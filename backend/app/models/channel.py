@@ -123,6 +123,8 @@ class ChannelBotAgentLink(Base, TimestampMixin):
         index=True,
     )
     agent_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    encrypted_agent_token: Mapped[bytes | None] = mapped_column(LargeBinary)
+    agent_token_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

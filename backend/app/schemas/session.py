@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
@@ -184,6 +184,30 @@ class EnvironmentResponse(BaseModel):
     # Stringified for JSON (UUIDs serialise as strings via
     # FastAPI default).
     default_project_id: str
+
+
+class RuntimeObservedDesiredResponse(BaseModel):
+    deployment_id: str
+    instance_id: str
+    generation: int
+    provider_id: str | None = None
+    enabled_runtimes: list[str]
+    has_mcp: bool = False
+    has_tools: bool = False
+    updated_at: datetime | None = None
+
+
+class RuntimeObservedHealthResponse(BaseModel):
+    status: Literal["ok", "error", "stale", "unknown", "not_configured"]
+    reasons: list[str] = []
+    reported_at: datetime | None = None
+
+
+class RuntimeObservedResponse(BaseModel):
+    environment: EnvironmentResponse
+    desired: RuntimeObservedDesiredResponse | None = None
+    observed: dict[str, Any] | None = None
+    health: RuntimeObservedHealthResponse
 
 
 class SessionBatchResponse(BaseModel):

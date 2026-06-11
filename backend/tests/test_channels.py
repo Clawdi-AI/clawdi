@@ -26,9 +26,12 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
+from app.models.api_key import ApiKey
 from app.models.channel import (
     CHANNEL_STATUS_DISABLED,
+    CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_PENDING,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
@@ -47,10 +50,12 @@ from app.routes.channel_routers.discord import (
 )
 from app.services import channels as channel_service
 from app.services.bluebubbles_socket import BlueBubblesSocketManager
+from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import (
     ChannelAgentContext,
+    decrypt_agent_link_token,
     encrypt_optional_token,
     extract_discord_routing_key,
     hash_token,
@@ -85,6 +90,31 @@ async def _client_for_user(
 
     async def _override_get_auth() -> AuthContext:
         return AuthContext(user=user)
+
+    app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
+
+
+@asynccontextmanager
+async def _client_for_api_key(
+    db_session: AsyncSession,
+    user,
+    api_key: ApiKey,
+) -> AsyncIterator[httpx.AsyncClient]:
+    previous_overrides = dict(app.dependency_overrides)
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=user, api_key=api_key)
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
@@ -532,6 +562,31 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_list_channels_supports_content_etag(client: httpx.AsyncClient):
+    first = await client.get("/api/channels")
+    assert first.status_code == 200
+    etag = first.headers.get("etag")
+    assert etag is not None
+    assert first.headers["cache-control"] == "no-store"
+
+    not_modified = await client.get("/api/channels", headers={"If-None-Match": etag})
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == etag
+    assert not_modified.headers["cache-control"] == "no-store"
+
+    created = await client.post(
+        "/api/channels",
+        json={"provider": "telegram", "name": f"etag-channel-{uuid4().hex}"},
+    )
+    assert created.status_code == 201
+
+    changed = await client.get("/api/channels", headers={"If-None-Match": etag})
+    assert changed.status_code == 200
+    assert changed.headers["etag"] != etag
+    assert any(item["id"] == created.json()["id"] for item in changed.json())
+
+
+@pytest.mark.asyncio
 async def test_rotate_channel_agent_link_token_replaces_one_time_token(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -566,6 +621,464 @@ async def test_rotate_channel_agent_link_token_replaces_one_time_token(
     ).scalar_one()
     assert link.agent_token_hash == hash_token(body["agent_token"])
     assert link.agent_token_hash != hash_token(old_token)
+    assert decrypt_agent_link_token(link) == body["agent_token"]
+
+
+@pytest.mark.asyncio
+async def test_channel_control_plane_actions_write_redacted_audit_events(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    provider_token = "123456:telegram-secret"
+    extra_secret = "channel-extra-secret"
+    created_response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "telegram",
+            "name": f"audit-channel-{uuid4().hex}",
+            "provider_token": provider_token,
+            "secrets": {"bot_token": extra_secret},
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    initial_agent_token = created["agent_token"]
+
+    rotated_response = await client.post(
+        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+    )
+    assert rotated_response.status_code == 200, rotated_response.text
+    rotated_agent_token = rotated_response.json()["agent_token"]
+
+    pair_response = await client.post(
+        f"/api/channels/{created['id']}/pair-codes",
+        json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+    )
+    assert pair_response.status_code == 201, pair_response.text
+    pair_code = pair_response.json()["code"]
+
+    audit_response = await client.get(
+        "/api/audit/events",
+        params={"channel_account_id": created["id"], "limit": 20},
+    )
+    assert audit_response.status_code == 200, audit_response.text
+    payload = audit_response.json()
+    actions = {event["action"] for event in payload["items"]}
+    assert {
+        "channel.account.create",
+        "channel.agent_link.credential_rotate",
+        "channel.pair_code.create",
+    }.issubset(actions)
+
+    create_event = next(
+        event for event in payload["items"] if event["action"] == "channel.account.create"
+    )
+    assert create_event["target_user_id"] == str(seed_user.id)
+    assert create_event["channel_account_id"] == created["id"]
+    assert create_event["details"]["provider"] == "telegram"
+    assert create_event["details"]["has_provider_credential"] is True
+
+    audit_text = json.dumps(payload)
+    assert provider_token not in audit_text
+    assert extra_secret not in audit_text
+    assert created["webhook_secret"] not in audit_text
+    assert initial_agent_token not in audit_text
+    assert rotated_agent_token not in audit_text
+    assert pair_code not in audit_text
+
+    other_user, _other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="audit-other",
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_response = await other_client.get(
+            "/api/audit/events",
+            params={"channel_account_id": created["id"], "limit": 20},
+        )
+
+    assert other_response.status_code == 200, other_response.text
+    assert other_response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_channel_activity_lists_messages_deliveries_and_debug_events_safely(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    provider_token = "123456:activity-provider-token"
+    created_response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "telegram",
+            "name": f"activity-channel-{uuid4().hex}",
+            "provider_token": provider_token,
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    outbound_response = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"external_chat_id": "activity-chat", "text": "activity outbound"},
+    )
+    assert outbound_response.status_code == 201, outbound_response.text
+    outbound = outbound_response.json()
+    delivery = await db_session.get(ChannelDelivery, UUID(outbound["delivery_id"]))
+    assert delivery is not None
+    delivery.status = DELIVERY_STATUS_FAILED
+    delivery.attempts = 2
+    delivery.last_error = "provider timed out"
+
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    db_session.add(
+        ChannelMessage(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            user_id=seed_user.id,
+            direction=MESSAGE_DIRECTION_INBOUND,
+            external_chat_id="activity-chat",
+            provider_message_id="provider-message-1",
+            text="activity inbound",
+            payload={"providerToken": provider_token},
+        )
+    )
+    await record_channel_debug_event(
+        db_session,
+        account=account,
+        user_id=seed_user.id,
+        provider="telegram",
+        direction="outbound",
+        stage="delivery",
+        outcome="failure",
+        external_chat_id="activity-chat",
+        status_code=503,
+        error="provider failed",
+        details={
+            "providerToken": provider_token,
+            "nested": {"authorization": f"Bearer {provider_token}"},
+        },
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/channels/{created['id']}/activity",
+        params={"external_chat_id": "activity-chat", "limit": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    items = payload["items"]
+    assert {item["kind"] for item in items} == {"message", "debug_event"}
+    outbound_item = next(item for item in items if item["text"] == "activity outbound")
+    assert outbound_item["delivery_id"] == outbound["delivery_id"]
+    assert outbound_item["delivery_status"] == DELIVERY_STATUS_FAILED
+    assert outbound_item["delivery_attempts"] == 2
+    assert outbound_item["delivery_last_error"] == "provider timed out"
+    inbound_item = next(item for item in items if item["text"] == "activity inbound")
+    assert inbound_item["direction"] == MESSAGE_DIRECTION_INBOUND
+    assert inbound_item["provider_message_id"] == "provider-message-1"
+    debug_item = next(item for item in items if item["kind"] == "debug_event")
+    assert debug_item["stage"] == "delivery"
+    assert debug_item["outcome"] == "failure"
+    assert debug_item["status_code"] == 503
+    assert debug_item["details"]["providerToken"] == "[redacted]"
+    assert debug_item["details"]["nested"]["authorization"] == "[redacted]"
+    assert provider_token not in response.text
+    assert "webhook_secret" not in response.text
+    assert "agent_token" not in response.text
+    assert "providerPayload" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_channel_activity_is_scoped_to_event_owner(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"public-activity-{uuid4().hex}",
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    db_session.add(
+        ChannelMessage(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            user_id=account.user_id,
+            direction=MESSAGE_DIRECTION_OUTBOUND,
+            external_chat_id="owner-chat",
+            provider_message_id=None,
+            text="owner-only activity",
+            payload={"delivery": "pending"},
+        )
+    )
+    await db_session.commit()
+
+    other_user, _other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="activity-other",
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_response = await other_client.get(f"/api/channels/{created['id']}/activity")
+
+    assert other_response.status_code == 200, other_response.text
+    assert other_response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_channel_health_summarizes_delivery_and_debug_state(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created_response = await client.post(
+        "/api/channels",
+        json={"provider": "telegram", "name": f"health-channel-{uuid4().hex}"},
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="health-chat",
+        external_chat_type="private",
+        external_chat_name="Health Chat",
+    )
+    db_session.add(binding)
+    await db_session.flush()
+    db_session.add(
+        ChannelMessage(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            binding_id=binding.id,
+            user_id=seed_user.id,
+            direction=MESSAGE_DIRECTION_INBOUND,
+            external_chat_id=binding.external_chat_id,
+            provider_message_id="health-inbound-1",
+            text="needs delivery",
+            payload={},
+        )
+    )
+    await db_session.commit()
+
+    failed_response = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"external_chat_id": "failed-chat", "text": "failed outbound"},
+    )
+    assert failed_response.status_code == 201, failed_response.text
+    failed_delivery = await db_session.get(
+        ChannelDelivery,
+        UUID(failed_response.json()["delivery_id"]),
+    )
+    assert failed_delivery is not None
+    failed_delivery.status = DELIVERY_STATUS_FAILED
+    failed_delivery.attempts = 3
+    failed_delivery.last_error = "provider rejected request"
+
+    pending_response = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"external_chat_id": "pending-chat", "text": "pending outbound"},
+    )
+    assert pending_response.status_code == 201, pending_response.text
+
+    await record_channel_debug_event(
+        db_session,
+        account=account,
+        user_id=seed_user.id,
+        provider="telegram",
+        direction="outbound",
+        stage="delivery",
+        outcome="failure",
+        error="rate limited",
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/channels/health")
+
+    assert response.status_code == 200, response.text
+    health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
+    assert health["provider"] == "telegram"
+    assert health["health_status"] == "error"
+    assert "failed_deliveries" in health["reasons"]
+    assert "pending_deliveries" in health["reasons"]
+    assert "pending_inbox" in health["reasons"]
+    assert "recent_error" in health["reasons"]
+    assert health["pending_inbox"] == 1
+    assert health["pending_deliveries"] == 1
+    assert health["failed_deliveries"] == 1
+    assert health["last_error"] in {"rate limited", "provider rejected request"}
+    assert health["last_error_stage"] in {"delivery", None}
+    assert health["last_message_at"] is not None
+    assert health["last_event_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_channel_health_includes_public_bound_channels_without_cross_user_counts(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "telegram", "name": f"shared-health-{uuid4().hex}"},
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    owner_message = ChannelMessage(
+        account_id=account.id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id="owner-health-chat",
+        provider_message_id=None,
+        text="owner failed",
+        payload={"delivery": DELIVERY_STATUS_PENDING},
+    )
+    db_session.add(owner_message)
+    await db_session.flush()
+    db_session.add(
+        ChannelDelivery(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            message_id=owner_message.id,
+            user_id=seed_user.id,
+            status=DELIVERY_STATUS_FAILED,
+            next_attempt_at=datetime.now(UTC),
+            last_error="owner-only failure",
+        )
+    )
+    other_user, _other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="health-other",
+    )
+    other_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=other_user.id,
+        external_chat_id="other-health-chat",
+        external_chat_type="private",
+        external_chat_name="Other Health Chat",
+    )
+    db_session.add(other_binding)
+    await db_session.flush()
+    db_session.add(
+        ChannelMessage(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            binding_id=other_binding.id,
+            user_id=other_user.id,
+            direction=MESSAGE_DIRECTION_INBOUND,
+            external_chat_id=other_binding.external_chat_id,
+            provider_message_id="other-inbound-1",
+            text="other pending inbox",
+            payload={},
+        )
+    )
+    await db_session.commit()
+
+    async with _client_for_user(db_session, other_user) as other_client:
+        response = await other_client.get("/api/channels/health")
+
+    assert response.status_code == 200, response.text
+    health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
+    assert health["health_status"] == "warning"
+    assert health["pending_inbox"] == 1
+    assert health["failed_deliveries"] == 0
+    assert health["last_error"] is None
+    assert "owner-only failure" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_env_bound_list_channels_returns_runtime_agent_token(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "telegram",
+            "name": f"runtime-list-{uuid4().hex}",
+            "provider_token": "123456:telegram-secret",
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        listed = await runtime_client.get("/api/channels")
+
+    assert listed.status_code == 200, listed.text
+    payload = listed.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == created["id"]
+    assert payload[0]["runtime_links"] == [
+        {
+            "id": created["agent_link_id"],
+            "account_id": created["id"],
+            "agent_id": str(channel_agent.id),
+            "status": "active",
+            "created_at": payload[0]["runtime_links"][0]["created_at"],
+            "agent_token": created["agent_token"],
+        }
+    ]
+    assert "telegram-secret" not in listed.text
+    assert "webhook_secret" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_env_bound_channel_etag_changes_when_agent_token_rotates(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"runtime-etag-{uuid4().hex}",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        first = await runtime_client.get("/api/channels")
+    assert first.status_code == 200, first.text
+    etag = first.headers["etag"]
+
+    rotated = await client.post(
+        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+    )
+    assert rotated.status_code == 200, rotated.text
+    rotated_token = rotated.json()["agent_token"]
+
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        changed = await runtime_client.get("/api/channels", headers={"If-None-Match": etag})
+
+    assert changed.status_code == 200, changed.text
+    assert changed.headers["etag"] != etag
+    assert changed.json()[0]["runtime_links"][0]["agent_token"] == rotated_token
 
 
 @pytest.mark.asyncio
@@ -796,9 +1309,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
         pool = await client_a.get("/api/channels/bot-pool")
         assert pool.status_code == 200
         public_item = next(
-            item
-            for item in pool.json()["providers"]["telegram"]
-            if item["id"] == str(account_id)
+            item for item in pool.json()["providers"]["telegram"] if item["id"] == str(account_id)
         )
         assert public_item["visibility"] == "public"
         assert public_item["access"] == "public"
@@ -972,7 +1483,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
         pair_b = await client_b.post(
             f"/api/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
-    )
+        )
     assert pair_b.status_code == 201
 
     _reset_fake_provider_client({"ok": True, "result": {"message_id": 8100}})
@@ -1022,11 +1533,10 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     bob_unpair_reply = (
         await db_session.execute(
             select(ChannelMessage)
-                .where(
-                    ChannelMessage.account_id == account_id,
-                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
-                    ChannelMessage.text
-                    == "Only the user who paired this chat can change its pairing.",
+            .where(
+                ChannelMessage.account_id == account_id,
+                ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                ChannelMessage.text == "Only the user who paired this chat can change its pairing.",
             )
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
@@ -1048,11 +1558,10 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     bob_takeover_reply = (
         await db_session.execute(
             select(ChannelMessage)
-                .where(
-                    ChannelMessage.account_id == account_id,
-                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
-                    ChannelMessage.text
-                    == "Only the user who paired this chat can change its pairing.",
+            .where(
+                ChannelMessage.account_id == account_id,
+                ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                ChannelMessage.text == "Only the user who paired this chat can change its pairing.",
             )
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
@@ -4848,9 +5357,7 @@ async def test_telegram_webhook_pair_code_sends_user_reply(
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    assert _FakeProviderClient.calls[0]["url"].endswith(
-        "/bot123456:telegram-secret/sendMessage"
-    )
+    assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/sendMessage")
     assert _FakeProviderClient.calls[0]["json"] == {
         "chat_id": "987654321",
         "text": "Paired! This chat is now connected to your agent.",
@@ -5675,9 +6182,7 @@ async def test_discord_message_pair_code_sends_user_reply(
         for call in _FakeProviderClient.calls
         if call["url"].endswith("/channels/chan-1/messages")
     )
-    assert reply_call["headers"]["Authorization"] == (
-        "Bot discord-provider-token"
-    )
+    assert reply_call["headers"]["Authorization"] == ("Bot discord-provider-token")
     assert reply_call["json"] == {
         "content": "Paired! This chat is now connected to your agent.",
         "allowed_mentions": {"parse": []},

@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,7 @@ from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
+from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.vault_crypto import decrypt
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
@@ -23,9 +25,10 @@ _MANAGED_PROVIDER_ID = "clawdi-managed"
 
 @router.get("/manifest")
 async def get_runtime_manifest(
+    request: Request,
     auth: AuthContext = Depends(require_cli_auth),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> Response:
     environment_id = auth.api_key.environment_id if auth.api_key is not None else None
     if environment_id is None:
         raise HTTPException(
@@ -52,14 +55,17 @@ async def get_runtime_manifest(
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Hosted runtime state not found")
 
-    providers, secret_values = await _provider_projection(db, auth=auth, state=state)
+    providers, secret_values, provider_version_sources = await _provider_projection(
+        db, auth=auth, state=state
+    )
+    issued_at = _version_timestamp([state, env, *provider_version_sources])
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
         "deploymentId": state.deployment_id,
         "environmentId": str(environment_id),
         "instanceId": state.instance_id,
         "generation": state.generation,
-        "issuedAt": datetime.now(UTC).isoformat(),
+        "issuedAt": issued_at,
         "system": state.system or _default_system(),
         "controlPlane": _control_plane(state.control_plane),
         "clawdiCli": state.clawdi_cli or _default_clawdi_cli(),
@@ -72,7 +78,35 @@ async def get_runtime_manifest(
         manifest["appId"] = state.app_id
     if state.mitm_profiles:
         manifest["mitmProfiles"] = state.mitm_profiles
-    return {"manifest": manifest, "secretValues": secret_values}
+    if state.mcp:
+        manifest["mcp"] = state.mcp
+    if state.tools:
+        manifest["tools"] = state.tools
+    payload = {"manifest": manifest, "secretValues": secret_values}
+    etag = strong_json_etag(payload)
+    headers = {"ETag": etag, "Cache-Control": "no-store"}
+    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return JSONResponse(payload, headers=headers)
+
+
+def _version_timestamp(sources: list[Any]) -> str:
+    timestamps: list[datetime] = []
+    for source in sources:
+        for attr in ("updated_at", "created_at"):
+            value = getattr(source, attr, None)
+            if isinstance(value, datetime):
+                timestamps.append(_as_utc(value))
+                break
+    if not timestamps:
+        return datetime.now(UTC).isoformat()
+    return max(timestamps).isoformat()
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _default_system() -> dict[str, Any]:
@@ -120,12 +154,12 @@ async def _provider_projection(
     *,
     auth: AuthContext,
     state: HostedRuntimeState,
-) -> tuple[dict[str, Any], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, str], list[Any]]:
     provider = await _select_provider(db, auth=auth, provider_id=state.provider_id)
     if provider is None:
-        return {}, {}
+        return {}, {}, []
 
-    secret = await _provider_secret(db, auth=auth, provider=provider)
+    secret, payload = await _provider_secret(db, auth=auth, provider=provider)
     projection: dict[str, Any] = {
         "kind": "openai-compatible",
         "baseUrl": provider.base_url,
@@ -136,7 +170,10 @@ async def _provider_projection(
         projection["apiKeySecretRef"] = _DEFAULT_PROVIDER_SECRET_REF
 
     secret_values = {_DEFAULT_PROVIDER_SECRET_REF: secret} if secret else {}
-    return {"default": projection}, secret_values
+    version_sources: list[Any] = [provider]
+    if payload is not None:
+        version_sources.append(payload)
+    return {"default": projection}, secret_values, version_sources
 
 
 async def _select_provider(
@@ -168,12 +205,12 @@ async def _provider_secret(
     *,
     auth: AuthContext,
     provider: AiProvider,
-) -> str | None:
+) -> tuple[str | None, AiProviderAuthPayload | None]:
     if provider.auth_type != "api_key":
-        return None
+        return None, None
     metadata = provider.auth_metadata or {}
     if metadata.get("source") not in {None, "managed"}:
-        return None
+        return None, None
     profile = metadata.get("profile") if isinstance(metadata.get("profile"), str) else "default"
     payload = (
         await db.execute(
@@ -186,5 +223,5 @@ async def _provider_secret(
         )
     ).scalar_one_or_none()
     if payload is None:
-        return None
-    return decrypt(payload.encrypted_payload, payload.nonce)
+        return None, None
+    return decrypt(payload.encrypted_payload, payload.nonce), payload

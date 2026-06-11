@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -98,6 +99,9 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
+    etag = response.headers.get("etag")
+    assert etag is not None
+    assert response.headers["cache-control"] == "no-store"
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
@@ -111,6 +115,96 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert "apiUrl" not in manifest["controlPlane"]
     assert "channels" not in manifest
     assert payload["secretValues"] == {}
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        not_modified = await client.get(
+            "/api/runtime/manifest",
+            headers={"If-None-Match": etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == etag
+    assert not_modified.headers["cache-control"] == "no-store"
+    assert not_modified.content == b""
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"audit-runtime-{uuid4().hex[:8]}",
+        machine_name="Runtime Audit",
+        agent_type="openclaw",
+    )
+    initial = await _write_runtime_state(admin_client, str(env.id))
+    updated = {**initial, "generation": 8}
+    await _write_runtime_state(admin_client, str(env.id), **updated)
+
+    async with await _runtime_client(db_session, seed_user, None) as client:
+        response = await client.get(
+            "/api/audit/events",
+            params={
+                "resource_type": "hosted_runtime_state",
+                "environment_id": str(env.id),
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["items"]) == 2
+    latest = payload["items"][0]
+    assert latest["action"] == "hosted_runtime_state.upsert"
+    assert latest["resource_type"] == "hosted_runtime_state"
+    assert latest["environment_id"] == str(env.id)
+    assert latest["target_user_id"] == str(seed_user.id)
+    assert latest["details"]["generation"] == 8
+    assert latest["details"]["previous_generation"] == 7
+    assert latest["details"]["enabled_runtimes"] == ["openclaw"]
+    assert latest["details"]["changed_fields"] == ["generation"]
+    assert "secret" not in json.dumps(payload).lower()
+    assert "token" not in json.dumps(payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"mcp-{uuid4().hex[:8]}",
+        machine_name="Runtime MCP",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        mcp={"enabled": True, "profile": "clawdi-default"},
+        tools={"catalog": "clawdi-default", "enabled": ["memory", "connectors"]},
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    manifest = response.json()["manifest"]
+    assert manifest["mcp"] == {"enabled": True, "profile": "clawdi-default"}
+    assert manifest["tools"] == {
+        "catalog": "clawdi-default",
+        "enabled": ["memory", "connectors"],
+    }
+    assert "channels" not in manifest
 
 
 @pytest.mark.asyncio
@@ -136,6 +230,47 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         "provider_id": "clawdi-managed",
         "runtimes": {"openclaw": {"enabled": True}},
         field: {},
+    }
+
+    response = await admin_client.put(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mcp", {"headers": {"authorization": "Bearer secret"}}),
+        ("tools", {"connectors": [{"apiKey": "secret"}]}),
+    ],
+)
+async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
+    admin_client,
+    db_session,
+    seed_user,
+    field,
+    value,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"mcp-secret-{uuid4().hex[:8]}",
+        machine_name="Runtime MCP secret",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": f"dep_{uuid4().hex}",
+        "app_id": "app-test",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "provider_id": "clawdi-managed",
+        "runtimes": {"openclaw": {"enabled": True}},
+        field: value,
     }
 
     response = await admin_client.put(
@@ -287,3 +422,32 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "apiKeySecretRef": "provider.default.apiKey",
     }
     assert payload["secretValues"] == {"provider.default.apiKey": "sk-test-provider"}
+    etag = response.headers["etag"]
+
+    ciphertext, nonce = encrypt("sk-rotated-provider")
+    provider_payload = (
+        await db_session.execute(
+            AiProviderAuthPayload.__table__.select().where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == "clawdi-managed",
+            )
+        )
+    ).first()
+    assert provider_payload is not None
+    await db_session.execute(
+        AiProviderAuthPayload.__table__.update()
+        .where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == "clawdi-managed",
+        )
+        .values(encrypted_payload=ciphertext, nonce=nonce)
+    )
+    await db_session.commit()
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        rotated = await client.get("/api/runtime/manifest", headers={"If-None-Match": etag})
+    app.dependency_overrides.clear()
+
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.headers["etag"] != etag
+    assert rotated.json()["secretValues"] == {"provider.default.apiKey": "sk-rotated-provider"}

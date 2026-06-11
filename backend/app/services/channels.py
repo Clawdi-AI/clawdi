@@ -202,6 +202,19 @@ def decrypt_provider_token(account: ChannelAccount) -> str:
     return decrypt(account.encrypted_provider_token, account.provider_token_nonce)
 
 
+def store_agent_link_token(link: ChannelBotAgentLink, raw_token: str) -> None:
+    ciphertext, nonce = encrypt(raw_token)
+    link.agent_token_hash = hash_token(raw_token)
+    link.encrypted_agent_token = ciphertext
+    link.agent_token_nonce = nonce
+
+
+def decrypt_agent_link_token(link: ChannelBotAgentLink) -> str | None:
+    if not link.encrypted_agent_token or not link.agent_token_nonce:
+        return None
+    return decrypt(link.encrypted_agent_token, link.agent_token_nonce)
+
+
 def channel_webhook_url(account_id: UUID, provider: str) -> str:
     return f"{settings.public_api_url.rstrip('/')}/api/channels/{provider}/{account_id}/webhook"
 
@@ -305,8 +318,8 @@ async def get_or_create_bot_agent_link(
         account_id=account.id,
         user_id=link_user_id,
         agent_id=agent_id,
-        agent_token_hash=hash_token(raw_token),
     )
+    store_agent_link_token(link, raw_token)
     db.add(link)
     await db.flush()
     return link, raw_token
@@ -386,7 +399,7 @@ async def rotate_bot_agent_link_token(
     link: ChannelBotAgentLink,
 ) -> str:
     raw_token = generate_agent_token(account.provider)
-    link.agent_token_hash = hash_token(raw_token)
+    store_agent_link_token(link, raw_token)
     await db.flush()
     return raw_token
 

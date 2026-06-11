@@ -28,3 +28,6 @@ class HostedRuntimeState(Base, TimestampMixin):
     live_sync: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     recovery: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     mitm_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    mcp: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    tools: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    observed: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))

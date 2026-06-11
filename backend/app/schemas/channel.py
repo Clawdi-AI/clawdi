@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
+ChannelHealthStatus = Literal["ok", "warning", "error"]
 
 
 class ChannelAccountCreate(BaseModel):
@@ -52,6 +53,19 @@ class ChannelAccountResponse(BaseModel):
     has_provider_token: bool
     webhook_url: str
     created_at: datetime
+
+
+class ChannelRuntimeAgentLinkResponse(BaseModel):
+    id: UUID
+    account_id: UUID
+    agent_id: UUID
+    status: str
+    created_at: datetime
+    agent_token: str | None = None
+
+
+class ChannelRuntimeAccountResponse(ChannelAccountResponse):
+    runtime_links: list[ChannelRuntimeAgentLinkResponse] = Field(default_factory=list)
 
 
 class ChannelBotPoolCapabilities(BaseModel):
@@ -174,6 +188,60 @@ class ChannelMessageResponse(BaseModel):
     delivery_status: str | None = None
     text: str | None
     created_at: datetime
+
+
+class ChannelActivityItemResponse(BaseModel):
+    kind: Literal["message", "debug_event"]
+    id: UUID
+    account_id: UUID
+    provider: str
+    direction: str | None = None
+    external_chat_id: str | None = None
+    message_id: UUID | None = None
+    delivery_id: UUID | None = None
+    delivery_status: str | None = None
+    delivery_attempts: int | None = None
+    delivery_max_attempts: int | None = None
+    delivery_next_attempt_at: datetime | None = None
+    delivery_last_error: str | None = None
+    provider_message_id: str | None = None
+    text: str | None = None
+    stage: str | None = None
+    outcome: str | None = None
+    status_code: int | None = None
+    error: str | None = None
+    details: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChannelActivityListResponse(BaseModel):
+    items: list[ChannelActivityItemResponse]
+
+
+class ChannelHealthItemResponse(BaseModel):
+    account_id: UUID
+    provider: str
+    name: str
+    visibility: ChannelVisibility
+    channel_status: str
+    health_status: ChannelHealthStatus
+    reasons: list[str] = Field(default_factory=list)
+    pending_inbox: int = 0
+    pending_deliveries: int = 0
+    in_progress_deliveries: int = 0
+    failed_deliveries: int = 0
+    last_message_at: datetime | None = None
+    last_event_at: datetime | None = None
+    last_error_at: datetime | None = None
+    last_error: str | None = None
+    last_error_stage: str | None = None
+    last_error_outcome: str | None = None
+    native_transport: dict[str, Any] | None = None
+
+
+class ChannelHealthListResponse(BaseModel):
+    items: list[ChannelHealthItemResponse]
 
 
 class TelegramWebhookResponse(BaseModel):

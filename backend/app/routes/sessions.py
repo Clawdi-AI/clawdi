@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from fastapi import (
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -36,6 +38,9 @@ from app.schemas.session import (
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentResponse,
+    RuntimeObservedDesiredResponse,
+    RuntimeObservedHealthResponse,
+    RuntimeObservedResponse,
     SessionBatchRequest,
     SessionBatchResponse,
     SessionDetailResponse,
@@ -63,6 +68,8 @@ router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
+_MAX_RUNTIME_OBSERVED_BYTES = 64 * 1024
+_RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
@@ -348,6 +355,40 @@ async def get_environment(
     return _env_to_response(env)
 
 
+@router.get("/api/environments/{environment_id}/runtime-observed")
+async def get_environment_runtime_observed(
+    environment_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    bound_env = _bound_env_id(auth)
+    if bound_env is not None and environment_id != bound_env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    return RuntimeObservedResponse(
+        environment=_env_to_response(env),
+        desired=_runtime_observed_desired(state) if state is not None else None,
+        observed=state.observed if state is not None else None,
+        health=_runtime_observed_health(env, state),
+    )
+
+
 def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
     return EnvironmentResponse(
         id=str(env.id),
@@ -367,6 +408,107 @@ def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
     )
+
+
+def _runtime_observed_desired(
+    state: HostedRuntimeState,
+) -> RuntimeObservedDesiredResponse:
+    return RuntimeObservedDesiredResponse(
+        deployment_id=state.deployment_id,
+        instance_id=state.instance_id,
+        generation=state.generation,
+        provider_id=state.provider_id,
+        enabled_runtimes=_enabled_runtime_names(state.runtimes),
+        has_mcp=state.mcp is not None,
+        has_tools=state.tools is not None,
+        updated_at=state.updated_at,
+    )
+
+
+def _runtime_observed_health(
+    env: AgentEnvironment,
+    state: HostedRuntimeState | None,
+) -> RuntimeObservedHealthResponse:
+    if state is None:
+        return RuntimeObservedHealthResponse(
+            status="not_configured",
+            reasons=["hosted_runtime_state_missing"],
+        )
+
+    reasons: list[str] = []
+    observed = state.observed if isinstance(state.observed, dict) else None
+    reported_at = _observed_reported_at(observed)
+    now = datetime.now(UTC)
+
+    if env.last_sync_error:
+        reasons.append("daemon_error")
+    if env.last_sync_at is None:
+        reasons.append("daemon_never_heartbeat")
+    elif now - _as_utc(env.last_sync_at) > _RUNTIME_OBSERVED_STALE_AFTER:
+        reasons.append("daemon_stale")
+
+    observed_status = observed.get("status") if observed is not None else None
+    if observed is None:
+        reasons.append("runtime_observed_missing")
+    elif observed_status == "error":
+        reasons.append("runtime_error")
+    elif observed_status not in {"ok", "unknown"}:
+        reasons.append("runtime_status_unknown")
+
+    supervisor = observed.get("supervisor") if observed is not None else None
+    supervisor_status = supervisor.get("status") if isinstance(supervisor, dict) else None
+    if supervisor_status == "error":
+        reasons.append("supervisor_error")
+    elif supervisor_status == "unknown":
+        reasons.append("supervisor_status_unknown")
+    elif supervisor_status is not None and supervisor_status != "ok":
+        reasons.append("supervisor_status_invalid")
+
+    if observed is not None and reported_at is None:
+        reasons.append("runtime_reported_at_missing")
+    elif reported_at is not None and now - reported_at > _RUNTIME_OBSERVED_STALE_AFTER:
+        reasons.append("runtime_observed_stale")
+
+    if "daemon_error" in reasons or "runtime_error" in reasons or "supervisor_error" in reasons:
+        status_value = "error"
+    elif "daemon_stale" in reasons or "runtime_observed_stale" in reasons:
+        status_value = "stale"
+    elif observed_status == "ok" and not reasons:
+        status_value = "ok"
+    else:
+        status_value = "unknown"
+
+    return RuntimeObservedHealthResponse(
+        status=status_value,
+        reasons=reasons,
+        reported_at=reported_at,
+    )
+
+
+def _enabled_runtime_names(runtimes: dict) -> list[str]:
+    enabled: list[str] = []
+    for name, raw in runtimes.items():
+        if isinstance(raw, dict) and raw.get("enabled") is True:
+            enabled.append(str(name))
+    return sorted(enabled)
+
+
+def _observed_reported_at(observed: dict[str, Any] | None) -> datetime | None:
+    if observed is None:
+        return None
+    value = observed.get("reportedAt")
+    if not isinstance(value, str):
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 @router.delete("/api/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -413,6 +555,22 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
+    runtime_observed: dict[str, Any] | None = None
+
+
+def _bounded_runtime_observed(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if len(encoded.encode("utf-8")) <= _MAX_RUNTIME_OBSERVED_BYTES:
+        return value
+    return {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "error",
+        "error": "runtime observed payload exceeded size limit",
+        "truncated": True,
+    }
 
 
 @router.post("/api/agents/{environment_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
@@ -471,6 +629,18 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
+    runtime_observed = _bounded_runtime_observed(body.runtime_observed)
+    hosted_state = None
+    observed_changed = False
+    if runtime_observed is not None:
+        hosted_state = (
+            await db.execute(
+                select(HostedRuntimeState).where(
+                    HostedRuntimeState.environment_id == environment_id
+                )
+            )
+        ).scalar_one_or_none()
+        observed_changed = hosted_state is not None and hosted_state.observed != runtime_observed
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
@@ -480,6 +650,7 @@ async def sync_heartbeat(
         )
         or bool(body.dropped_count_delta)
         or not env.sync_enabled
+        or observed_changed
     )
     # Even with no state change, refresh last_sync_at if the
     # previous value is older than 30s — the dashboard freshness
@@ -506,6 +677,8 @@ async def sync_heartbeat(
     # rollout — it has done its job once an actual heartbeat arrives.
     if not env.sync_enabled:
         env.sync_enabled = True
+    if hosted_state is not None and runtime_observed is not None:
+        hosted_state.observed = runtime_observed
     await db.commit()
 
 

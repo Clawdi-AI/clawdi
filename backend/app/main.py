@@ -25,6 +25,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.ai_providers import router as ai_providers_router
+from app.routes.audit import router as audit_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.channels import router as channels_router
@@ -225,6 +226,7 @@ async def request_validation_exception_handler(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(ai_providers_router)
+app.include_router(audit_router)
 app.include_router(channels_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
