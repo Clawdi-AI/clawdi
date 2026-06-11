@@ -346,21 +346,29 @@ async def list_environment_runtime_observed(
         filters.append(AgentEnvironment.id == bound_env)
 
     envs = (
-        await db.execute(
-            select(AgentEnvironment)
-            .where(*filters)
-            .order_by(AgentEnvironment.created_at.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(AgentEnvironment)
+                .where(*filters)
+                .order_by(AgentEnvironment.created_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     env_ids = [env.id for env in envs]
     states_by_env: dict[UUID, HostedRuntimeState] = {}
     if env_ids:
         states = (
-            await db.execute(
-                select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+            (
+                await db.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         states_by_env = {state.environment_id: state for state in states}
 
     counts = RuntimeObservedSummaryCountsResponse()
