@@ -58,7 +58,7 @@ async def get_runtime_manifest(
     providers, secret_values, provider_version_sources = await _provider_projection(
         db, auth=auth, state=state
     )
-    issued_at = _version_timestamp([state, env, *provider_version_sources])
+    issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
         "deploymentId": state.deployment_id,
@@ -90,9 +90,19 @@ async def get_runtime_manifest(
     return JSONResponse(payload, headers=headers)
 
 
-def _version_timestamp(sources: list[Any]) -> str:
+def _runtime_manifest_issued_at(
+    state: HostedRuntimeState,
+    provider_version_sources: list[Any],
+) -> str:
+    # `HostedRuntimeState.updated_at` also moves when the daemon writes
+    # observed liveness into the row. Runtime manifests must version desired
+    # state, not heartbeat state, so only use the stable state creation time
+    # plus provider config/secret timestamps here. Desired field changes still
+    # alter the manifest payload and ETag directly.
     timestamps: list[datetime] = []
-    for source in sources:
+    if isinstance(state.created_at, datetime):
+        timestamps.append(_as_utc(state.created_at))
+    for source in provider_version_sources:
         for attr in ("updated_at", "created_at"):
             value = getattr(source, attr, None)
             if isinstance(value, datetime):

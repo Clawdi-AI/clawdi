@@ -1749,6 +1749,8 @@ exit 64
 			expect(codexEnv.id).toBe("env-codex");
 			expect(supervisorConfig).toContain("[program:clawdi-runtime-watch]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime watch");
+			expect(supervisorConfig).toContain("chmod=0770");
+			expect(supervisorConfig).toContain("chown=clawdi:clawdi");
 			expect(supervisorConfig).toContain("[program:clawdi-daemon]");
 			expect(supervisorConfig).toContain("clawdi daemon run");
 			expect(supervisorConfig).toContain('CLAWDI_SERVE_MODE="container"');

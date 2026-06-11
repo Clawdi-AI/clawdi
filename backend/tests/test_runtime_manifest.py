@@ -130,6 +130,53 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-heartbeat-{uuid4().hex[:8]}",
+        machine_name="Runtime heartbeat",
+        agent_type="openclaw",
+    )
+    expected = await _write_runtime_state(admin_client, str(env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+        assert response.status_code == 200, response.text
+        etag = response.headers["etag"]
+
+        heartbeat = await client.post(
+            f"/api/agents/{env.id}/sync-heartbeat",
+            json={
+                "last_revision_seen": 1,
+                "queue_depth": 0,
+                "runtime_observed": {
+                    "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+                    "reportedAt": "2026-06-11T00:00:00+00:00",
+                    "status": "ok",
+                    "generation": expected["generation"],
+                },
+            },
+        )
+        assert heartbeat.status_code == 204, heartbeat.text
+
+        not_modified = await client.get(
+            "/api/runtime/manifest",
+            headers={"If-None-Match": etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == etag
+    assert not_modified.content == b""
+
+
+@pytest.mark.asyncio
 async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
     admin_client,
     db_session,
