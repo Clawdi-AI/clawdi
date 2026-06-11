@@ -1,163 +1,20 @@
 import { type MitmProfileInputBundle, mitmProfileInputBundleSchema } from "./mitm-profiles";
 
 type HostedMitmProfile = MitmProfileInputBundle["profiles"][number];
-type HostedChannelName = "discord" | "telegram" | "imessage" | "whatsapp";
-
-interface HostedRuntimeChannel {
-	enabled: boolean;
-	owner?: string | null;
-	provider?: string | null;
-	baseUrl?: string | null;
-	apiBaseUrl?: string | null;
-	restBaseUrl?: string | null;
-	gatewayBaseUrl?: string | null;
-	websocketBaseUrl?: string | null;
-	upstreamBaseUrl?: string | null;
-	secretRef?: string | null;
-	tokenSecretRef?: string | null;
-	botTokenSecretRef?: string | null;
-	passwordSecretRef?: string | null;
-	apiKeySecretRef?: string | null;
-}
 
 interface HostedRuntimeManifestProjection {
 	mitmProfiles?: unknown;
+	controlPlane?: {
+		cloudApiUrl?: string | null;
+		manifestUrl?: string | null;
+	} | null;
 	providers?: {
 		default?: {
 			baseUrl?: string | null;
 			apiKeySecretRef?: string | null;
 		} | null;
 	} | null;
-	channels?: Partial<Record<HostedChannelName, HostedRuntimeChannel>> | null;
 }
-
-type ChannelProfileBuilder = {
-	channel: HostedChannelName;
-	build: (
-		baseUrl: string | null,
-		channel: HostedRuntimeChannel | undefined,
-		owner: string,
-	) => HostedMitmProfile[];
-};
-
-const CHANNEL_PROFILE_BUILDERS: readonly ChannelProfileBuilder[] = [
-	{
-		channel: "discord",
-		build: (baseUrl, channel, owner) => {
-			if (!baseUrl) return [];
-			const botTokenRef = channelTokenSecretRef(channel);
-			return [
-				channelProfile({
-					id: "discord-rest-channel",
-					kind: "http",
-					scheme: "https",
-					host: "discord.com",
-					pathPrefix: "/api/",
-					headers: botTokenRef
-						? {
-								authorization: {
-									type: "secretRefEquals",
-									secretRef: botTokenRef,
-									prefix: "Bot ",
-								},
-							}
-						: undefined,
-					upstreamBaseUrl: baseUrl,
-					redactHeaders: ["authorization"],
-					priority: 100,
-					owner,
-				}),
-				channelProfile({
-					id: "discord-gateway-channel",
-					kind: "websocket",
-					scheme: "wss",
-					host: "gateway.discord.gg",
-					pathPrefix: "/",
-					upstreamBaseUrl: channelWebSocketBaseUrl(channel) ?? baseUrl,
-					priority: 130,
-					owner,
-				}),
-			];
-		},
-	},
-	{
-		channel: "telegram",
-		build: (baseUrl, channel, owner) => {
-			if (!baseUrl) return [];
-			const botTokenRef = channelTokenSecretRef(channel);
-			return [
-				channelProfile({
-					id: "telegram-bot-api-channel",
-					kind: "http",
-					scheme: "https",
-					host: "api.telegram.org",
-					pathPrefix: "/bot",
-					path: botTokenRef
-						? {
-								type: "secretRefPrefix",
-								secretRef: botTokenRef,
-								prefix: "/bot",
-								suffix: "/",
-							}
-						: undefined,
-					upstreamBaseUrl: baseUrl,
-					redactUrlPatterns: ["/bot[^/]+/"],
-					priority: 110,
-					owner,
-				}),
-			];
-		},
-	},
-	{
-		channel: "imessage",
-		build: (baseUrl, channel, owner) => {
-			if (!baseUrl) return [];
-			const passwordRef = normalizeSecretRef(
-				channel?.passwordSecretRef ?? channel?.tokenSecretRef ?? channel?.secretRef,
-			);
-			return [
-				channelProfile({
-					id: "bluebubbles-imessage-channel",
-					kind: "http",
-					scheme: "https",
-					host: "bluebubbles.invalid",
-					pathPrefix: "/api/",
-					query: passwordRef
-						? {
-								password: {
-									type: "secretRefEquals",
-									secretRef: passwordRef,
-								},
-							}
-						: undefined,
-					upstreamBaseUrl: baseUrl,
-					redactUrlPatterns: ["password=[^&]+"],
-					priority: 120,
-					owner,
-				}),
-			];
-		},
-	},
-	{
-		channel: "whatsapp",
-		build: (baseUrl, channel, owner) =>
-			baseUrl
-				? [
-						channelProfile({
-							id: "whatsapp-web-channel",
-							kind: "websocket",
-							scheme: "wss",
-							host: "web.whatsapp.com",
-							pathPrefix: "/ws/",
-							upstreamBaseUrl: channelWebSocketBaseUrl(channel) ?? baseUrl,
-							preservePath: false,
-							priority: 140,
-							owner,
-						}),
-					]
-				: [],
-	},
-];
 
 export function hostedManifestMitmProfiles(
 	hosted: HostedRuntimeManifestProjection,
@@ -166,16 +23,7 @@ export function hostedManifestMitmProfiles(
 		return mitmProfileInputBundleSchema.parse(hosted.mitmProfiles);
 	}
 
-	const profiles: HostedMitmProfile[] = [];
-	const channels = hosted.channels ?? {};
-	for (const entry of CHANNEL_PROFILE_BUILDERS) {
-		const channel = channels[entry.channel];
-		if (channel?.enabled !== true) continue;
-		profiles.push(
-			...entry.build(channelProfileBaseUrl(entry.channel, channel), channel, channelOwner(channel)),
-		);
-	}
-
+	const profiles: HostedMitmProfile[] = nativeChannelMitmProfiles(hosted);
 	const provider = hosted.providers?.default;
 	const providerBaseUrl = cleanBaseUrl(provider?.baseUrl);
 	const providerApiKeySecretRef = normalizeSecretRef(provider?.apiKeySecretRef);
@@ -186,72 +34,92 @@ export function hostedManifestMitmProfiles(
 	return { profiles };
 }
 
-function channelProfile(input: {
-	id: string;
-	kind: "http" | "websocket";
-	scheme: "https" | "wss";
-	host: string;
-	pathPrefix: string;
-	path?: HostedMitmProfile["match"]["path"];
-	headers?: HostedMitmProfile["match"]["headers"];
-	query?: HostedMitmProfile["match"]["query"];
-	upstreamBaseUrl: string;
-	preservePath?: boolean;
-	redactHeaders?: string[];
-	redactUrlPatterns?: string[];
-	priority: number;
-	owner: string;
-}): HostedMitmProfile {
-	return {
-		id: input.id,
-		enabled: true,
-		kind: input.kind,
-		match: {
-			scheme: input.scheme,
-			host: input.host,
-			pathPrefix: input.pathPrefix,
-			...(input.path ? { path: input.path } : {}),
-			headers: input.headers ?? {},
-			query: input.query ?? {},
+function nativeChannelMitmProfiles(hosted: HostedRuntimeManifestProjection): HostedMitmProfile[] {
+	const cloudApiUrl = hostedCloudApiUrl(hosted);
+	if (!cloudApiUrl) return [];
+	const cloudWsUrl = toWebSocketUrl(cloudApiUrl);
+	return [
+		{
+			id: "native-telegram-bot-api",
+			enabled: true,
+			kind: "http",
+			match: {
+				scheme: "https",
+				host: "api.telegram.org",
+				pathPrefix: "/bot",
+				headers: {},
+				query: {},
+			},
+			rewrite: {
+				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/telegram"),
+				preservePath: true,
+				setHeaders: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: ["/bot[^/]+"] },
+			priority: 100,
+			owner: "clawdi-native-channels",
 		},
-		rewrite: {
-			upstreamBaseUrl: input.upstreamBaseUrl,
-			preservePath: input.preservePath ?? true,
-			setHeaders: {},
+		{
+			id: "native-discord-rest",
+			enabled: true,
+			kind: "http",
+			match: {
+				scheme: "https",
+				host: "discord.com",
+				pathPrefix: "/api/",
+				headers: {},
+				query: {},
+			},
+			rewrite: {
+				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/discord"),
+				preservePath: true,
+				setHeaders: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 101,
+			owner: "clawdi-native-channels",
 		},
-		logging: {
-			redactHeaders: input.redactHeaders ?? [],
-			redactUrlPatterns: input.redactUrlPatterns ?? [],
+		{
+			id: "native-discord-gateway",
+			enabled: true,
+			kind: "websocket",
+			match: {
+				scheme: "wss",
+				host: "gateway.discord.gg",
+				pathPrefix: "/",
+				headers: {},
+				query: {},
+			},
+			rewrite: {
+				upstreamBaseUrl: appendCleanPath(cloudWsUrl, "/api/channels/discord/gateway"),
+				preservePath: true,
+				setHeaders: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 102,
+			owner: "clawdi-native-channels",
 		},
-		priority: input.priority,
-		owner: input.owner,
-	};
-}
-
-function channelBaseUrl(channel: HostedRuntimeChannel | undefined): string | null {
-	return cleanBaseUrl(channel?.apiBaseUrl ?? channel?.baseUrl ?? channel?.upstreamBaseUrl);
-}
-
-function channelProfileBaseUrl(
-	channelName: HostedChannelName,
-	channel: HostedRuntimeChannel | undefined,
-): string | null {
-	if (channelName === "whatsapp")
-		return channelWebSocketBaseUrl(channel) ?? channelBaseUrl(channel);
-	return channelBaseUrl(channel);
-}
-
-function channelWebSocketBaseUrl(channel: HostedRuntimeChannel | undefined): string | null {
-	return cleanBaseUrl(
-		channel?.gatewayBaseUrl ??
-			channel?.websocketBaseUrl ??
-			channel?.upstreamBaseUrl ??
-			channel?.baseUrl,
-	);
-}
-
-function channelOwner(channel: HostedRuntimeChannel | undefined): string {
-	return channel?.owner?.trim() || channel?.provider?.trim() || "channel";
+		{
+			id: "native-whatsapp-graph",
+			enabled: true,
+			kind: "http",
+			match: {
+				scheme: "https",
+				host: "graph.facebook.com",
+				pathPrefix: "/v",
+				headers: {},
+				query: {},
+			},
+			rewrite: {
+				upstreamBaseUrl: appendCleanPath(cloudApiUrl, "/api/channels/whatsapp/graph"),
+				preservePath: true,
+				setHeaders: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 103,
+			owner: "clawdi-native-channels",
+		},
+	];
 }
 
 function providerMitmProfiles(
@@ -278,8 +146,8 @@ function providerMitmProfiles(
 				query: {},
 			},
 			rewrite: {
-				upstreamBaseUrl: providerBaseUrl,
-				preservePath: true,
+				upstreamBaseUrl: openAiResponsesUrl(providerBaseUrl),
+				preservePath: false,
 				setHeaders: {},
 			},
 			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
@@ -300,7 +168,7 @@ function providerMitmProfiles(
 				query: {},
 			},
 			rewrite: {
-				upstreamBaseUrl: appendCleanPath(providerBaseUrl, "/responses"),
+				upstreamBaseUrl: chatGptCodexBackendResponsesUrl(providerBaseUrl),
 				preservePath: false,
 				setHeaders: {
 					authorization: {
@@ -317,10 +185,31 @@ function providerMitmProfiles(
 	];
 }
 
-function channelTokenSecretRef(channel: HostedRuntimeChannel | undefined): string | null {
-	return normalizeSecretRef(
-		channel?.botTokenSecretRef ?? channel?.tokenSecretRef ?? channel?.secretRef,
-	);
+function openAiResponsesUrl(providerBaseUrl: string): string {
+	return appendCleanPath(providerBaseUrl, "/responses");
+}
+
+function chatGptCodexBackendResponsesUrl(providerBaseUrl: string): string {
+	return openAiResponsesUrl(providerBaseUrl);
+}
+
+function hostedCloudApiUrl(hosted: HostedRuntimeManifestProjection): string | null {
+	const explicit = cleanBaseUrl(hosted.controlPlane?.cloudApiUrl);
+	if (explicit) return explicit;
+	const manifestUrl = cleanBaseUrl(hosted.controlPlane?.manifestUrl);
+	if (!manifestUrl) return null;
+	try {
+		return new URL(manifestUrl).origin;
+	} catch {
+		return null;
+	}
+}
+
+function toWebSocketUrl(baseUrl: string): string {
+	const parsed = new URL(baseUrl);
+	if (parsed.protocol === "https:") parsed.protocol = "wss:";
+	else if (parsed.protocol === "http:") parsed.protocol = "ws:";
+	return parsed.toString().replace(/\/+$/, "");
 }
 
 export function normalizeSecretRef(value: string | null | undefined): string | null {

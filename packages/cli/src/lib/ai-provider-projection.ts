@@ -71,7 +71,7 @@ interface ProjectionProvider {
 const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "openai-completions",
 	openai_responses: "openai-responses",
-	codex_responses: "openai-codex-responses",
+	codex_responses: "openai-chatgpt-responses",
 	anthropic_messages: "anthropic-messages",
 	google_generate_content: "google-generative-ai",
 };
@@ -84,7 +84,9 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 };
 
 const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-const OPENCLAW_MANAGED_CODEX_PROVIDER_ID = "openai-codex";
+const OPENCLAW_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
+const OPENCLAW_CODEX_PROVIDER_ID = "openai";
+const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
 
 export function buildAgentTargetProjection(
 	target: AgentTarget,
@@ -220,11 +222,10 @@ function buildOpenClawProjection(
 			.map((provider) => [
 				openClawProjectedProviderId(provider),
 				compactObject({
-					baseUrl: provider.base_url,
+					baseUrl: openClawBaseUrlForProvider(provider),
 					api: openClawApiLabelForProvider(provider, provider.api_mode),
-					agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
-					apiKey: provider.env_name
-						? { source: "env", provider: "default", id: provider.env_name }
+					apiKey: openClawApiKeyEnvForProvider(provider)
+						? { source: "env", provider: "default", id: openClawApiKeyEnvForProvider(provider) }
 						: undefined,
 					models: openClawModels(provider),
 				}),
@@ -257,8 +258,11 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 			const api = openClawApiLabelForProvider(provider, model.api_mode ?? provider.api_mode);
 			return compactObject({
 				id: openClawModelId(provider, model.id),
-				name: model.label ?? model.id,
+				name: usesOpenClawCodexResponsesRuntime(provider)
+					? openClawModelId(provider, model.id)
+					: (model.label ?? model.id),
 				api,
+				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
 				input: model.input_modalities,
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
@@ -271,7 +275,14 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 	const api = openClawApiLabelForProvider(provider, provider.api_mode);
 	const defaultModelId = openClawModelId(provider, provider.default_model);
 	if (!models.some((model) => model.id === defaultModelId)) {
-		models.unshift({ id: defaultModelId, name: provider.default_model, api });
+		models.unshift(
+			compactObject({
+				id: defaultModelId,
+				name: defaultModelId,
+				api,
+				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
+			}),
+		);
 	}
 	return models;
 }
@@ -280,8 +291,8 @@ function openClawApiLabelForProvider(
 	provider: ProjectionProvider,
 	apiMode: AiProviderApiMode,
 ): string | undefined {
-	if (apiMode === "openai_responses" && usesOpenClawCodexResponsesRuntime(provider)) {
-		return "openai-codex-responses";
+	if (usesOpenClawCodexResponsesRuntime(provider) && isCodexResponsesApiMode(apiMode)) {
+		return "openai-chatgpt-responses";
 	}
 	return openClawApiLabel(apiMode);
 }
@@ -292,6 +303,14 @@ function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
 
 function isClawdiManagedProvider(provider: ProjectionProvider): boolean {
 	return provider.managed_by === "clawdi" || provider.id === "clawdi-managed";
+}
+
+function isCodexResponsesApiMode(apiMode: AiProviderApiMode): boolean {
+	return apiMode === "codex_responses" || apiMode === "openai_responses";
+}
+
+function usesManagedCodexMitm(provider: ProjectionProvider): boolean {
+	return isClawdiManagedProvider(provider) && isCodexResponsesApiMode(provider.api_mode);
 }
 
 function usesOpenClawCodexResponsesRuntime(provider: ProjectionProvider): boolean {
@@ -320,13 +339,45 @@ function openClawDefaultModelRef(provider: ProjectionProvider): string {
 }
 
 function openClawProjectedProviderId(provider: ProjectionProvider): string {
-	return usesOpenClawCodexResponsesRuntime(provider)
-		? OPENCLAW_MANAGED_CODEX_PROVIDER_ID
-		: provider.id;
+	return usesOpenClawCodexResponsesRuntime(provider) ? OPENCLAW_CODEX_PROVIDER_ID : provider.id;
 }
 
 function openClawModelId(provider: ProjectionProvider, modelId: string): string {
 	return usesOpenClawCodexResponsesRuntime(provider) ? codexNativeModelId(modelId) : modelId;
+}
+
+function openClawBaseUrlForProvider(provider: ProjectionProvider): string {
+	if (usesManagedCodexMitm(provider)) return OPENCLAW_CODEX_BASE_URL;
+	if (!usesOpenClawCodexResponsesRuntime(provider)) return provider.base_url;
+	return openClawCodexBaseUrl(provider.base_url);
+}
+
+function openClawApiKeyEnvForProvider(provider: ProjectionProvider): string | undefined {
+	return usesManagedCodexMitm(provider) ? MANAGED_MITM_PLACEHOLDER_ENV : provider.env_name;
+}
+
+function openClawCodexBaseUrl(input: string): string {
+	const normalized = input.trim().replace(/\/+$/, "");
+	if (!normalized) return input;
+	try {
+		const url = new URL(normalized);
+		const path = url.pathname.replace(/\/+$/, "");
+		if (path.endsWith("/backend-api") || path.endsWith("/backend-api/codex")) {
+			url.pathname = path;
+			url.search = "";
+			url.hash = "";
+			return url.toString().replace(/\/$/, "");
+		}
+		if (path.endsWith("/v1")) {
+			url.pathname = `${path.slice(0, -"/v1".length)}/backend-api`;
+			url.search = "";
+			url.hash = "";
+			return url.toString().replace(/\/$/, "");
+		}
+	} catch {
+		return normalized;
+	}
+	return normalized;
 }
 
 function positiveNumber(input: number | undefined): number | undefined {
@@ -348,6 +399,9 @@ function buildHermesProjection(
 		lines.push('  provider: "openai-codex"');
 		lines.push(`  default: ${quoteYaml(codexNativeModelId(defaultProvider.default_model))}`);
 		lines.push(`  base_url: ${quoteYaml(HERMES_CODEX_BASE_URL)}`);
+	} else if (usesManagedCodexMitm(defaultProvider)) {
+		lines.push(`  provider: ${quoteYaml(hermesProviderSelector(defaultProvider.id))}`);
+		lines.push(`  default: ${quoteYaml(codexNativeModelId(defaultProvider.default_model))}`);
 	} else {
 		lines.push(`  provider: ${quoteYaml(hermesProviderSelector(defaultProvider.id))}`);
 		lines.push(`  default: ${quoteYaml(defaultProvider.default_model)}`);
@@ -362,12 +416,25 @@ function buildHermesProjection(
 		}
 		lines.push(`  ${quoteYaml(provider.id)}:`);
 		if (provider.label) lines.push(`    name: ${quoteYaml(provider.label)}`);
-		lines.push(`    api: ${quoteYaml(provider.base_url)}`);
+		lines.push(`    api: ${quoteYaml(hermesBaseUrlForProvider(provider))}`);
 		lines.push(`    transport: ${quoteYaml(transport)}`);
-		lines.push(`    default_model: ${quoteYaml(provider.default_model)}`);
-		if (provider.env_name) lines.push(`    key_env: ${quoteYaml(provider.env_name)}`);
+		lines.push(`    default_model: ${quoteYaml(hermesModelId(provider, provider.default_model))}`);
+		const envName = hermesKeyEnvForProvider(provider);
+		if (envName) lines.push(`    key_env: ${quoteYaml(envName)}`);
 	}
 	return `${lines.join("\n")}\n`;
+}
+
+function hermesBaseUrlForProvider(provider: ProjectionProvider): string {
+	return usesManagedCodexMitm(provider) ? HERMES_CODEX_BASE_URL : provider.base_url;
+}
+
+function hermesModelId(provider: ProjectionProvider, modelId: string): string {
+	return usesManagedCodexMitm(provider) ? codexNativeModelId(modelId) : modelId;
+}
+
+function hermesKeyEnvForProvider(provider: ProjectionProvider): string | undefined {
+	return usesManagedCodexMitm(provider) ? MANAGED_MITM_PLACEHOLDER_ENV : provider.env_name;
 }
 
 function hermesProjectionSkipReason(provider: ProjectionProvider): string | undefined {

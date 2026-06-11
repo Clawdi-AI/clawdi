@@ -86,6 +86,12 @@ router = APIRouter(prefix="/api/channels/telegram", tags=["channels"])
     include_in_schema=False,
     response_model=None,
 )
+@router.api_route(
+    "/bot{agent_token}/{method}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    response_model=None,
+)
 async def telegram_bot_api(
     agent_token: str,
     method: str,
@@ -297,6 +303,11 @@ async def telegram_bot_api(
 
 @router.get(
     "/file/bot/{agent_token}/{file_path:path}",
+    include_in_schema=False,
+    response_model=None,
+)
+@router.get(
+    "/file/bot{agent_token}/{file_path:path}",
     include_in_schema=False,
     response_model=None,
 )

@@ -901,8 +901,8 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         command = head.split("@", 1)[0]
         if command != "/start" or not separator:
             return None
-        code = rest.strip().split(maxsplit=1)[0] if rest.strip() else ""
-        if PAIR_CODE_PATTERN.match(code):
+        code = _single_command_arg(rest)
+        if code is not None and PAIR_CODE_PATTERN.fullmatch(code):
             return ChannelPairCommand(kind="pair", code=code)
         return None
     if not trimmed.startswith("/bot_"):
@@ -910,11 +910,25 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
     head, separator, rest = trimmed.partition(" ")
     command = head.split("@", 1)[0]
     if command == PAIR_COMMAND:
-        code = rest.strip().split(maxsplit=1)[0] if separator and rest.strip() else ""
+        code = _single_command_arg(rest) if separator else ""
+        if code is None:
+            code = ""
         return ChannelPairCommand(kind="pair", code=code)
     if command == UNPAIR_COMMAND:
+        if separator and rest.strip():
+            return ChannelPairCommand(kind="unknown", command=command)
         return ChannelPairCommand(kind="unpair")
     return ChannelPairCommand(kind="unknown", command=command)
+
+
+def _single_command_arg(rest: str) -> str | None:
+    stripped = rest.strip()
+    if not stripped:
+        return ""
+    parts = stripped.split()
+    if len(parts) != 1:
+        return None
+    return parts[0]
 
 
 def pairing_reply_for_command(

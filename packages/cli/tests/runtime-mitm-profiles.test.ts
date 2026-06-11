@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { hostedManifestMitmProfiles } from "../src/runtime/hosted-mitm-profiles";
 import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
 
 describe("runtime MITM profile schema", () => {
@@ -36,7 +37,7 @@ describe("runtime MITM profile schema", () => {
 					headers: { authorization: { type: "exists" } },
 				},
 				rewrite: {
-					upstreamBaseUrl: "https://sub2api.test/v1/responses",
+					upstreamBaseUrl: "https://sub2api.test/backend-api/codex/responses",
 					preservePath: false,
 					setHeaders: {
 						authorization: {
@@ -93,5 +94,27 @@ describe("runtime MITM profile schema", () => {
 				rewrite: { upstreamBaseUrl: "https://router.test" },
 			}).success,
 		).toBe(false);
+	});
+
+	it("routes ChatGPT Codex backend requests to provider responses endpoint", () => {
+		const bundle = hostedManifestMitmProfiles({
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			providers: {
+				default: {
+					baseUrl: "https://sub2api.test/v1",
+					apiKeySecretRef: "provider.default.apiKey",
+				},
+			},
+		});
+
+		const openai = bundle.profiles.find((profile) => profile.id === "codex-openai-responses");
+		const chatgpt = bundle.profiles.find(
+			(profile) => profile.id === "codex-chatgpt-backend-responses",
+		);
+
+		expect(openai?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
+		expect(openai?.rewrite.preservePath).toBe(false);
+		expect(chatgpt?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
+		expect(chatgpt?.rewrite.preservePath).toBe(false);
 	});
 });

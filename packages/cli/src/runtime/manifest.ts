@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
 	accessSync,
 	chmodSync,
@@ -11,6 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AiProviderCatalog } from "@clawdi/shared";
+import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import { mergeHermesConfig } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 
@@ -109,9 +112,20 @@ function writeSecretValues(
 		mode: 0o600,
 		dirMode: 0o700,
 	});
-	makeRuntimeUserOwned(dirname(path));
-	makeRuntimeUserOwned(path);
+	makeSystemOwned(dirname(path));
+	makeSystemOwned(path);
 	return path;
+}
+
+function makeSystemOwned(path: string): void {
+	if (!runningAsRoot()) return;
+	const isSecretFile = path.endsWith("secrets.json");
+	try {
+		chownSync(path, 0, 0);
+		chmodSync(path, isSecretFile ? 0o600 : 0o755);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
 }
 
 function makeRuntimeUserOwned(path: string): void {
@@ -129,6 +143,16 @@ function makeRuntimeUserOwned(path: string): void {
 	} catch {
 		// Best effort: hosted demos without a system user still exercise the
 		// manifest path, but production images provide CLAWDI_RUNTIME_USER.
+	}
+}
+
+function makeRuntimeUserPrivateDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeRuntimeUserOwned(path);
+	try {
+		chmodSync(path, 0o700);
+	} catch {
+		// Best effort for non-POSIX local development environments.
 	}
 }
 
@@ -469,22 +493,119 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 	};
 }
 
-function runtimeSettingsWithSecretFile(
-	settings: RuntimeManifest["runtimes"][string]["run"],
-	secretFile: string | null,
-	enabled: boolean,
-): RuntimeManifest["runtimes"][string]["run"] {
-	if (!secretFile || !enabled) return settings;
+function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog | null {
+	const providers = manifest.projection?.providers;
+	if (!providers || Object.keys(providers).length === 0) return null;
+	const entries = Object.entries(providers)
+		.map(([id, raw]) => {
+			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+			const input = raw as Record<string, unknown>;
+			const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl : undefined;
+			const model = typeof input.model === "string" ? input.model : undefined;
+			if (!baseUrl || !model) return null;
+			return {
+				id,
+				type: "custom_openai_compatible" as const,
+				base_url: baseUrl,
+				default_model: model,
+				api_mode: "codex_responses" as const,
+				auth: { type: "api_key" as const, source: "managed" as const },
+				managed_by: "clawdi" as const,
+				runtime_env_name: "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN",
+				models: [{ id: model, api_mode: "codex_responses" as const }],
+			};
+		})
+		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+	if (entries.length === 0) return null;
 	return {
-		command: settings?.command,
-		args: settings?.args ?? [],
-		env: {
-			...(settings?.env ?? {}),
-			CLAWDI_MITM_SECRET_FILE: secretFile,
-		},
-		cwd: settings?.cwd,
-		prependPath: settings?.prependPath ?? [],
+		schema_version: 1,
+		providers: entries,
+		defaults: { chat_provider_id: entries[0]?.id },
 	};
+}
+
+function applyHostedAiProviderProjection(
+	name: string,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+): string | null {
+	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+		return null;
+	}
+	const catalog = hostedAiProviderCatalog(manifest);
+	if (!catalog) return null;
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	if (name === "hermes") {
+		const projection = buildAgentTargetProjection("hermes", catalog);
+		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
+		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
+		const configPath = join(home, ".hermes", "config.yaml");
+		mergeHermesConfig(configPath, file.content);
+		makeRuntimeUserOwned(configPath);
+		return configPath;
+	}
+	if (name === "openclaw") {
+		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+		runRuntimeUserCommand(
+			observation.commandPath,
+			["config", "patch", "--stdin"],
+			file.content,
+			home,
+			workspaceRoot,
+		);
+		return observation.commandPath;
+	}
+	return null;
+}
+
+function projectionSystemHome(manifest: RuntimeManifest): string | null {
+	const system = manifest.projection?.system;
+	if (typeof system !== "object" || system === null || Array.isArray(system)) return null;
+	const home = (system as Record<string, unknown>).home;
+	return typeof home === "string" && home.trim() ? home.trim() : null;
+}
+
+function runRuntimeUserCommand(
+	command: string,
+	args: string[],
+	stdin: string,
+	home: string,
+	cwd: string,
+): void {
+	const env = {
+		...process.env,
+		HOME: home,
+		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
+			.filter(Boolean)
+			.join(":"),
+	};
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		if (commandExists("gosu")) {
+			execFileSync("gosu", [runtimeUser, command, ...args], {
+				input: stdin,
+				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
+				cwd,
+				stdio: "pipe",
+			});
+			return;
+		}
+		if (commandExists("runuser")) {
+			execFileSync(
+				"runuser",
+				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
+				{ input: stdin, env, cwd, stdio: "pipe" },
+			);
+			return;
+		}
+		throw new Error(
+			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
+		);
+	}
+	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
 }
 
 function clearMitmProfileBundle(paths: RuntimePaths): null {
@@ -597,6 +718,14 @@ function writeSupervisorConfig(
 	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
+	const runtimeNeedsSystemBoundary = hasEnabledMitmProfiles(
+		buildMitmProfileBundle({
+			generatedAt: new Date(0).toISOString(),
+			generation: manifest.generation,
+			instanceId: manifest.instanceId,
+			profiles: manifest.mitmProfiles,
+		}),
+	);
 	const lines = [
 		"; Generated by clawdi runtime init. Do not edit inside hosted runtime.",
 		`; Desired-state generation: ${manifest.generation}`,
@@ -652,7 +781,7 @@ function writeSupervisorConfig(
 			`[program:clawdi-${runtime}]`,
 			`command=/usr/bin/env clawdi run -- ${runtime}`,
 			`directory=${workspaceRoot}`,
-			`user=${runtimeUser}`,
+			...(runtimeNeedsSystemBoundary ? [] : [`user=${runtimeUser}`]),
 			"autostart=true",
 			"autorestart=true",
 			"startsecs=2",
@@ -716,6 +845,7 @@ export function convergeRuntimeManifest(
 
 	mkdirSync(workspaceRoot, { recursive: true });
 	makeRuntimeUserOwned(paths.userHome);
+	makeRuntimeUserPrivateDir(paths.clawdiHome);
 	makeRuntimeUserOwned(workspaceRoot);
 	makeRuntimeUserOwned(paths.runRoot);
 	mkdirSync(paths.installInventory, { recursive: true });
@@ -828,7 +958,15 @@ export function convergeRuntimeManifest(
 		const projectionPath = join(paths.projectionRoot, `${name}.json`);
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
-
+		try {
+			applyHostedAiProviderProjection(name, observation, manifest, workspaceRoot);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} provider projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 		if (isSupportedRuntimeName(name)) {
 			const runConfigPath = writeRuntimeRunConfig(
 				buildRuntimeRunConfig({
@@ -841,11 +979,7 @@ export function convergeRuntimeManifest(
 					appRoot: observation.appRoot,
 					workspaceRoot,
 					mitmProfileBundlePath,
-					settings: runtimeSettingsWithSecretFile(
-						runtime.run,
-						mitmProfileBundlePath ? mitmSecretFile : null,
-						runtime.enabled,
-					),
+					settings: runtime.run,
 				}),
 				paths,
 			);

@@ -312,27 +312,27 @@ chmod +x "$HOME/.local/bin/hermes"
 			mitmProfiles: {
 				profiles: [
 					{
-						id: "discord-rest-channel",
-						kind: "http",
+						id: "codex-openai-responses",
+						kind: "provider",
 						match: {
 							scheme: "https",
-							host: "discord.com",
-							pathPrefix: "/api/",
+							host: "api.openai.com",
+							pathPrefix: "/v1/",
 							headers: {
 								authorization: {
 									type: "secretRefEquals",
-									secretRef: "secret://channels/discord/bot-token",
-									prefix: "Bot ",
+									secretRef: "secret://provider.default.apiKey",
+									prefix: "Bearer ",
 								},
 							},
 						},
 						rewrite: {
-							upstreamBaseUrl: "http://127.0.0.1:18890/discord",
-							preservePath: true,
-							setHeaders: { "x-clawdi-original-host": "discord.com" },
+							upstreamBaseUrl: "http://127.0.0.1:18890/provider/openai/responses",
+							preservePath: false,
+							setHeaders: {},
 						},
 						logging: { redactHeaders: ["authorization"] },
-						owner: "clawdi-channels",
+						owner: "provider-projection",
 					},
 				],
 			},
@@ -438,7 +438,12 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- hermes");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- openclaw");
-			expect(supervisorConfig).toContain("user=clawdi");
+			const openclawStart = supervisorConfig.indexOf("[program:clawdi-openclaw]");
+			const openclawSection = supervisorConfig.slice(
+				openclawStart,
+				supervisorConfig.indexOf("\n\n", openclawStart),
+			);
+			expect(openclawSection).not.toContain("user=clawdi");
 			expect(supervisorConfig).not.toContain("auth-test-token");
 			const inventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
@@ -467,6 +472,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"loopback",
 				"--force",
 			]);
+			expect(openclawRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 			const hermesRunConfig = JSON.parse(
 				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
 			);
@@ -474,6 +480,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(hermesRunConfig.commandPath).toBe(join(home, ".local", "bin", "hermes"));
 			expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
 			expect(hermesRunConfig.env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
+			expect(hermesRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 			expect(hermesRunConfig.mitmProfileBundlePath).toBe(
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
@@ -481,8 +488,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				readFileSync(join(serviceStateRoot, "config", "mitm", "profiles.json"), "utf-8"),
 			);
 			expect(mitmProfiles.schemaVersion).toBe("clawdi.mitmProfiles.v1");
-			expect(mitmProfiles.profiles[0].id).toBe("discord-rest-channel");
-			expect(JSON.stringify(mitmProfiles)).toContain("secret://channels/discord/bot-token");
+			expect(mitmProfiles.profiles[0].id).toBe("codex-openai-responses");
+			expect(JSON.stringify(mitmProfiles)).toContain("secret://provider.default.apiKey");
 			expect(JSON.stringify(mitmProfiles)).not.toContain("auth-test-token");
 
 			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);

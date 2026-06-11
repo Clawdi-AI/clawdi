@@ -66,7 +66,6 @@ const runtimeProjectionSchema = z
 		sourceSchemaVersion: z.string().min(1).optional(),
 		system: z.unknown().nullable().optional(),
 		providers: z.record(z.string().min(1), z.unknown()).optional(),
-		channels: z.record(z.string().min(1), z.unknown()).optional(),
 		aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 		mcp: z.unknown().optional(),
 	})
@@ -129,30 +128,11 @@ const hostedRuntimeEntrySchema = z
 	})
 	.passthrough();
 
-const hostedRuntimeChannelSchema = z
-	.object({
-		enabled: z.boolean(),
-		owner: z.string().min(1).optional(),
-		provider: z.string().min(1).optional(),
-		routeKind: z.string().min(1).optional(),
-		baseUrl: z.string().url().optional(),
-		apiBaseUrl: z.string().url().optional(),
-		restBaseUrl: z.string().url().optional(),
-		gatewayBaseUrl: z.string().url().optional(),
-		websocketBaseUrl: z.string().url().optional(),
-		upstreamBaseUrl: z.string().url().optional(),
-		secretRef: z.string().min(1).optional(),
-		tokenSecretRef: z.string().min(1).optional(),
-		botTokenSecretRef: z.string().min(1).optional(),
-		passwordSecretRef: z.string().min(1).optional(),
-		apiKeySecretRef: z.string().min(1).optional(),
-	})
-	.passthrough();
-
 export const hostedRuntimeManifestSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		deploymentId: z.string().min(1),
+		environmentId: z.string().min(1).optional(),
 		appId: z.string().min(1).optional(),
 		instanceId: z.string().min(1),
 		generation: z.number().int().nonnegative(),
@@ -170,10 +150,13 @@ export const hostedRuntimeManifestSchema = z
 		controlPlane: z
 			.object({
 				manifestUrl: z.string().url().optional(),
-				apiUrl: z.string().url().optional(),
 				cloudApiUrl: z.string().url().optional(),
 			})
-			.passthrough(),
+			.passthrough()
+			.refine((value) => !("apiUrl" in value), {
+				message: "hosted runtime controlPlane must use cloudApiUrl",
+				path: ["apiUrl"],
+			}),
 		clawdiCli: cliPayloadPolicySchema.optional(),
 		runtimes: z.record(z.string().min(1), hostedRuntimeEntrySchema),
 		providers: z
@@ -189,7 +172,6 @@ export const hostedRuntimeManifestSchema = z
 					.passthrough(),
 			)
 			.optional(),
-		channels: z.record(z.string().min(1), hostedRuntimeChannelSchema).optional(),
 		liveSync: liveSyncSchema.optional(),
 		mitmProfiles: z.unknown().optional(),
 		recovery: z

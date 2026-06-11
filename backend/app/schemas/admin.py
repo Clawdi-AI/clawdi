@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
@@ -55,6 +55,54 @@ class AdminApiKeyCreate(BaseModel):
     label: str
     environment_id: str | None = None
     scopes: list[str] | None = None
+
+
+class AdminRuntimeStateUpsert(BaseModel):
+    """Hosted runtime desired state written by the SaaS deploy orchestrator.
+
+    This is deployment-level state only. Native channel credentials and channel
+    links are owned by `/api/channels/*` and must not be embedded here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deployment_id: str = Field(min_length=1, max_length=200)
+    app_id: str | None = Field(default=None, min_length=1, max_length=200)
+    instance_id: str = Field(min_length=1, max_length=200)
+    generation: int = Field(ge=0)
+    provider_id: str | None = Field(default=None, min_length=2, max_length=80)
+    system: dict[str, Any] | None = None
+    control_plane: dict[str, Any] | None = None
+    clawdi_cli: dict[str, Any] | None = None
+    runtimes: dict[str, Any] = Field(default_factory=dict)
+    live_sync: dict[str, Any] | None = None
+    recovery: dict[str, Any] | None = None
+    mitm_profiles: dict[str, Any] | None = None
+
+    @field_validator("runtimes")
+    @classmethod
+    def _validate_runtimes(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not value:
+            raise ValueError("runtimes cannot be empty")
+        if "channels" in value:
+            raise ValueError("channels are not runtime desired state")
+        return value
+
+    @field_validator("control_plane")
+    @classmethod
+    def _validate_control_plane(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if value is not None and "apiUrl" in value:
+            raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
+        return value
+
+
+class AdminRuntimeStateResponse(BaseModel):
+    environment_id: UUID
+    deployment_id: str
+    instance_id: str
+    generation: int
 
 
 class AdminChannelCreate(BaseModel):

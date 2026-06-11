@@ -199,7 +199,7 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
-		environmentId: hosted.appId || hosted.deploymentId,
+		environmentId: hosted.environmentId || hosted.appId || hosted.deploymentId,
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
 		issuedAt: hosted.issuedAt,
@@ -238,7 +238,6 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 			sourceSchemaVersion: hosted.schemaVersion,
 			system: hosted.system ?? null,
 			providers: hosted.providers ?? {},
-			channels: hosted.channels ?? {},
 		},
 		liveSync: hosted.liveSync,
 		mitmProfiles: hostedManifestMitmProfiles(hosted),
@@ -266,7 +265,7 @@ function hostedRuntimeRunSettings(
 }
 
 function hostedControlPlaneApiUrl(hosted: HostedRuntimeManifest): string {
-	const explicit = hosted.controlPlane.cloudApiUrl || hosted.controlPlane.apiUrl;
+	const explicit = hosted.controlPlane.cloudApiUrl;
 	if (explicit) return explicit;
 	const manifestUrl = hosted.controlPlane.manifestUrl;
 	if (!manifestUrl) return new URL(runtimeManifestUrlFromEnvOrSource()).origin;

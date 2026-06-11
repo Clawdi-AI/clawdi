@@ -1,4 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+
+const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
+const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
 
 export const mitmBrokerEnvKeys = [
 	"CLAWDI_MITM_ENABLED",
@@ -66,6 +70,7 @@ export function buildMitmBrokerEnv(input: MitmBrokerEnvInput): NodeJS.ProcessEnv
 	env.GIT_SSL_CAINFO = caPath;
 	env.DENO_CERT = caPath;
 	env.CODEX_CA_CERTIFICATE = caPath;
+	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
 
 	return env;
 }
@@ -104,6 +109,7 @@ export function applyMitmBrokerRuntimeEnv(
 	env.GIT_SSL_CAINFO = output.caFile;
 	env.DENO_CERT = output.caFile;
 	env.CODEX_CA_CERTIFICATE = output.caFile;
+	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
 }
 
 function resolveProxyUrl(env: NodeJS.ProcessEnv): string {
@@ -118,8 +124,7 @@ function resolveCaPath(env: NodeJS.ProcessEnv): string {
 	return (
 		env.CLAWDI_MITM_CA_FILE?.trim() ||
 		env.CLAWDI_MITM_CA_PATH?.trim() ||
-		(env.CLAWDI_RUN_DIR?.trim() ? join(env.CLAWDI_RUN_DIR.trim(), "mitm", "ca.pem") : undefined) ||
-		join("/run/clawdi", "mitm", "ca.pem")
+		join(resolveMitmRunRoot(env), "brokers", randomUUID(), "ca.pem")
 	);
 }
 
@@ -131,6 +136,12 @@ function resolveSecretFile(env: NodeJS.ProcessEnv): string {
 			: undefined) ||
 		join("/run/clawdi", "mitm", "secrets.json")
 	);
+}
+
+function resolveMitmRunRoot(env: NodeJS.ProcessEnv): string {
+	return env.CLAWDI_RUN_DIR?.trim()
+		? join(env.CLAWDI_RUN_DIR.trim(), "mitm")
+		: join("/run/clawdi", "mitm");
 }
 
 function buildNoProxy(proxyUrl: string): string {

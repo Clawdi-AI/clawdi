@@ -209,6 +209,7 @@ describe("runtime manifest datasource", () => {
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							deploymentId: "dep_test",
+							environmentId: "env_test",
 							appId: "app_test",
 							instanceId: "iid_remote",
 							generation: 3,
@@ -221,7 +222,6 @@ describe("runtime manifest datasource", () => {
 							},
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/desired-state",
-								apiUrl: "https://api.test",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -249,42 +249,9 @@ describe("runtime manifest datasource", () => {
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
-							channels: {
-								telegram: {
-									enabled: true,
-									provider: "clawdi-channels",
-									routeKind: "telegram-bot-api",
-									baseUrl: "https://channels.test/telegram",
-									botTokenSecretRef: "channels.telegram.bot-token",
-								},
-								discord: {
-									enabled: true,
-									provider: "clawdi-channels",
-									routeKind: "discord-rest-gateway",
-									baseUrl: "https://channels.test/discord",
-									gatewayBaseUrl: "wss://channels.test/discord/gateway",
-									botTokenSecretRef: "channels.discord.bot-token",
-								},
-								whatsapp: {
-									enabled: true,
-									provider: "clawdi-channels",
-									routeKind: "whatsapp-web-bridge",
-									websocketBaseUrl: "wss://channels.test/whatsapp",
-								},
-								imessage: {
-									enabled: true,
-									provider: "clawdi-channels",
-									routeKind: "bluebubbles-imessage",
-									baseUrl: "https://channels.test/imessage",
-									passwordSecretRef: "channels.imessage.password",
-								},
-							},
 						},
 						secretValues: {
 							"provider.default.apiKey": "sk-runtime",
-							"channels.telegram.bot-token": "telegram-token",
-							"channels.discord.bot-token": "discord-token",
-							"channels.imessage.password": "imessage-password",
 						},
 					}),
 			},
@@ -300,7 +267,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.sourcePath).toBe("https://runtime.test/v1/manifest");
 			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 			expect(loaded.manifest.workspaceRoot).toBe(join(home, "managed-workspace"));
-			expect(loaded.manifest.environmentId).toBe("app_test");
+			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
 			expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@latest");
@@ -310,36 +277,45 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.manifest.runtimes.openclaw.install?.home).toBe(home);
 			expect(loaded.manifest.runtimes.openclaw.install?.args).toEqual(["--json", "--no-onboard"]);
 			expect(loaded.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
-				"discord-rest-channel",
-				"discord-gateway-channel",
-				"telegram-bot-api-channel",
-				"bluebubbles-imessage-channel",
-				"whatsapp-web-channel",
+				"native-telegram-bot-api",
+				"native-discord-rest",
+				"native-discord-gateway",
+				"native-whatsapp-graph",
 				"codex-openai-responses",
 				"codex-chatgpt-backend-responses",
 			]);
 			const profiles = Object.fromEntries(
 				loaded.manifest.mitmProfiles?.profiles.map((profile) => [profile.id, profile]) ?? [],
 			);
-			expect(profiles["discord-rest-channel"]?.match.headers.authorization).toEqual({
-				type: "secretRefEquals",
-				secretRef: "secret://channels.discord.bot-token",
-				prefix: "Bot ",
+			expect(profiles["native-telegram-bot-api"]?.rewrite).toEqual({
+				upstreamBaseUrl: "https://cloud-api.test/api/channels/telegram",
+				preservePath: true,
+				setHeaders: {},
 			});
-			expect(profiles["telegram-bot-api-channel"]?.match.path).toEqual({
-				type: "secretRefPrefix",
-				secretRef: "secret://channels.telegram.bot-token",
-				prefix: "/bot",
-				suffix: "/",
+			expect(profiles["native-discord-rest"]?.rewrite).toEqual({
+				upstreamBaseUrl: "https://cloud-api.test/api/channels/discord",
+				preservePath: true,
+				setHeaders: {},
 			});
-			expect(profiles["bluebubbles-imessage-channel"]?.match.query.password).toEqual({
-				type: "secretRefEquals",
-				secretRef: "secret://channels.imessage.password",
+			expect(profiles["native-discord-gateway"]?.rewrite).toEqual({
+				upstreamBaseUrl: "wss://cloud-api.test/api/channels/discord/gateway",
+				preservePath: true,
+				setHeaders: {},
+			});
+			expect(profiles["native-whatsapp-graph"]?.rewrite).toEqual({
+				upstreamBaseUrl: "https://cloud-api.test/api/channels/whatsapp/graph",
+				preservePath: true,
+				setHeaders: {},
 			});
 			expect(profiles["codex-openai-responses"]?.match.headers.authorization).toEqual({
 				type: "secretRefEquals",
 				secretRef: "secret://provider.default.apiKey",
 				prefix: "Bearer ",
+			});
+			expect(profiles["codex-openai-responses"]?.rewrite).toEqual({
+				upstreamBaseUrl: "https://sub2api.test/v1/responses",
+				preservePath: false,
+				setHeaders: {},
 			});
 			expect(profiles["codex-chatgpt-backend-responses"]?.match).toEqual({
 				scheme: "https",
@@ -362,109 +338,10 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.secretValues).toEqual({
 				"provider.default.apiKey": "sk-runtime",
 				"secret://provider.default.apiKey": "sk-runtime",
-				"channels.telegram.bot-token": "telegram-token",
-				"secret://channels.telegram.bot-token": "telegram-token",
-				"channels.discord.bot-token": "discord-token",
-				"secret://channels.discord.bot-token": "discord-token",
-				"channels.imessage.password": "imessage-password",
-				"secret://channels.imessage.password": "imessage-password",
 			});
 		} finally {
 			restore();
 		}
-	});
-
-	it("projects hosted channels without requiring a legacy router", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const manifestPath = join(root, "kobb-channel-manifest.json");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			manifestPath,
-			JSON.stringify({
-				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					deploymentId: "dep_kobb",
-					appId: "app_kobb",
-					instanceId: "iid_kobb",
-					generation: 4,
-					issuedAt: "2026-06-06T00:00:00Z",
-					system: { home },
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
-					},
-					channels: {
-						telegram: {
-							enabled: true,
-							provider: "kobb",
-							routeKind: "telegram-bot-api",
-							baseUrl: "https://kobb.test",
-							botTokenSecretRef: "channels.telegram.bot-token",
-						},
-					},
-				},
-				secretValues: {
-					"channels.telegram.bot-token": "2733207171:test-token",
-				},
-			}),
-		);
-
-		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
-
-		expect("manifest" in loaded).toBe(true);
-		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.projection?.channels).toEqual({
-			telegram: {
-				enabled: true,
-				provider: "kobb",
-				routeKind: "telegram-bot-api",
-				baseUrl: "https://kobb.test",
-				botTokenSecretRef: "channels.telegram.bot-token",
-			},
-		});
-		const profiles = Object.fromEntries(
-			loaded.manifest.mitmProfiles?.profiles.map((profile) => [profile.id, profile]) ?? [],
-		);
-		expect(Object.keys(profiles)).toEqual(["telegram-bot-api-channel"]);
-		expect(profiles["telegram-bot-api-channel"]).toEqual({
-			id: "telegram-bot-api-channel",
-			enabled: true,
-			kind: "http",
-			match: {
-				scheme: "https",
-				host: "api.telegram.org",
-				pathPrefix: "/bot",
-				path: {
-					type: "secretRefPrefix",
-					secretRef: "secret://channels.telegram.bot-token",
-					prefix: "/bot",
-					suffix: "/",
-				},
-				headers: {},
-				query: {},
-			},
-			rewrite: {
-				upstreamBaseUrl: "https://kobb.test",
-				preservePath: true,
-				setHeaders: {},
-			},
-			logging: {
-				redactHeaders: [],
-				redactUrlPatterns: ["/bot[^/]+/"],
-			},
-			priority: 110,
-			owner: "kobb",
-		});
-		expect(loaded.secretValues).toEqual({
-			"channels.telegram.bot-token": "2733207171:test-token",
-			"secret://channels.telegram.bot-token": "2733207171:test-token",
-		});
 	});
 
 	it("honors the auth env declared by the runtime source", async () => {
@@ -501,7 +378,7 @@ describe("runtime manifest datasource", () => {
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home },
-							controlPlane: { apiUrl: "https://cloud-api.test" },
+							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							runtimes: { hermes: { enabled: false } },
 						},
 						secretValues: {},
@@ -543,7 +420,7 @@ describe("runtime manifest datasource", () => {
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home, workspace },
-							controlPlane: { apiUrl: "https://cloud-api.test" },
+							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							runtimes: {
 								hermes: { enabled: false },
 							},
@@ -573,6 +450,39 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	it("rejects legacy hosted controlPlane apiUrl", async () => {
+		const home = join(root, "home", "clawdi");
+		const manifestPath = join(root, "hosted-legacy-api-url.json");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_legacy_api_url",
+					instanceId: "iid_legacy_api_url",
+					generation: 1,
+					issuedAt: "2026-06-06T00:00:00Z",
+					system: { home },
+					controlPlane: { apiUrl: "https://api.test" },
+					runtimes: {
+						hermes: { enabled: false },
+					},
+				},
+				secretValues: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.errors.join("\n")).toContain("hosted runtime controlPlane must use cloudApiUrl");
+	});
+
 	it("uses hosted runtime workspace paths even without explicit run settings", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -594,7 +504,7 @@ describe("runtime manifest datasource", () => {
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					system: { home, workspace: join(home, "system-workspace") },
-					controlPlane: { apiUrl: "https://cloud-api.test" },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
 						hermes: {
 							enabled: false,
@@ -692,21 +602,17 @@ describe("runtime manifest datasource", () => {
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/desired-state",
-								apiUrl: "https://api.test",
+								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
 								openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
 								hermes: { enabled: false, install: { source: "official" }, paths: { home } },
 							},
 							providers: {
-								default: { kind: "openai-compatible", baseUrl: "https://sub2api.test/v1" },
-							},
-							channels: {
-								telegram: {
-									enabled: true,
-									provider: "clawdi-channels",
-									routeKind: "telegram-bot-api",
-									baseUrl: "https://channels.test/telegram",
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://sub2api.test/v1",
+									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
 						},
@@ -935,7 +841,6 @@ describe("runtime manifest datasource", () => {
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/desired-state",
-								apiUrl: "https://api.test",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
@@ -1002,7 +907,7 @@ describe("runtime manifest datasource", () => {
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					system: { home, workspace: join(home, "clawdi") },
-					controlPlane: { apiUrl: "https://api.test" },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
 						openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
 						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
@@ -1019,7 +924,12 @@ describe("runtime manifest datasource", () => {
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([]);
+		expect(loaded.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
+			"native-telegram-bot-api",
+			"native-discord-rest",
+			"native-discord-gateway",
+			"native-whatsapp-graph",
+		]);
 	});
 
 	it("rejects invalid explicit hosted MITM profiles instead of falling back", async () => {
@@ -1039,7 +949,7 @@ describe("runtime manifest datasource", () => {
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					system: { home, workspace: join(home, "clawdi") },
-					controlPlane: { apiUrl: "https://api.test" },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
 						hermes: { enabled: false },
 					},
@@ -1139,27 +1049,20 @@ describe("runtime manifest datasource", () => {
 				mitmProfiles: {
 					profiles: [
 						{
-							id: "discord-rest-channel",
+							id: "native-telegram-agent-token",
 							kind: "http",
 							match: {
 								scheme: "https",
-								host: "discord.com",
-								pathPrefix: "/api/",
-								headers: {
-									authorization: {
-										type: "secretRefEquals",
-										secretRef: "secret://channels/discord/bot-token",
-										prefix: "Bot ",
-									},
-								},
+								host: "api.telegram.org",
+								pathPrefix: "/bot",
+								headers: {},
 							},
 							rewrite: {
-								upstreamBaseUrl: "http://127.0.0.1:18890/discord",
+								upstreamBaseUrl: "http://127.0.0.1:18890/api/channels/telegram",
 								preservePath: true,
-								setHeaders: { "x-clawdi-original-host": "discord.com" },
+								setHeaders: {},
 							},
-							logging: { redactHeaders: ["authorization"] },
-							owner: "clawdi-channels",
+							owner: "clawdi-native-channels",
 						},
 					],
 				},
@@ -1170,6 +1073,6 @@ describe("runtime manifest datasource", () => {
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.mitmProfiles?.profiles[0]?.id).toBe("discord-rest-channel");
+		expect(loaded.manifest.mitmProfiles?.profiles[0]?.id).toBe("native-telegram-agent-token");
 	});
 });

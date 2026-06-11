@@ -10,6 +10,7 @@ from app.models import (  # noqa: F401 - register models
     api_key,
     channel,
     device_authorization,
+    hosted_runtime,
     memory,
     project,
     project_invitation,

@@ -43,6 +43,7 @@ from app.models.channel import (
     CHANNEL_PROVIDERS,
     ChannelAccount,
 )
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
@@ -55,6 +56,8 @@ from app.schemas.admin import (
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
     AdminEnvironmentCreate,
+    AdminRuntimeStateResponse,
+    AdminRuntimeStateUpsert,
 )
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
@@ -507,6 +510,60 @@ async def admin_register_environment(
         body.machine_id,
     )
     return EnvironmentCreatedResponse(id=str(env.id))
+
+
+@router.put(
+    "/environments/{environment_id}/runtime-state",
+    response_model=AdminRuntimeStateResponse,
+)
+async def admin_upsert_runtime_state(
+    environment_id: UUID,
+    body: AdminRuntimeStateUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminRuntimeStateResponse:
+    env = (
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState)
+            .where(HostedRuntimeState.environment_id == environment_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if state is None:
+        state = HostedRuntimeState(environment_id=environment_id)
+        db.add(state)
+
+    state.deployment_id = body.deployment_id
+    state.app_id = body.app_id
+    state.instance_id = body.instance_id
+    state.generation = body.generation
+    state.provider_id = body.provider_id
+    state.system = body.system
+    state.control_plane = body.control_plane
+    state.clawdi_cli = body.clawdi_cli
+    state.runtimes = body.runtimes
+    state.live_sync = body.live_sync
+    state.recovery = body.recovery
+    state.mitm_profiles = body.mitm_profiles
+    await db.commit()
+    logger.info(
+        "admin_runtime_state_upserted environment_id=%s deployment_id=%s generation=%s",
+        environment_id,
+        body.deployment_id,
+        body.generation,
+    )
+    return AdminRuntimeStateResponse(
+        environment_id=environment_id,
+        deployment_id=body.deployment_id,
+        instance_id=body.instance_id,
+        generation=body.generation,
+    )
 
 
 async def _admin_get_channel_row(

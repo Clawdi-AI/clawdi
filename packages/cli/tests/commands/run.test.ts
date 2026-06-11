@@ -5,7 +5,7 @@ import { mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { run } from "../../src/commands/run";
+import { buildRuntimeChildSpawn, run } from "../../src/commands/run";
 import { setProjectFolderLink } from "../../src/lib/project-folders";
 import type {
 	RuntimeMitmBrokerFactory,
@@ -133,6 +133,53 @@ function linkCurrentProjectFolder(): void {
 }
 
 describe("run command project folder selection", () => {
+	it("drops root-hosted runtime children to CLAWDI_RUNTIME_USER", () => {
+		const child = buildRuntimeChildSpawn(
+			{
+				runtime: "openclaw",
+				command: "/home/clawdi/.openclaw/bin/openclaw",
+				args: ["gateway", "run"],
+				cwd: "/home/clawdi/clawdi",
+				env: {
+					HOME: "/home/clawdi",
+					CLAWDI_RUNTIME_USER: "clawdi",
+					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/mitm/secrets.json",
+					HTTPS_PROXY: "http://127.0.0.1:19090",
+					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-mitm-placeholder",
+				},
+				configPath: "/var/lib/clawdi/config/run/openclaw.json",
+			},
+			{ isRoot: true, commandExists: (command) => command === "gosu" },
+		);
+
+		expect(child.command).toBe("gosu");
+		expect(child.args).toEqual(["clawdi", "/home/clawdi/.openclaw/bin/openclaw", "gateway", "run"]);
+		expect(child.env.USER).toBe("clawdi");
+		expect(child.env.LOGNAME).toBe("clawdi");
+		expect(child.env.HOME).toBe("/home/clawdi");
+		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
+		expect(child.env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
+		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
+		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+	});
+
+	it("fails closed when root-hosted runtime cannot drop privileges", () => {
+		expect(() =>
+			buildRuntimeChildSpawn(
+				{
+					runtime: "openclaw",
+					command: "openclaw",
+					args: [],
+					cwd: "/home/clawdi/clawdi",
+					env: { CLAWDI_RUNTIME_USER: "clawdi" },
+					configPath: "/var/lib/clawdi/config/run/openclaw.json",
+				},
+				{ isRoot: true, commandExists: () => false },
+			),
+		).toThrow("neither gosu nor runuser is available");
+	});
+
 	it("runs hosted runtime commands from managed run config without login", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
@@ -314,8 +361,10 @@ describe("run command project folder selection", () => {
 			runtime: "hermes",
 			profileBundlePath: mitmProfileBundle,
 			proxyUrl: "http://127.0.0.1:0",
-			caFile: join(runRoot, "mitm", "ca.pem"),
 		});
+		const brokerCaFile = broker.calls[0].caFile;
+		expect(brokerCaFile?.startsWith(join(runRoot, "mitm", "brokers"))).toBe(true);
+		expect(brokerCaFile?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(broker.calls[0].authToken).toBeUndefined();
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
@@ -330,13 +379,14 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.no_proxy).toBe(calls[0].env.NO_PROXY);
 		expect(calls[0].env.NODE_USE_ENV_PROXY).toBe("1");
 		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.SSL_CERT_FILE).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.CURL_CA_BUNDLE).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.GIT_SSL_CAINFO).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.DENO_CERT).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.SSL_CERT_FILE).toBe(brokerCaFile);
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(brokerCaFile);
+		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(brokerCaFile);
+		expect(calls[0].env.CURL_CA_BUNDLE).toBe(brokerCaFile);
+		expect(calls[0].env.GIT_SSL_CAINFO).toBe(brokerCaFile);
+		expect(calls[0].env.DENO_CERT).toBe(brokerCaFile);
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(brokerCaFile);
+		expect(calls[0].env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
 		expect(calls[0].env.CLAWDI_MITM_BROKER_PATH).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_BROKER_BUNDLE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_ALLOW_REMOTE_PROXY).toBeUndefined();
@@ -489,7 +539,7 @@ describe("run command project folder selection", () => {
 		const { calls, spawnImpl } = recordSpawn();
 		const broker = recordBroker({
 			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm", "ca.pem"),
+			caFile: join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
 		});
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
@@ -503,8 +553,9 @@ describe("run command project folder selection", () => {
 			runtime: "generic",
 			profileBundlePath: mitmProfileBundle,
 			proxyUrl: "http://127.0.0.1:0",
-			caFile: join(runRoot, "mitm", "ca.pem"),
 		});
+		expect(broker.calls[0].caFile?.startsWith(join(runRoot, "mitm", "brokers"))).toBe(true);
+		expect(broker.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("codex");
 		expect(calls[0].args).toEqual(["exec", "hello"]);
@@ -513,8 +564,12 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19191");
 		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19191");
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "mitm", "ca.pem"));
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "mitm", "ca.pem"));
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(
+			join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+		);
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(
+			join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+		);
 	});
 
 	it("uses the linked Project folder when resolving vault env", async () => {

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import chalk from "chalk";
 import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import { inspectAiProviderAuth } from "../lib/ai-provider-test";
@@ -61,6 +62,18 @@ interface SelectedProject {
 }
 
 type SpawnFn = typeof spawn;
+
+interface RuntimeChildSpawn {
+	command: string;
+	args: string[];
+	env: NodeJS.ProcessEnv;
+	cwd?: string;
+}
+
+interface RuntimeChildWrapOptions {
+	isRoot?: boolean;
+	commandExists?: (command: string) => boolean;
+}
 
 export async function run(
 	args: string[],
@@ -310,9 +323,18 @@ async function spawnRuntimeInvocation(
 		applyMitmBrokerRuntimeEnv(invocation.env, broker);
 		stripMitmBrokerControlEnv(invocation.env);
 	}
-	const child = spawnImpl(invocation.command, invocation.args, {
-		cwd: invocation.cwd,
-		env: invocation.env,
+	let childSpawn: RuntimeChildSpawn;
+	try {
+		childSpawn = buildRuntimeChildSpawn(invocation);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.log(chalk.red(`Failed to prepare ${invocation.runtime}: ${message}`));
+		await broker?.stop();
+		process.exit(1);
+	}
+	const child = spawnImpl(childSpawn.command, childSpawn.args, {
+		cwd: childSpawn.cwd,
+		env: childSpawn.env,
 		stdio: "inherit",
 	});
 
@@ -322,6 +344,76 @@ async function spawnRuntimeInvocation(
 	} finally {
 		process.exitCode = code;
 	}
+}
+
+export function buildRuntimeChildSpawn(
+	invocation: RuntimeRunInvocation,
+	options: RuntimeChildWrapOptions = {},
+): RuntimeChildSpawn {
+	const runtimeUser = invocation.env.CLAWDI_RUNTIME_USER?.trim();
+	const isRoot = options.isRoot ?? runningAsRoot();
+	const hasCommand = options.commandExists ?? commandExists;
+	const childEnv = runtimeChildEnv(invocation.env, runtimeUser);
+	if (!isRoot || !runtimeUser || runtimeUser === "root") {
+		return {
+			command: invocation.command,
+			args: invocation.args,
+			env: childEnv,
+			cwd: invocation.cwd,
+		};
+	}
+	if (hasCommand("gosu")) {
+		return {
+			command: "gosu",
+			args: [runtimeUser, invocation.command, ...invocation.args],
+			env: childEnv,
+			cwd: invocation.cwd,
+		};
+	}
+	if (hasCommand("runuser")) {
+		return {
+			command: "runuser",
+			args: ["-u", runtimeUser, "--", invocation.command, ...invocation.args],
+			env: childEnv,
+			cwd: invocation.cwd,
+		};
+	}
+	throw new Error(
+		`running as root with CLAWDI_RUNTIME_USER=${runtimeUser}, but neither gosu nor runuser is available`,
+	);
+}
+
+function runtimeChildEnv(
+	env: NodeJS.ProcessEnv,
+	runtimeUser: string | undefined,
+): NodeJS.ProcessEnv {
+	const childEnv = { ...env };
+	delete childEnv.CLAWDI_AUTH_TOKEN;
+	delete childEnv.CLAWDI_MITM_SECRET_FILE;
+	if (runtimeUser && runtimeUser !== "root") {
+		childEnv.USER = runtimeUser;
+		childEnv.LOGNAME = runtimeUser;
+		childEnv.HOME ||= `/home/${runtimeUser}`;
+	}
+	return childEnv;
+}
+
+function runningAsRoot(): boolean {
+	return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function commandExists(command: string): boolean {
+	const path = process.env.PATH ?? "";
+	for (const dir of path.split(":")) {
+		if (!dir) continue;
+		try {
+			accessSync(join(dir, command), constants.X_OK);
+			return true;
+		} catch {
+			// Try the next PATH entry.
+		}
+	}
+	return false;
 }
 
 const SIGNAL_EXIT_CODES: Record<string, number> = {

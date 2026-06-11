@@ -30,15 +30,38 @@ describe("runtime MITM env projection", () => {
 		expect(env.http_proxy).toBe("http://127.0.0.1:19090");
 		expect(env.CLAWDI_MITM_ENABLED).toBe("1");
 		expect(env.CLAWDI_MITM_PROFILE_BUNDLE).toBe(profileBundlePath);
-		expect(env.CLAWDI_MITM_CA_FILE).toBe(join("/run/clawdi", "mitm", "ca.pem"));
+		expect(env.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "brokers"))).toBe(true);
+		expect(env.CLAWDI_MITM_CA_FILE?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(env.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
 		expect(env.NODE_USE_ENV_PROXY).toBe("1");
 		expect(env.NODE_OPTIONS).toBe("--trace-warnings");
-		expect(env.SSL_CERT_FILE).toBe(join("/run/clawdi", "mitm", "ca.pem"));
-		expect(env.NODE_EXTRA_CA_CERTS).toBe(join("/run/clawdi", "mitm", "ca.pem"));
-		expect(env.CODEX_CA_CERTIFICATE).toBe(join("/run/clawdi", "mitm", "ca.pem"));
+		expect(env.SSL_CERT_FILE).toBe(env.CLAWDI_MITM_CA_FILE);
+		expect(env.NODE_EXTRA_CA_CERTS).toBe(env.CLAWDI_MITM_CA_FILE);
+		expect(env.CODEX_CA_CERTIFICATE).toBe(env.CLAWDI_MITM_CA_FILE);
 		expect(env.NO_PROXY).toContain("127.0.0.1");
 		expect(env.no_proxy).toBe(env.NO_PROXY);
+	});
+
+	it("generates an isolated CA path for each broker invocation", () => {
+		const profileBundlePath = "/var/lib/clawdi/config/mitm/profiles.json";
+		const first = buildMitmBrokerEnv({
+			profileBundlePath,
+			env: { CLAWDI_RUN_DIR: "/run/clawdi" },
+		});
+		const second = buildMitmBrokerEnv({
+			profileBundlePath,
+			env: { CLAWDI_RUN_DIR: "/run/clawdi" },
+		});
+
+		expect(first.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
+		expect(second.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
+		expect(first.CLAWDI_MITM_CA_FILE).not.toBe(second.CLAWDI_MITM_CA_FILE);
+		expect(first.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "brokers"))).toBe(
+			true,
+		);
+		expect(second.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "brokers"))).toBe(
+			true,
+		);
 	});
 
 	it("applies broker runtime output without exposing Clawdi MITM internals", () => {

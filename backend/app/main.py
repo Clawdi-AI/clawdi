@@ -37,6 +37,7 @@ from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
+from app.routes.runtime import router as runtime_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
@@ -234,6 +235,7 @@ app.include_router(sessions_router)
 app.include_router(public_sessions_router)
 app.include_router(dashboard_router)
 app.include_router(projects_router)
+app.include_router(runtime_router)
 app.include_router(skills_router)
 app.include_router(skills_project_router)
 app.include_router(sync_router)

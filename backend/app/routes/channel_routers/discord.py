@@ -86,6 +86,12 @@ _DISCORD_GATEWAY_SESSIONS: dict[str, dict[str, Any]] = {}
     include_in_schema=False,
     response_model=None,
 )
+@router.api_route(
+    "/api/v10/{discord_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+    response_model=None,
+)
 async def discord_agent_rest(
     discord_path: str,
     request: Request,
@@ -202,6 +208,7 @@ async def discord_agent_rest(
 
 
 @router.websocket("/gateway")
+@router.websocket("/gateway/")
 async def discord_agent_gateway(websocket: WebSocket) -> None:
     await websocket.accept()
     encoding = websocket.query_params.get("encoding") or "json"

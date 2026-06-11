@@ -1261,6 +1261,41 @@ async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.Asy
 
 
 @pytest.mark.asyncio
+async def test_telegram_bot_api_accepts_official_bot_path_shape(client: httpx.AsyncClient):
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-official-path",
+        chat_id="333",
+    )
+    await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 3,
+                "text": "official path",
+                "chat": {"id": 333, "type": "private"},
+            },
+        },
+    )
+
+    updates = await client.get(
+        f"/api/channels/telegram/bot{created['agent_token']}/getUpdates",
+        params={"offset": 3},
+    )
+    delete_webhook = await client.post(
+        f"/api/channels/telegram/bot{created['agent_token']}/deleteWebhook",
+    )
+
+    assert updates.status_code == 200
+    assert updates.json()["ok"] is True
+    assert updates.json()["result"][0]["message"]["text"] == "official path"
+    assert delete_webhook.status_code == 200
+    assert delete_webhook.json() == {"ok": True, "result": True}
+
+
+@pytest.mark.asyncio
 async def test_telegram_repair_moves_chat_to_new_agent_link(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -3040,6 +3075,28 @@ async def test_discord_rest_gateway_bot_uses_agent_token(client: httpx.AsyncClie
     assert response.status_code == 200
     assert response.json()["url"].endswith("/api/channels/discord/gateway")
     assert response.json()["shards"] == 1
+
+
+@pytest.mark.asyncio
+async def test_discord_rest_accepts_preserve_path_mitm_alias(client: httpx.AsyncClient):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-agent-preserve-path",
+                "config": {"application_id": "app-agent"},
+            },
+        )
+    ).json()
+
+    response = await client.get(
+        "/api/channels/discord/api/v10/gateway/bot",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"].endswith("/api/channels/discord/gateway")
 
 
 @pytest.mark.asyncio
@@ -5032,18 +5089,21 @@ async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient
     assert response.status_code == 401
 
 
-def test_parse_pair_command_matches_msg_router_shapes():
+def test_parse_pair_command_matches_strict_bot_shapes():
     assert parse_pair_command("/bot_pair ABCDEF1234") is not None
     assert parse_pair_command("/bot_pair ABCDEF1234").code == "ABCDEF1234"
     assert parse_pair_command("/bot_pair@shared_bot ABC123").code == "ABC123"
-    assert parse_pair_command("/bot_pair ABC123 thanks").code == "ABC123"
+    assert parse_pair_command("/bot_pair ABC123 thanks").code == ""
+    assert parse_pair_command("/bot_pair ABC123\n•").code == ""
     assert parse_pair_command("/bot_pair").code == ""
     assert parse_pair_command("/start PAIRABCDEF1234").code == "PAIRABCDEF1234"
     assert parse_pair_command("/start@shared_bot PAIRABCDEF1234").code == "PAIRABCDEF1234"
+    assert parse_pair_command("/start PAIRABCDEF1234 thanks") is None
     assert parse_pair_command("/start OLD_PAIR_CODE") is None
     assert parse_pair_command("/start") is None
     assert parse_pair_command("/bot_unpair").kind == "unpair"
     assert parse_pair_command("/bot_unpair@shared_bot").kind == "unpair"
+    assert parse_pair_command("/bot_unpair now").kind == "unknown"
     assert parse_pair_command("hello world") is None
     unknown = parse_pair_command("/bot_foo bar")
     assert unknown is not None
