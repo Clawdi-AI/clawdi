@@ -12,6 +12,7 @@ from app.models.user import User, UserSetting
 from app.services.memory_provider import (
     BuiltinProvider,
     Mem0Provider,
+    XTraceProvider,
     get_memory_provider,
 )
 from app.services.vault_crypto import encrypt_field
@@ -85,6 +86,175 @@ async def test_get_memory_provider_uses_builtin_when_no_setting(
 ):
     provider = await get_memory_provider(str(seed_user.id), db_session)
     assert isinstance(provider, BuiltinProvider)
+
+
+@pytest.mark.asyncio
+async def test_get_memory_provider_uses_xtrace_when_configured(
+    db_session: AsyncSession, seed_user: User, monkeypatch
+):
+    setting = UserSetting(
+        user_id=seed_user.id,
+        settings={"memory_provider": "xtrace"},
+    )
+    db_session.add(setting)
+    await db_session.commit()
+
+    import app.services.memory_provider as mp
+
+    monkeypatch.setattr(mp, "xtrace_memory_configured", lambda: True)
+
+    provider = await get_memory_provider(str(seed_user.id), db_session)
+    assert isinstance(provider, XTraceProvider)
+
+
+@pytest.mark.asyncio
+async def test_xtrace_provider_search_uses_remote_memory_search(
+    db_session: AsyncSession, seed_user: User, monkeypatch
+):
+    import app.services.memory_provider as mp
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            import httpx
+
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "mem_remote",
+                            "object": "memory",
+                            "type": "fact",
+                            "text": "User prefers XTrace remote recall for memory search.",
+                            "user_id": str(seed_user.id),
+                            "agent_id": None,
+                            "conv_id": None,
+                            "app_id": "clawdi-cloud",
+                            "metadata": {"source_type": "session"},
+                            "categories": ["preference"],
+                            "score": 0.91,
+                            "created_at": "2026-06-05T22:41:44Z",
+                            "updated_at": "2026-06-05T22:41:44Z",
+                            "details": {
+                                "fact_type": "preference",
+                                "status": "active",
+                                "supersedes": None,
+                                "source_role": "user",
+                                "episode_id": None,
+                                "artifact_id": None,
+                                "artifact_ids": [],
+                                "source_event_ids": [],
+                            },
+                        }
+                    ],
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+            )
+
+    monkeypatch.setattr(mp.settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(mp.settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(mp.settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr(mp.settings, "xtrace_memory_app_id", "clawdi-cloud")
+    monkeypatch.setattr(mp.httpx, "AsyncClient", FakeXTraceClient)
+
+    provider = XTraceProvider(db_session)
+    results = await provider.search(str(seed_user.id), "remote recall", limit=3)
+
+    assert calls[0]["url"] == "https://xtrace.test/v1/memories/search"
+    assert calls[0]["headers"]["Authorization"] == "Bearer xtk_test"
+    assert calls[0]["headers"]["X-Org-Id"] == "org_test"
+    assert calls[0]["json"] == {
+        "query": "remote recall",
+        "user_id": str(seed_user.id),
+        "app_id": "clawdi-cloud",
+        "limit": 3,
+    }
+    assert results == [
+        {
+            "id": "mem_remote",
+            "content": "User prefers XTrace remote recall for memory search.",
+            "category": "preference",
+            "source": "xtrace",
+            "tags": ["xtrace", "xtrace:fact"],
+            "access_count": 0,
+            "created_at": "2026-06-05T22:41:44Z",
+            "source_session_id": None,
+            "xtrace": {
+                "memory_id": "mem_remote",
+                "type": "fact",
+                "status": "active",
+                "operation": None,
+                "source_type": "session",
+                "source_key": None,
+                "local_session_id": None,
+                "skill_key": None,
+                "supersedes": [],
+                "superseded_by": None,
+                "timeline": [
+                    {
+                        "operation": "add",
+                        "content": "User prefers XTrace remote recall for memory search.",
+                        "memory_id": "mem_remote",
+                        "status": "active",
+                        "at": "2026-06-05T22:41:44Z",
+                    }
+                ],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_xtrace_provider_search_falls_back_to_builtin_on_remote_failure(
+    db_session: AsyncSession, seed_user: User, monkeypatch
+):
+    import app.services.memory_provider as mp
+
+    class BrokenXTraceClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            raise RuntimeError("xtrace unavailable")
+
+    monkeypatch.setattr(mp.settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(mp.settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(mp.httpx, "AsyncClient", BrokenXTraceClient)
+
+    provider = XTraceProvider(db_session)
+    await provider.add(
+        str(seed_user.id),
+        "User prefers local fallback when XTrace search is unavailable.",
+        category="preference",
+    )
+
+    results = await provider.search(str(seed_user.id), "local fallback", limit=5)
+
+    assert len(results) == 1
+    assert results[0]["content"] == "User prefers local fallback when XTrace search is unavailable."
+    assert results[0]["source"] == "manual"
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
@@ -22,6 +22,7 @@ from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
+from app.models.skill_chunk import SkillChunk
 from app.models.vault import Vault, VaultProjectAttachment
 from app.services.memory_provider import get_memory_provider
 
@@ -59,6 +60,20 @@ class SearchResponse(BaseModel):
 
 
 TYPE_LIMIT = 5
+
+
+def _query_excerpt(content: str, query: str, max_len: int = 120) -> str:
+    haystack = content.replace("\n", " ").strip()
+    if len(haystack) <= max_len:
+        return haystack
+    pos = haystack.lower().find(query.lower())
+    if pos < 0:
+        return haystack[: max_len - 3].rstrip() + "..."
+    start = max(0, pos - 40)
+    end = min(len(haystack), start + max_len)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(haystack) else ""
+    return prefix + haystack[start:end].strip() + suffix
 
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
@@ -151,7 +166,7 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
         .limit(TYPE_LIMIT)
     )
     rows = (await db.execute(stmt)).scalars().all()
-    return [
+    hits = [
         SearchHit(
             type="skill",
             id=str(s.id),
@@ -173,6 +188,45 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
         )
         for s in rows
     ]
+    seen_skill_ids = {s.id for s in rows}
+    remaining = TYPE_LIMIT - len(hits)
+    if remaining <= 0:
+        return hits
+
+    content_score = func.similarity(SkillChunk.content, query)
+    chunk_stmt = (
+        select(Skill, SkillChunk)
+        .join(SkillChunk, SkillChunk.skill_id == Skill.id)
+        .where(
+            Skill.is_active,
+            Skill.project_id.in_(visible_project_ids),
+            SkillChunk.content_hash == Skill.content_hash,
+            or_(
+                SkillChunk.content.ilike(needle, escape="\\"),
+                SkillChunk.file_path.ilike(needle, escape="\\"),
+                content_score > 0.1,
+            ),
+        )
+        .order_by(content_score.desc(), Skill.updated_at.desc(), SkillChunk.file_path)
+        .limit(TYPE_LIMIT * 3)
+    )
+    chunk_rows = (await db.execute(chunk_stmt)).all()
+    for skill, chunk in chunk_rows:
+        if skill.id in seen_skill_ids:
+            continue
+        hits.append(
+            SearchHit(
+                type="skill",
+                id=str(skill.id),
+                title=skill.name or skill.skill_key,
+                subtitle=f"{chunk.file_path} · {_query_excerpt(chunk.content, query)}",
+                href=f"/skills/{quote(skill.skill_key, safe='')}?project={skill.project_id}",
+            )
+        )
+        seen_skill_ids.add(skill.id)
+        if len(hits) >= TYPE_LIMIT:
+            break
+    return hits
 
 
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:

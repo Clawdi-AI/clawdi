@@ -126,6 +126,12 @@ for each service.
     COMPOSIO_API_KEY=...
     MEMORY_EMBEDDING_MODE=...
     MEMORY_EMBEDDING_MODEL=...
+    XTRACE_MEMORY_ENABLED=false
+    XTRACE_API_KEY=
+    XTRACE_ORG_ID=
+    XTRACE_MEMORY_BASE_URL=https://api.production.xtrace.ai
+    XTRACE_MEMORY_MAX_MESSAGES=80
+    XTRACE_MEMORY_BACKFILL_MAX_MESSAGES=20
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
     CLERK_SECRET_KEY=...
     NEXT_PUBLIC_DEPLOY_API_URL=https://<your-public-prod-api>
@@ -140,12 +146,79 @@ for each service.
     command from the auto-injected `SERVICE_FQDN_*` — no need to set them
     in the Coolify UI.
 
+    To enable XTrace session and skill memory in a preview, set
+    `XTRACE_MEMORY_ENABLED=true` plus the preview XTrace key/org values,
+    then redeploy the preview so the API container starts with those env vars.
+
 11. **Clerk dashboard:** add `https://*.<your-domain>` to **Allowed Origins**
     and `https://*.<your-domain>/sign-in/sso-callback` to **Authorized Redirect
     URLs** for the production Clerk app. (Wildcard at the apex covers all
     one-label preview hostnames.)
 
 After all eleven, opening a PR on the repo deploys a preview automatically.
+
+## XTrace memory preview checks
+
+After deploying a preview with XTrace enabled, trigger a backend-managed
+backfill job so existing stored sessions and skills are sent to XTrace:
+
+```bash
+API_KEY=<preview-api-key>
+curl -s -X POST \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills \
+  -d '{"include_sessions":true,"include_skills":true}'
+```
+
+For a smaller validation run:
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills \
+  -d '{"include_sessions":true,"include_skills":true,"limit":10}'
+```
+
+Poll the job until `status` leaves `queued`/`running`:
+
+```bash
+curl -s -H "Authorization: Bearer $API_KEY" \
+  https://preview-api.faraday.cloud/api/xtrace/backfills/<job-id>
+```
+
+To inspect one session directly:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.debug_xtrace_session_ingest \
+  --local-session-id <local-session-id> \
+  --user-id <user-uuid> \
+  --print-response
+```
+
+The output prints `job_id`, `status`, `created_ref_count`,
+`updated_ref_count`, and `mirrored_count`. The same data is also stored in
+`xtrace_backfill_jobs` tracks job progress and per-source counters.
+`xtrace_memory_ingests` stores each XTrace request with `source_type=session`
+or `source_type=skill`, including cases where XTrace returns a pending job or
+zero memory refs. API logs include `xtrace_memory_ingested ... job_id=...` and
+`xtrace_skill_memory_ingested ... job_id=...`.
+
+Preview defaults intentionally cap XTrace payload size. Live session uploads
+send at most `XTRACE_MEMORY_MAX_MESSAGES` messages, and historical backfills
+send at most `XTRACE_MEMORY_BACKFILL_MAX_MESSAGES` messages per session. Keep
+the backfill cap low so a bulk run does not exhaust the XTrace message quota by
+replaying full transcripts.
+
+Existing skill archives from the restored snapshot need one backfill after the
+migration so skill-file content search works:
+
+```bash
+cd /app/backend
+pdm run python -m scripts.reindex_skill_chunks --all
+```
 
 ## Refreshing the snapshot
 

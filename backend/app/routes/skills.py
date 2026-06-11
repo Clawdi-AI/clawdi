@@ -42,6 +42,7 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.skill_index import index_skill_archive
 from app.services.sync_events import bump_skills_revision, get_skills_revision
 from app.services.tar_utils import (
     TarValidationError,
@@ -50,6 +51,8 @@ from app.services.tar_utils import (
     tar_from_content,
     validate_tar,
 )
+from app.services.xtrace_ingest_queue import enqueue_xtrace_skill_ingest
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -977,11 +980,13 @@ async def _do_upload_skill(
         source="local",
         source_repo=None,
     )
+    await index_skill_archive(db, skill, data)
     # Single commit at the route boundary — _upsert_skill now
     # only flushes, so the advisory lock acquired at line 317
     # holds across the upsert + revision bump and is released
     # only when this commit lands.
     await db.commit()
+    await _ingest_skill_to_xtrace(db, skill, data)
 
     return SkillUploadResponse(
         skill_key=skill.skill_key,
@@ -1314,8 +1319,10 @@ async def _do_install_skill(
         source="marketplace",
         source_repo=body.repo,
     )
+    await index_skill_archive(db, skill, fetched.tar_bytes)
     # Single commit at the route boundary — see upload_skill.
     await db.commit()
+    await _ingest_skill_to_xtrace(db, skill, fetched.tar_bytes)
 
     return SkillInstallResponse(
         skill_key=skill_key,
@@ -1330,6 +1337,23 @@ async def _do_install_skill(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _ingest_skill_to_xtrace(db: AsyncSession, skill: Skill, data: bytes) -> None:
+    if not xtrace_memory_configured():
+        return
+    try:
+        job = await enqueue_xtrace_skill_ingest(db, skill=skill)
+        if job is not None:
+            log.info(
+                "xtrace_skill_memory_ingest_queued skill_key=%s ingest_id=%s status=%s",
+                skill.skill_key,
+                job.id,
+                job.status,
+            )
+    except Exception:
+        await db.rollback()
+        log.exception("xtrace_skill_memory_ingest_failed skill_key=%s", skill.skill_key)
 
 
 async def _upsert_skill(

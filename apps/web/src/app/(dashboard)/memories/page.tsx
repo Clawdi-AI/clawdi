@@ -2,7 +2,7 @@
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Brain, Database, GitBranch, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -37,7 +37,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
-import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import {
+	MEMORY_CATEGORY_COLORS,
+	MEMORY_CATEGORY_EMOJI,
+	MEMORY_CATEGORY_TILE_CLASSES,
+	MEMORY_FALLBACK_EMOJI,
+} from "@/lib/memory-utils";
 import { getProjectResourceDefinition, memoryDetailHref } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -48,6 +53,7 @@ const CATEGORIES = [
 	{ value: "preference", label: "Preference" },
 	{ value: "pattern", label: "Pattern" },
 	{ value: "decision", label: "Decision" },
+	{ value: "artifact", label: "Artifact" },
 	{ value: "context", label: "Context" },
 ] as const;
 
@@ -56,6 +62,11 @@ const CATEGORIES = [
 // for the All chip (Radix does not treat "" as a selected value).
 const ALL = "all";
 const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");
+const PROVIDER_OPTIONS = {
+	builtin: { label: "Built-in", icon: Database },
+	mem0: { label: "Mem0", icon: Brain },
+	xtrace: { label: "XTrace", icon: GitBranch },
+} as const;
 
 export default function MemoriesPage() {
 	const api = useApi();
@@ -70,9 +81,17 @@ export default function MemoriesPage() {
 		queryKey: ["settings"],
 		queryFn: async () => unwrap(await api.GET("/api/settings")),
 	});
+	const { data: capabilities } = useQuery({
+		queryKey: ["capabilities"],
+		queryFn: async () => unwrap(await api.GET("/api/capabilities")),
+	});
 
 	const provider =
 		typeof settings?.memory_provider === "string" ? settings.memory_provider : "builtin";
+	const availableProviders = new Set(capabilities?.memory_providers ?? ["builtin"]);
+	const providerOptions = (Object.keys(PROVIDER_OPTIONS) as Array<keyof typeof PROVIDER_OPTIONS>)
+		.filter((value) => value === provider || availableProviders.has(value))
+		.map((value) => ({ value, ...PROVIDER_OPTIONS[value] }));
 	const mem0Key = typeof settings?.mem0_api_key === "string" ? settings.mem0_api_key : "";
 	const hasMem0Key = mem0Key !== "";
 
@@ -147,14 +166,12 @@ export default function MemoriesPage() {
 							variant="outline"
 							size="sm"
 						>
-							<ToggleGroupItem value="builtin">
-								<Database />
-								Built-in
-							</ToggleGroupItem>
-							<ToggleGroupItem value="mem0">
-								<Brain />
-								Mem0
-							</ToggleGroupItem>
+							{providerOptions.map(({ value, label, icon: Icon }) => (
+								<ToggleGroupItem key={value} value={value}>
+									<Icon />
+									{label}
+								</ToggleGroupItem>
+							))}
 						</ToggleGroup>
 						<AddMemoryForm />
 					</>
@@ -266,7 +283,20 @@ function MemoryNotesGrid({
 						aria-label={`Open memory ${memory.id.slice(0, 8)}`}
 						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					/>
-					<p className="line-clamp-[8] break-words text-sm leading-relaxed">{memory.content}</p>
+					<div className="flex items-start gap-2.5">
+						<span
+							aria-hidden
+							className={cn(
+								"flex size-7 shrink-0 select-none items-center justify-center rounded-lg text-sm leading-none",
+								MEMORY_CATEGORY_TILE_CLASSES[memory.category] ?? "bg-muted",
+							)}
+						>
+							{MEMORY_CATEGORY_EMOJI[memory.category] ?? MEMORY_FALLBACK_EMOJI}
+						</span>
+						<p className="line-clamp-[8] min-w-0 break-words text-sm leading-relaxed">
+							{memory.content}
+						</p>
+					</div>
 					<div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 						<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
 							{memory.category}
@@ -276,6 +306,15 @@ function MemoryNotesGrid({
 								#{tag}
 							</span>
 						))}
+						{memory.xtrace?.status ? (
+							<span
+								className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground"
+								title="XTrace memory status"
+							>
+								<GitBranch className="size-3" />
+								{memory.xtrace.status}
+							</span>
+						) : null}
 						<span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
 							{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
 							{memory.source_machine_name ? (

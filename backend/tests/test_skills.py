@@ -47,6 +47,299 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
 
 
 @pytest.mark.asyncio
+async def test_skill_upload_indexes_file_content_for_search(
+    client: httpx.AsyncClient, project_id: str
+):
+    content = (
+        "---\n"
+        "name: deploy helper\n"
+        "description: ordinary deployment instructions\n"
+        "---\n"
+        "# Deploy\n"
+        "Use the zephyr-coolify-handshake checklist before preview rollout.\n"
+    )
+    tar_bytes, _ = tar_from_content("deploy-helper", content)
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper"},
+        files={"file": ("deploy-helper.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    search = await client.get("/api/search?q=zephyr-coolify-handshake")
+    assert search.status_code == 200, search.text
+    skill_hits = [h for h in search.json()["results"] if h["type"] == "skill"]
+    assert skill_hits, search.json()
+    assert skill_hits[0]["title"] == "deploy helper"
+    assert "SKILL.md" in (skill_hits[0]["subtitle"] or "")
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_enqueues_xtrace_ingest_when_configured(
+    client: httpx.AsyncClient,
+    db_session,
+    project_id: str,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.skill import Skill
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_skill",
+                    "status": "succeeded",
+                    "result": {
+                        "object": "ingest_result",
+                        "memories_created": [
+                            {
+                                "id": "artifact_skill",
+                                "type": "artifact",
+                                "status": "active",
+                                "text": (
+                                    "Deploy helper skill captures the preview rollout checklist."
+                                ),
+                            }
+                        ],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    content = (
+        "---\n"
+        "name: deploy helper\n"
+        "description: preview deployment workflow\n"
+        "---\n"
+        "# Deploy\n"
+        "Use Coolify preview and verify health checks before sharing the URL.\n"
+    )
+    tar_bytes, _ = tar_from_content("deploy-helper", content)
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper"},
+        files={"file": ("deploy-helper.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    skill = (
+        await db_session.execute(
+            select(Skill).where(Skill.user_id == seed_user.id, Skill.skill_key == "deploy-helper")
+        )
+    ).scalar_one()
+    assert calls == []
+
+    audit = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.skill_id == skill.id)
+        )
+    ).scalar_one()
+    assert audit.source_type == "skill"
+    assert audit.source_key == f"skill:{skill.id}:{skill.content_hash}"
+    assert audit.status == "queued"
+    assert audit.mirrored_count == 0
+
+    upload_again = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper"},
+        files={"file": ("deploy-helper.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload_again.status_code == 200, upload_again.text
+    audits = (
+        (
+            await db_session.execute(
+                select(XTraceMemoryIngest).where(XTraceMemoryIngest.skill_id == skill.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 1
+
+
+@pytest.mark.asyncio
+async def test_xtrace_skill_ingest_worker_processes_queued_upload(
+    client: httpx.AsyncClient,
+    db_session,
+    project_id: str,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import select
+
+    from app.core.config import settings as app_settings
+    from app.models.memory import Memory
+    from app.models.skill import Skill
+    from app.models.xtrace_ingest import XTraceMemoryIngest
+    from app.services.xtrace_ingest_queue import run_xtrace_ingest_job
+
+    calls: list[dict] = []
+
+    class FakeXTraceClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls.append({"url": str(url), **kwargs})
+            request = httpx.Request("POST", str(url))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "ingest_job",
+                    "id": "job_skill_worker",
+                    "status": "succeeded",
+                    "result": {
+                        "memories_created": [
+                            {
+                                "id": "artifact_skill_worker",
+                                "type": "artifact",
+                                "status": "active",
+                                "text": (
+                                    "Deploy helper skill captures the preview rollout checklist."
+                                ),
+                            }
+                        ],
+                        "memories_updated": [],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app_settings, "xtrace_memory_enabled", True)
+    monkeypatch.setattr(app_settings, "xtrace_api_key", "xtk_test")
+    monkeypatch.setattr(app_settings, "xtrace_org_id", "org_test")
+    monkeypatch.setattr(app_settings, "xtrace_memory_base_url", "https://xtrace.test")
+    monkeypatch.setattr("app.services.xtrace_memory.httpx.AsyncClient", FakeXTraceClient)
+
+    content = (
+        "---\n"
+        "name: deploy helper\n"
+        "description: preview deployment workflow\n"
+        "---\n"
+        "# Deploy\n"
+        "Use Coolify preview and verify health checks before sharing the URL.\n"
+    )
+    tar_bytes, _ = tar_from_content("deploy-helper-worker", content)
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "deploy-helper-worker"},
+        files={"file": ("deploy-helper-worker.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.user_id == seed_user.id,
+                Skill.skill_key == "deploy-helper-worker",
+            )
+        )
+    ).scalar_one()
+    queued = (
+        await db_session.execute(
+            select(XTraceMemoryIngest).where(XTraceMemoryIngest.skill_id == skill.id)
+        )
+    ).scalar_one()
+
+    await run_xtrace_ingest_job(queued.id, db=db_session)
+
+    processed = await db_session.get(XTraceMemoryIngest, queued.id)
+    assert processed is not None
+    await db_session.refresh(processed)
+    assert processed.status == "succeeded"
+    assert processed.job_id == "job_skill_worker"
+    assert processed.created_ref_count == 1
+    assert processed.mirrored_count == 1
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["url"] == "https://xtrace.test/v1/memories"
+    assert call["json"]["user_id"] == str(seed_user.id)
+    assert call["json"]["conv_id"].startswith(f"skill:{skill.id}:")
+    assert call["json"]["metadata"]["skill_key"] == "deploy-helper-worker"
+    assert any("Skill file: SKILL.md" in message["content"] for message in call["json"]["messages"])
+
+    memory = (
+        await db_session.execute(
+            select(Memory).where(Memory.user_id == seed_user.id, Memory.source == "xtrace_skill")
+        )
+    ).scalar_one()
+    assert memory.content == "Deploy helper skill captures the preview rollout checklist."
+    assert memory.category == "artifact"
+    assert memory.metadata_["skill_key"] == "deploy-helper-worker"
+    assert memory.metadata_["xtrace_memory_id"] == "artifact_skill_worker"
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_indexes_reference_file_content_for_search(
+    client: httpx.AsyncClient, project_id: str
+):
+    buf = io.BytesIO()
+    files = {
+        "multi-file/SKILL.md": "---\nname: multi file\ndescription: docs bundle\n---\n# Multi\n",
+        "multi-file/references/deploy.md": (
+            "# Preview\nUse the nebula-reference-marker before promoting a preview.\n"
+        ),
+    }
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, content in files.items():
+            encoded = content.encode("utf-8")
+            info = tarfile.TarInfo(name=name)
+            info.size = len(encoded)
+            tf.addfile(info, io.BytesIO(encoded))
+    tar_bytes = buf.getvalue()
+
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "multi-file"},
+        files={"file": ("multi-file.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    search = await client.get("/api/search?q=nebula-reference-marker")
+    assert search.status_code == 200, search.text
+    skill_hits = [h for h in search.json()["results"] if h["type"] == "skill"]
+    assert skill_hits, search.json()
+    assert skill_hits[0]["title"] == "multi file"
+    assert "references/deploy.md" in (skill_hits[0]["subtitle"] or "")
+
+
+@pytest.mark.asyncio
 async def test_dashboard_edit_with_stale_content_hash_returns_412(
     client: httpx.AsyncClient, project_id: str
 ):

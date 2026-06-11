@@ -36,8 +36,11 @@ from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.routes.xtrace import router as xtrace_router
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
+from app.services.xtrace_ingest_queue import run_xtrace_ingest_worker
+from app.services.xtrace_memory import xtrace_memory_configured
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -70,6 +73,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Task and the GC can reap it mid-flight otherwise. Python docs
         # explicitly warn about this pattern.
         task = asyncio.create_task(_warm(), name="embedder-warm")
+        background.add(task)
+        task.add_done_callback(background.discard)
+
+    if settings.xtrace_memory_worker_enabled and xtrace_memory_configured():
+        task = asyncio.create_task(run_xtrace_ingest_worker(), name="xtrace-ingest-worker")
         background.add(task)
         task.add_done_callback(background.discard)
 
@@ -187,6 +195,7 @@ app.include_router(share_redeem_router)
 app.include_router(sharing_router)
 app.include_router(me_router)
 app.include_router(agent_project_bindings_router)
+app.include_router(xtrace_router)
 
 
 @app.get("/health")

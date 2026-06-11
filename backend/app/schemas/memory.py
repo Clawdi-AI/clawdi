@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MemoryCreate(BaseModel):
@@ -8,6 +8,28 @@ class MemoryCreate(BaseModel):
     category: str = "fact"
     source: str = "manual"
     tags: list[str] | None = None
+
+
+class XTraceMemoryTimelineItem(BaseModel):
+    operation: str
+    content: str
+    memory_id: str | None = None
+    status: str | None = None
+    at: str | None = None
+
+
+class XTraceMemoryDetails(BaseModel):
+    memory_id: str | None = None
+    type: str | None = None
+    status: str | None = None
+    operation: str | None = None
+    source_type: str | None = None
+    source_key: str | None = None
+    local_session_id: str | None = None
+    skill_key: str | None = None
+    supersedes: list[str] = Field(default_factory=list)
+    superseded_by: str | None = None
+    timeline: list[XTraceMemoryTimelineItem] = Field(default_factory=list)
 
 
 class MemoryResponse(BaseModel):
@@ -26,6 +48,7 @@ class MemoryResponse(BaseModel):
     source_session_id: str | None = None
     source_environment_id: str | None = None
     source_machine_name: str | None = None
+    xtrace: XTraceMemoryDetails | None = None
 
 
 class MemoryCreatedResponse(BaseModel):

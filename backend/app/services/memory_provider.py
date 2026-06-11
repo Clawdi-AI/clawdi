@@ -8,12 +8,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Protocol
 
+import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.memory import Memory
 from app.services.embedding import Embedder, resolve_embedder
 from app.services.vault_crypto import decrypt_field
+from app.services.xtrace_memory import xtrace_memory_configured
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +261,51 @@ class BuiltinProvider:
             await self.db.commit()
 
 
+class XTraceProvider(BuiltinProvider):
+    """Provider facade for XTrace-backed memory.
+
+    XTrace owns extraction, belief revision, and lineage on the write side.
+    Clawdi mirrors returned refs into the local memory table, so dashboard
+    browse/search/delete can keep using the builtin provider contract while
+    XTrace recall/search endpoints are added on top.
+    """
+
+    async def search(
+        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+    ) -> list[dict]:
+        try:
+            rows = await self._search_remote(user_id, query, limit=limit)
+        except Exception as exc:
+            log.warning("xtrace remote memory search failed, falling back to builtin: %s", exc)
+            return await super().search(user_id, query, limit=limit, category=category)
+
+        if category:
+            rows = [row for row in rows if row.get("category") == category]
+        return rows[:limit]
+
+    async def _search_remote(self, user_id: str, query: str, *, limit: int) -> list[dict]:
+        url = f"{settings.xtrace_memory_base_url.rstrip('/')}/v1/memories/search"
+        headers = {
+            "Authorization": f"Bearer {settings.xtrace_api_key}",
+            "X-Org-Id": settings.xtrace_org_id,
+            "Accept": "application/json",
+        }
+        body = {
+            "query": query,
+            "user_id": user_id,
+            "app_id": settings.xtrace_memory_app_id,
+            "limit": limit,
+        }
+        async with httpx.AsyncClient(timeout=settings.xtrace_memory_timeout_seconds) as client:
+            response = await client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return []
+        return [_xtrace_remote_memory_to_dict(item) for item in data if isinstance(item, dict)]
+
+
 class Mem0Provider:
     """Memory provider backed by Mem0 API."""
 
@@ -367,13 +415,69 @@ def memory_to_dict(m: Memory) -> dict:
         # source machine in one bulk query. None when the memory was
         # added manually.
         "source_session_id": str(m.source_session_id) if m.source_session_id else None,
+        "xtrace": _xtrace_details(m.metadata_, m.content),
     }
+
+
+def _xtrace_remote_memory_to_dict(raw: dict) -> dict:
+    text = str(raw.get("text") or "")
+    memory_type = str(raw.get("type") or "fact")
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    details = raw.get("details") if isinstance(raw.get("details"), dict) else {}
+    categories = raw.get("categories")
+    category = (
+        str(categories[0])
+        if isinstance(categories, list) and categories and categories[0]
+        else _category_for_xtrace_type(memory_type)
+    )
+    created_at = _string_or_none(raw.get("created_at")) or datetime.now(UTC).isoformat()
+    status = _string_or_none(details.get("status")) or "active"
+    return {
+        "id": str(raw.get("id") or ""),
+        "content": text,
+        "category": category,
+        "source": "xtrace",
+        "tags": ["xtrace", f"xtrace:{memory_type}"],
+        "access_count": 0,
+        "created_at": created_at,
+        "source_session_id": _string_or_none(metadata.get("source_session_id")),
+        "xtrace": {
+            "memory_id": str(raw.get("id") or ""),
+            "type": memory_type,
+            "status": status,
+            "operation": _string_or_none(metadata.get("xtrace_operation")),
+            "source_type": _string_or_none(metadata.get("source_type")),
+            "source_key": _string_or_none(metadata.get("source_key")),
+            "local_session_id": _string_or_none(metadata.get("local_session_id")),
+            "skill_key": _string_or_none(metadata.get("skill_key")),
+            "supersedes": _string_list(details.get("supersedes")),
+            "superseded_by": _string_or_none(details.get("superseded_by")),
+            "timeline": [
+                {
+                    "operation": _string_or_none(metadata.get("xtrace_operation")) or "add",
+                    "content": text,
+                    "memory_id": str(raw.get("id") or ""),
+                    "status": status,
+                    "at": created_at,
+                }
+            ],
+        },
+    }
+
+
+def _category_for_xtrace_type(memory_type: str) -> str:
+    if memory_type == "artifact":
+        return "artifact"
+    if memory_type == "episode":
+        return "context"
+    return "fact"
 
 
 def _row_to_dict(r) -> dict:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
     created_at = r["created_at"]
     sid = r.get("source_session_id") if hasattr(r, "get") else None
+    metadata = r.get("metadata") if hasattr(r, "get") else None
     return {
         "id": str(r["id"]),
         "content": r["content"],
@@ -383,7 +487,86 @@ def _row_to_dict(r) -> dict:
         "access_count": r["access_count"],
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         "source_session_id": str(sid) if sid else None,
+        "xtrace": _xtrace_details(metadata, r["content"]),
     }
+
+
+def _xtrace_details(metadata: object, content: str) -> dict | None:
+    if not isinstance(metadata, dict):
+        return None
+    memory_id = _string_or_none(metadata.get("xtrace_memory_id"))
+    memory_type = _string_or_none(metadata.get("xtrace_type"))
+    if memory_id is None and memory_type is None:
+        return None
+
+    operation = _string_or_none(metadata.get("xtrace_operation"))
+    status = _string_or_none(metadata.get("xtrace_status")) or "active"
+    timeline = metadata.get("xtrace_timeline")
+    return {
+        "memory_id": memory_id,
+        "type": memory_type,
+        "status": status,
+        "operation": operation,
+        "source_type": _string_or_none(metadata.get("source_type")),
+        "source_key": _string_or_none(metadata.get("source_key")),
+        "local_session_id": _string_or_none(metadata.get("local_session_id")),
+        "skill_key": _string_or_none(metadata.get("skill_key")),
+        "supersedes": _string_list(metadata.get("xtrace_supersedes")),
+        "superseded_by": _string_or_none(metadata.get("xtrace_superseded_by")),
+        "timeline": _timeline_items(timeline, content, memory_id, status, operation),
+    }
+
+
+def _timeline_items(
+    raw: object,
+    content: str,
+    memory_id: str | None,
+    status: str,
+    operation: str | None,
+) -> list[dict]:
+    if isinstance(raw, list):
+        out: list[dict] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            item_content = _string_or_none(item.get("content"))
+            if item_content is None:
+                continue
+            out.append(
+                {
+                    "operation": _string_or_none(item.get("operation")) or "add",
+                    "content": item_content,
+                    "memory_id": _string_or_none(item.get("memory_id")),
+                    "status": _string_or_none(item.get("status")),
+                    "at": _string_or_none(item.get("at")),
+                }
+            )
+        if out:
+            return out
+
+    return [
+        {
+            "operation": operation or "add",
+            "content": content,
+            "memory_id": memory_id,
+            "status": status,
+            "at": None,
+        }
+    ]
+
+
+def _string_or_none(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str) and value:
+        return [value]
+    if isinstance(value, list):
+        return [str(v) for v in value if isinstance(v, str) and v]
+    return []
 
 
 def _row_to_search_dict(r, score_key: str) -> dict:
@@ -559,6 +742,12 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == uuid.UUID(user_id)))
     setting = result.scalar_one_or_none()
     s = (setting.settings if setting else {}) or {}
+
+    if s.get("memory_provider") == "xtrace":
+        if xtrace_memory_configured():
+            return XTraceProvider(db, embedder=resolve_embedder())
+        log.warning("memory_provider=xtrace but XTrace is not configured; falling back to builtin.")
+        return BuiltinProvider(db, embedder=resolve_embedder())
 
     if s.get("memory_provider") == "mem0":
         raw_key = s.get("mem0_api_key", "")

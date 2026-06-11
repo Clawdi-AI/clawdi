@@ -5,6 +5,7 @@ import {
 	ArrowDown,
 	ArrowDownNarrowWide,
 	ArrowUpNarrowWide,
+	Brain,
 	Clock,
 	Hash,
 	MessageSquare,
@@ -16,6 +17,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { MemoryRelationshipList } from "@/components/memories/memory-relationship-list";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { MessageList } from "@/components/sessions/message-list";
@@ -53,6 +55,22 @@ export default function SessionDetailPage() {
 			if (status >= 400 && status < 500) return false;
 			return failureCount < 2;
 		},
+	});
+
+	const { data: sessionMemories, isLoading: isSessionMemoriesLoading } = useQuery({
+		queryKey: ["memories", "session", id],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/memories", {
+					params: {
+						query: {
+							source_session_id: id,
+							page_size: 12,
+						},
+					},
+				}),
+			),
+		enabled: !!session,
 	});
 
 	// Direction toggle: "desc" (newest-first, default) is the most
@@ -268,6 +286,30 @@ export default function SessionDetailPage() {
 					title={session.local_session_id}
 				/>
 			</DetailStats>
+
+			<DetailPanel className="space-y-3">
+				<div className="flex items-center justify-between gap-3">
+					<div className="space-y-1">
+						<div className="flex items-center gap-2">
+							<Brain className="size-4 text-muted-foreground" />
+							<h2 className="text-sm font-semibold">Memories learned from this session</h2>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							These are account-level memories generated from this session and available to agents
+							later.
+						</p>
+					</div>
+					<span className="text-xs tabular-nums text-muted-foreground">
+						{sessionMemories?.total ?? 0}
+					</span>
+				</div>
+				<MemoryRelationshipList
+					memories={sessionMemories?.items ?? []}
+					isLoading={isSessionMemoriesLoading}
+					emptyMessage="No memories have been linked to this session yet."
+					limit={6}
+				/>
+			</DetailPanel>
 
 			{/* Direction toggle. Gated on `has_content` (not on
 			    `messages.length`) so it stays visible while pages

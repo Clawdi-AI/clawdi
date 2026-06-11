@@ -58,6 +58,8 @@ from app.services.session_content import (
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
+from app.services.xtrace_ingest_queue import enqueue_xtrace_session_ingest
+from app.services.xtrace_memory import xtrace_memory_configured
 
 router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
@@ -1232,9 +1234,11 @@ async def upload_session_content(
     # the file store and the row's content_hash is the source of truth;
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
+    parsed_messages: list[dict[str, object]] | None = None
     try:
         parsed = json.loads(data)
         if isinstance(parsed, list):
+            parsed_messages = [m for m in parsed if isinstance(m, dict)]
             session.related_refs = extract_related_refs(parsed) or None
     except (json.JSONDecodeError, ValueError, TypeError):
         # log.exception (not warning) so the traceback lands in logs —
@@ -1246,6 +1250,23 @@ async def upload_session_content(
         )
 
     await db.commit()
+
+    if parsed_messages is not None and xtrace_memory_configured():
+        try:
+            xtrace_job = await enqueue_xtrace_session_ingest(db, session=session)
+            if xtrace_job is not None:
+                log.info(
+                    "xtrace_memory_ingest_queued local_session_id=%s ingest_id=%s status=%s",
+                    local_session_id,
+                    xtrace_job.id,
+                    xtrace_job.status,
+                )
+        except Exception:
+            await db.rollback()
+            log.exception(
+                "xtrace_memory_ingest_failed local_session_id=%s",
+                local_session_id,
+            )
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 

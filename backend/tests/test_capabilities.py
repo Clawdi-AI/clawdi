@@ -31,6 +31,14 @@ def _patch_mem0_available(monkeypatch, *, available: bool) -> None:
         monkeypatch.setattr(mod, "mem0_available", lambda: available)
 
 
+def _patch_xtrace_configured(monkeypatch, *, configured: bool) -> None:
+    import app.routes.capabilities as cap
+    import app.routes.settings as st
+
+    for mod in (cap, st):
+        monkeypatch.setattr(mod, "xtrace_memory_configured", lambda: configured)
+
+
 @pytest.mark.asyncio
 async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
     _patch_mem0_available(monkeypatch, available=False)
@@ -45,6 +53,14 @@ async def test_capabilities_includes_mem0_when_available(client: httpx.AsyncClie
     r = await client.get("/api/capabilities")
     assert r.status_code == 200, r.text
     assert "mem0" in r.json()["memory_providers"]
+
+
+@pytest.mark.asyncio
+async def test_capabilities_includes_xtrace_when_configured(client: httpx.AsyncClient, monkeypatch):
+    _patch_xtrace_configured(monkeypatch, configured=True)
+    r = await client.get("/api/capabilities")
+    assert r.status_code == 200, r.text
+    assert "xtrace" in r.json()["memory_providers"]
 
 
 @pytest.mark.asyncio
@@ -73,3 +89,26 @@ async def test_settings_accepts_mem0_when_available(client: httpx.AsyncClient, m
     _patch_mem0_available(monkeypatch, available=True)
     r = await client.patch("/api/settings", json={"settings": {"memory_provider": "mem0"}})
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_settings_refuses_xtrace_when_unconfigured(client: httpx.AsyncClient, monkeypatch):
+    _patch_xtrace_configured(monkeypatch, configured=False)
+    r = await client.patch("/api/settings", json={"settings": {"memory_provider": "xtrace"}})
+    assert r.status_code == 400, r.text
+    assert r.json().get("detail", {}).get("code") == "memory_provider_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_settings_accepts_xtrace_when_configured(client: httpx.AsyncClient, monkeypatch):
+    _patch_xtrace_configured(monkeypatch, configured=True)
+    r = await client.patch("/api/settings", json={"settings": {"memory_provider": "xtrace"}})
+    assert r.status_code == 200, r.text
+
+
+def test_xtrace_worker_is_opt_in_by_default():
+    from app.core.config import Settings
+
+    settings = Settings()
+    assert settings.xtrace_memory_worker_enabled is False
+    assert settings.xtrace_memory_worker_batch_size == 1
