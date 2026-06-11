@@ -92,18 +92,14 @@ class AdminRuntimeStateUpsert(BaseModel):
 
     @field_validator("control_plane")
     @classmethod
-    def _validate_control_plane(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _validate_control_plane(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None and "apiUrl" in value:
             raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
         return value
 
     @field_validator("mcp", "tools")
     @classmethod
-    def _validate_tool_desired_state(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None:
             _reject_plaintext_tool_secret(value)
         return value
