@@ -135,11 +135,11 @@ async def deliver_telegram_agent_webhook(
     except httpx.HTTPError:
         webhook_deliveries.labels(outcome="failure").inc()
         return False
-    if response.status_code >= 400:
-        webhook_deliveries.labels(outcome="failure").inc()
-        return False
-    webhook_deliveries.labels(outcome="success").inc()
-    return True
+    if response.status_code < 400:
+        webhook_deliveries.labels(outcome="success").inc()
+        return True
+    webhook_deliveries.labels(outcome="failure").inc()
+    return False
 
 
 def _webhook_url_with_password(url: str, password: str) -> str:

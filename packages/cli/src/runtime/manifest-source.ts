@@ -21,14 +21,59 @@ export interface RuntimeManifestLoad {
 	sourcePath: string;
 	offline: boolean;
 	secretValues?: Record<string, string>;
+	etag?: string;
+}
+
+export interface RuntimeManifestNotModified {
+	source: "remote-datasource";
+	sourcePath: string;
+	notModified: true;
+	etag?: string;
 }
 
 export interface RuntimeManifestFailure {
 	mode: "repair" | "manifest-rejected";
-	stage: "detect" | "local" | "network";
+	stage: "detect" | "local" | "network" | "auth";
 	errors: string[];
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
+}
+
+export interface RuntimeChannelAgentLink {
+	id: string;
+	account_id: string;
+	agent_id: string;
+	status: string;
+	agent_token: string | null;
+}
+
+export interface RuntimeChannelAccount {
+	id: string;
+	provider: "telegram" | "discord" | "whatsapp" | "imessage";
+	name: string;
+	status: string;
+	visibility: "private" | "public";
+	runtime_links: RuntimeChannelAgentLink[];
+}
+
+export interface RuntimeChannelsLoad {
+	channels: RuntimeChannelAccount[];
+	source: "remote-datasource";
+	sourcePath: string;
+	etag?: string;
+}
+
+export interface RuntimeChannelsNotModified {
+	source: "remote-datasource";
+	sourcePath: string;
+	notModified: true;
+	etag?: string;
+}
+
+export interface RuntimeChannelsFailure {
+	mode: "repair";
+	stage: "network" | "auth";
+	errors: string[];
 }
 
 interface ExistingManifestState {
@@ -54,6 +99,47 @@ const runtimeSourceSchema = z
 	.strict();
 
 type RuntimeSource = z.infer<typeof runtimeSourceSchema>;
+
+class RuntimeAuthError extends Error {
+	constructor(
+		readonly resource: "manifest" | "channels",
+		readonly status: number,
+		detail: string,
+	) {
+		super(
+			`runtime ${resource} authentication failed: HTTP ${status}${
+				detail ? ` ${detail.slice(0, 200)}` : ""
+			}`,
+		);
+	}
+}
+
+const runtimeChannelAgentLinkSchema = z
+	.object({
+		id: z.string().min(1),
+		account_id: z.string().min(1),
+		agent_id: z.string().min(1),
+		status: z.string().min(1),
+		agent_token: z.string().min(1).nullable().optional(),
+	})
+	.passthrough()
+	.transform((link) => ({
+		...link,
+		agent_token: link.agent_token ?? null,
+	}));
+
+const runtimeChannelAccountSchema = z
+	.object({
+		id: z.string().min(1),
+		provider: z.enum(["telegram", "discord", "whatsapp", "imessage"]),
+		name: z.string().min(1),
+		status: z.string().min(1),
+		visibility: z.enum(["private", "public"]).default("private"),
+		runtime_links: z.array(runtimeChannelAgentLinkSchema).default([]),
+	})
+	.passthrough();
+
+const runtimeChannelsSchema = z.array(runtimeChannelAccountSchema);
 
 function readJsonFile(path: string): unknown {
 	return JSON.parse(readFileSync(path, "utf-8")) as unknown;
@@ -116,9 +202,15 @@ function rawGeneration(value: unknown): number | null {
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
-function runtimeCredential(source: RuntimeSource): string | null {
+function runtimeCredential(source: RuntimeSource, paths: RuntimePaths): string | null {
 	const token = process.env[source.auth.env]?.trim();
-	return token || null;
+	if (token) return token;
+	try {
+		const fileToken = readFileSync(join(paths.runRoot, "sync", "auth-token"), "utf-8").trim();
+		return fileToken || null;
+	} catch {
+		return null;
+	}
 }
 
 function resolveRuntimeSource(paths: RuntimePaths): RuntimeSource {
@@ -154,12 +246,23 @@ export function runtimeSourceAuthEnv(paths: RuntimePaths): string {
 	return resolveRuntimeSource(paths).auth.env;
 }
 
-async function fetchRuntimeManifestPayload(paths: RuntimePaths): Promise<{
-	url: string;
-	raw: unknown;
-}> {
+async function fetchRuntimeManifestPayload(
+	paths: RuntimePaths,
+	opts: { ifNoneMatch?: string } = {},
+): Promise<
+	| {
+			url: string;
+			raw: unknown;
+			etag?: string;
+	  }
+	| {
+			url: string;
+			notModified: true;
+			etag?: string;
+	  }
+> {
 	const source = resolveRuntimeSource(paths);
-	const token = runtimeCredential(source);
+	const token = runtimeCredential(source, paths);
 	if (!token) {
 		throw new Error(`missing ${source.auth.env}`);
 	}
@@ -176,21 +279,194 @@ async function fetchRuntimeManifestPayload(paths: RuntimePaths): Promise<{
 			headers: {
 				accept: "application/json",
 				authorization: `Bearer ${token}`,
+				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,
 		});
+		const etag = response.headers.get("etag") ?? undefined;
+		if (response.status === 304) {
+			return { url, notModified: true, etag };
+		}
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
+			if (response.status === 401 || response.status === 403) {
+				throw new RuntimeAuthError("manifest", response.status, detail);
+			}
 			throw new Error(
 				`runtime manifest request failed: HTTP ${response.status}${
 					detail ? ` ${detail.slice(0, 200)}` : ""
 				}`,
 			);
 		}
-		return { url, raw: await response.json() };
+		return { url, raw: await response.json(), etag };
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+function runtimeChannelsUrl(source: RuntimeSource): string {
+	const url = new URL(source.url);
+	const manifestSuffix = "/api/runtime/manifest";
+	const path = url.pathname.replace(/\/+$/, "");
+	if (path.endsWith(manifestSuffix)) {
+		const prefix = path.slice(0, -manifestSuffix.length);
+		url.pathname = `${prefix}/api/channels`;
+	} else {
+		url.pathname = new URL("api/channels", url).pathname;
+	}
+	url.search = "";
+	url.hash = "";
+	return url.toString();
+}
+
+async function fetchRuntimeChannelsPayload(
+	paths: RuntimePaths,
+	opts: { ifNoneMatch?: string } = {},
+): Promise<
+	| {
+			url: string;
+			raw: unknown;
+			etag?: string;
+	  }
+	| {
+			url: string;
+			notModified: true;
+			etag?: string;
+	  }
+> {
+	const source = resolveRuntimeSource(paths);
+	const token = runtimeCredential(source, paths);
+	if (!token) {
+		throw new Error(`missing ${source.auth.env}`);
+	}
+	const url = runtimeChannelsUrl(source);
+	const timeoutMs =
+		Number.parseInt(process.env.CLAWDI_RUNTIME_CHANNELS_TIMEOUT_MS ?? "", 10) ||
+		source.timeoutMs ||
+		15000;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, {
+			method: "GET",
+			headers: {
+				accept: "application/json",
+				authorization: `Bearer ${token}`,
+				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
+			},
+			signal: controller.signal,
+		});
+		const etag = response.headers.get("etag") ?? undefined;
+		if (response.status === 304) {
+			return { url, notModified: true, etag };
+		}
+		if (!response.ok) {
+			const detail = await response.text().catch(() => "");
+			if (response.status === 401 || response.status === 403) {
+				throw new RuntimeAuthError("channels", response.status, detail);
+			}
+			throw new Error(
+				`runtime channels request failed: HTTP ${response.status}${
+					detail ? ` ${detail.slice(0, 200)}` : ""
+				}`,
+			);
+		}
+		return { url, raw: await response.json(), etag };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+export async function loadRemoteRuntimeManifest(
+	paths: RuntimePaths,
+	opts: { ifNoneMatch?: string } = {},
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure | RuntimeManifestNotModified> {
+	let fetched: Awaited<ReturnType<typeof fetchRuntimeManifestPayload>>;
+	try {
+		fetched = await fetchRuntimeManifestPayload(paths, opts);
+	} catch (error) {
+		return {
+			mode: "repair",
+			stage: runtimeFetchFailureStage(error),
+			errors: [
+				`could not fetch runtime manifest: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			],
+		};
+	}
+	if ("notModified" in fetched) {
+		return {
+			source: "remote-datasource",
+			sourcePath: fetched.url,
+			notModified: true,
+			etag: fetched.etag ?? opts.ifNoneMatch,
+		};
+	}
+
+	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
+	try {
+		normalized = normalizeManifestPayload(fetched.raw);
+	} catch (error) {
+		return {
+			mode: "manifest-rejected",
+			stage: "network",
+			errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
+			rejectedGeneration: rawGeneration(fetched.raw),
+			activeGeneration: loadExistingState(paths).generation ?? null,
+		};
+	}
+	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
+	if ("manifest" in loaded) {
+		return { ...loaded, etag: fetched.etag };
+	}
+	return loaded;
+}
+
+export async function loadRemoteRuntimeChannels(
+	paths: RuntimePaths,
+	opts: { ifNoneMatch?: string } = {},
+): Promise<RuntimeChannelsLoad | RuntimeChannelsFailure | RuntimeChannelsNotModified> {
+	let fetched: Awaited<ReturnType<typeof fetchRuntimeChannelsPayload>>;
+	try {
+		fetched = await fetchRuntimeChannelsPayload(paths, opts);
+	} catch (error) {
+		return {
+			mode: "repair",
+			stage: runtimeFetchFailureStage(error),
+			errors: [
+				`could not fetch runtime channels: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			],
+		};
+	}
+	if ("notModified" in fetched) {
+		return {
+			source: "remote-datasource",
+			sourcePath: fetched.url,
+			notModified: true,
+			etag: fetched.etag ?? opts.ifNoneMatch,
+		};
+	}
+	const parsed = runtimeChannelsSchema.safeParse(fetched.raw);
+	if (!parsed.success) {
+		return {
+			mode: "repair",
+			stage: "network",
+			errors: zodErrors(parsed.error),
+		};
+	}
+	return {
+		channels: parsed.data,
+		source: "remote-datasource",
+		sourcePath: fetched.url,
+		etag: fetched.etag,
+	};
+}
+
+function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
+	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
 function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
@@ -199,7 +475,7 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
-		environmentId: hosted.appId || hosted.deploymentId,
+		environmentId: hosted.environmentId || hosted.appId || hosted.deploymentId,
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
 		issuedAt: hosted.issuedAt,
@@ -238,7 +514,8 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 			sourceSchemaVersion: hosted.schemaVersion,
 			system: hosted.system ?? null,
 			providers: hosted.providers ?? {},
-			channels: hosted.channels ?? {},
+			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
+			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 		},
 		liveSync: hosted.liveSync,
 		mitmProfiles: hostedManifestMitmProfiles(hosted),
@@ -266,7 +543,7 @@ function hostedRuntimeRunSettings(
 }
 
 function hostedControlPlaneApiUrl(hosted: HostedRuntimeManifest): string {
-	const explicit = hosted.controlPlane.cloudApiUrl || hosted.controlPlane.apiUrl;
+	const explicit = hosted.controlPlane.cloudApiUrl;
 	if (explicit) return explicit;
 	const manifestUrl = hosted.controlPlane.manifestUrl;
 	if (!manifestUrl) return new URL(runtimeManifestUrlFromEnvOrSource()).origin;
@@ -372,9 +649,13 @@ export async function loadRuntimeManifest(
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
 	const manifestPath = opts.manifestPath ?? runtimeManifestFixturePath();
 	if (!manifestPath) {
-		let fetched: { url: string; raw: unknown };
+		let fetched: { url: string; raw: unknown; etag?: string };
 		try {
-			fetched = await fetchRuntimeManifestPayload(paths);
+			const result = await fetchRuntimeManifestPayload(paths);
+			if ("notModified" in result) {
+				throw new Error("runtime manifest datasource returned 304 without If-None-Match");
+			}
+			fetched = result;
 		} catch (error) {
 			const cached = loadLastGoodManifest(paths);
 			if ("manifest" in cached) return cached;
@@ -402,7 +683,9 @@ export async function loadRuntimeManifest(
 				activeGeneration: loadExistingState(paths).generation ?? null,
 			};
 		}
-		return validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
+		const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
+		if ("manifest" in loaded) return { ...loaded, etag: fetched.etag };
+		return loaded;
 	}
 
 	if (!isAbsolute(manifestPath)) {
@@ -447,6 +730,21 @@ export async function loadRuntimeManifest(
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
+	const missingSecretRefs = manifestSecretRefsMissingValues(
+		normalized.manifest,
+		normalized.secretValues,
+	);
+	if (missingSecretRefs.length > 0) {
+		return {
+			mode: "manifest-rejected",
+			stage: "local",
+			errors: [
+				`runtime manifest fixture references secretValues (${missingSecretRefs.join(", ")}); refusing fixture without inline secretValues`,
+			],
+			rejectedGeneration: normalized.manifest.generation,
+			activeGeneration: loadExistingState(paths).generation ?? null,
+		};
+	}
 
 	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
 }
@@ -476,6 +774,16 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				errors: [`cached ${expiryError}`],
 			};
 		}
+		const secretRefs = manifestSecretRefs(manifest);
+		if (secretRefs.length > 0) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					`cached manifest references secretValues (${secretRefs.join(", ")}); refusing offline boot without a fresh runtime manifest`,
+				],
+			};
+		}
 		return {
 			manifest,
 			source: "last-good-cache",
@@ -495,6 +803,34 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 	}
 }
 
+function manifestSecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	collectSecretRefs(manifest, refs);
+	return [...refs].sort();
+}
+
+function manifestSecretRefsMissingValues(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): string[] {
+	const normalizedValues = normalizeSecretValues(secretValues ?? {});
+	return manifestSecretRefs(manifest).filter((ref) => normalizedValues[ref] === undefined);
+}
+
+function collectSecretRefs(value: unknown, refs: Set<string>): void {
+	if (!value || typeof value !== "object") return;
+	if (Array.isArray(value)) {
+		for (const item of value) collectSecretRefs(item, refs);
+		return;
+	}
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
+			refs.add(entry);
+		}
+		collectSecretRefs(entry, refs);
+	}
+}
+
 function validateLoadedManifest(
 	normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> },
 	paths: RuntimePaths,
@@ -507,11 +843,6 @@ function validateLoadedManifest(
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
 			`manifest instanceId ${manifest.instanceId} does not match last-good instanceId ${existing.instanceId}`,
-		);
-	}
-	if (existing.generation !== undefined && manifest.generation < existing.generation) {
-		semanticErrors.push(
-			`manifest generation ${manifest.generation} is older than last-good generation ${existing.generation}`,
 		);
 	}
 	if (semanticErrors.length > 0) {

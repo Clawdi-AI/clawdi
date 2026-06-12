@@ -167,6 +167,10 @@ Bot pool:
 - Each item includes `access` and `capabilities`. The current access values are
   `owner` and `public`. UI and hosted runtime code should prefer capabilities
   over inferring behavior from `visibility`.
+- Each item includes `link_count`, optional `max_links`, and `available`.
+  `max_links` comes from account config and caps active bot-agent links for a
+  shared bot. Full bots remain visible but return `available = false`, expose
+  `link_agent/pair_chat = false`, and reject new link creation with 409.
 - The pool does not grant ownership. Public bot provider credentials, webhook
   secrets, account config, archive, and command sync remain admin-managed.
 
@@ -308,8 +312,10 @@ Required behavior:
   `.local`/`.localhost` names, private DNS results, and unresolved DNS names
   are rejected.
 - Telegram and BlueBubbles webhook delivery only acknowledges messages after a
-  successful `2xx` or `3xx` response. `4xx`, `5xx`, DNS failures, and network
-  failures keep the message pending for retry or TTL drop.
+  successful `2xx` or `3xx` response. Telegram makes one inline delivery attempt
+  and leaves `5xx`, network, `4xx`, and DNS failures pending for
+  `ChannelWebhookDeliveryWorker` retry or TTL drop. BlueBubbles keeps short
+  in-process retries for `5xx` or network failures.
 
 ## Message Routing Model
 
@@ -339,6 +345,16 @@ Outbound sends:
 - Durable sends go through `channel_deliveries` and `pdm run channels-worker`.
 - Provider-specific direct replies and SDK-compatible sends still converge on
   the same binding/link ownership checks.
+
+Known operational limits:
+
+- Retention pruning intentionally deletes delivered rows and old unbound inbound
+  rows only. Pending bound inbound rows for disabled or archived bot-agent links
+  stay visible for health/debug investigation and require an operator sweep if
+  they should be cleared.
+- `channel_deliveries` claiming is global FIFO with retry backoff. Messages to
+  the same external chat can be observed out of order when an earlier send is
+  retried and a later send succeeds first.
 
 ## API Boundary
 
@@ -424,6 +440,9 @@ Provider ingress:
 Agent SDK emulation:
 
 - Telegram Bot API-compatible routes under `/api/channels/telegram/bot/{token}`.
+  Telegram `agent_token` values deliberately keep a Bot API-looking
+  `<9-digit bot id>:<secret>` shape so SDKs and OpenClaw-compatible clients
+  that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/api/channels/discord`.
 - WhatsApp Graph and Baileys-compatible routes under `/api/channels/whatsapp`.
 - BlueBubbles-compatible REST and Socket.IO routes under

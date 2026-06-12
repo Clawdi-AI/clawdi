@@ -25,6 +25,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.ai_providers import router as ai_providers_router
+from app.routes.audit import router as audit_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.channels import router as channels_router
@@ -37,6 +38,7 @@ from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
+from app.routes.runtime import router as runtime_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
@@ -224,6 +226,7 @@ async def request_validation_exception_handler(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(ai_providers_router)
+app.include_router(audit_router)
 app.include_router(channels_router)
 app.include_router(cli_auth_router)
 app.include_router(sessions_router)
@@ -234,6 +237,7 @@ app.include_router(sessions_router)
 app.include_router(public_sessions_router)
 app.include_router(dashboard_router)
 app.include_router(projects_router)
+app.include_router(runtime_router)
 app.include_router(skills_router)
 app.include_router(skills_project_router)
 app.include_router(sync_router)

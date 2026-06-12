@@ -56,6 +56,7 @@ from app.services.channels import (
     parse_pair_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
+    record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
     record_telegram_update_references,
     resolve_channel_agent_by_token,
@@ -82,6 +83,12 @@ router = APIRouter(prefix="/api/channels/telegram", tags=["channels"])
 
 @router.api_route(
     "/bot/{agent_token}/{method}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    response_model=None,
+)
+@router.api_route(
+    "/bot{agent_token}/{method}",
     methods=["GET", "POST"],
     include_in_schema=False,
     response_model=None,
@@ -300,6 +307,11 @@ async def telegram_bot_api(
     include_in_schema=False,
     response_model=None,
 )
+@router.get(
+    "/file/bot{agent_token}/{file_path:path}",
+    include_in_schema=False,
+    response_model=None,
+)
 async def telegram_file_api(
     agent_token: str,
     file_path: str,
@@ -421,7 +433,6 @@ async def telegram_webhook(
     )
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
-        delivered_any = False
         for routed_message, binding in messages:
             delivered = await _deliver_telegram_agent_webhook_for_binding(
                 db,
@@ -431,9 +442,7 @@ async def telegram_webhook(
             )
             if delivered:
                 routed_message.delivered_at = delivered_at
-                delivered_any = True
-        if delivered_any:
-            await db.commit()
+        await db.commit()
     return TelegramWebhookResponse(
         ok=True,
         paired=binding_result.paired,
@@ -460,6 +469,12 @@ async def _deliver_telegram_agent_webhook_for_binding(
         return False
     link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
     if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+        await record_inactive_bot_agent_link_event(
+            db,
+            account=account,
+            binding=binding,
+            link=link,
+        )
         return False
     return await _deliver_telegram_agent_webhook(account, link, payload)
 

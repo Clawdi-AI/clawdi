@@ -6,6 +6,7 @@ import signal
 
 from app.core.database import async_session_factory, engine
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
+from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 
@@ -17,6 +18,7 @@ def build_channel_workers() -> tuple[
     ChannelDeliveryWorker,
     ChannelWebhookDeliveryWorker,
     DiscordGatewayWorker,
+    ChannelMessageRetentionWorker,
 ]:
     """Build the Clawdi-owned channel worker stack.
 
@@ -27,6 +29,7 @@ def build_channel_workers() -> tuple[
         ChannelDeliveryWorker(async_session_factory),
         ChannelWebhookDeliveryWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),
+        ChannelMessageRetentionWorker(async_session_factory),
     )
 
 

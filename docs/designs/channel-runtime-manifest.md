@@ -246,6 +246,10 @@ drop-in compatibility needs one of:
   `/api/channels/telegram/file/bot<token>/<file_path>`, or
 - a target adapter that knows Clawdi's slashful `/bot/{token}` route shape.
 
+The Telegram `agent_token` is intentionally generated in Bot API-looking
+`<9-digit bot id>:<secret>` form. Keep that shape stable because SDKs and
+OpenClaw-compatible clients may validate it before sending requests.
+
 For BlueBubbles, many clients append `/api/v1` under `BLUEBUBBLES_SERVER_URL`.
 Full drop-in compatibility needs either
 `/api/channels/imessage/bluebubbles/api/v1/*` aliases or a target adapter that

@@ -5,7 +5,7 @@ import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 
 export type RuntimeBootMode = "normal" | "degraded-offline" | "manifest-rejected" | "repair";
-export type RuntimeBootStage = "detect" | "local" | "network" | "config" | "final";
+export type RuntimeBootStage = "detect" | "local" | "network" | "auth" | "config" | "final";
 
 export interface RuntimeBootStatus {
 	schemaVersion: "clawdi.runtimeBootStatus.v1";
@@ -70,6 +70,7 @@ export interface RuntimeBootStatus {
 		cliNpmPrefix: string;
 		cliBootstrapStatus: string;
 		bootStatus: string;
+		runtimeWatchStatus: string;
 		cloudStatus: string;
 		cloudResult: string;
 		runRoot: string;
@@ -107,6 +108,7 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cliNpmPrefix: paths.cliNpmPrefix,
 		cliBootstrapStatus: paths.cliBootstrapStatus,
 		bootStatus: paths.bootStatus,
+		runtimeWatchStatus: paths.runtimeWatchStatus,
 		cloudStatus: paths.cloudStatus,
 		cloudResult: paths.cloudResult,
 		runRoot: paths.runRoot,
@@ -204,6 +206,21 @@ export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRun
 				instance_id: status.instanceId ?? null,
 				errors: status.errors,
 			},
+		},
+		0o644,
+	);
+}
+
+export function writeRuntimeWatchStatus(
+	event: Record<string, unknown>,
+	paths = getRuntimePaths(),
+): void {
+	writeJson(
+		paths.runtimeWatchStatus,
+		{
+			schemaVersion: "clawdi.runtimeWatchStatus.v1",
+			timestamp: new Date().toISOString(),
+			event,
 		},
 		0o644,
 	);

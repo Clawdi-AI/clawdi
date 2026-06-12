@@ -422,7 +422,7 @@ func TestRewritePathPreservesBaseAndQueries(t *testing.T) {
 	}
 }
 
-func TestValidateProfileRejectsPassthrough(t *testing.T) {
+func TestValidateProfileAcceptsPassthroughWithoutRewrite(t *testing.T) {
 	err := validateProfile(profile{
 		ID:   "local-passthrough",
 		Kind: "passthrough",
@@ -432,11 +432,67 @@ func TestValidateProfileRejectsPassthrough(t *testing.T) {
 			PathPrefix: "/",
 		},
 	})
-	if err == nil {
-		t.Fatal("expected passthrough profile to be rejected")
+	if err != nil {
+		t.Fatalf("expected passthrough profile to be accepted, got %v", err)
 	}
-	if !strings.Contains(err.Error(), `unsupported kind "passthrough"`) {
-		t.Fatalf("unexpected passthrough rejection: %v", err)
+
+	err = validateProfile(profile{
+		ID:   "bad-passthrough",
+		Kind: "passthrough",
+		Match: profileMatch{
+			Scheme:     "http",
+			Host:       "example.com",
+			PathPrefix: "/",
+		},
+		Rewrite: rewriteRule{UpstreamBaseURL: "https://router.test"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "passthrough profiles must not set") {
+		t.Fatalf("expected passthrough rewrite rejection, got %v", err)
+	}
+}
+
+func TestMatchRoutePrefersManagedRewriteBeforePassthrough(t *testing.T) {
+	proxy := proxyServer{
+		profiles: []profile{
+			{
+				ID:       "managed",
+				Kind:     "provider",
+				Priority: 100,
+				Match: profileMatch{
+					Scheme:     "https",
+					Host:       "api.openai.com",
+					PathPrefix: "/v1/",
+					Headers: map[string]headerMatcher{
+						"authorization": {
+							Type:   "equals",
+							Value:  "clawdi-mitm-placeholder",
+							Prefix: "Bearer ",
+						},
+					},
+				},
+				Rewrite: rewriteRule{UpstreamBaseURL: "https://router.test/responses"},
+			},
+			{
+				ID:       "byo",
+				Kind:     "passthrough",
+				Priority: 200,
+				Match: profileMatch{
+					Scheme:     "https",
+					Host:       "api.openai.com",
+					PathPrefix: "/",
+				},
+			},
+		},
+	}
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer clawdi-mitm-placeholder")
+	if route := proxy.matchRoute("api.openai.com", "https", "/v1/responses", "", headers); route == nil || route.profile.ID != "managed" {
+		t.Fatalf("expected managed route, got %#v", route)
+	}
+	headers.Set("Authorization", "Bearer sk-user-byo")
+	if route := proxy.matchRoute("api.openai.com", "https", "/v1/responses", "", headers); route == nil || route.profile.ID != "byo" {
+		t.Fatalf("expected BYO passthrough route, got %#v", route)
 	}
 }
 

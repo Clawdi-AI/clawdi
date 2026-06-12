@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -8,9 +9,24 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { getCliVersion } from "../lib/version";
+import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
+import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
-import { convergeRuntimeManifest, loadRuntimeManifest } from "../runtime/manifest";
-import { runtimeSourceAuthEnv } from "../runtime/manifest-source";
+import {
+	convergeRuntimeManifest,
+	loadRuntimeManifest,
+	withRuntimeConvergeLock,
+} from "../runtime/manifest";
+import {
+	loadRemoteRuntimeChannels,
+	loadRemoteRuntimeManifest,
+	type RuntimeChannelsLoad,
+	type RuntimeChannelsNotModified,
+	type RuntimeManifestLoad,
+	type RuntimeManifestNotModified,
+	runtimeSourceAuthEnv,
+} from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -19,6 +35,7 @@ import {
 	type RuntimeBootStage,
 	readRuntimeBootStatus,
 	writeRuntimeBootStatus,
+	writeRuntimeWatchStatus,
 } from "../runtime/state";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -1109,11 +1126,29 @@ interface RuntimeInitOptions {
 	manifestFile?: string;
 }
 
+interface RuntimeWatchOptions {
+	intervalMs?: number | string;
+	selfHealMs?: number | string;
+	once?: boolean;
+	json?: boolean;
+}
+
 interface RuntimeDoctorCheck {
 	name: string;
 	ok: boolean;
 	detail?: string;
 	hint?: string;
+}
+
+interface RuntimeApplyResult {
+	convergence: ReturnType<typeof convergeRuntimeManifest>;
+	cliUpdate: RuntimeCliUpdateResult;
+}
+
+interface RuntimeApplyOptions {
+	continueOnCliUpdateError?: boolean;
+	deferCliInstall?: boolean;
+	deferCliInstallReason?: string;
 }
 
 function hasRuntimeCredential(input: {
@@ -1123,6 +1158,11 @@ function hasRuntimeCredential(input: {
 	if (input.manifestPath) return true;
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
+	try {
+		if (readFileSync(join(paths.runRoot, "sync", "auth-token"), "utf-8").trim()) return true;
+	} catch {
+		// Fall through to the configured auth environment variable.
+	}
 	try {
 		return Boolean(process.env[runtimeSourceAuthEnv(paths)]?.trim());
 	} catch {
@@ -1153,6 +1193,136 @@ function readable(path: string): boolean {
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+function readRuntimeManifestEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
+	if (!existsSync(paths.manifestEtag)) return undefined;
+	const etag = readFileSync(paths.manifestEtag, "utf-8").trim();
+	return etag || undefined;
+}
+
+function writeRuntimeManifestEtag(
+	paths: ReturnType<typeof getRuntimePaths>,
+	etag: string | undefined,
+): void {
+	if (!etag) {
+		rmSync(paths.manifestEtag, { force: true });
+		return;
+	}
+	writePrivateFileAtomic(paths.manifestEtag, `${etag}\n`, { mode: 0o644, dirMode: 0o755 });
+}
+
+function readRuntimeChannelsEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
+	if (!existsSync(paths.channelsEtag)) return undefined;
+	const etag = readFileSync(paths.channelsEtag, "utf-8").trim();
+	return etag || undefined;
+}
+
+function writeRuntimeChannelsEtag(
+	paths: ReturnType<typeof getRuntimePaths>,
+	etag: string | undefined,
+): void {
+	if (!etag) {
+		rmSync(paths.channelsEtag, { force: true });
+		return;
+	}
+	writePrivateFileAtomic(paths.channelsEtag, `${etag}\n`, { mode: 0o644, dirMode: 0o755 });
+}
+
+function parsePositiveMs(
+	value: number | string | undefined,
+	fallback: number,
+	name: string,
+): number {
+	if (value === undefined) return fallback;
+	const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		throw new Error(`${name} must be a positive integer number of milliseconds`);
+	}
+	return parsed;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+const RUNTIME_WATCH_PROGRAM = "clawdi-runtime-watch";
+
+function supervisorctl(
+	paths: ReturnType<typeof getRuntimePaths>,
+	args: string[],
+	opts: { allowNonZero?: boolean } = {},
+): string {
+	const command = process.env.CLAWDI_SUPERVISORCTL_PATH?.trim() || "supervisorctl";
+	const result = spawnSync(command, ["-c", paths.supervisorConfig, ...args], {
+		encoding: "utf8",
+	});
+	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+	if (result.status === 0 || opts.allowNonZero) return output;
+	const action = args.join(" ");
+	throw new Error(
+		`supervisorctl ${action} failed${result.status === null ? "" : ` (${result.status})`}${
+			result.error ? `: ${result.error.message}` : ""
+		}${output ? `: ${output.slice(0, 1000)}` : ""}`,
+	);
+}
+
+function applySupervisorRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): void {
+	const targets = supervisorRuntimeUpdateTargets(paths);
+	supervisorctl(paths, ["reread"]);
+	for (const target of targets) {
+		supervisorctl(paths, ["update", target]);
+	}
+}
+
+function supervisorRuntimeUpdateTargets(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	const targets = new Set<string>();
+	for (const program of supervisorStatusPrograms(paths)) {
+		targets.add(program);
+	}
+	for (const program of supervisorConfigPrograms(paths)) {
+		targets.add(program);
+	}
+	targets.delete(RUNTIME_WATCH_PROGRAM);
+	return [...targets].sort();
+}
+
+function supervisorStatusPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	const output = supervisorctl(paths, ["status"], { allowNonZero: true });
+	return output
+		.split(/\r?\n/)
+		.map((line) => line.trim().match(/^([A-Za-z0-9_.-]+)\s+/)?.[1])
+		.filter((program): program is string => Boolean(program));
+}
+
+function supervisorConfigPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
+	try {
+		const config = readFileSync(paths.supervisorConfig, "utf-8");
+		return [...config.matchAll(/^\[program:([^\]]+)\]$/gm)].map((match) => match[1]);
+	} catch {
+		return [];
+	}
+}
+
+function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void {
+	if (json) {
+		console.log(JSON.stringify(value));
+		return;
+	}
+	if (!value || typeof value !== "object") return;
+	const event = value as {
+		status?: string;
+		generation?: number;
+		error?: string;
+		errors?: string[];
+	};
+	if (event.status === "applied") {
+		console.log(`runtime watch applied generation ${event.generation ?? "unknown"}`);
+		return;
+	}
+	if (event.status === "error") {
+		console.error(`runtime watch error: ${event.error ?? event.errors?.[0] ?? "unknown error"}`);
 	}
 }
 
@@ -1293,8 +1463,124 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			return;
 		}
 
-		const convergence = convergeRuntimeManifest(loaded, paths);
+		let channelsLoad: RuntimeChannelsLoad | null = null;
+		let convergenceLoad = loaded;
+		if (loaded.source === "remote-datasource") {
+			const loadedChannels = await loadRemoteRuntimeChannels(paths);
+			if ("errors" in loadedChannels) {
+				const status = buildRuntimeBootStatus(
+					{
+						mode: loadedChannels.mode,
+						status: "error",
+						stage: loadedChannels.stage,
+						bootId,
+						runtimeMode: mode,
+						activeGeneration: null,
+						enabledRuntimes: [],
+						error: loadedChannels.errors[0],
+						errors: loadedChannels.errors,
+						exitCode: 21,
+						datasource: "RuntimeSource",
+						hostPolicy: hostPolicySummary(hostPolicy),
+					},
+					paths,
+				);
+				writeRuntimeBootStatus(status, paths);
+
+				if (opts.json || !process.stdout.isTTY) {
+					console.log(JSON.stringify(status, null, 2));
+				} else {
+					console.log(chalk.bold("clawdi runtime init"));
+					console.log(chalk.yellow(`  ${loadedChannels.mode}: ${loadedChannels.errors[0]}`));
+					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+				}
+				process.exitCode = 21;
+				return;
+			}
+			if ("notModified" in loadedChannels) {
+				const errors = ["runtime channels datasource returned 304 without If-None-Match"];
+				const status = buildRuntimeBootStatus(
+					{
+						mode: "repair",
+						status: "error",
+						stage: "network",
+						bootId,
+						runtimeMode: mode,
+						activeGeneration: null,
+						enabledRuntimes: [],
+						error: errors[0],
+						errors,
+						exitCode: 21,
+						datasource: "RuntimeSource",
+						hostPolicy: hostPolicySummary(hostPolicy),
+					},
+					paths,
+				);
+				writeRuntimeBootStatus(status, paths);
+
+				if (opts.json || !process.stdout.isTTY) {
+					console.log(JSON.stringify(status, null, 2));
+				} else {
+					console.log(chalk.bold("clawdi runtime init"));
+					console.log(chalk.yellow(`  repair: ${errors[0]}`));
+					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+				}
+				process.exitCode = 21;
+				return;
+			}
+			channelsLoad = loadedChannels;
+			convergenceLoad = applyRuntimeChannelsToManifestLoad(loaded, channelsLoad);
+		}
+
+		let applyResult: RuntimeApplyResult;
+		try {
+			applyResult = withRuntimeConvergeLock(paths, () =>
+				applyRuntimeDesiredState(convergenceLoad, paths),
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const status = buildRuntimeBootStatus(
+				{
+					mode: "repair",
+					status: "error",
+					stage: "final",
+					bootId,
+					runtimeMode: mode,
+					activeGeneration: convergenceLoad.manifest.generation,
+					instanceId: convergenceLoad.manifest.instanceId,
+					enabledRuntimes: [],
+					error: message,
+					errors: [message],
+					exitCode: 23,
+					datasource: "RuntimeSource",
+					hostPolicy: hostPolicySummary(hostPolicy),
+					manifestSource: {
+						type: convergenceLoad.source,
+						path: convergenceLoad.sourcePath,
+						offline: convergenceLoad.offline,
+					},
+				},
+				paths,
+			);
+			writeRuntimeBootStatus(status, paths);
+			if (opts.json || !process.stdout.isTTY) {
+				console.log(JSON.stringify(status, null, 2));
+			} else {
+				console.log(chalk.bold("clawdi runtime init"));
+				console.log(chalk.red(`  repair: ${message}`));
+				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+			}
+			process.exitCode = 23;
+			return;
+		}
+		const { convergence } = applyResult;
 		const installOk = convergence.installErrors.length === 0;
+		if (installOk && loaded.source === "remote-datasource") {
+			writeRuntimeManifestEtag(paths, loaded.etag);
+			if (channelsLoad) {
+				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+			}
+		}
 		const status = buildRuntimeBootStatus(
 			{
 				mode: convergence.mode,
@@ -1361,6 +1647,308 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		console.log(chalk.gray(`  status: ${paths.bootStatus}`));
 	}
 	process.exitCode = exitCode;
+}
+
+async function runtimeWatchTick(
+	paths: ReturnType<typeof getRuntimePaths>,
+	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+): Promise<Record<string, unknown>> {
+	const manifestEtag = opts.forceRefresh ? undefined : readRuntimeManifestEtag(paths);
+	const channelsEtag = opts.forceRefresh ? undefined : readRuntimeChannelsEtag(paths);
+	const [manifestLoad, channelsLoad] = await Promise.all([
+		loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag }),
+		loadRemoteRuntimeChannels(paths, { ifNoneMatch: channelsEtag }),
+	]);
+	if ("errors" in manifestLoad) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			mode: manifestLoad.mode,
+			stage: manifestLoad.stage,
+			errors: manifestLoad.errors,
+			error: manifestLoad.errors[0],
+			activeGeneration: manifestLoad.activeGeneration ?? null,
+			rejectedGeneration: manifestLoad.rejectedGeneration ?? null,
+		};
+	}
+	if ("errors" in channelsLoad) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			mode: channelsLoad.mode,
+			stage: channelsLoad.stage,
+			errors: channelsLoad.errors,
+			error: channelsLoad.errors[0],
+		};
+	}
+	if ("notModified" in manifestLoad && "notModified" in channelsLoad) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "not_modified",
+			sourcePath: manifestLoad.sourcePath,
+			etag: manifestLoad.etag ?? manifestEtag ?? null,
+			channelsSourcePath: channelsLoad.sourcePath,
+			channelsEtag: channelsLoad.etag ?? channelsEtag ?? null,
+		};
+	}
+
+	try {
+		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
+		const { convergence, cliUpdate } = withRuntimeConvergeLock(paths, () =>
+			applyRuntimeDesiredState(loaded, paths, {
+				continueOnCliUpdateError: true,
+				deferCliInstall: opts.deferCliInstall,
+				deferCliInstallReason: opts.deferCliInstallReason,
+			}),
+		);
+		const cliUpdateError =
+			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
+		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
+		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		if (convergence.installErrors.length === 0) {
+			applySupervisorRuntimeUpdate(paths);
+		}
+		if (errors.length > 0) {
+			if (convergence.installErrors.length === 0 && !("notModified" in manifestLoad)) {
+				writeRuntimeManifestEtag(paths, manifestLoad.etag);
+			}
+			if (convergence.installErrors.length === 0 && !("notModified" in channelsLoad)) {
+				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+			}
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				stage: cliUpdateError ? "cli-update" : "final",
+				errors,
+				error: errors[0],
+				activeGeneration: convergence.manifest.generation,
+				cliUpdate,
+				selfReexec,
+				convergence: convergence.outputs,
+			};
+		}
+		if (!("notModified" in manifestLoad)) {
+			writeRuntimeManifestEtag(paths, manifestLoad.etag);
+		}
+		if (!("notModified" in channelsLoad)) {
+			writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+		}
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "applied",
+			sourcePath: loaded.sourcePath,
+			etag:
+				"notModified" in manifestLoad
+					? (manifestLoad.etag ?? manifestEtag ?? null)
+					: (manifestLoad.etag ?? null),
+			channelsSourcePath: channelsLoad.sourcePath,
+			channelsEtag:
+				"notModified" in channelsLoad
+					? (channelsLoad.etag ?? channelsEtag ?? null)
+					: (channelsLoad.etag ?? null),
+			generation: convergence.manifest.generation,
+			instanceId: convergence.manifest.instanceId,
+			enabledRuntimes: convergence.enabledRuntimes,
+			cliUpdate,
+			selfReexec,
+			convergence: convergence.outputs,
+		};
+	} catch (error) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "final",
+			errors: [error instanceof Error ? error.message : String(error)],
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+function applyRuntimeDesiredState(
+	load: RuntimeManifestLoad,
+	paths: ReturnType<typeof getRuntimePaths>,
+	opts: RuntimeApplyOptions = {},
+): RuntimeApplyResult {
+	let cliUpdate: RuntimeCliUpdateResult;
+	try {
+		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
+			deferInstall: opts.deferCliInstall,
+			deferReason: opts.deferCliInstallReason,
+		});
+	} catch (error) {
+		if (!opts.continueOnCliUpdateError) throw error;
+		cliUpdate = runtimeCliUpdateError(load.manifest, paths, error);
+	}
+	const convergence = convergeRuntimeManifest(load, paths);
+	return { cliUpdate, convergence };
+}
+
+function runtimeCliUpdateError(
+	manifest: RuntimeManifestLoad["manifest"],
+	paths: ReturnType<typeof getRuntimePaths>,
+	error: unknown,
+): RuntimeCliUpdateResult {
+	const rawRegistry = (manifest.clawdiCli as Record<string, unknown> | undefined)?.registry;
+	return {
+		status: "error",
+		packageSpec: manifest.clawdiCli?.packageSpec?.trim() || null,
+		registry: typeof rawRegistry === "string" && rawRegistry.trim() ? rawRegistry.trim() : null,
+		npmPrefix: paths.cliNpmPrefix,
+		npmCache: paths.cliNpmCache,
+		activePath: paths.cliManagedBin,
+		activeTarget: null,
+		version: null,
+		error: error instanceof Error ? error.message : String(error),
+	};
+}
+
+function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolean {
+	if (cliUpdate.status === "installed") return true;
+	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
+	return cliUpdate.version !== getCliVersion();
+}
+
+async function runtimeWatchLoadForApply(
+	paths: ReturnType<typeof getRuntimePaths>,
+	manifestLoad: RuntimeManifestLoad | RuntimeManifestNotModified,
+	channelsLoad: RuntimeChannelsLoad | RuntimeChannelsNotModified,
+): Promise<RuntimeManifestLoad> {
+	const loaded =
+		"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
+	const channelDesired =
+		"notModified" in channelsLoad ? await loadFullRuntimeChannelsForWatch(paths) : channelsLoad;
+	return applyRuntimeChannelsToManifestLoad(loaded, channelDesired);
+}
+
+async function loadFullRuntimeManifestForWatch(
+	paths: ReturnType<typeof getRuntimePaths>,
+): Promise<RuntimeManifestLoad> {
+	const loaded = await loadRemoteRuntimeManifest(paths);
+	if ("notModified" in loaded) {
+		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
+	}
+	if ("errors" in loaded) {
+		throw new Error(loaded.errors.join("; "));
+	}
+	return loaded;
+}
+
+async function loadFullRuntimeChannelsForWatch(
+	paths: ReturnType<typeof getRuntimePaths>,
+): Promise<RuntimeChannelsLoad> {
+	const loaded = await loadRemoteRuntimeChannels(paths);
+	if ("notModified" in loaded) {
+		throw new Error("runtime channels datasource returned 304 without If-None-Match");
+	}
+	if ("errors" in loaded) {
+		throw new Error(loaded.errors.join("; "));
+	}
+	return loaded;
+}
+
+export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
+	const paths = getRuntimePaths();
+	const mode = detectRuntimeMode();
+	const intervalMs = parsePositiveMs(opts.intervalMs, 15_000, "--interval-ms");
+	const selfHealMs = parsePositiveMs(opts.selfHealMs, 300_000, "--self-heal-ms");
+	let lastFullFetchAt = Date.now();
+	let cliInstallRetryPending = false;
+	let cliInstallBackoffMs = 0;
+	let nextCliInstallRetryAt = 0;
+
+	if (mode !== "hosted") {
+		const event = {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "detect",
+			error: "runtime watch requires hosted runtime mode",
+			errors: ["runtime watch requires hosted runtime mode"],
+		};
+		emitRuntimeWatchEvent(event, opts.json);
+		process.exitCode = 2;
+		return;
+	}
+
+	try {
+		ensureRuntimeStateDirs(paths);
+	} catch (error) {
+		const message = `could not create runtime state directories: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
+		const event = {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "detect",
+			error: message,
+			errors: [message],
+		};
+		emitRuntimeWatchEvent(event, opts.json);
+		process.exitCode = 20;
+		return;
+	}
+
+	for (;;) {
+		const now = Date.now();
+		const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
+		const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+		const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
+		const event = await runtimeWatchTick(paths, {
+			forceRefresh,
+			deferCliInstall,
+			deferCliInstallReason: deferCliInstall
+				? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
+				: undefined,
+		});
+		const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
+		if (cliUpdateStatus === "error") {
+			cliInstallRetryPending = true;
+			cliInstallBackoffMs = nextCliInstallBackoffMs(cliInstallBackoffMs);
+			nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+		} else if (
+			cliUpdateStatus === "installed" ||
+			cliUpdateStatus === "current" ||
+			cliUpdateStatus === "not_requested"
+		) {
+			cliInstallRetryPending = false;
+			cliInstallBackoffMs = 0;
+			nextCliInstallRetryAt = 0;
+		}
+		if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
+		writeRuntimeWatchStatus(event, paths);
+		emitRuntimeWatchEvent(event, opts.json);
+		if (opts.once) {
+			if (event.status === "error") process.exitCode = 1;
+			else process.exitCode = 0;
+			return;
+		}
+		if (event.selfReexec === true) {
+			return;
+		}
+		await sleep(intervalMs);
+	}
+}
+
+function runtimeWatchCliUpdateStatus(
+	event: Record<string, unknown>,
+): RuntimeCliUpdateResult["status"] | null {
+	const cliUpdate = event.cliUpdate;
+	if (!cliUpdate || typeof cliUpdate !== "object" || Array.isArray(cliUpdate)) return null;
+	const status = (cliUpdate as Record<string, unknown>).status;
+	if (
+		status === "not_requested" ||
+		status === "current" ||
+		status === "installed" ||
+		status === "deferred" ||
+		status === "error"
+	) {
+		return status;
+	}
+	return null;
+}
+
+function nextCliInstallBackoffMs(previousMs: number): number {
+	if (previousMs <= 0) return 60_000;
+	return Math.min(previousMs * 2, 300_000);
 }
 
 export async function runtimeStatus(opts: { json?: boolean } = {}) {

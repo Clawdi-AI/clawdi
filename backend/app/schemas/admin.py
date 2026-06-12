@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
@@ -55,6 +55,61 @@ class AdminApiKeyCreate(BaseModel):
     label: str
     environment_id: str | None = None
     scopes: list[str] | None = None
+
+
+class AdminRuntimeStateUpsert(BaseModel):
+    """Hosted runtime desired state written by the SaaS deploy orchestrator.
+
+    This is deployment-level state only. Native channel credentials and channel
+    links are owned by `/api/channels/*` and must not be embedded here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deployment_id: str = Field(min_length=1, max_length=200)
+    app_id: str | None = Field(default=None, min_length=1, max_length=200)
+    instance_id: str = Field(min_length=1, max_length=200)
+    generation: int = Field(ge=0)
+    provider_id: str | None = Field(default=None, min_length=2, max_length=80)
+    system: dict[str, Any] | None = None
+    control_plane: dict[str, Any] | None = None
+    clawdi_cli: dict[str, Any] | None = None
+    runtimes: dict[str, Any] = Field(default_factory=dict)
+    live_sync: dict[str, Any] | None = None
+    recovery: dict[str, Any] | None = None
+    mitm_profiles: dict[str, Any] | None = None
+    mcp: dict[str, Any] | None = None
+    tools: dict[str, Any] | None = None
+
+    @field_validator("runtimes")
+    @classmethod
+    def _validate_runtimes(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not value:
+            raise ValueError("runtimes cannot be empty")
+        if "channels" in value:
+            raise ValueError("channels are not runtime desired state")
+        return value
+
+    @field_validator("control_plane")
+    @classmethod
+    def _validate_control_plane(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None and "apiUrl" in value:
+            raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
+        return value
+
+    @field_validator("mcp", "tools")
+    @classmethod
+    def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None:
+            _reject_plaintext_tool_secret(value)
+        return value
+
+
+class AdminRuntimeStateResponse(BaseModel):
+    environment_id: UUID
+    deployment_id: str
+    instance_id: str
+    generation: int
 
 
 class AdminChannelCreate(BaseModel):
@@ -156,3 +211,33 @@ def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str]
             raise ValueError("secret values cannot be blank")
         cleaned[name] = secret
     return cleaned
+
+
+_FORBIDDEN_TOOL_SECRET_KEYS = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "bearer",
+    "header",
+    "headers",
+    "password",
+    "secret",
+    "secrets",
+    "secretvalues",
+    "token",
+}
+
+
+def _reject_plaintext_tool_secret(value: Any, path: str = "") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).replace("-", "_").lower()
+            if normalized in _FORBIDDEN_TOOL_SECRET_KEYS:
+                location = f" at {path}.{key}" if path else f" at {key}"
+                raise ValueError(
+                    f"mcp/tools desired state must not contain plaintext secrets{location}"
+                )
+            _reject_plaintext_tool_secret(child, f"{path}.{key}" if path else str(key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_plaintext_tool_secret(child, f"{path}[{index}]")

@@ -191,7 +191,10 @@ tenant authorization.
 
 `pdm run channels-worker` is the single Clawdi backend worker process for
 delivery outbox retries, agent webhook redelivery, and Discord Gateway capture.
-It is not the old Node msg-router worker.
+It is not the old Node msg-router worker. Cloud-api deployments must run this
+worker alongside the API process; otherwise outbound delivery, Telegram agent
+webhook redelivery, Discord Gateway capture/replay, and channel message
+retention pruning do not run.
 
 See `docs/designs/whatsapp-baileys-sidecar-runtime.md` for the W5 sidecar
 contract and ownership split.

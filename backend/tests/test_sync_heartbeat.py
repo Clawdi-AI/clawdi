@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -26,6 +27,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
+from app.models.hosted_runtime import HostedRuntimeState
 
 
 async def _create_env(client: httpx.AsyncClient) -> str:
@@ -176,6 +178,343 @@ async def test_bound_key_can_heartbeat_its_own_env(env_bound_cli_client):
     client, bound_id, _other_id = env_bound_cli_client
     r = await client.post(f"/api/agents/{bound_id}/sync-heartbeat", json={"queue_depth": 1})
     assert r.status_code == 204, r.text
+
+
+@pytest.mark.asyncio
+async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
+    env_bound_cli_client, db_session: AsyncSession
+):
+    client, bound_id, _other_id = env_bound_cli_client
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(bound_id),
+        deployment_id="dep-observed",
+        instance_id="iid-observed",
+        generation=1,
+        runtimes={"openclaw": {"enabled": True}},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "status": "ok",
+        "manifest": {"etag": '"manifest-etag"'},
+        "channels": {"etag": '"channels-etag"'},
+    }
+    r = await client.post(
+        f"/api/agents/{bound_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert r.status_code == 204, r.text
+
+    await db_session.refresh(state)
+    assert state.observed == observed
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_endpoint_returns_desired_observed_health(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-observed-api",
+        instance_id="iid-observed-api",
+        generation=4,
+        provider_id="clawdi-managed",
+        runtimes={
+            "openclaw": {"enabled": True},
+            "hermes": {"enabled": False},
+        },
+        mcp={"enabled": True},
+        tools={"catalog": "clawdi-default"},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "ok",
+        "manifest": {"etag": '"manifest-etag"'},
+        "channels": {"etag": '"channels-etag"'},
+    }
+    heartbeat = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["environment"]["id"] == env_id
+    assert payload["desired"] == {
+        "deployment_id": "dep-observed-api",
+        "instance_id": "iid-observed-api",
+        "generation": 4,
+        "provider_id": "clawdi-managed",
+        "enabled_runtimes": ["openclaw"],
+        "has_mcp": True,
+        "has_tools": True,
+        "updated_at": payload["desired"]["updated_at"],
+    }
+    assert payload["observed"] == observed
+    assert payload["health"]["status"] == "ok"
+    assert payload["health"]["reasons"] == []
+    assert payload["health"]["reported_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-observed-dedupe",
+        instance_id="iid-observed-dedupe",
+        generation=4,
+        provider_id="clawdi-managed",
+        runtimes={"openclaw": {"enabled": True}},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": "2026-06-11T00:00:00+00:00",
+        "status": "ok",
+        "manifest": {"etag": '"manifest-etag"'},
+    }
+    first = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert first.status_code == 204, first.text
+    await db_session.refresh(state)
+    assert state.observed == observed
+
+    second = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": {
+                **observed,
+                "reportedAt": "2026-06-11T00:00:30+00:00",
+            }
+        },
+    )
+    assert second.status_code == 204, second.text
+    await db_session.refresh(state)
+    assert state.observed == observed
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-supervisor-error",
+        instance_id="iid-supervisor-error",
+        generation=5,
+        runtimes={"openclaw": {"enabled": True}},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "ok",
+        "supervisor": {
+            "status": "error",
+            "programs": [
+                {
+                    "name": "clawdi-openclaw",
+                    "state": "FATAL",
+                    "status": "error",
+                    "description": "Exited too quickly",
+                }
+            ],
+        },
+    }
+    heartbeat = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["health"]["status"] == "error"
+    assert "supervisor_error" in payload["health"]["reasons"]
+    assert payload["observed"]["supervisor"]["programs"][0]["name"] == "clawdi-openclaw"
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_endpoint_surfaces_provider_errors(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-provider-error",
+        instance_id="iid-provider-error",
+        generation=6,
+        provider_id="clawdi-managed",
+        runtimes={"openclaw": {"enabled": True}},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "ok",
+        "providers": {
+            "default": {
+                "status": "error",
+                "baseUrl": "https://sub2api.test/v1",
+                "model": "gpt-5.5",
+                "apiKeySecretRef": "provider.default.apiKey",
+                "secretAvailable": False,
+                "reasons": ["secret_missing"],
+            }
+        },
+    }
+    heartbeat = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["health"]["status"] == "error"
+    assert "provider_error" in payload["health"]["reasons"]
+    assert payload["provider_health"] == [
+        {
+            "provider_id": "default",
+            "status": "error",
+            "reasons": ["provider_secret_missing", "secret_missing"],
+            "desired": {
+                "state_provider_id": "clawdi-managed",
+                "default_binding": True,
+            },
+            "observed": observed["providers"]["default"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_endpoint_reports_not_configured(
+    client: httpx.AsyncClient,
+):
+    env_id = await _create_env(client)
+
+    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["environment"]["id"] == env_id
+    assert payload["desired"] is None
+    assert payload["observed"] is None
+    assert payload["health"] == {
+        "status": "not_configured",
+        "reasons": ["hosted_runtime_state_missing"],
+        "reported_at": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_bound_key_runtime_observed_is_env_scoped(env_bound_cli_client):
+    client, bound_id, other_id = env_bound_cli_client
+
+    own = await client.get(f"/api/environments/{bound_id}/runtime-observed")
+    assert own.status_code == 200, own.text
+    assert own.json()["environment"]["id"] == bound_id
+
+    other = await client.get(f"/api/environments/{other_id}/runtime-observed")
+    assert other.status_code == 404, other.text
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_summary_counts_health_by_environment(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    ok_env_id = await _create_env(client)
+    error_env_id = await _create_env(client)
+    missing_state_env_id = await _create_env(client)
+    db_session.add_all(
+        [
+            HostedRuntimeState(
+                environment_id=uuid.UUID(ok_env_id),
+                deployment_id="dep-summary-ok",
+                instance_id="iid-summary-ok",
+                generation=1,
+                runtimes={"openclaw": {"enabled": True}},
+            ),
+            HostedRuntimeState(
+                environment_id=uuid.UUID(error_env_id),
+                deployment_id="dep-summary-error",
+                instance_id="iid-summary-error",
+                generation=1,
+                provider_id="clawdi-managed",
+                runtimes={"openclaw": {"enabled": True}},
+            ),
+        ]
+    )
+    await db_session.commit()
+    ok_observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "ok",
+    }
+    error_observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": datetime.now(UTC).isoformat(),
+        "status": "ok",
+        "providers": {
+            "default": {
+                "status": "error",
+                "apiKeySecretRef": "provider.default.apiKey",
+                "secretAvailable": False,
+            }
+        },
+    }
+    ok_heartbeat = await client.post(
+        f"/api/agents/{ok_env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": ok_observed},
+    )
+    assert ok_heartbeat.status_code == 204, ok_heartbeat.text
+    error_heartbeat = await client.post(
+        f"/api/agents/{error_env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": error_observed},
+    )
+    assert error_heartbeat.status_code == 204, error_heartbeat.text
+
+    response = await client.get("/api/environments/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["counts"] == {
+        "ok": 1,
+        "error": 1,
+        "stale": 0,
+        "unknown": 0,
+        "not_configured": 1,
+    }
+    by_env = {item["environment"]["id"]: item for item in payload["items"]}
+    assert by_env[ok_env_id]["health"]["status"] == "ok"
+    assert by_env[error_env_id]["provider_health"][0]["status"] == "error"
+    assert by_env[missing_state_env_id]["health"]["status"] == "not_configured"
 
 
 @pytest.mark.asyncio

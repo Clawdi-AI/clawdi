@@ -35,12 +35,24 @@ DISCORD_GATEWAY_ENCODING = "json"
 DISCORD_DEFAULT_INTENTS = 46593
 
 _NON_RETRYABLE_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
+_SESSION_RESET_CLOSE_CODES = {4007, 4009}
 
 
 @dataclass
 class _GatewayState:
     sequence: int | None = None
     heartbeat_acknowledged: bool = True
+    session_id: str | None = None
+    resume_gateway_url: str | None = None
+
+    def can_resume(self) -> bool:
+        return self.sequence is not None and bool(self.session_id) and bool(self.resume_gateway_url)
+
+    def clear_session(self) -> None:
+        self.sequence = None
+        self.session_id = None
+        self.resume_gateway_url = None
+        self.heartbeat_acknowledged = True
 
 
 class DiscordGatewayWorker:
@@ -110,9 +122,10 @@ class DiscordGatewayWorker:
 
     async def _run_account_forever(self, account_id: UUID, stop: asyncio.Event) -> None:
         backoff_seconds = self._reconnect_initial_seconds
+        state = _GatewayState()
         while not stop.is_set():
             try:
-                acquired = await self._run_account_with_lock(account_id, stop)
+                acquired = await self._run_account_with_lock(account_id, stop, state)
                 if not acquired:
                     await _sleep_until_stop(stop, self._scan_interval_seconds)
                     return
@@ -121,6 +134,8 @@ class DiscordGatewayWorker:
                 raise
             except ConnectionClosed as exc:
                 close_code = discord_gateway_close_code(exc)
+                if close_code in _SESSION_RESET_CLOSE_CODES:
+                    state.clear_session()
                 if close_code in _NON_RETRYABLE_CLOSE_CODES:
                     log.error(
                         "discord gateway account %s closed with non-retryable code %s",
@@ -135,19 +150,29 @@ class DiscordGatewayWorker:
             await _sleep_until_stop(stop, backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, self._reconnect_max_seconds)
 
-    async def _run_account_with_lock(self, account_id: UUID, stop: asyncio.Event) -> bool:
+    async def _run_account_with_lock(
+        self,
+        account_id: UUID,
+        stop: asyncio.Event,
+        state: _GatewayState,
+    ) -> bool:
         lock_key = discord_gateway_advisory_lock_key(account_id)
         async with self._lock_engine.connect() as lock_connection:
             acquired = await _try_advisory_lock(lock_connection, lock_key)
             if not acquired:
                 return False
             try:
-                await self._connect_and_record(account_id, stop)
+                await self._connect_and_record(account_id, stop, state)
             finally:
                 await _release_advisory_lock(lock_connection, lock_key)
         return True
 
-    async def _connect_and_record(self, account_id: UUID, stop: asyncio.Event) -> None:
+    async def _connect_and_record(
+        self,
+        account_id: UUID,
+        stop: asyncio.Event,
+        state: _GatewayState,
+    ) -> None:
         account = await load_discord_gateway_account(self._sessionmaker, account_id)
         if account is None:
             return
@@ -157,13 +182,14 @@ class DiscordGatewayWorker:
             detail = exc.detail if isinstance(exc.detail, str) else "provider token unavailable"
             raise RuntimeError(detail) from exc
 
-        gateway_url = _account_gateway_url(account)
+        can_resume = state.can_resume()
+        gateway_url = state.resume_gateway_url if can_resume else _account_gateway_url(account)
         try:
             await validate_channel_websocket_url(gateway_url, label="discord gateway url")
         except UnsafeOutboundUrlError as exc:
             raise RuntimeError(str(exc)) from exc
         uri = discord_gateway_uri(gateway_url)
-        state = _GatewayState()
+        state.heartbeat_acknowledged = True
         async with self._connect_factory(
             uri,
             ping_interval=None,
@@ -177,14 +203,26 @@ class DiscordGatewayWorker:
                 name=f"discord-gateway-heartbeat-{account_id}",
             )
             try:
-                await websocket.send(
-                    _gateway_json(
-                        discord_identify_payload(
-                            token=token,
-                            intents=discord_gateway_intents(account),
+                if can_resume and state.session_id is not None and state.sequence is not None:
+                    await websocket.send(
+                        _gateway_json(
+                            discord_resume_payload(
+                                token=token,
+                                session_id=state.session_id,
+                                sequence=state.sequence,
+                            )
                         )
                     )
-                )
+                else:
+                    state.clear_session()
+                    await websocket.send(
+                        _gateway_json(
+                            discord_identify_payload(
+                                token=token,
+                                intents=discord_gateway_intents(account),
+                            )
+                        )
+                    )
                 while not stop.is_set():
                     try:
                         frame = await asyncio.wait_for(websocket.recv(), timeout=1.0)
@@ -211,12 +249,15 @@ class DiscordGatewayWorker:
             state.sequence = sequence
         op = frame.get("op")
         if op == 0:
+            _update_gateway_session_state(state, frame)
             await record_discord_gateway_dispatch(self._sessionmaker, account_id, frame)
         elif op == 1:
             await _send_heartbeat(websocket, state)
         elif op == 7:
             raise RuntimeError("discord requested reconnect")
         elif op == 9:
+            if frame.get("d") is not True:
+                state.clear_session()
             raise RuntimeError("discord invalidated gateway session")
         elif op == 11:
             state.heartbeat_acknowledged = True
@@ -330,6 +371,22 @@ def discord_identify_payload(*, token: str, intents: int) -> dict[str, Any]:
     }
 
 
+def discord_resume_payload(
+    *,
+    token: str,
+    session_id: str,
+    sequence: int,
+) -> dict[str, Any]:
+    return {
+        "op": 6,
+        "d": {
+            "token": token,
+            "session_id": session_id,
+            "seq": sequence,
+        },
+    }
+
+
 def discord_gateway_intents(account: ChannelAccount) -> int:
     value = _account_config_value(account, "gateway_intents")
     if isinstance(value, int) and value > 0:
@@ -349,6 +406,20 @@ def parse_gateway_frame(raw_frame: str | bytes) -> dict[str, Any] | None:
         raw_frame = raw_frame.decode("utf-8")
     payload = json.loads(raw_frame)
     return payload if isinstance(payload, dict) else None
+
+
+def _update_gateway_session_state(state: _GatewayState, frame: dict[str, Any]) -> None:
+    if frame.get("t") != "READY":
+        return
+    data = frame.get("d")
+    if not isinstance(data, dict):
+        return
+    session_id = data.get("session_id")
+    resume_gateway_url = data.get("resume_gateway_url")
+    if isinstance(session_id, str) and session_id.strip():
+        state.session_id = session_id
+    if isinstance(resume_gateway_url, str) and resume_gateway_url.strip():
+        state.resume_gateway_url = resume_gateway_url
 
 
 def discord_gateway_advisory_lock_key(account_id: UUID) -> int:

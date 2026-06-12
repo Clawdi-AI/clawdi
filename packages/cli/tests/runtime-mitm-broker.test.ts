@@ -255,7 +255,7 @@ describe("runtime MITM broker launcher", () => {
 				path: req.url ?? "",
 				originalHost: req.headers["x-clawdi-original-host"]?.toString(),
 			};
-			if (hit.originalHost === "chatgpt.com") {
+			if (hit.originalHost === "chatgpt.com" || hit.originalHost === "api.openai.com") {
 				providerHits.push({
 					...hit,
 					authorization: req.headers.authorization,
@@ -327,13 +327,7 @@ describe("runtime MITM broker launcher", () => {
 							scheme: "https",
 							host: "discord.com",
 							pathPrefix: "/api/",
-							headers: {
-								authorization: {
-									type: "secretRefEquals",
-									secretRef: "secret://channels/discord/bot-token",
-									prefix: "Bot ",
-								},
-							},
+							headers: {},
 						},
 						rewrite: {
 							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/discord`,
@@ -367,12 +361,8 @@ describe("runtime MITM broker launcher", () => {
 						match: {
 							scheme: "https",
 							host: "api.telegram.org",
-							path: {
-								type: "secretRefPrefix",
-								secretRef: "secret://channels/telegram/bot-token",
-								prefix: "/bot",
-								suffix: "/",
-							},
+							pathPrefix: "/bot",
+							headers: {},
 						},
 						rewrite: {
 							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/telegram`,
@@ -389,12 +379,7 @@ describe("runtime MITM broker launcher", () => {
 							scheme: "https",
 							host: "bluebubbles.invalid",
 							pathPrefix: "/api/",
-							query: {
-								password: {
-									type: "secretRefEquals",
-									secretRef: "secret://channels/imessage/agent-token",
-								},
-							},
+							query: {},
 						},
 						rewrite: {
 							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/bluebubbles`,
@@ -405,6 +390,36 @@ describe("runtime MITM broker launcher", () => {
 						priority: 120,
 					},
 					{
+						id: "codex-openai-responses",
+						enabled: true,
+						kind: "provider",
+						match: {
+							scheme: "https",
+							host: "api.openai.com",
+							pathPrefix: "/v1/",
+							headers: {
+								authorization: {
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						rewrite: {
+							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/sub2api/v1/responses`,
+							preservePath: false,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://providers/openai/api-key",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+						priority: 124,
+					},
+					{
 						id: "codex-chatgpt-backend-responses",
 						enabled: true,
 						kind: "provider",
@@ -412,10 +427,16 @@ describe("runtime MITM broker launcher", () => {
 							scheme: "https",
 							host: "chatgpt.com",
 							path: { type: "equals", value: "/backend-api/codex/responses" },
-							headers: { authorization: { type: "exists" } },
+							headers: {
+								authorization: {
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
+									prefix: "Bearer ",
+								},
+							},
 						},
 						rewrite: {
-							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/sub2api/v1/responses`,
+							upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/sub2api/backend-api/codex/responses`,
 							preservePath: false,
 							setHeaders: {
 								authorization: {
@@ -435,9 +456,6 @@ describe("runtime MITM broker launcher", () => {
 			secretFile,
 			JSON.stringify({
 				secrets: {
-					"secret://channels/discord/bot-token": "managed-token",
-					"secret://channels/telegram/bot-token": "managed-telegram-token",
-					"secret://channels/imessage/agent-token": "managed-imessage-token",
 					"secret://providers/openai/api-key": "sk-managed-provider",
 				},
 			}),
@@ -459,7 +477,7 @@ describe("runtime MITM broker launcher", () => {
 				caFile: broker.caFile,
 				host: "discord.com",
 				path: "/api/v10/users/@me",
-				headers: { authorization: "Bot managed-token" },
+				headers: { authorization: "Bot scoped-agent-token" },
 			});
 			expect(routed.status).toBe(200);
 			expect(routed.body).toContain("test-upstream");
@@ -471,63 +489,43 @@ describe("runtime MITM broker launcher", () => {
 				proxyUrl: broker.proxyUrl,
 				caFile: broker.caFile,
 				host: "api.telegram.org",
-				path: "/botmanaged-telegram-token/getMe",
+				path: "/botscoped-agent-token/getMe",
 				headers: {},
 			});
 			expect(telegram.status).toBe(200);
 			expect(upstreamHits).toEqual([
 				{ path: "/discord/api/v10/users/@me", originalHost: "discord.com" },
-				{ path: "/telegram/botmanaged-telegram-token/getMe", originalHost: "api.telegram.org" },
+				{ path: "/telegram/botscoped-agent-token/getMe", originalHost: "api.telegram.org" },
 			]);
 
 			const bluebubbles = await requestThroughProxy({
 				proxyUrl: broker.proxyUrl,
 				caFile: broker.caFile,
 				host: "bluebubbles.invalid",
-				path: "/api/v1/ping?password=managed-imessage-token",
+				path: "/api/v1/ping?password=scoped-agent-token",
 				headers: {},
 			});
 			expect(bluebubbles.status).toBe(200);
 			expect(upstreamHits).toEqual([
 				{ path: "/discord/api/v10/users/@me", originalHost: "discord.com" },
-				{ path: "/telegram/botmanaged-telegram-token/getMe", originalHost: "api.telegram.org" },
+				{ path: "/telegram/botscoped-agent-token/getMe", originalHost: "api.telegram.org" },
 				{
-					path: "/bluebubbles/api/v1/ping?password=managed-imessage-token",
+					path: "/bluebubbles/api/v1/ping?password=scoped-agent-token",
 					originalHost: "bluebubbles.invalid",
 				},
 			]);
-
-			const deniedBluebubbles = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
-				host: "bluebubbles.invalid",
-				path: "/api/v1/ping?password=wrong-token",
-				headers: {},
-			});
-			expect(deniedBluebubbles.status).toBe(403);
-			expect(upstreamHits).toHaveLength(3);
-
-			const deniedTelegram = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
-				host: "api.telegram.org",
-				path: "/botwrong-token/getMe",
-				headers: {},
-			});
-			expect(deniedTelegram.status).toBe(403);
-			expect(upstreamHits).toHaveLength(3);
 
 			const chatgptCodex = await requestThroughProxy({
 				proxyUrl: broker.proxyUrl,
 				caFile: broker.caFile,
 				host: "chatgpt.com",
 				path: "/backend-api/codex/responses",
-				headers: { authorization: "Bearer user-chatgpt-token" },
+				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
 			});
 			expect(chatgptCodex.status).toBe(200);
 			expect(providerHits).toEqual([
 				{
-					path: "/sub2api/v1/responses",
+					path: "/sub2api/backend-api/codex/responses",
 					originalHost: "chatgpt.com",
 					authorization: "Bearer sk-managed-provider",
 				},
@@ -535,15 +533,38 @@ describe("runtime MITM broker launcher", () => {
 			expect(JSON.stringify(providerHits)).not.toContain("user-chatgpt-token");
 			expect(upstreamHits).toHaveLength(3);
 
+			const openaiCodex = await requestThroughProxy({
+				proxyUrl: broker.proxyUrl,
+				caFile: broker.caFile,
+				host: "api.openai.com",
+				path: "/v1/responses",
+				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
+			});
+			expect(openaiCodex.status).toBe(200);
+			expect(providerHits).toEqual([
+				{
+					path: "/sub2api/backend-api/codex/responses",
+					originalHost: "chatgpt.com",
+					authorization: "Bearer sk-managed-provider",
+				},
+				{
+					path: "/sub2api/v1/responses",
+					originalHost: "api.openai.com",
+					authorization: "Bearer sk-managed-provider",
+				},
+			]);
+			expect(upstreamHits).toHaveLength(3);
+
 			const denied = await requestThroughProxy({
 				proxyUrl: broker.proxyUrl,
 				caFile: broker.caFile,
-				host: "discord.com",
-				path: "/api/v10/users/@me",
-				headers: { authorization: "Bot wrong-token" },
+				host: "unmatched.example.test",
+				path: "/not-managed",
+				headers: {},
 			});
 			expect(denied.status).toBe(403);
 			expect(upstreamHits).toHaveLength(3);
+			expect(providerHits).toHaveLength(2);
 
 			const gateway = await requestWebSocketThroughNodeProxy({
 				proxyUrl: broker.proxyUrl,

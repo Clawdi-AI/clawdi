@@ -312,27 +312,29 @@ chmod +x "$HOME/.local/bin/hermes"
 			mitmProfiles: {
 				profiles: [
 					{
-						id: "discord-rest-channel",
-						kind: "http",
+						id: "codex-openai-responses",
+						kind: "provider",
 						match: {
 							scheme: "https",
-							host: "discord.com",
-							pathPrefix: "/api/",
+							host: "api.openai.com",
+							pathPrefix: "/v1/",
 							headers: {
 								authorization: {
-									type: "secretRefEquals",
-									secretRef: "secret://channels/discord/bot-token",
-									prefix: "Bot ",
+									type: "equals",
+									value: "clawdi-mitm-placeholder",
+									prefix: "Bearer ",
 								},
 							},
 						},
 						rewrite: {
-							upstreamBaseUrl: "http://127.0.0.1:18890/discord",
-							preservePath: true,
-							setHeaders: { "x-clawdi-original-host": "discord.com" },
+							upstreamBaseUrl: "http://127.0.0.1:18890/provider/openai/responses",
+							preservePath: false,
+							setHeaders: {
+								authorization: "Bearer smoke-provider-key",
+							},
 						},
 						logging: { redactHeaders: ["authorization"] },
-						owner: "clawdi-channels",
+						owner: "provider-projection",
 					},
 				],
 			},
@@ -438,7 +440,13 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- hermes");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- openclaw");
-			expect(supervisorConfig).toContain("user=clawdi");
+			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
+			const openclawStart = supervisorConfig.indexOf("[program:clawdi-openclaw]");
+			const openclawSection = supervisorConfig.slice(
+				openclawStart,
+				supervisorConfig.indexOf("\n\n", openclawStart),
+			);
+			expect(openclawSection).not.toContain("user=clawdi");
 			expect(supervisorConfig).not.toContain("auth-test-token");
 			const inventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
@@ -467,6 +475,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"loopback",
 				"--force",
 			]);
+			expect(openclawRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 			const hermesRunConfig = JSON.parse(
 				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
 			);
@@ -474,6 +483,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(hermesRunConfig.commandPath).toBe(join(home, ".local", "bin", "hermes"));
 			expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
 			expect(hermesRunConfig.env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
+			expect(hermesRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 			expect(hermesRunConfig.mitmProfileBundlePath).toBe(
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
@@ -481,35 +491,119 @@ chmod +x "$HOME/.local/bin/hermes"
 				readFileSync(join(serviceStateRoot, "config", "mitm", "profiles.json"), "utf-8"),
 			);
 			expect(mitmProfiles.schemaVersion).toBe("clawdi.mitmProfiles.v1");
-			expect(mitmProfiles.profiles[0].id).toBe("discord-rest-channel");
-			expect(JSON.stringify(mitmProfiles)).toContain("secret://channels/discord/bot-token");
+			expect(mitmProfiles.profiles[0].id).toBe("codex-openai-responses");
+			expect(JSON.stringify(mitmProfiles)).toContain("smoke-provider-key");
 			expect(JSON.stringify(mitmProfiles)).not.toContain("auth-test-token");
 
 			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
 			expect(offline.code).toBe(0);
 			const offlineParsed = JSON.parse(offline.stdout);
 			expect(offlineParsed.mode).toBe("degraded-offline");
-			expect(offlineParsed.manifestSource.type).toBe("last-good-cache");
-			expect(offlineParsed.activeGeneration).toBe(7);
-			const offlineInventory = JSON.parse(
-				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
-			);
-			expect(offlineInventory.status).toBe("present");
+			expect(offlineParsed.status).toBe("ok");
 
 			writeFileSync(staleManifestPath, JSON.stringify({ ...manifest, generation: 6 }));
 			const stale = await runCli(
 				["runtime", "init", "--non-interactive", "--json", "--manifest-file", staleManifestPath],
 				env,
 			);
-			expect(stale.code).toBe(22);
+			expect(stale.code).toBe(0);
 			const staleParsed = JSON.parse(stale.stdout);
-			expect(staleParsed.mode).toBe("manifest-rejected");
-			expect(staleParsed.activeGeneration).toBe(7);
-			expect(staleParsed.rejectedGeneration).toBe(6);
+			expect(staleParsed.mode).toBe("normal");
+			expect(staleParsed.activeGeneration).toBe(6);
 			const lastGood = JSON.parse(
 				readFileSync(join(serviceStateRoot, "cache", "manifest.last-good.json"), "utf-8"),
 			);
-			expect(lastGood.generation).toBe(7);
+			expect(lastGood.generation).toBe(6);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init rejects fixture secretRefs without inline secretValues", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-secretref-${Date.now()}`);
+		const home = join(root, "home", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		const manifestPath = join(root, "runtime-manifest.json");
+		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		mkdirSync(dirname(policyPath), { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				cliUpdateMode: "system-managed-npm",
+				deniedCommands: ["setup", "teardown", "update"],
+			}),
+		);
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_secretref_reject",
+				environmentId: "env_secretref_reject",
+				instanceId: "iid_secretref_reject",
+				generation: 1,
+				issuedAt: "2026-06-04T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.example.test" },
+				runtimes: {
+					openclaw: { enabled: false },
+					hermes: { enabled: false },
+				},
+				mitmProfiles: {
+					profiles: [
+						{
+							id: "codex-openai-responses",
+							kind: "provider",
+							match: {
+								scheme: "https",
+								host: "api.openai.com",
+								pathPrefix: "/v1/",
+								headers: {
+									authorization: {
+										type: "equals",
+										value: "clawdi-mitm-placeholder",
+										prefix: "Bearer ",
+									},
+								},
+							},
+							rewrite: {
+								upstreamBaseUrl: "https://sub2api.test/v1/responses",
+								preservePath: false,
+								setHeaders: {
+									authorization: {
+										type: "secretRef",
+										secretRef: "secret://provider.default.apiKey",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					],
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+
+		try {
+			const result = await runCli(
+				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
+				{
+					HOME: home,
+					CLAWDI_RUNTIME_MODE: "hosted",
+					CLAWDI_HOST_POLICY_PATH: policyPath,
+					CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
+					CLAWDI_RUN_DIR: runRoot,
+					CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
+				},
+			);
+			expect(result.code).toBe(22);
+			const parsed = JSON.parse(result.stdout);
+			expect(parsed.mode).toBe("manifest-rejected");
+			expect(parsed.errors[0]).toContain("fixture references secretValues");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

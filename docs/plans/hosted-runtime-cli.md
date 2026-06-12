@@ -212,7 +212,9 @@ Implemented behavior:
 - normalizer from `clawdi.hosted-runtime.manifest.v1` into
   `clawdi.runtimeDesiredState.v1`;
 - runtime `secretValues` projection into `/run/clawdi/mitm/secrets.json`
-  without writing secrets into the last-good manifest cache;
+  without writing secrets into the last-good manifest cache. In hosted MITM
+  mode this file remains system-owned `0600`; the MITM directory is not
+  writable by the ordinary runtime user while CA material remains readable;
 - last-good manifest cache and degraded offline restart;
 - stale generation rejection;
 - managed projection files and boot semaphores;
@@ -235,6 +237,10 @@ Implemented behavior:
 - hosted `clawdi run -- <runtime>` now starts the managed broker bundle,
   rewrites child env to the broker's actual proxy/CA paths, and stops the
   broker when the runtime process exits.
+- when MITM profiles are enabled, supervised runtime programs start
+  `clawdi run` from the system context. The broker reads the root-only
+  `secretRef` file there, and `clawdi run` drops only the OpenClaw/Hermes child
+  process to `CLAWDI_RUNTIME_USER` with `gosu`/`runuser`.
 - hosted `clawdi run -- <command>` also applies the managed MITM profile bundle
   to generic commands such as `codex` or `node` when no runtime-specific run
   config exists. This keeps Codex official endpoint MITM on the same user-facing
@@ -355,6 +361,8 @@ Target behavior:
   the child;
 - strip `CLAWDI_AUTH_TOKEN` and all `CLAWDI_MITM_*` control variables before
   `exec` so the child sees standard proxy/CA behavior, not Clawdi internals;
+- if running as root with `CLAWDI_RUNTIME_USER`, drop the upstream child to that
+  user while keeping the broker in the system context;
 - do not globally inject `--use-env-proxy` through `NODE_OPTIONS`; Node-based
   diagnostics/runtimes need a hosted base Node version that supports
   `NODE_USE_ENV_PROXY` for their HTTP client path, or an explicit runtime
@@ -410,6 +418,11 @@ Clawdi-specific boundaries:
   path from the child process view. The child still sees
   `https://api.openai.com/v1/responses`; the broker owns the managed-provider
   credential and rewrite boundary.
+- Hosted-managed OpenClaw Codex uses OpenClaw's native
+  `openai-chatgpt-responses` transport. The child sees
+  `https://chatgpt.com/backend-api/codex/responses`; the broker rewrites to the
+  managed sub2api `/backend-api/codex/responses` surface and replaces
+  authorization from secretRef.
 - Ordinary OpenAI-compatible provider APIs use native provider projection or a
   direct provider URL when official Codex/OpenAI behavior does not need to be
   simulated.
@@ -418,14 +431,14 @@ Clawdi-specific boundaries:
 External runtime smoke is not part of default CLI CI because it depends on a
 runtime image, external channel credentials, and provider gateway credentials.
 
-The current productized profile IDs are:
+The current hosted-manifest-generated profile IDs are:
 
-- `discord-rest-channel`;
-- `discord-gateway-channel`;
-- `telegram-bot-api-channel`;
-- `bluebubbles-imessage-channel`;
-- `whatsapp-web-channel`;
-- `codex-openai-responses`.
+- `codex-openai-responses`;
+- `codex-chatgpt-backend-responses`.
+
+Channel profiles are not generated from hosted manifest `channels`. Clawdi
+native channels use scoped `agent_token` values and cloud-api server-side
+credential mapping.
 
 An egress-deny profile remains a follow-up policy profile, not part of the
 current generated default bundle.

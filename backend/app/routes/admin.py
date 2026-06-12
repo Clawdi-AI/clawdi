@@ -43,6 +43,7 @@ from app.models.channel import (
     CHANNEL_PROVIDERS,
     ChannelAccount,
 )
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
@@ -55,11 +56,14 @@ from app.schemas.admin import (
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
     AdminEnvironmentCreate,
+    AdminRuntimeStateResponse,
+    AdminRuntimeStateUpsert,
 )
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.api_key import mint_api_key
+from app.services.audit import record_control_plane_audit
 from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
     archive_channel_account,
@@ -280,6 +284,22 @@ async def admin_create_channel(
     try:
         await db.flush()
         await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
+        record_control_plane_audit(
+            db,
+            actor_type="admin",
+            action="channel.account.create",
+            resource_type="channel_account",
+            resource_id=str(account.id),
+            channel_account_id=account.id,
+            target_user_id=target.id,
+            source="api.admin",
+            details={
+                "provider": account.provider,
+                "visibility": account.visibility,
+                "has_provider_credential": body.provider_token is not None,
+                "secret_names": sorted((body.secrets or {}).keys()),
+            },
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -336,6 +356,17 @@ async def admin_update_channel(
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
+        record_control_plane_audit(
+            db,
+            actor_type="admin",
+            action="channel.account.update",
+            resource_type="channel_account",
+            resource_id=str(account.id),
+            channel_account_id=account.id,
+            target_user_id=account.user_id,
+            source="api.admin",
+            details=_admin_channel_update_audit_details(account, updates, body),
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -359,6 +390,17 @@ async def admin_rotate_channel_webhook_secret(
     account, _owner = await _admin_get_channel_row(db, account_id=account_id)
     webhook_secret = generate_webhook_secret()
     account.webhook_secret_hash = hash_token(webhook_secret)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.webhook_secret.rotate",
+        resource_type="channel_account",
+        resource_id=str(account.id),
+        channel_account_id=account.id,
+        target_user_id=account.user_id,
+        source="api.admin",
+        details={"provider": account.provider},
+    )
     await db.commit()
     logger.info("admin_channel_webhook_secret_rotated channel_id=%s", account.id)
     return AdminChannelWebhookSecretResponse(id=account.id, webhook_secret=webhook_secret)
@@ -393,6 +435,17 @@ async def admin_delete_channel(
 ) -> None:
     account, _owner = await _admin_get_channel_row(db, account_id=account_id)
     await archive_channel_account(db, account=account)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.account.archive",
+        resource_type="channel_account",
+        resource_id=str(account.id),
+        channel_account_id=account.id,
+        target_user_id=account.user_id,
+        source="api.admin",
+        details={"provider": account.provider, "visibility": account.visibility},
+    )
     await db.commit()
     logger.info("admin_channel_archived channel_id=%s", account.id)
 
@@ -509,6 +562,90 @@ async def admin_register_environment(
     return EnvironmentCreatedResponse(id=str(env.id))
 
 
+@router.put(
+    "/environments/{environment_id}/runtime-state",
+    response_model=AdminRuntimeStateResponse,
+)
+async def admin_upsert_runtime_state(
+    environment_id: UUID,
+    body: AdminRuntimeStateUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminRuntimeStateResponse:
+    env = (
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState)
+            .where(HostedRuntimeState.environment_id == environment_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    existing_state = state
+    previous_generation = state.generation if state is not None else None
+    changed_fields = _runtime_state_changed_fields(existing_state, body)
+    if state is None:
+        state = HostedRuntimeState(environment_id=environment_id)
+        db.add(state)
+
+    state.deployment_id = body.deployment_id
+    state.app_id = body.app_id
+    state.instance_id = body.instance_id
+    state.generation = body.generation
+    state.provider_id = body.provider_id
+    state.system = body.system
+    state.control_plane = body.control_plane
+    state.clawdi_cli = body.clawdi_cli
+    state.runtimes = body.runtimes
+    state.live_sync = body.live_sync
+    state.recovery = body.recovery
+    if state is not existing_state or body.mitm_profiles is not None:
+        state.mitm_profiles = body.mitm_profiles
+    if state is not existing_state or body.mcp is not None:
+        state.mcp = body.mcp
+    if state is not existing_state or body.tools is not None:
+        state.tools = body.tools
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="hosted_runtime_state.upsert",
+        resource_type="hosted_runtime_state",
+        resource_id=str(environment_id),
+        environment_id=environment_id,
+        target_user_id=env.user_id,
+        source="api.admin",
+        details={
+            "deployment_id": body.deployment_id,
+            "app_id": body.app_id,
+            "instance_id": body.instance_id,
+            "generation": body.generation,
+            "previous_generation": previous_generation,
+            "provider_id": body.provider_id,
+            "enabled_runtimes": _enabled_runtime_names(body.runtimes),
+            "has_mcp": body.mcp is not None,
+            "has_tools": body.tools is not None,
+            "changed_fields": changed_fields,
+        },
+    )
+    await db.commit()
+    logger.info(
+        "admin_runtime_state_upserted environment_id=%s deployment_id=%s generation=%s",
+        environment_id,
+        body.deployment_id,
+        body.generation,
+    )
+    return AdminRuntimeStateResponse(
+        environment_id=environment_id,
+        deployment_id=body.deployment_id,
+        instance_id=body.instance_id,
+        generation=body.generation,
+    )
+
+
 async def _admin_get_channel_row(
     db: AsyncSession,
     *,
@@ -544,3 +681,64 @@ def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChanne
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
+
+
+def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
+    return sorted(
+        name
+        for name, value in runtimes.items()
+        if isinstance(value, dict) and value.get("enabled") is True
+    )
+
+
+def _runtime_state_changed_fields(
+    state: HostedRuntimeState | None,
+    body: AdminRuntimeStateUpsert,
+) -> list[str]:
+    fields = [
+        "deployment_id",
+        "app_id",
+        "instance_id",
+        "generation",
+        "provider_id",
+        "system",
+        "control_plane",
+        "clawdi_cli",
+        "runtimes",
+        "live_sync",
+        "recovery",
+        "mitm_profiles",
+        "mcp",
+        "tools",
+    ]
+    if state is None:
+        return fields
+    changed: list[str] = []
+    preserve_when_omitted = {"mitm_profiles", "mcp", "tools"}
+    for field in fields:
+        body_value = getattr(body, field)
+        if field in preserve_when_omitted and body_value is None:
+            continue
+        if getattr(state, field) != body_value:
+            changed.append(field)
+    return changed
+
+
+def _admin_channel_update_audit_details(
+    account: ChannelAccount,
+    updates: set[str],
+    body: AdminChannelUpdate,
+) -> dict[str, object]:
+    changed_fields = sorted(updates)
+    details: dict[str, object] = {
+        "provider": account.provider,
+        "visibility": account.visibility,
+        "changed_fields": changed_fields,
+    }
+    if "status" in updates and body.status is not None:
+        details["status"] = body.status
+    if "provider_token" in updates:
+        details["provider_credential_changed"] = True
+    if "secrets" in updates:
+        details["secret_names"] = sorted((body.secrets or {}).keys())
+    return details

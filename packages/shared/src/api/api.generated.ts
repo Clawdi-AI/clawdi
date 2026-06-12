@@ -195,6 +195,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Control Plane Audit Events */
+        get: operations["list_control_plane_audit_events_api_audit_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/channels/debug/events": {
         parameters: {
             query?: never;
@@ -256,6 +273,40 @@ export interface paths {
         };
         /** List Channel Bot Pool */
         get: operations["list_channel_bot_pool_api_channels_bot_pool_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channel Health */
+        get: operations["list_channel_health_api_channels_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Channel Activity */
+        get: operations["list_channel_activity_api_channels__account_id__activity_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -543,6 +594,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/environments/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Environment Runtime Observed */
+        get: operations["list_environment_runtime_observed_api_environments_runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -561,6 +629,23 @@ export interface paths {
          *     list query uses an outer-join so orphaned rows still render.
          */
         delete: operations["delete_environment_api_environments__environment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/environments/{environment_id}/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Environment Runtime Observed */
+        get: operations["get_environment_runtime_observed_api_environments__environment_id__runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1030,6 +1115,23 @@ export interface paths {
          * @description Show one project if it is visible to the caller.
          */
         get: operations["get_project_api_projects__project_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtime Manifest */
+        get: operations["get_runtime_manifest_api_runtime_manifest_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2686,6 +2788,75 @@ export interface components {
              */
             created_at: string;
         };
+        /** ChannelActivityItemResponse */
+        ChannelActivityItemResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "message" | "debug_event";
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Provider */
+            provider: string;
+            /** Direction */
+            direction?: string | null;
+            /** External Chat Id */
+            external_chat_id?: string | null;
+            /** Message Id */
+            message_id?: string | null;
+            /** Delivery Id */
+            delivery_id?: string | null;
+            /** Delivery Status */
+            delivery_status?: string | null;
+            /** Delivery Attempts */
+            delivery_attempts?: number | null;
+            /** Delivery Max Attempts */
+            delivery_max_attempts?: number | null;
+            /** Delivery Next Attempt At */
+            delivery_next_attempt_at?: string | null;
+            /** Delivery Last Error */
+            delivery_last_error?: string | null;
+            /** Provider Message Id */
+            provider_message_id?: string | null;
+            /** Text */
+            text?: string | null;
+            /** Stage */
+            stage?: string | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Status Code */
+            status_code?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ChannelActivityListResponse */
+        ChannelActivityListResponse: {
+            /** Items */
+            items: components["schemas"]["ChannelActivityItemResponse"][];
+        };
         /** ChannelAgentLinkCreate */
         ChannelAgentLinkCreate: {
             /** Agent Id */
@@ -2793,6 +2964,18 @@ export interface components {
              */
             access: "owner" | "public";
             capabilities: components["schemas"]["ChannelBotPoolCapabilities"];
+            /**
+             * Link Count
+             * @default 0
+             */
+            link_count: number;
+            /** Max Links */
+            max_links?: number | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
         };
         /** ChannelBotPoolResponse */
         ChannelBotPoolResponse: {
@@ -2827,6 +3010,73 @@ export interface components {
             commands: {
                 [key: string]: unknown;
             }[];
+        };
+        /** ChannelHealthItemResponse */
+        ChannelHealthItemResponse: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Provider */
+            provider: string;
+            /** Name */
+            name: string;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            visibility: "private" | "public";
+            /** Channel Status */
+            channel_status: string;
+            /**
+             * Health Status
+             * @enum {string}
+             */
+            health_status: "ok" | "warning" | "error";
+            /** Reasons */
+            reasons?: string[];
+            /**
+             * Pending Inbox
+             * @default 0
+             */
+            pending_inbox: number;
+            /**
+             * Pending Deliveries
+             * @default 0
+             */
+            pending_deliveries: number;
+            /**
+             * In Progress Deliveries
+             * @default 0
+             */
+            in_progress_deliveries: number;
+            /**
+             * Failed Deliveries
+             * @default 0
+             */
+            failed_deliveries: number;
+            /** Last Message At */
+            last_message_at?: string | null;
+            /** Last Event At */
+            last_event_at?: string | null;
+            /** Last Error At */
+            last_error_at?: string | null;
+            /** Last Error */
+            last_error?: string | null;
+            /** Last Error Stage */
+            last_error_stage?: string | null;
+            /** Last Error Outcome */
+            last_error_outcome?: string | null;
+            /** Native Transport */
+            native_transport?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ChannelHealthListResponse */
+        ChannelHealthListResponse: {
+            /** Items */
+            items: components["schemas"]["ChannelHealthItemResponse"][];
         };
         /** ChannelMessageResponse */
         ChannelMessageResponse: {
@@ -2891,6 +3141,64 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+        };
+        /** ChannelRuntimeAccountResponse */
+        ChannelRuntimeAccountResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /**
+             * Visibility
+             * @default private
+             * @enum {string}
+             */
+            visibility: "private" | "public";
+            /** Has Provider Token */
+            has_provider_token: boolean;
+            /** Webhook Url */
+            webhook_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Runtime Links */
+            runtime_links?: components["schemas"]["ChannelRuntimeAgentLinkResponse"][];
+        };
+        /** ChannelRuntimeAgentLinkResponse */
+        ChannelRuntimeAgentLinkResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Agent Token */
+            agent_token?: string | null;
         };
         /** ChannelSendMessageRequest */
         ChannelSendMessageRequest: {
@@ -3081,6 +3389,48 @@ export interface components {
             count: number;
             /** Level */
             level: number;
+        };
+        /** ControlPlaneAuditEventListResponse */
+        ControlPlaneAuditEventListResponse: {
+            /** Items */
+            items: components["schemas"]["ControlPlaneAuditEventResponse"][];
+        };
+        /** ControlPlaneAuditEventResponse */
+        ControlPlaneAuditEventResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Actor Type */
+            actor_type: string;
+            /** Actor User Id */
+            actor_user_id?: string | null;
+            /** Target User Id */
+            target_user_id?: string | null;
+            /** Source */
+            source: string;
+            /** Action */
+            action: string;
+            /** Resource Type */
+            resource_type: string;
+            /** Resource Id */
+            resource_id?: string | null;
+            /** Environment Id */
+            environment_id?: string | null;
+            /** Channel Account Id */
+            channel_account_id?: string | null;
+            /** Channel Agent Link Id */
+            channel_agent_link_id?: string | null;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** CurrentUserResponse */
         CurrentUserResponse: {
@@ -3649,6 +3999,129 @@ export interface components {
             owner_name: string | null;
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
+        };
+        /** RuntimeObservedDesiredResponse */
+        RuntimeObservedDesiredResponse: {
+            /** Deployment Id */
+            deployment_id: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Generation */
+            generation: number;
+            /** Provider Id */
+            provider_id?: string | null;
+            /** Enabled Runtimes */
+            enabled_runtimes: string[];
+            /**
+             * Has Mcp
+             * @default false
+             */
+            has_mcp: boolean;
+            /**
+             * Has Tools
+             * @default false
+             */
+            has_tools: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** RuntimeObservedHealthResponse */
+        RuntimeObservedHealthResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "stale" | "unknown" | "not_configured";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Reported At */
+            reported_at?: string | null;
+        };
+        /** RuntimeObservedProviderHealthResponse */
+        RuntimeObservedProviderHealthResponse: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown" | "not_configured";
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: string[];
+            /** Desired */
+            desired?: {
+                [key: string]: unknown;
+            } | null;
+            /** Observed */
+            observed?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** RuntimeObservedResponse */
+        RuntimeObservedResponse: {
+            environment: components["schemas"]["EnvironmentResponse"];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            /** Observed */
+            observed?: {
+                [key: string]: unknown;
+            } | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** RuntimeObservedSummaryCountsResponse */
+        RuntimeObservedSummaryCountsResponse: {
+            /**
+             * Ok
+             * @default 0
+             */
+            ok: number;
+            /**
+             * Error
+             * @default 0
+             */
+            error: number;
+            /**
+             * Stale
+             * @default 0
+             */
+            stale: number;
+            /**
+             * Unknown
+             * @default 0
+             */
+            unknown: number;
+            /**
+             * Not Configured
+             * @default 0
+             */
+            not_configured: number;
+        };
+        /** RuntimeObservedSummaryItemResponse */
+        RuntimeObservedSummaryItemResponse: {
+            environment: components["schemas"]["EnvironmentResponse"];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** RuntimeObservedSummaryResponse */
+        RuntimeObservedSummaryResponse: {
+            counts: components["schemas"]["RuntimeObservedSummaryCountsResponse"];
+            /** Items */
+            items: components["schemas"]["RuntimeObservedSummaryItemResponse"][];
         };
         /** SearchHit */
         SearchHit: {
@@ -4301,6 +4774,10 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
+            /** Runtime Observed */
+            runtime_observed?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * UnshareResponse
@@ -5148,6 +5625,40 @@ export interface operations {
             };
         };
     };
+    list_control_plane_audit_events_api_audit_events_get: {
+        parameters: {
+            query?: {
+                resource_type?: string | null;
+                environment_id?: string | null;
+                channel_account_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPlaneAuditEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_debug_events_api_channels_debug_events_get: {
         parameters: {
             query?: {
@@ -5224,7 +5735,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChannelAccountResponse"][];
+                    "application/json": (components["schemas"]["ChannelAccountResponse"] | components["schemas"]["ChannelRuntimeAccountResponse"])[];
                 };
             };
         };
@@ -5278,6 +5789,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelBotPoolResponse"];
+                };
+            };
+        };
+    };
+    list_channel_health_api_channels_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelHealthListResponse"];
+                };
+            };
+        };
+    };
+    list_channel_activity_api_channels__account_id__activity_get: {
+        parameters: {
+            query?: {
+                external_chat_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelActivityListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5921,6 +6486,37 @@ export interface operations {
             };
         };
     };
+    list_environment_runtime_observed_api_environments_runtime_observed_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservedSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_environment_api_environments__environment_id__get: {
         parameters: {
             query?: never;
@@ -5969,6 +6565,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_environment_runtime_observed_api_environments__environment_id__runtime_observed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservedResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -6684,6 +7311,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runtime_manifest_api_runtime_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
