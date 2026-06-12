@@ -555,6 +555,17 @@ describe("runtime MITM broker launcher", () => {
 			]);
 			expect(upstreamHits).toHaveLength(3);
 
+			const denied = await requestThroughProxy({
+				proxyUrl: broker.proxyUrl,
+				caFile: broker.caFile,
+				host: "unmatched.example.test",
+				path: "/not-managed",
+				headers: {},
+			});
+			expect(denied.status).toBe(403);
+			expect(upstreamHits).toHaveLength(3);
+			expect(providerHits).toHaveLength(2);
+
 			const gateway = await requestWebSocketThroughNodeProxy({
 				proxyUrl: broker.proxyUrl,
 				caFile: broker.caFile,

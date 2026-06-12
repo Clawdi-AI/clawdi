@@ -587,6 +587,11 @@ async def admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
+    if previous_generation is not None and body.generation < previous_generation:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "runtime state generation cannot decrease",
+        )
     changed_fields = _runtime_state_changed_fields(existing_state, body)
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
@@ -603,9 +608,12 @@ async def admin_upsert_runtime_state(
     state.runtimes = body.runtimes
     state.live_sync = body.live_sync
     state.recovery = body.recovery
-    state.mitm_profiles = body.mitm_profiles
-    state.mcp = body.mcp
-    state.tools = body.tools
+    if state is not existing_state or body.mitm_profiles is not None:
+        state.mitm_profiles = body.mitm_profiles
+    if state is not existing_state or body.mcp is not None:
+        state.mcp = body.mcp
+    if state is not existing_state or body.tools is not None:
+        state.tools = body.tools
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -711,8 +719,12 @@ def _runtime_state_changed_fields(
     if state is None:
         return fields
     changed: list[str] = []
+    preserve_when_omitted = {"mitm_profiles", "mcp", "tools"}
     for field in fields:
-        if getattr(state, field) != getattr(body, field):
+        body_value = getattr(body, field)
+        if field in preserve_when_omitted and body_value is None:
+            continue
+        if getattr(state, field) != body_value:
             changed.append(field)
     return changed
 

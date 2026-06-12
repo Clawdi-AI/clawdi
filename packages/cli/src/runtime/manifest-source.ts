@@ -289,7 +289,14 @@ async function fetchRuntimeManifestPayload(
 
 function runtimeChannelsUrl(source: RuntimeSource): string {
 	const url = new URL(source.url);
-	url.pathname = "/api/channels";
+	const manifestSuffix = "/api/runtime/manifest";
+	const path = url.pathname.replace(/\/+$/, "");
+	if (path.endsWith(manifestSuffix)) {
+		const prefix = path.slice(0, -manifestSuffix.length);
+		url.pathname = `${prefix}/api/channels`;
+	} else {
+		url.pathname = new URL("api/channels", url).pathname;
+	}
 	url.search = "";
 	url.hash = "";
 	return url.toString();

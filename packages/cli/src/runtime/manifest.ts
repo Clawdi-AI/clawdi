@@ -8,7 +8,9 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -653,8 +655,11 @@ function applyHostedAiProviderProjection(
 }
 
 function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unknown> | null {
-	const channels = manifest.projection?.channels;
-	if (!channels || Object.keys(channels).length === 0) return null;
+	if (!manifest.projection || !Object.hasOwn(manifest.projection, "channels")) {
+		return null;
+	}
+	const channels = manifest.projection.channels;
+	if (!isPlainRecord(channels)) return null;
 	return channels;
 }
 
@@ -671,19 +676,39 @@ function applyHostedChannelProjection(
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
-	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
-	const patch = {
-		channels,
-		plugins: { entries: channelPluginEntries(channels) },
-	};
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin"],
-		`${JSON.stringify(patch, null, 2)}\n`,
+		`${JSON.stringify(deleteOpenClawManagedChannelsPatch(), null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
+	if (Object.keys(channels).length > 0) {
+		installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
+		const patch = {
+			channels,
+			plugins: { entries: channelPluginEntries(channels) },
+		};
+		runRuntimeUserCommand(
+			observation.commandPath,
+			["config", "patch", "--stdin"],
+			`${JSON.stringify(patch, null, 2)}\n`,
+			home,
+			workspaceRoot,
+		);
+	}
 	return observation.commandPath;
+}
+
+function deleteOpenClawManagedChannelsPatch(): Record<string, unknown> {
+	const managedChannels = ["telegram", "discord", "whatsapp", "bluebubbles"];
+	const deleteEntries = Object.fromEntries(
+		managedChannels.map((channel) => [channel, { $patch: "delete" }]),
+	);
+	return {
+		channels: deleteEntries,
+		plugins: { entries: deleteEntries },
+	};
 }
 
 function installOpenClawChannelPlugins(
@@ -957,6 +982,56 @@ function sleepSync(ms: number): void {
 	Atomics.wait(signal, 0, 0, ms);
 }
 
+function convergeLockOwnerPath(lockDir: string): string {
+	return join(lockDir, "owner.json");
+}
+
+function writeConvergeLockOwner(lockDir: string): void {
+	writeFileSync(
+		convergeLockOwnerPath(lockDir),
+		`${JSON.stringify({
+			schemaVersion: "clawdi.runtimeConvergeLockOwner.v1",
+			pid: process.pid,
+			acquiredAt: new Date().toISOString(),
+		})}\n`,
+		{ mode: 0o600 },
+	);
+}
+
+function readConvergeLockOwnerPid(lockDir: string): number | null {
+	try {
+		const raw = JSON.parse(readFileSync(convergeLockOwnerPath(lockDir), "utf-8")) as unknown;
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+		const pid = (raw as Record<string, unknown>).pid;
+		return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+	} catch {
+		return null;
+	}
+}
+
+function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			(error as NodeJS.ErrnoException).code === "ESRCH"
+		) {
+			return false;
+		}
+		return true;
+	}
+}
+
+function reclaimStaleConvergeLock(lockDir: string): boolean {
+	const ownerPid = readConvergeLockOwnerPid(lockDir);
+	if (ownerPid === null || processIsAlive(ownerPid)) return false;
+	rmSync(lockDir, { recursive: true, force: true });
+	return true;
+}
+
 export function withRuntimeConvergeLock<T>(
 	paths: RuntimePaths,
 	fn: () => T,
@@ -970,6 +1045,12 @@ export function withRuntimeConvergeLock<T>(
 	for (;;) {
 		try {
 			mkdirSync(lockDir);
+			try {
+				writeConvergeLockOwner(lockDir);
+			} catch (error) {
+				rmSync(lockDir, { recursive: true, force: true });
+				throw error;
+			}
 			break;
 		} catch (error) {
 			if (
@@ -978,6 +1059,9 @@ export function withRuntimeConvergeLock<T>(
 				(error as NodeJS.ErrnoException).code !== "EEXIST"
 			) {
 				throw error;
+			}
+			if (reclaimStaleConvergeLock(lockDir)) {
+				continue;
 			}
 			if (Date.now() - startedAt > timeoutMs) {
 				throw new Error(`timed out waiting for runtime converge lock at ${lockDir}`);
@@ -999,6 +1083,7 @@ function runtimeProgramRevision(
 ): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
+		controlPlane: manifest.controlPlane,
 		mitmProfiles: manifest.mitmProfiles ?? null,
 		projection: manifest.projection ?? null,
 		runtime: manifest.runtimes[runtime] ?? null,
@@ -1211,7 +1296,7 @@ export function convergeRuntimeManifest(
 	mkdirSync(paths.projectionRoot, { recursive: true });
 	mkdirSync(semRoot, { recursive: true });
 
-	const manifestLastGood = writeLastGoodManifest(manifest, paths);
+	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {
 		schemaVersion: "clawdi.hostedManagedConfig.v1",
 		generatedAt,
@@ -1380,6 +1465,9 @@ export function convergeRuntimeManifest(
 	const bootFinished = join(instanceRoot, "boot-finished");
 	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
 	removeStaleRuntimeRunConfigs(writtenRunConfigRuntimes, paths);
+	if (installErrors.length === 0) {
+		manifestLastGood = writeLastGoodManifest(manifest, paths);
+	}
 
 	return {
 		manifest,

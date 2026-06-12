@@ -15,6 +15,8 @@ from app.core.database import get_session
 from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
+from app.models.hosted_runtime import HostedRuntimeState
+from app.services.audit import _sanitize_audit_details
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
 
@@ -217,6 +219,89 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
     assert latest["details"]["changed_fields"] == ["generation"]
     assert "secret" not in json.dumps(payload).lower()
     assert "token" not in json.dumps(payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_generation_regression(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"generation-regression-{uuid4().hex[:8]}",
+        machine_name="Runtime generation regression",
+        agent_type="openclaw",
+    )
+    initial = await _write_runtime_state(admin_client, str(env.id), generation=7)
+
+    response = await admin_client.put(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={**initial, "generation": 6},
+    )
+
+    assert response.status_code == 409, response.text
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.generation == 7
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"state-preserve-{uuid4().hex[:8]}",
+        machine_name="Runtime state preserve",
+        agent_type="openclaw",
+    )
+    initial = await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        mitm_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
+        mcp={"enabled": True},
+        tools={"catalog": "clawdi-default"},
+    )
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        **{
+            key: value
+            for key, value in {**initial, "generation": 8}.items()
+            if key not in {"mitm_profiles", "mcp", "tools"}
+        },
+    )
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.generation == 8
+    assert state.mitm_profiles == {"profiles": [{"id": "profile-1", "enabled": True}]}
+    assert state.mcp == {"enabled": True}
+    assert state.tools == {"catalog": "clawdi-default"}
+
+
+def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
+    sanitized = _sanitize_audit_details(
+        {
+            "authorization": "Bearer secret",
+            "cookie": "session=secret",
+            "providerCredential": "secret",
+            "nested": {"bearer": "secret"},
+        }
+    )
+
+    assert sanitized == {
+        "authorization": "[REDACTED]",
+        "cookie": "[REDACTED]",
+        "providerCredential": "[REDACTED]",
+        "nested": {"bearer": "[REDACTED]"},
+    }
 
 
 @pytest.mark.asyncio

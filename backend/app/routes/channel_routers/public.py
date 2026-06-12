@@ -249,7 +249,12 @@ async def list_channels(
                 ChannelBotAgentLink.user_id == auth.user_id,
                 ChannelBotAgentLink.agent_id == auth.api_key.environment_id,
             )
-            .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
+            .order_by(
+                ChannelAccount.provider,
+                ChannelAccount.visibility,
+                ChannelAccount.name,
+                ChannelAccount.id,
+            )
         )
         payload = [
             _runtime_account_response(account, link).model_dump(mode="json")

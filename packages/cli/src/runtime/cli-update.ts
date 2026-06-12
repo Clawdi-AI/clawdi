@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	accessSync,
 	constants,
@@ -9,13 +10,13 @@ import {
 	rmSync,
 	symlinkSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { chmodBestEffort, writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
 export interface RuntimeCliUpdateResult {
-	status: "not_requested" | "current" | "installed";
+	status: "not_requested" | "current" | "installed" | "deferred" | "error";
 	packageSpec: string | null;
 	registry: string | null;
 	npmPrefix: string;
@@ -23,6 +24,7 @@ export interface RuntimeCliUpdateResult {
 	activePath: string;
 	activeTarget: string | null;
 	version: string | null;
+	error?: string | null;
 }
 
 interface RuntimeCliBootstrapStatus {
@@ -30,6 +32,7 @@ interface RuntimeCliBootstrapStatus {
 	source?: string;
 	packageSpec?: string;
 	registry?: string | null;
+	npmPrefix?: string;
 	activePath?: string;
 	activeTarget?: string;
 	version?: string;
@@ -41,6 +44,7 @@ const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 export function applyRuntimeCliDesiredState(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
+	opts: { deferInstall?: boolean; deferReason?: string } = {},
 ): RuntimeCliUpdateResult {
 	const packageSpec = manifest.clawdiCli?.packageSpec?.trim();
 	if (!packageSpec) {
@@ -58,8 +62,19 @@ export function applyRuntimeCliDesiredState(
 		return baseResult("current", paths, {
 			packageSpec,
 			registry,
+			npmPrefix: current.npmPrefix ?? prefixForActiveTarget(current.activeTarget),
 			activeTarget: current.activeTarget ?? null,
 			version: current.version ?? null,
+		});
+	}
+	if (opts.deferInstall) {
+		return baseResult("deferred", paths, {
+			packageSpec,
+			registry,
+			npmPrefix: current?.npmPrefix ?? paths.cliNpmPrefix,
+			activeTarget: current?.activeTarget ?? null,
+			version: current?.version ?? null,
+			error: opts.deferReason ?? "CLI install retry is in backoff",
 		});
 	}
 
@@ -68,47 +83,77 @@ export function applyRuntimeCliDesiredState(
 	writeCliBootstrapStatus(paths, {
 		packageSpec,
 		registry,
+		npmPrefix: installed.npmPrefix,
 		activeTarget: installed.activeTarget,
 		version: installed.version,
 	});
 	return baseResult("installed", paths, {
 		packageSpec,
 		registry,
+		npmPrefix: installed.npmPrefix,
 		activeTarget: installed.activeTarget,
 		version: installed.version,
 	});
 }
 
+type RuntimeCliResultValues = Pick<
+	RuntimeCliUpdateResult,
+	"packageSpec" | "registry" | "activeTarget" | "version"
+> &
+	Partial<Pick<RuntimeCliUpdateResult, "npmPrefix" | "npmCache" | "error">>;
+
 function baseResult(
 	status: RuntimeCliUpdateResult["status"],
 	paths: RuntimePaths,
-	values: Pick<RuntimeCliUpdateResult, "packageSpec" | "registry" | "activeTarget" | "version">,
+	values: RuntimeCliResultValues,
 ): RuntimeCliUpdateResult {
 	return {
 		status,
 		...values,
-		npmPrefix: paths.cliNpmPrefix,
-		npmCache: paths.cliNpmCache,
+		npmPrefix: values.npmPrefix ?? paths.cliNpmPrefix,
+		npmCache: values.npmCache ?? paths.cliNpmCache,
 		activePath: paths.cliManagedBin,
 	};
 }
 
 function cliRegistry(manifest: RuntimeManifest): string | null {
 	const value = (manifest.clawdiCli as Record<string, unknown> | undefined)?.registry;
-	return typeof value === "string" && value.trim() ? value.trim() : null;
+	if (typeof value !== "string" || !value.trim()) return null;
+	const registry = value.trim();
+	let normalized: string;
+	try {
+		const parsed = new URL(registry);
+		parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+		parsed.search = "";
+		parsed.hash = "";
+		normalized = parsed.toString().replace(/\/$/, "");
+	} catch {
+		throw new Error(`unsupported clawdi CLI registry: ${registry}`);
+	}
+	if (normalized !== "https://registry.npmjs.org") {
+		throw new Error(`unsupported clawdi CLI registry: ${registry}`);
+	}
+	return "https://registry.npmjs.org";
 }
 
 function validatePackageSpec(packageSpec: string): void {
+	if (packageSpec === "clawdi") {
+		return;
+	}
+	if (/^clawdi@[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(packageSpec)) {
+		return;
+	}
+	if (/^clawdi@[A-Za-z0-9._-]+$/.test(packageSpec)) {
+		return;
+	}
 	if (
-		packageSpec === "clawdi" ||
-		packageSpec.startsWith("clawdi@") ||
-		(/^\/usr\/local\/share\/clawdi\/bootstrap\/[^/]+\.tgz$/.test(packageSpec) &&
-			!packageSpec.includes(".."))
+		/^\/usr\/local\/share\/clawdi\/bootstrap\/[^/]+\.tgz$/.test(packageSpec) &&
+		!packageSpec.includes("..")
 	) {
 		return;
 	}
 	throw new Error(
-		`clawdi CLI packageSpec must be clawdi, clawdi@..., or a managed bootstrap tarball: ${packageSpec}`,
+		`clawdi CLI packageSpec must be clawdi, clawdi@<version-or-tag>, or a managed bootstrap tarball: ${packageSpec}`,
 	);
 }
 
@@ -142,19 +187,21 @@ function installCliPackage(
 	paths: RuntimePaths,
 	packageSpec: string,
 	registry: string | null,
-): { activeTarget: string; version: string } {
+): { npmPrefix: string; activeTarget: string; version: string } {
+	const npmPrefix = cliPackagePrefix(paths, packageSpec, registry);
 	mkdirSync(dirname(paths.cliManagedBin), { recursive: true });
-	mkdirSync(paths.cliNpmPrefix, { recursive: true });
+	mkdirSync(npmPrefix, { recursive: true });
 	mkdirSync(paths.cliNpmCache, { recursive: true });
 	chmodBestEffort(dirname(paths.cliManagedBin), 0o755);
 	chmodBestEffort(paths.cliNpmPrefix, 0o755);
+	chmodBestEffort(npmPrefix, 0o755);
 	chmodBestEffort(paths.cliNpmCache, 0o755);
 
 	const args = [
 		"install",
 		"-g",
 		"--prefix",
-		paths.cliNpmPrefix,
+		npmPrefix,
 		"--cache",
 		paths.cliNpmCache,
 		"--ignore-scripts",
@@ -190,12 +237,28 @@ function installCliPackage(
 		);
 	}
 
-	const activeTarget = `${paths.cliNpmPrefix}/bin/clawdi`;
+	const activeTarget = `${npmPrefix}/bin/clawdi`;
 	if (!isExecutable(activeTarget)) {
 		throw new Error(`npm install completed but clawdi bin is missing: ${activeTarget}`);
 	}
 	const version = smokeCliVersion(activeTarget);
-	return { activeTarget, version };
+	return { npmPrefix, activeTarget, version };
+}
+
+function cliPackagePrefix(
+	paths: RuntimePaths,
+	packageSpec: string,
+	registry: string | null,
+): string {
+	const hash = createHash("sha256")
+		.update(JSON.stringify({ packageSpec, registry }))
+		.digest("hex")
+		.slice(0, 16);
+	return join(paths.cliNpmPrefix, "packages", hash);
+}
+
+function prefixForActiveTarget(activeTarget: string): string {
+	return dirname(dirname(activeTarget));
 }
 
 function commandOutput(stdout: string | null, stderr: string | null): string {
@@ -247,6 +310,7 @@ function writeCliBootstrapStatus(
 	input: {
 		packageSpec: string;
 		registry: string | null;
+		npmPrefix: string;
 		activeTarget: string;
 		version: string;
 	},
@@ -261,7 +325,7 @@ function writeCliBootstrapStatus(
 				source: "npm",
 				packageSpec: input.packageSpec,
 				registry: input.registry,
-				npmPrefix: paths.cliNpmPrefix,
+				npmPrefix: input.npmPrefix,
 				npmCache: paths.cliNpmCache,
 				activePath: paths.cliManagedBin,
 				activeTarget: input.activeTarget,

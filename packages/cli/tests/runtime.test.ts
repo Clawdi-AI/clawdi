@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -12,15 +12,23 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runtimeInit, runtimeWatch } from "../src/commands/runtime";
+import { applyRuntimeChannelsToManifestLoad } from "../src/runtime/channels";
+import { applyRuntimeCliDesiredState } from "../src/runtime/cli-update";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
 	readHostPolicy,
 } from "../src/runtime/host-policy";
-import { convergeRuntimeManifest, loadRuntimeManifest } from "../src/runtime/manifest";
+import {
+	convergeRuntimeManifest,
+	loadRuntimeManifest,
+	type RuntimeManifest,
+	withRuntimeConvergeLock,
+} from "../src/runtime/manifest";
 import {
 	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
+	type RuntimeChannelsLoad,
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
@@ -45,10 +53,15 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_MANIFEST_URL",
 	"CLAWDI_RUNTIME_SOURCE_PATH",
 	"CLAWDI_RUNTIME_AUTH_ENV",
+	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
+	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
+	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
+	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
 	"CLAWDI_API_URL",
 	"CLAWDI_SUPERVISORCTL_PATH",
+	"CLAWDI_RUNTIME_USER",
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -58,6 +71,7 @@ let root: string;
 
 beforeEach(() => {
 	originalEnv = {};
+	process.exitCode = undefined;
 	for (const key of ENV_KEYS) {
 		const value = process.env[key];
 		if (value !== undefined) originalEnv[key] = value;
@@ -72,7 +86,12 @@ afterEach(() => {
 	for (const [key, value] of Object.entries(originalEnv)) {
 		process.env[key as EnvKey] = value;
 	}
+	process.exitCode = undefined;
 	rmSync(root, { recursive: true, force: true });
+});
+
+afterAll(() => {
+	process.exitCode = 0;
 });
 
 function seedCurrentCliInstall(
@@ -152,6 +171,39 @@ describe("runtime paths", () => {
 		expect(paths.mitmProfileRoot).toBe(join(state, "config", "mitm"));
 		expect(paths.mitmProfileBundle).toBe(join(state, "config", "mitm", "profiles.json"));
 		expect(paths.instanceData).toBe(join(run, "instance-data.json"));
+	});
+
+	it("reclaims a stale converge lock whose owner process is gone", () => {
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const lockDir = join(run, "locks", "converge.lock");
+		const ownerPath = join(lockDir, "owner.json");
+		mkdirSync(lockDir, { recursive: true });
+		writeFileSync(
+			ownerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.runtimeConvergeLockOwner.v1",
+				pid: 99_999_999,
+				acquiredAt: "2026-06-06T00:00:00Z",
+			})}\n`,
+		);
+
+		const result = withRuntimeConvergeLock(
+			paths,
+			() => {
+				const owner = JSON.parse(readFileSync(ownerPath, "utf-8"));
+				expect(owner.pid).toBe(process.pid);
+				return "locked";
+			},
+			{ timeoutMs: 10 },
+		);
+
+		expect(result).toBe("locked");
+		expect(existsSync(lockDir)).toBe(false);
 	});
 });
 
@@ -576,14 +628,14 @@ describe("runtime manifest datasource", () => {
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/api/runtime/manifest?ignored=1",
+				url: "https://runtime.test/prefix/api/runtime/manifest?ignored=1",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/prefix/api/channels",
 				response: () =>
 					new Response(
 						JSON.stringify([
@@ -625,7 +677,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.etag).toBe('"channels-etag-1"');
 			expect(loaded.channels[0]?.runtime_links[0]?.agent_token).toBe("agent-token-runtime");
 			expect(captured).toHaveLength(1);
-			expect(captured[0].path).toBe("/api/channels");
+			expect(captured[0].path).toBe("/prefix/api/channels");
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers["if-none-match"]).toBe('"channels-etag-0"');
 		} finally {
@@ -730,10 +782,10 @@ fi
 		try {
 			await runtimeWatch({ once: true, json: true });
 
-			if (process.exitCode !== undefined) {
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
-			expect(process.exitCode).toBeUndefined();
+			expect(process.exitCode ?? 0).toBe(0);
 			expect(captured).toHaveLength(2);
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[1].headers.authorization).toBe("Bearer file-runtime-token");
@@ -778,6 +830,327 @@ fi
 			expect(supervisorConfig).not.toContain("file-runtime-token");
 		} finally {
 			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime watch keeps provider secrets when manifest is 304 and channels changed", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const supervisorCalls = join(root, "supervisorctl.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		const providerSecretRef = "provider.default.apiKey";
+		const channelSecretRef = "secret://channels/telegram/clawdi_accttelegram/agent-token";
+		const hostedPayload = {
+			manifest: {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				deploymentId: "dep_watch_secret",
+				environmentId: "env_watch_secret",
+				instanceId: "iid_watch_secret",
+				generation: 22,
+				issuedAt: "2026-06-06T00:00:00Z",
+				system: { home, workspace: join(home, "clawdi") },
+				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: { source: "official", channel: "stable" },
+						paths: { home },
+					},
+					hermes: { enabled: false },
+				},
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						baseUrl: "https://sub2api.test/v1",
+						model: "gpt-5.5",
+						apiKeySecretRef: providerSecretRef,
+					},
+				},
+			},
+			secretValues: {
+				[providerSecretRef]: "sk-provider-watch",
+			},
+		};
+		const channelsPayload = [
+			{
+				id: "acct-telegram-watch",
+				provider: "telegram",
+				name: "Runtime Telegram",
+				status: "active",
+				visibility: "private",
+				runtime_links: [
+					{
+						id: "link-telegram-watch",
+						account_id: "acct-telegram-watch",
+						agent_id: "env_watch_secret",
+						status: "active",
+						agent_token: "agent-token-watch",
+					},
+				],
+			},
+		];
+		const manifestResponse = () =>
+			new Response(JSON.stringify(hostedPayload), {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+					etag: '"manifest-etag-stable"',
+				},
+			});
+		const channelsResponse = () =>
+			new Response(JSON.stringify(channelsPayload), {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+					etag: '"channels-etag-next"',
+				},
+			});
+		const openclawRevision = (config: string): string => {
+			const match = config.match(/\[program:clawdi-openclaw\][\s\S]*?CLAWDI_RUNTIME_REV="([^"]+)"/);
+			expect(match?.[1]).toBeTruthy();
+			return match?.[1] ?? "";
+		};
+
+		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			join(bin, "supervisorctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${supervisorCalls}'
+if [ "\${3:-}" = "status" ]; then
+  cat <<'STATUS'
+clawdi-openclaw                  RUNNING   pid 11, uptime 0:00:12
+clawdi-runtime-watch             RUNNING   pid 12, uptime 0:00:12
+STATUS
+fi
+`,
+		);
+		chmodSync(join(bin, "supervisorctl"), 0o700);
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >/dev/null
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_SUPERVISORCTL_PATH = join(bin, "supervisorctl");
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		seedCurrentCliInstall(state);
+		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const paths = getRuntimePaths();
+		const initial = mockFetch([
+			{ method: "GET", path: "/manifest", response: manifestResponse },
+			{ method: "GET", path: "/api/channels", response: channelsResponse },
+		]);
+		try {
+			const manifestLoad = await loadRemoteRuntimeManifest(paths);
+			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
+				throw new Error("expected initial manifest load success");
+			}
+			const channelsLoad = await loadRemoteRuntimeChannels(paths);
+			if (!("channels" in channelsLoad) || "notModified" in channelsLoad) {
+				throw new Error("expected initial channels load success");
+			}
+			const initialConvergence = convergeRuntimeManifest(
+				applyRuntimeChannelsToManifestLoad(
+					manifestLoad as RuntimeManifestLoad,
+					channelsLoad as RuntimeChannelsLoad,
+				),
+				paths,
+			);
+			expect(initialConvergence.installErrors).toEqual([]);
+			writeFileSync(paths.manifestEtag, '"manifest-etag-stable"\n');
+			writeFileSync(paths.channelsEtag, '"channels-etag-current"\n');
+		} finally {
+			initial.restore();
+		}
+		const baselineConfig = readFileSync(paths.supervisorConfig, "utf-8");
+		const baselineRevision = openclawRevision(baselineConfig);
+		const baselineSecrets = JSON.parse(readFileSync(join(run, "mitm", "secrets.json"), "utf-8"));
+		expect(baselineSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+		expect(baselineSecrets[channelSecretRef]).toBe("agent-token-watch");
+
+		const watchFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: (request) =>
+					request.headers["if-none-match"]
+						? new Response(null, {
+								status: 304,
+								headers: { etag: '"manifest-etag-stable"' },
+							})
+						: manifestResponse(),
+			},
+			{ method: "GET", path: "/api/channels", response: channelsResponse },
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			expect(watchFetch.captured.map((request) => request.path)).toEqual([
+				"/manifest",
+				"/api/channels",
+				"/manifest",
+			]);
+			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
+			expect(watchFetch.captured[1].headers["if-none-match"]).toBe('"channels-etag-current"');
+			expect(watchFetch.captured[2].headers["if-none-match"]).toBeUndefined();
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("applied");
+			expect(event.generation).toBe(22);
+			const secrets = JSON.parse(readFileSync(join(run, "mitm", "secrets.json"), "utf-8"));
+			expect(secrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
+			const supervisorConfig = readFileSync(paths.supervisorConfig, "utf-8");
+			expect(openclawRevision(supervisorConfig)).toBe(baselineRevision);
+		} finally {
+			watchFetch.restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime watch retries datasource failures and applies after recovery", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const supervisorCalls = join(root, "supervisorctl.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "supervisorctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${supervisorCalls}'
+if [ "\${3:-}" = "status" ]; then
+  cat <<'STATUS'
+clawdi-daemon                    RUNNING   pid 10, uptime 0:00:12
+clawdi-runtime-watch             RUNNING   pid 12, uptime 0:00:12
+STATUS
+fi
+`,
+		);
+		chmodSync(join(bin, "supervisorctl"), 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_SUPERVISORCTL_PATH = join(bin, "supervisorctl");
+		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		seedCurrentCliInstall(state);
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		const runOnce = async (
+			manifestResponse: () => Response | Promise<Response>,
+			expectedStatus: "error" | "applied",
+		) => {
+			process.exitCode = undefined;
+			logs.length = 0;
+			const { restore } = mockFetch([
+				{ method: "GET", path: "/manifest", response: manifestResponse },
+				{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+			]);
+			try {
+				await runtimeWatch({ once: true, json: true });
+			} finally {
+				restore();
+			}
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe(expectedStatus);
+			return event;
+		};
+
+		try {
+			await runOnce(() => {
+				throw new Error("network down");
+			}, "error");
+			await runOnce(() => new Response("upstream unavailable", { status: 503 }), "error");
+			await runOnce(
+				() => new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+				"error",
+			);
+			const recovered = await runOnce(
+				() =>
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								deploymentId: "dep_watch_recovery",
+								environmentId: "env_watch_recovery",
+								instanceId: "iid_watch_recovery",
+								generation: 18,
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+							},
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json", etag: '"etag-recovered"' },
+						},
+					),
+				"applied",
+			);
+
+			expect(recovered.generation).toBe(18);
+			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
+				'"etag-recovered"\n',
+			);
+		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
 		}
@@ -1166,15 +1539,22 @@ fi
 		try {
 			await runtimeWatch({ once: true, json: true });
 
-			expect(process.exitCode).toBeUndefined();
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			expect(process.exitCode ?? 0).toBe(0);
 			expect(captured).toHaveLength(2);
 			const active = join(state, "bin", "clawdi");
-			const activeTarget = join(state, "npm", "bin", "clawdi");
+			const sharedPrefixTarget = join(state, "npm", "bin", "clawdi");
+			const activeTarget = readlinkSync(active);
 			expect(readlinkSync(active)).toBe(activeTarget);
 			const status = JSON.parse(readFileSync(join(state, "status", "cli-bootstrap.json"), "utf-8"));
 			expect(status.packageSpec).toBe("clawdi@0.13.1-beta.0");
 			expect(status.activePath).toBe(active);
 			expect(status.activeTarget).toBe(activeTarget);
+			expect(status.npmPrefix.startsWith(join(state, "npm", "packages"))).toBe(true);
+			expect(activeTarget).toBe(join(status.npmPrefix, "bin", "clawdi"));
+			expect(activeTarget).not.toBe(sharedPrefixTarget);
 			expect(status.version).toBe("0.13.1-beta.0");
 			expect(readFileSync(supervisorCalls, "utf-8")).toBe(
 				`-c ${join(state, "supervisor", "supervisord.conf")} status\n-c ${join(
@@ -1205,6 +1585,374 @@ fi
 		}
 	});
 
+	it("runtime watch keeps self re-exec when convergence fails after CLI install", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const openclawInstaller = join(root, "install-openclaw.sh");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.3-beta.0"
+  exit 0
+fi
+echo "fake clawdi"
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		writeFileSync(
+			openclawInstaller,
+			`#!/usr/bin/env bash
+set -euo pipefail
+install -d "$HOME/.openclaw/bin"
+cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
+  echo "projection boom" >&2
+  exit 73
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+SH
+chmod +x "$HOME/.openclaw/bin/openclaw"
+`,
+		);
+		chmodSync(openclawInstaller, 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							deploymentId: "dep_cli_update_converge_failure",
+							environmentId: "env_cli_update_converge_failure",
+							instanceId: "iid_cli_update_converge_failure",
+							generation: 16,
+							issuedAt: "2026-06-06T00:00:00Z",
+							system: { home, workspace: join(home, "clawdi") },
+							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+							clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.3-beta.0" },
+							runtimes: {
+								openclaw: { enabled: true },
+								hermes: { enabled: false },
+							},
+						},
+						secretValues: {},
+					}),
+			},
+			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.cliUpdate.status).toBe("installed");
+			expect(event.selfReexec).toBe(true);
+			expect(event.errors[0]).toContain("runtime openclaw channel projection failed");
+			expect(event.errors[0]).toContain("projection boom");
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("runtime watch applies supervisor state when CLI install fails", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const supervisorCalls = join(root, "supervisorctl.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(join(bin, "npm"), "#!/usr/bin/env bash\necho npm down >&2\nexit 42\n");
+		chmodSync(join(bin, "npm"), 0o700);
+		writeFileSync(
+			join(bin, "supervisorctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${supervisorCalls}'
+if [ "\${3:-}" = "status" ]; then
+  cat <<'STATUS'
+clawdi-daemon                    RUNNING   pid 10, uptime 0:00:12
+clawdi-runtime-watch             RUNNING   pid 12, uptime 0:00:12
+STATUS
+fi
+`,
+		);
+		chmodSync(join(bin, "supervisorctl"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_SUPERVISORCTL_PATH = join(bin, "supervisorctl");
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								deploymentId: "dep_cli_update_failure",
+								environmentId: "env_cli_update_failure",
+								instanceId: "iid_cli_update_failure",
+								generation: 17,
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.4-beta.0" },
+								runtimes: {
+									openclaw: { enabled: false },
+									hermes: { enabled: false },
+								},
+							},
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json", etag: '"etag-cli-failed"' },
+						},
+					),
+			},
+			{
+				method: "GET",
+				path: "/api/channels",
+				response: () =>
+					new Response(JSON.stringify([]), {
+						status: 200,
+						headers: { "content-type": "application/json", etag: '"channels-cli-failed"' },
+					}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.stage).toBe("cli-update");
+			expect(event.cliUpdate.status).toBe("error");
+			expect(event.convergence.supervisorConfig).toBe(
+				join(state, "supervisor", "supervisord.conf"),
+			);
+			expect(readFileSync(supervisorCalls, "utf-8")).toContain("update clawdi-daemon");
+			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
+				'"etag-cli-failed"\n',
+			);
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("keeps the previous active CLI when installed CLI smoke fails", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ -z "$prefix" ]; then
+  echo "missing --prefix" >&2
+  exit 64
+fi
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "broken smoke" >&2
+  exit 42
+fi
+echo "new broken clawdi"
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.1-beta.0", "0.13.1-beta.0");
+		const paths = getRuntimePaths();
+		const oldTarget = readlinkSync(paths.cliManagedBin);
+		const oldStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_smoke_failure",
+			environmentId: "env_cli_smoke_failure",
+			instanceId: "iid_cli_smoke_failure",
+			generation: 14,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.13.2-beta.0",
+			},
+			runtimes: {
+				openclaw: { enabled: false },
+				hermes: { enabled: false },
+			},
+			recovery: {},
+		};
+
+		try {
+			expect(() => applyRuntimeCliDesiredState(manifest, paths)).toThrow(/smoke check/);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(status).toEqual(oldStatus);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("rejects unsafe clawdi CLI package specs and registries", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const baseManifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_spec_validation",
+			environmentId: "env_cli_spec_validation",
+			instanceId: "iid_cli_spec_validation",
+			generation: 15,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.2-beta.0" },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: {},
+		};
+
+		for (const packageSpec of [
+			"clawdi@npm:evil",
+			"clawdi@https://evil.test/clawdi.tgz",
+			"clawdi@github:evil/clawdi",
+			"clawdi@file:/tmp/clawdi.tgz",
+		]) {
+			expect(() =>
+				applyRuntimeCliDesiredState(
+					{ ...baseManifest, clawdiCli: { source: "npm:clawdi", packageSpec } },
+					paths,
+				),
+			).toThrow(/packageSpec/);
+		}
+		expect(() =>
+			applyRuntimeCliDesiredState(
+				{
+					...baseManifest,
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec: "clawdi@0.13.2-beta.0",
+						registry: "https://registry.evil.test",
+					},
+				},
+				paths,
+			),
+		).toThrow(/registry/);
+	});
+
 	it("runtime init applies remote channel desired state during first boot", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1225,7 +1973,8 @@ fi
 			`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat > '${openclawPatch}'
+  cat >> '${openclawPatch}'
+  printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
 if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
@@ -1365,6 +2114,7 @@ exit 64
 				'"channels-etag-init-1"\n',
 			);
 			const patchText = readFileSync(openclawPatch, "utf-8");
+			expect(patchText).toContain('"$patch": "delete"');
 			expect(patchText).toContain('"telegram"');
 			expect(patchText).toContain('"botToken": "agent-token-init"');
 			expect(patchText).toContain('"discord"');
@@ -1387,6 +2137,80 @@ exit 64
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
 		}
+	});
+
+	it("converges deleted native channels with OpenClaw patch-delete semantics", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-channel-delete-patch.jsonl");
+		mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatch}'
+  printf '\\n---\\n' >> '${openclawPatch}'
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  echo "plugin install should not run for empty channels" >&2
+  exit 64
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_channel_delete",
+				environmentId: "env_channel_delete",
+				instanceId: "iid_channel_delete",
+				generation: 8,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: { enabled: false },
+				},
+				projection: {
+					system: { home, workspace },
+					channels: {},
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://channel-delete",
+			offline: false,
+			secretValues: {},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const patchText = readFileSync(openclawPatch, "utf-8");
+		expect(patchText).toContain('"telegram": {');
+		expect(patchText).toContain('"discord": {');
+		expect(patchText).toContain('"$patch": "delete"');
+		expect(patchText).not.toContain('"botToken"');
 	});
 
 	it("treats already-installed OpenClaw channel plugins as converged", () => {
@@ -1702,6 +2526,116 @@ exit 64
 			profile: "clawdi-default",
 		});
 		expect(mcpProjection.projection.tools).toEqual({ catalog: "clawdi-default" });
+	});
+
+	it("does not advance last-good manifest cache when convergence has install errors", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const cachePath = join(state, "cache", "manifest.last-good.json");
+		mkdirSync(dirname(cachePath), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const previousManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_last_good_floor",
+			environmentId: "env_last_good_floor",
+			instanceId: "iid_last_good_floor",
+			generation: 1,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(cachePath, JSON.stringify(previousManifest));
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				...previousManifest,
+				generation: 2,
+				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+			} as RuntimeManifest,
+			source: "fixture-file",
+			sourcePath: "test://install-error",
+			offline: false,
+			secretValues: {},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([
+			"runtime openclaw is enabled but missing install metadata",
+		]);
+		expect(convergence.outputs.manifestLastGood).toBeNull();
+		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
+	});
+
+	it("runtime program revision changes for control-plane changes but not sibling runtimes", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const baseManifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_revision",
+			environmentId: "env_revision",
+			instanceId: "iid_revision",
+			generation: 1,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.0-test" },
+			runtimes: {
+				openclaw: { enabled: true },
+				hermes: { enabled: false },
+			},
+			recovery: {},
+		};
+		const revisionFor = (manifest: RuntimeManifest, runtime: string) => {
+			convergeRuntimeManifest(
+				{
+					manifest,
+					source: "fixture-file",
+					sourcePath: "test://revision",
+					offline: false,
+					secretValues: {},
+				},
+				getRuntimePaths(),
+			);
+			const supervisorConfig = readFileSync(join(state, "supervisor", "supervisord.conf"), "utf-8");
+			const match = supervisorConfig.match(
+				new RegExp(`\\[program:clawdi-${runtime}\\][\\s\\S]*?CLAWDI_RUNTIME_REV="([^"]+)"`),
+			);
+			if (!match) throw new Error(`missing runtime revision for ${runtime}`);
+			return match[1];
+		};
+
+		const baseRev = revisionFor(baseManifest, "openclaw");
+		const controlPlaneRev = revisionFor(
+			{
+				...baseManifest,
+				controlPlane: { apiUrl: "https://cloud-api-next.test" },
+			},
+			"openclaw",
+		);
+		const siblingRuntimeRev = revisionFor(
+			{
+				...baseManifest,
+				runtimes: {
+					...baseManifest.runtimes,
+					hermes: { enabled: true },
+				},
+			},
+			"openclaw",
+		);
+
+		expect(controlPlaneRev).not.toBe(baseRev);
+		expect(siblingRuntimeRev).toBe(baseRev);
 	});
 
 	it("derives a safe API origin when manifests only include a source URL", async () => {

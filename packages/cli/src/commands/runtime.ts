@@ -9,6 +9,7 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { getCliVersion } from "../lib/version";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -1144,6 +1145,12 @@ interface RuntimeApplyResult {
 	cliUpdate: RuntimeCliUpdateResult;
 }
 
+interface RuntimeApplyOptions {
+	continueOnCliUpdateError?: boolean;
+	deferCliInstall?: boolean;
+	deferCliInstallReason?: string;
+}
+
 function hasRuntimeCredential(input: {
 	manifestPath?: string;
 	paths?: ReturnType<typeof getRuntimePaths>;
@@ -1644,7 +1651,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean },
+	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
 ): Promise<Record<string, unknown>> {
 	const manifestEtag = opts.forceRefresh ? undefined : readRuntimeManifestEtag(paths);
 	const channelsEtag = opts.forceRefresh ? undefined : readRuntimeChannelsEtag(paths);
@@ -1688,19 +1695,38 @@ async function runtimeWatchTick(
 	try {
 		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
 		const { convergence, cliUpdate } = withRuntimeConvergeLock(paths, () =>
-			applyRuntimeDesiredState(loaded, paths),
+			applyRuntimeDesiredState(loaded, paths, {
+				continueOnCliUpdateError: true,
+				deferCliInstall: opts.deferCliInstall,
+				deferCliInstallReason: opts.deferCliInstallReason,
+			}),
 		);
-		if (convergence.installErrors.length > 0) {
+		const cliUpdateError =
+			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
+		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
+		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		if (convergence.installErrors.length === 0) {
+			applySupervisorRuntimeUpdate(paths);
+		}
+		if (errors.length > 0) {
+			if (!("notModified" in manifestLoad)) {
+				writeRuntimeManifestEtag(paths, manifestLoad.etag);
+			}
+			if (!("notModified" in channelsLoad)) {
+				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+			}
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
-				stage: "final",
-				errors: convergence.installErrors,
-				error: convergence.installErrors[0],
+				stage: cliUpdateError ? "cli-update" : "final",
+				errors,
+				error: errors[0],
 				activeGeneration: convergence.manifest.generation,
+				cliUpdate,
+				selfReexec,
+				convergence: convergence.outputs,
 			};
 		}
-		applySupervisorRuntimeUpdate(paths);
 		if (!("notModified" in manifestLoad)) {
 			writeRuntimeManifestEtag(paths, manifestLoad.etag);
 		}
@@ -1725,7 +1751,7 @@ async function runtimeWatchTick(
 			instanceId: convergence.manifest.instanceId,
 			enabledRuntimes: convergence.enabledRuntimes,
 			cliUpdate,
-			selfReexec: cliUpdate.status === "installed",
+			selfReexec,
 			convergence: convergence.outputs,
 		};
 	} catch (error) {
@@ -1742,10 +1768,45 @@ async function runtimeWatchTick(
 function applyRuntimeDesiredState(
 	load: RuntimeManifestLoad,
 	paths: ReturnType<typeof getRuntimePaths>,
+	opts: RuntimeApplyOptions = {},
 ): RuntimeApplyResult {
-	const cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths);
+	let cliUpdate: RuntimeCliUpdateResult;
+	try {
+		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
+			deferInstall: opts.deferCliInstall,
+			deferReason: opts.deferCliInstallReason,
+		});
+	} catch (error) {
+		if (!opts.continueOnCliUpdateError) throw error;
+		cliUpdate = runtimeCliUpdateError(load.manifest, paths, error);
+	}
 	const convergence = convergeRuntimeManifest(load, paths);
 	return { cliUpdate, convergence };
+}
+
+function runtimeCliUpdateError(
+	manifest: RuntimeManifestLoad["manifest"],
+	paths: ReturnType<typeof getRuntimePaths>,
+	error: unknown,
+): RuntimeCliUpdateResult {
+	const rawRegistry = (manifest.clawdiCli as Record<string, unknown> | undefined)?.registry;
+	return {
+		status: "error",
+		packageSpec: manifest.clawdiCli?.packageSpec?.trim() || null,
+		registry: typeof rawRegistry === "string" && rawRegistry.trim() ? rawRegistry.trim() : null,
+		npmPrefix: paths.cliNpmPrefix,
+		npmCache: paths.cliNpmCache,
+		activePath: paths.cliManagedBin,
+		activeTarget: null,
+		version: null,
+		error: error instanceof Error ? error.message : String(error),
+	};
+}
+
+function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolean {
+	if (cliUpdate.status === "installed") return true;
+	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
+	return cliUpdate.version !== getCliVersion();
 }
 
 async function runtimeWatchLoadForApply(
@@ -1754,7 +1815,11 @@ async function runtimeWatchLoadForApply(
 	channelsLoad: RuntimeChannelsLoad | RuntimeChannelsNotModified,
 ): Promise<RuntimeManifestLoad> {
 	const loaded =
-		"notModified" in manifestLoad ? await loadCachedRuntimeManifestForWatch(paths) : manifestLoad;
+		"notModified" in manifestLoad
+			? "notModified" in channelsLoad
+				? await loadCachedRuntimeManifestForWatch(paths)
+				: await loadFullRuntimeManifestForWatch(paths)
+			: manifestLoad;
 	const channelDesired =
 		"notModified" in channelsLoad
 			? "notModified" in manifestLoad
@@ -1773,6 +1838,19 @@ async function loadCachedRuntimeManifestForWatch(
 		);
 	}
 	const loaded = await loadRuntimeManifest(paths, { manifestPath: paths.manifestLastGood });
+	if ("errors" in loaded) {
+		throw new Error(loaded.errors.join("; "));
+	}
+	return loaded;
+}
+
+async function loadFullRuntimeManifestForWatch(
+	paths: ReturnType<typeof getRuntimePaths>,
+): Promise<RuntimeManifestLoad> {
+	const loaded = await loadRemoteRuntimeManifest(paths);
+	if ("notModified" in loaded) {
+		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
+	}
 	if ("errors" in loaded) {
 		throw new Error(loaded.errors.join("; "));
 	}
@@ -1798,6 +1876,9 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const intervalMs = parsePositiveMs(opts.intervalMs, 15_000, "--interval-ms");
 	const selfHealMs = parsePositiveMs(opts.selfHealMs, 300_000, "--self-heal-ms");
 	let lastFullFetchAt = Date.now();
+	let cliInstallRetryPending = false;
+	let cliInstallBackoffMs = 0;
+	let nextCliInstallRetryAt = 0;
 
 	if (mode !== "hosted") {
 		const event = {
@@ -1831,13 +1912,37 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	}
 
 	for (;;) {
-		const forceRefresh = Date.now() - lastFullFetchAt >= selfHealMs;
-		const event = await runtimeWatchTick(paths, { forceRefresh });
+		const now = Date.now();
+		const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
+		const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+		const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
+		const event = await runtimeWatchTick(paths, {
+			forceRefresh,
+			deferCliInstall,
+			deferCliInstallReason: deferCliInstall
+				? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
+				: undefined,
+		});
+		const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
+		if (cliUpdateStatus === "error") {
+			cliInstallRetryPending = true;
+			cliInstallBackoffMs = nextCliInstallBackoffMs(cliInstallBackoffMs);
+			nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+		} else if (
+			cliUpdateStatus === "installed" ||
+			cliUpdateStatus === "current" ||
+			cliUpdateStatus === "not_requested"
+		) {
+			cliInstallRetryPending = false;
+			cliInstallBackoffMs = 0;
+			nextCliInstallRetryAt = 0;
+		}
 		if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
 		writeRuntimeWatchStatus(event, paths);
 		emitRuntimeWatchEvent(event, opts.json);
 		if (opts.once) {
 			if (event.status === "error") process.exitCode = 1;
+			else process.exitCode = 0;
 			return;
 		}
 		if (event.selfReexec === true) {
@@ -1845,6 +1950,29 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		}
 		await sleep(intervalMs);
 	}
+}
+
+function runtimeWatchCliUpdateStatus(
+	event: Record<string, unknown>,
+): RuntimeCliUpdateResult["status"] | null {
+	const cliUpdate = event.cliUpdate;
+	if (!cliUpdate || typeof cliUpdate !== "object" || Array.isArray(cliUpdate)) return null;
+	const status = (cliUpdate as Record<string, unknown>).status;
+	if (
+		status === "not_requested" ||
+		status === "current" ||
+		status === "installed" ||
+		status === "deferred" ||
+		status === "error"
+	) {
+		return status;
+	}
+	return null;
+}
+
+function nextCliInstallBackoffMs(previousMs: number): number {
+	if (previousMs <= 0) return 60_000;
+	return Math.min(previousMs * 2, 300_000);
 }
 
 export async function runtimeStatus(opts: { json?: boolean } = {}) {

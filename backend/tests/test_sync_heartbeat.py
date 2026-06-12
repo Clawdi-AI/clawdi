@@ -267,6 +267,51 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
 
 
 @pytest.mark.asyncio
+async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = HostedRuntimeState(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-observed-dedupe",
+        instance_id="iid-observed-dedupe",
+        generation=4,
+        provider_id="clawdi-managed",
+        runtimes={"openclaw": {"enabled": True}},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    observed = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "reportedAt": "2026-06-11T00:00:00+00:00",
+        "status": "ok",
+        "manifest": {"etag": '"manifest-etag"'},
+    }
+    first = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={"queue_depth": 1, "runtime_observed": observed},
+    )
+    assert first.status_code == 204, first.text
+    await db_session.refresh(state)
+    assert state.observed == observed
+
+    second = await client.post(
+        f"/api/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": {
+                **observed,
+                "reportedAt": "2026-06-11T00:00:30+00:00",
+            }
+        },
+    )
+    assert second.status_code == 204, second.text
+    await db_session.refresh(state)
+    assert state.observed == observed
+
+
+@pytest.mark.asyncio
 async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

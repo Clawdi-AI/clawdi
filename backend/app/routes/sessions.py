@@ -709,6 +709,14 @@ def _bounded_runtime_observed(value: dict[str, Any] | None) -> dict[str, Any] | 
     }
 
 
+def _runtime_observed_comparison_value(
+    value: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return {key: item for key, item in value.items() if key != "reportedAt"}
+
+
 @router.post("/api/agents/{environment_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
 async def sync_heartbeat(
     environment_id: UUID,
@@ -776,7 +784,11 @@ async def sync_heartbeat(
                 )
             )
         ).scalar_one_or_none()
-        observed_changed = hosted_state is not None and hosted_state.observed != runtime_observed
+        observed_changed = (
+            hosted_state is not None
+            and _runtime_observed_comparison_value(hosted_state.observed)
+            != _runtime_observed_comparison_value(runtime_observed)
+        )
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)

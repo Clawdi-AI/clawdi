@@ -7,7 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import ControlPlaneAuditEvent
 
-SECRETISH_KEY_PARTS = ("secret", "token", "password", "api_key", "apikey", "private_key")
+SECRETISH_KEY_PARTS = (
+    "secret",
+    "token",
+    "password",
+    "api_key",
+    "apikey",
+    "private_key",
+    "authorization",
+    "bearer",
+    "cookie",
+    "credential",
+)
 
 
 def record_control_plane_audit(

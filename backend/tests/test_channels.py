@@ -1044,6 +1044,65 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
 
 
 @pytest.mark.asyncio
+async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    duplicate_name = f"Runtime Duplicate {uuid4().hex}"
+    created_response = await client.post(
+        "/api/channels",
+        json={
+            "provider": "telegram",
+            "name": duplicate_name,
+            "provider_token": "123456:telegram-secret-0",
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created_ids = [created_response.json()["id"]]
+
+    other_user, _ = await _create_user_with_channel_agent(db_session, label="runtime-duplicate")
+    other_token_ciphertext, other_token_nonce = encrypt_optional_token("123456:telegram-secret-1")
+    other_agent_token_ciphertext, other_agent_token_nonce = encrypt_optional_token(
+        "telegram-agent-secret-1"
+    )
+    other_account = ChannelAccount(
+        user_id=other_user.id,
+        provider="telegram",
+        name=duplicate_name,
+        encrypted_provider_token=other_token_ciphertext,
+        provider_token_nonce=other_token_nonce,
+        webhook_secret_hash=hash_token("runtime-duplicate-webhook-secret"),
+    )
+    db_session.add(other_account)
+    await db_session.flush()
+    db_session.add(
+        ChannelBotAgentLink(
+            account_id=other_account.id,
+            user_id=seed_user.id,
+            agent_id=channel_agent.id,
+            agent_token_hash=hash_token("telegram-agent-secret-1"),
+            encrypted_agent_token=other_agent_token_ciphertext,
+            agent_token_nonce=other_agent_token_nonce,
+        )
+    )
+    created_ids.append(str(other_account.id))
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        first = await runtime_client.get("/api/channels")
+        assert first.status_code == 200, first.text
+        etag = first.headers["etag"]
+        second = await runtime_client.get("/api/channels", headers={"If-None-Match": etag})
+
+    assert second.status_code == 304, second.text
+    listed_ids = [item["id"] for item in first.json()]
+    assert listed_ids == sorted(listed_ids)
+
+
+@pytest.mark.asyncio
 async def test_env_bound_channel_etag_changes_when_agent_token_rotates(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
