@@ -1313,10 +1313,12 @@ async def record_inactive_bot_agent_link_event(
     *,
     account: ChannelAccount,
     binding: ChannelBinding | None,
+    link: ChannelBotAgentLink | None = None,
 ) -> None:
     if binding is None or binding.bot_agent_link_id is None:
         return
-    link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    if link is None:
+        link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
     if (
         link is not None
         and link.status == BOT_AGENT_LINK_STATUS_ACTIVE

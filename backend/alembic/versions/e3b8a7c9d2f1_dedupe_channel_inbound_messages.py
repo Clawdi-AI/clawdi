@@ -1,5 +1,9 @@
 """dedupe channel inbound messages
 
+Production preflight on 2026-06-12 reported channel_messages at reltuples=-1
+and 80 kB total size, so regular unique index creation is acceptable for this
+release. Revisit CONCURRENTLY if the table is large in a future environment.
+
 Revision ID: e3b8a7c9d2f1
 Revises: da72b4f51c03
 Create Date: 2026-06-12 00:00:00.000000

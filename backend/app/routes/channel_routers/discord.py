@@ -264,10 +264,6 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
         inbox_by_gateway = session_state.setdefault("inbox_by_gateway_sequence", {})
         if isinstance(inbox_by_gateway, dict):
             inbox_by_gateway[gateway_sequence_value] = inbox_sequence
-        session_state["max_dispatched_inbox_sequence"] = max(
-            int(session_state.get("max_dispatched_inbox_sequence") or 0),
-            inbox_sequence,
-        )
 
     async def ack_gateway_sequence(through_sequence: int) -> None:
         if account is None or bot_agent_link_id is None:
