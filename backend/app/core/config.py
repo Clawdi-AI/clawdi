@@ -153,6 +153,9 @@ class Settings(BaseSettings):
     channel_long_poll_max_seconds: float = 30.0
     channel_long_poll_interval_seconds: float = 0.1
     discord_gateway_poll_interval_seconds: float = 1.0
+    channel_message_retention_days: int = 30
+    channel_unbound_message_retention_hours: int = 24
+    channel_message_cleanup_batch_size: int = 500
 
     # Shared LLM credentials for any feature that needs chat completions
     # (memory extraction today; session summarization, auto-tagging, etc.

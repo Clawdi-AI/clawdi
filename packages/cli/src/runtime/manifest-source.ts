@@ -33,7 +33,7 @@ export interface RuntimeManifestNotModified {
 
 export interface RuntimeManifestFailure {
 	mode: "repair" | "manifest-rejected";
-	stage: "detect" | "local" | "network";
+	stage: "detect" | "local" | "network" | "auth";
 	errors: string[];
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
@@ -72,7 +72,7 @@ export interface RuntimeChannelsNotModified {
 
 export interface RuntimeChannelsFailure {
 	mode: "repair";
-	stage: "network";
+	stage: "network" | "auth";
 	errors: string[];
 }
 
@@ -99,6 +99,20 @@ const runtimeSourceSchema = z
 	.strict();
 
 type RuntimeSource = z.infer<typeof runtimeSourceSchema>;
+
+class RuntimeAuthError extends Error {
+	constructor(
+		readonly resource: "manifest" | "channels",
+		readonly status: number,
+		detail: string,
+	) {
+		super(
+			`runtime ${resource} authentication failed: HTTP ${status}${
+				detail ? ` ${detail.slice(0, 200)}` : ""
+			}`,
+		);
+	}
+}
 
 const runtimeChannelAgentLinkSchema = z
 	.object({
@@ -275,6 +289,9 @@ async function fetchRuntimeManifestPayload(
 		}
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
+			if (response.status === 401 || response.status === 403) {
+				throw new RuntimeAuthError("manifest", response.status, detail);
+			}
 			throw new Error(
 				`runtime manifest request failed: HTTP ${response.status}${
 					detail ? ` ${detail.slice(0, 200)}` : ""
@@ -345,6 +362,9 @@ async function fetchRuntimeChannelsPayload(
 		}
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
+			if (response.status === 401 || response.status === 403) {
+				throw new RuntimeAuthError("channels", response.status, detail);
+			}
 			throw new Error(
 				`runtime channels request failed: HTTP ${response.status}${
 					detail ? ` ${detail.slice(0, 200)}` : ""
@@ -367,7 +387,7 @@ export async function loadRemoteRuntimeManifest(
 	} catch (error) {
 		return {
 			mode: "repair",
-			stage: "network",
+			stage: runtimeFetchFailureStage(error),
 			errors: [
 				`could not fetch runtime manifest: ${
 					error instanceof Error ? error.message : String(error)
@@ -413,7 +433,7 @@ export async function loadRemoteRuntimeChannels(
 	} catch (error) {
 		return {
 			mode: "repair",
-			stage: "network",
+			stage: runtimeFetchFailureStage(error),
 			errors: [
 				`could not fetch runtime channels: ${
 					error instanceof Error ? error.message : String(error)
@@ -443,6 +463,10 @@ export async function loadRemoteRuntimeChannels(
 		sourcePath: fetched.url,
 		etag: fetched.etag,
 	};
+}
+
+function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
+	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
 function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
@@ -706,6 +730,21 @@ export async function loadRuntimeManifest(
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
+	const missingSecretRefs = manifestSecretRefsMissingValues(
+		normalized.manifest,
+		normalized.secretValues,
+	);
+	if (missingSecretRefs.length > 0) {
+		return {
+			mode: "manifest-rejected",
+			stage: "local",
+			errors: [
+				`runtime manifest fixture references secretValues (${missingSecretRefs.join(", ")}); refusing fixture without inline secretValues`,
+			],
+			rejectedGeneration: normalized.manifest.generation,
+			activeGeneration: loadExistingState(paths).generation ?? null,
+		};
+	}
 
 	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
 }
@@ -770,6 +809,14 @@ function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	return [...refs].sort();
 }
 
+function manifestSecretRefsMissingValues(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): string[] {
+	const normalizedValues = normalizeSecretValues(secretValues ?? {});
+	return manifestSecretRefs(manifest).filter((ref) => normalizedValues[ref] === undefined);
+}
+
 function collectSecretRefs(value: unknown, refs: Set<string>): void {
 	if (!value || typeof value !== "object") return;
 	if (Array.isArray(value)) {
@@ -796,11 +843,6 @@ function validateLoadedManifest(
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
 			`manifest instanceId ${manifest.instanceId} does not match last-good instanceId ${existing.instanceId}`,
-		);
-	}
-	if (existing.generation !== undefined && manifest.generation < existing.generation) {
-		semanticErrors.push(
-			`manifest generation ${manifest.generation} is older than last-good generation ${existing.generation}`,
 		);
 	}
 	if (semanticErrors.length > 0) {

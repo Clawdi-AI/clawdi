@@ -9,7 +9,9 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,7 +19,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AiProviderCatalog } from "@clawdi/shared";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
-import { mergeHermesConfig, mergeHermesMcpServer } from "../lib/hermes-config-merge";
+import {
+	mergeHermesConfig,
+	mergeHermesMcpServer,
+	removeHermesMcpServer,
+} from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
@@ -765,8 +771,7 @@ function channelPluginEntries(
 ): Record<string, { enabled: boolean }> {
 	const entries: Record<string, { enabled: boolean }> = {};
 	for (const channel of Object.keys(channels).sort()) {
-		if (channel === "bluebubbles") entries.bluebubbles = { enabled: true };
-		else entries[channel] = { enabled: true };
+		entries[channel] = { enabled: true };
 	}
 	return entries;
 }
@@ -776,6 +781,11 @@ function hostedMcpProjectionEnabled(manifest: RuntimeManifest): boolean {
 	if (!projection) return false;
 	if (isPlainRecord(projection.mcp) && projection.mcp.enabled === false) return false;
 	return projection.mcp !== undefined || projection.tools !== undefined;
+}
+
+function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
+	const projection = manifest.projection;
+	return Boolean(projection && (projection.mcp !== undefined || projection.tools !== undefined));
 }
 
 function hostedMcpServerConfig(
@@ -800,13 +810,16 @@ function applyHostedMcpProjection(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 ): string | null {
-	if (!hostedMcpProjectionEnabled(manifest)) return null;
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	if (!hostedMcpProjectionDeclared(manifest)) return null;
+	if (!hostedMcpProjectionEnabled(manifest)) {
+		return removeHostedMcpProjection(name, observation, manifest, home, workspaceRoot);
+	}
 	if (!daemonAuthTokenFile) return null;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return null;
 	}
 	const server = hostedMcpServerConfig(manifest, daemonAuthTokenFile);
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "openclaw") {
 		runRuntimeUserCommand(
 			observation.commandPath,
@@ -820,6 +833,28 @@ function applyHostedMcpProjection(
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
 		mergeHermesMcpServer(configPath, "clawdi", server);
+		makeRuntimeUserOwned(configPath);
+		return configPath;
+	}
+	return null;
+}
+
+function removeHostedMcpProjection(
+	name: string,
+	observation: RuntimeInstallObservation,
+	_manifest: RuntimeManifest,
+	home: string,
+	workspaceRoot: string,
+): string | null {
+	if (name === "openclaw") {
+		const commandPath = observation.commandPath ?? runtimeCommandPath(name, home);
+		if (!commandPath || !executableExists(commandPath)) return null;
+		runRuntimeUserCommand(commandPath, ["mcp", "unset", "clawdi"], "", home, workspaceRoot);
+		return commandPath;
+	}
+	if (name === "hermes") {
+		const configPath = join(home, ".hermes", "config.yaml");
+		removeHermesMcpServer(configPath, "clawdi");
 		makeRuntimeUserOwned(configPath);
 		return configPath;
 	}
@@ -1025,10 +1060,42 @@ function processIsAlive(pid: number): boolean {
 	}
 }
 
-function reclaimStaleConvergeLock(lockDir: string): boolean {
+function reclaimStaleConvergeLock(lockDir: string, timeoutMs: number): boolean {
 	const ownerPid = readConvergeLockOwnerPid(lockDir);
-	if (ownerPid === null || processIsAlive(ownerPid)) return false;
-	rmSync(lockDir, { recursive: true, force: true });
+	if (ownerPid === null) {
+		let mtimeMs: number;
+		try {
+			mtimeMs = statSync(lockDir).mtimeMs;
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				"code" in error &&
+				(error as NodeJS.ErrnoException).code === "ENOENT"
+			) {
+				return true;
+			}
+			throw error;
+		}
+		if (Date.now() - mtimeMs <= 2 * timeoutMs) return false;
+	} else if (processIsAlive(ownerPid)) {
+		return false;
+	}
+	const staleDir = `${lockDir}.stale.${process.pid}.${Date.now()}.${Math.random()
+		.toString(36)
+		.slice(2)}`;
+	try {
+		renameSync(lockDir, staleDir);
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			(error as NodeJS.ErrnoException).code === "ENOENT"
+		) {
+			return true;
+		}
+		throw error;
+	}
+	rmSync(staleDir, { recursive: true, force: true });
 	return true;
 }
 
@@ -1060,7 +1127,7 @@ export function withRuntimeConvergeLock<T>(
 			) {
 				throw error;
 			}
-			if (reclaimStaleConvergeLock(lockDir)) {
+			if (reclaimStaleConvergeLock(lockDir, timeoutMs)) {
 				continue;
 			}
 			if (Date.now() - startedAt > timeoutMs) {

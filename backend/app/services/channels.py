@@ -16,7 +16,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +54,7 @@ from app.models.channel import (
     ChannelPairCode,
     ChannelSecret,
 )
+from app.services.channel_debug_events import record_channel_debug_event
 from app.services.discord_rate_limiter import discord_rate_limiter
 from app.services.imessage_routing import (
     list_imessage_outbound_chat_guids,
@@ -176,6 +177,8 @@ def generate_pair_code() -> str:
 def generate_agent_token(provider: str) -> str:
     secret = secrets.token_urlsafe(32).replace("-", "").replace("_", "")
     if provider == CHANNEL_PROVIDER_TELEGRAM:
+        # Keep Telegram agent tokens Bot API-shaped for SDKs that validate or
+        # interpolate tokens into `/bot{token}/...` paths.
         bot_id = secrets.randbelow(900_000_000) + 100_000_000
         return f"{bot_id}:{secret}"
     if provider == CHANNEL_PROVIDER_DISCORD:
@@ -313,6 +316,7 @@ async def get_or_create_bot_agent_link(
     if link is not None:
         return link, None
 
+    await ensure_bot_agent_link_capacity(db, account=account)
     raw_token = agent_token or generate_agent_token(account.provider)
     link = ChannelBotAgentLink(
         account_id=account.id,
@@ -323,6 +327,54 @@ async def get_or_create_bot_agent_link(
     db.add(link)
     await db.flush()
     return link, raw_token
+
+
+def channel_bot_link_limit(account: ChannelAccount) -> int | None:
+    config = account.config if isinstance(account.config, dict) else {}
+    value = config.get("max_links", config.get("maxLinks"))
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+async def count_active_bot_agent_links(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> int:
+    result = await db.execute(
+        select(func.count())
+        .select_from(ChannelBotAgentLink)
+        .where(
+            ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+    )
+    return int(result.scalar_one())
+
+
+async def ensure_bot_agent_link_capacity(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> None:
+    max_links = channel_bot_link_limit(account)
+    if max_links is None:
+        return
+    await db.execute(
+        select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+    )
+    link_count = await count_active_bot_agent_links(db, account=account)
+    if link_count >= max_links:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="channel bot link capacity reached",
+        )
 
 
 async def create_pair_code(
@@ -1151,6 +1203,16 @@ async def record_inbound_message(
     text: str | None,
     payload: dict[str, Any],
 ) -> ChannelMessage:
+    if provider_message_id is not None:
+        existing = await _find_existing_inbound_message(
+            db,
+            account=account,
+            binding=binding,
+            external_chat_id=external_chat_id,
+            provider_message_id=provider_message_id,
+        )
+        if existing is not None:
+            return existing
     owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
         account_id=account.id,
@@ -1163,10 +1225,52 @@ async def record_inbound_message(
         text=text,
         payload=payload,
     )
-    db.add(message)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(message)
+            await db.flush()
+    except IntegrityError:
+        existing = await _find_existing_inbound_message(
+            db,
+            account=account,
+            binding=binding,
+            external_chat_id=external_chat_id,
+            provider_message_id=provider_message_id,
+        )
+        if existing is not None:
+            return existing
+        raise
     inbound_messages.labels(channel=account.provider).inc()
     return message
+
+
+async def _find_existing_inbound_message(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+    external_chat_id: str,
+    provider_message_id: str | None,
+) -> ChannelMessage | None:
+    if provider_message_id is None:
+        return None
+    filters = [
+        ChannelMessage.account_id == account.id,
+        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+        ChannelMessage.external_chat_id == external_chat_id,
+        ChannelMessage.provider_message_id == provider_message_id,
+    ]
+    if binding is None:
+        filters.append(ChannelMessage.bot_agent_link_id.is_(None))
+    else:
+        filters.append(ChannelMessage.bot_agent_link_id == binding.bot_agent_link_id)
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(*filters)
+        .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def record_inbound_messages_for_bindings(
@@ -1202,6 +1306,46 @@ async def record_inbound_messages_for_bindings(
     if binding_result.command_handled:
         _mark_inbound_messages_delivered(messages)
     return messages
+
+
+async def record_inactive_bot_agent_link_event(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+) -> None:
+    if binding is None or binding.bot_agent_link_id is None:
+        return
+    link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    if (
+        link is not None
+        and link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+        and link.archived_at is None
+    ):
+        return
+    if link is None:
+        reason = "link_missing"
+    elif link.archived_at is not None:
+        reason = "link_archived"
+    else:
+        reason = "link_disabled"
+    await record_channel_debug_event(
+        db,
+        account=account,
+        user_id=binding.user_id,
+        provider=account.provider,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        stage="agent_webhook",
+        outcome="failure",
+        external_chat_id=binding.external_chat_id,
+        error="bot agent link inactive",
+        details={
+            "reason": reason,
+            "binding_id": str(binding.id),
+            "bot_agent_link_id": str(binding.bot_agent_link_id),
+            "bot_agent_link_status": link.status if link is not None else None,
+        },
+    )
 
 
 def _mark_inbound_messages_delivered(
@@ -1502,17 +1646,19 @@ async def ack_channel_inbox_events(
     db: AsyncSession,
     *,
     account: ChannelAccount,
+    bot_agent_link_id: UUID | None = None,
     through_sequence: int,
 ) -> int:
-    result = await db.execute(
-        select(ChannelMessage).where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-            ChannelMessage.binding_id.is_not(None),
-            ChannelMessage.delivered_at.is_(None),
-            ChannelMessage.inbox_sequence <= through_sequence,
-        )
-    )
+    filters = [
+        ChannelMessage.account_id == account.id,
+        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+        ChannelMessage.binding_id.is_not(None),
+        ChannelMessage.delivered_at.is_(None),
+        ChannelMessage.inbox_sequence <= through_sequence,
+    ]
+    if bot_agent_link_id is not None:
+        filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
+    result = await db.execute(select(ChannelMessage).where(*filters))
     messages = list(result.scalars().all())
     now = datetime.now(UTC)
     for message in messages:
@@ -1538,6 +1684,52 @@ async def drain_channel_inbox(
     now = datetime.now(UTC)
     for message in messages:
         message.delivered_at = now
+    await db.flush()
+    return len(messages)
+
+
+async def prune_channel_messages(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    delivered_retention: timedelta | None = None,
+    unbound_retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    delivered_cutoff = current_time - (
+        delivered_retention or timedelta(days=settings.channel_message_retention_days)
+    )
+    unbound_cutoff = current_time - (
+        unbound_retention or timedelta(hours=settings.channel_unbound_message_retention_hours)
+    )
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(
+            or_(
+                and_(
+                    ChannelMessage.delivered_at.is_not(None),
+                    ChannelMessage.delivered_at < delivered_cutoff,
+                ),
+                and_(
+                    ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                    ChannelMessage.binding_id.is_(None),
+                    ChannelMessage.created_at < unbound_cutoff,
+                ),
+            )
+        )
+        .order_by(ChannelMessage.created_at, ChannelMessage.id)
+        .limit(batch_limit)
+    )
+    messages = list(result.scalars().all())
+    for message in messages:
+        await db.delete(message)
     await db.flush()
     return len(messages)
 
@@ -1624,6 +1816,7 @@ async def dequeue_discord_gateway_events(
         ChannelMessage.account_id == account.id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
         ChannelMessage.binding_id.is_not(None),
+        ChannelMessage.delivered_at.is_(None),
         ChannelMessage.inbox_sequence > after_sequence,
     ]
     if bot_agent_link_id is not None:
@@ -2772,6 +2965,7 @@ async def record_discord_dispatch(
             message=message,
             payload=payload,
         )
+        await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     return True
 
 

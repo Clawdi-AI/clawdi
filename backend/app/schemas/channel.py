@@ -79,6 +79,9 @@ class ChannelBotPoolCapabilities(BaseModel):
 class ChannelBotPoolItem(ChannelAccountResponse):
     access: ChannelBotPoolAccess
     capabilities: ChannelBotPoolCapabilities
+    link_count: int = 0
+    max_links: int | None = None
+    available: bool = True
 
 
 class ChannelBotPoolResponse(BaseModel):

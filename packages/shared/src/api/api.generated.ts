@@ -2964,6 +2964,18 @@ export interface components {
              */
             access: "owner" | "public";
             capabilities: components["schemas"]["ChannelBotPoolCapabilities"];
+            /**
+             * Link Count
+             * @default 0
+             */
+            link_count: number;
+            /** Max Links */
+            max_links?: number | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
         };
         /** ChannelBotPoolResponse */
         ChannelBotPoolResponse: {

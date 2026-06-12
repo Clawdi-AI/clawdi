@@ -1709,10 +1709,10 @@ async function runtimeWatchTick(
 			applySupervisorRuntimeUpdate(paths);
 		}
 		if (errors.length > 0) {
-			if (!("notModified" in manifestLoad)) {
+			if (convergence.installErrors.length === 0 && !("notModified" in manifestLoad)) {
 				writeRuntimeManifestEtag(paths, manifestLoad.etag);
 			}
-			if (!("notModified" in channelsLoad)) {
+			if (convergence.installErrors.length === 0 && !("notModified" in channelsLoad)) {
 				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
 			}
 			return {
@@ -1741,8 +1741,7 @@ async function runtimeWatchTick(
 				"notModified" in manifestLoad
 					? (manifestLoad.etag ?? manifestEtag ?? null)
 					: (manifestLoad.etag ?? null),
-			channelsSourcePath:
-				"notModified" in channelsLoad ? channelsLoad.sourcePath : channelsLoad.sourcePath,
+			channelsSourcePath: channelsLoad.sourcePath,
 			channelsEtag:
 				"notModified" in channelsLoad
 					? (channelsLoad.etag ?? channelsEtag ?? null)
@@ -1815,33 +1814,10 @@ async function runtimeWatchLoadForApply(
 	channelsLoad: RuntimeChannelsLoad | RuntimeChannelsNotModified,
 ): Promise<RuntimeManifestLoad> {
 	const loaded =
-		"notModified" in manifestLoad
-			? "notModified" in channelsLoad
-				? await loadCachedRuntimeManifestForWatch(paths)
-				: await loadFullRuntimeManifestForWatch(paths)
-			: manifestLoad;
+		"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
 	const channelDesired =
-		"notModified" in channelsLoad
-			? "notModified" in manifestLoad
-				? null
-				: await loadFullRuntimeChannelsForWatch(paths)
-			: channelsLoad;
+		"notModified" in channelsLoad ? await loadFullRuntimeChannelsForWatch(paths) : channelsLoad;
 	return applyRuntimeChannelsToManifestLoad(loaded, channelDesired);
-}
-
-async function loadCachedRuntimeManifestForWatch(
-	paths: ReturnType<typeof getRuntimePaths>,
-): Promise<RuntimeManifestLoad> {
-	if (!existsSync(paths.manifestLastGood)) {
-		throw new Error(
-			`runtime channels changed but cached manifest does not exist: ${paths.manifestLastGood}`,
-		);
-	}
-	const loaded = await loadRuntimeManifest(paths, { manifestPath: paths.manifestLastGood });
-	if ("errors" in loaded) {
-		throw new Error(loaded.errors.join("; "));
-	}
-	return loaded;
 }
 
 async function loadFullRuntimeManifestForWatch(

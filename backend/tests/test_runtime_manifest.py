@@ -222,7 +222,7 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
 
 
 @pytest.mark.asyncio
-async def test_admin_runtime_state_rejects_generation_regression(
+async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generation(
     admin_client,
     db_session,
     seed_user,
@@ -230,22 +230,40 @@ async def test_admin_runtime_state_rejects_generation_regression(
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
-        machine_id=f"generation-regression-{uuid4().hex[:8]}",
-        machine_name="Runtime generation regression",
+        machine_id=f"generation-reset-{uuid4().hex[:8]}",
+        machine_name="Runtime generation reset",
         agent_type="openclaw",
     )
     initial = await _write_runtime_state(admin_client, str(env.id), generation=7)
 
-    response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
-        headers=_AUTH,
-        json={**initial, "generation": 6},
-    )
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
 
-    assert response.status_code == 409, response.text
+    assert response.status_code == 200, response.text
+    etag = response.headers["etag"]
+    assert response.json()["manifest"]["generation"] == 7
+
+    await _write_runtime_state(admin_client, str(env.id), **{**initial, "generation": 6})
+
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
-    assert state.generation == 7
+    assert state.generation == 6
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        reset = await client.get("/api/runtime/manifest")
+        not_modified = await client.get(
+            "/api/runtime/manifest",
+            headers={"If-None-Match": etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert reset.status_code == 200, reset.text
+    assert reset.headers["etag"] == etag
+    assert reset.json()["manifest"]["generation"] == 6
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == etag
+    assert not_modified.content == b""
 
 
 @pytest.mark.asyncio
@@ -293,6 +311,7 @@ def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
             "cookie": "session=secret",
             "providerCredential": "secret",
             "has_provider_credential": True,
+            "pin_code": 123456,
             "nested": {"bearer": "secret"},
         }
     )
@@ -302,6 +321,7 @@ def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
         "cookie": "[REDACTED]",
         "providerCredential": "[REDACTED]",
         "has_provider_credential": True,
+        "pin_code": "[REDACTED]",
         "nested": {"bearer": "[REDACTED]"},
     }
 
@@ -339,6 +359,39 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
         "enabled": ["memory", "connectors"],
     }
     assert "channels" not in manifest
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_rejects_conflicting_runtime_provider_ids(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-conflict-{uuid4().hex[:8]}",
+        machine_name="Runtime provider conflict",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        provider_id="openai-managed",
+        runtimes={
+            "openclaw": {"enabled": True, "provider_id": "openai-managed"},
+            "hermes": {"enabled": True, "providerId": "anthropic-managed"},
+        },
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "enabled runtimes must use a single provider id"}
+    assert "provider.default.apiKey" not in response.text
 
 
 @pytest.mark.asyncio

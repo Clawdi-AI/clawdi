@@ -5,7 +5,7 @@ import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 
 export type RuntimeBootMode = "normal" | "degraded-offline" | "manifest-rejected" | "repair";
-export type RuntimeBootStage = "detect" | "local" | "network" | "config" | "final";
+export type RuntimeBootStage = "detect" | "local" | "network" | "auth" | "config" | "final";
 
 export interface RuntimeBootStatus {
 	schemaVersion: "clawdi.runtimeBootStatus.v1";

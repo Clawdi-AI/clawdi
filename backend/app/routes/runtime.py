@@ -83,7 +83,11 @@ async def get_runtime_manifest(
     if state.tools:
         manifest["tools"] = state.tools
     payload = {"manifest": manifest, "secretValues": secret_values}
-    etag = strong_json_etag(payload)
+    etag_payload = {
+        "manifest": {key: value for key, value in manifest.items() if key != "generation"},
+        "secretValues": secret_values,
+    }
+    etag = strong_json_etag(etag_payload)
     headers = {"ETag": etag, "Cache-Control": "no-store"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
@@ -165,7 +169,8 @@ async def _provider_projection(
     auth: AuthContext,
     state: HostedRuntimeState,
 ) -> tuple[dict[str, Any], dict[str, str], list[Any]]:
-    provider = await _select_provider(db, auth=auth, provider_id=state.provider_id)
+    provider_id = _runtime_provider_id(state)
+    provider = await _select_provider(db, auth=auth, provider_id=provider_id)
     if provider is None:
         return {}, {}, []
 
@@ -184,6 +189,36 @@ async def _provider_projection(
     if payload is not None:
         version_sources.append(payload)
     return {"default": projection}, secret_values, version_sources
+
+
+def _runtime_provider_id(state: HostedRuntimeState) -> str | None:
+    declared_provider_ids: set[str] = set()
+    for runtime in (state.runtimes or {}).values():
+        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
+            continue
+        provider_id = runtime.get("provider_id", runtime.get("providerId"))
+        if provider_id is None:
+            continue
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "enabled runtime provider id must be a non-empty string",
+            )
+        declared_provider_ids.add(provider_id)
+
+    if len(declared_provider_ids) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "enabled runtimes must use a single provider id",
+        )
+
+    declared_provider_id = next(iter(declared_provider_ids), None)
+    if state.provider_id and declared_provider_id and state.provider_id != declared_provider_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "runtime state provider id does not match enabled runtime provider id",
+        )
+    return state.provider_id or declared_provider_id
 
 
 async def _select_provider(

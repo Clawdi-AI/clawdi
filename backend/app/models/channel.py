@@ -11,7 +11,9 @@ from sqlalchemy import (
     LargeBinary,
     String,
     UniqueConstraint,
-    text,
+)
+from sqlalchemy import (
+    text as sql_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -95,7 +97,7 @@ class ChannelAccount(Base, TimestampMixin):
             "provider",
             "name",
             unique=True,
-            postgresql_where=text("archived_at IS NULL"),
+            postgresql_where=sql_text("archived_at IS NULL"),
         ),
     )
 
@@ -140,7 +142,7 @@ class ChannelBotAgentLink(Base, TimestampMixin):
             "account_id",
             "agent_id",
             unique=True,
-            postgresql_where=text("archived_at IS NULL"),
+            postgresql_where=sql_text("archived_at IS NULL"),
         ),
     )
 
@@ -213,7 +215,7 @@ class ChannelBinding(Base, TimestampMixin):
             "account_id",
             "external_chat_id",
             unique=True,
-            postgresql_where=text("status = 'active'"),
+            postgresql_where=sql_text("status = 'active'"),
         ),
     )
 
@@ -329,7 +331,7 @@ class ChannelMessage(Base, TimestampMixin):
         BigInteger,
         nullable=False,
         index=True,
-        server_default=text("nextval('channel_messages_inbox_sequence_seq'::regclass)"),
+        server_default=sql_text("nextval('channel_messages_inbox_sequence_seq'::regclass)"),
     )
     external_chat_id: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
     provider_message_id: Mapped[str | None] = mapped_column(String(300))
@@ -344,6 +346,31 @@ class ChannelMessage(Base, TimestampMixin):
             "direction",
             "delivered_at",
             "inbox_sequence",
+        ),
+        Index(
+            "ux_channel_messages_inbound_provider_message_bound",
+            "account_id",
+            "external_chat_id",
+            "provider_message_id",
+            "bot_agent_link_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "direction = 'inbound' "
+                "AND provider_message_id IS NOT NULL "
+                "AND bot_agent_link_id IS NOT NULL"
+            ),
+        ),
+        Index(
+            "ux_channel_messages_inbound_provider_message_unbound",
+            "account_id",
+            "external_chat_id",
+            "provider_message_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "direction = 'inbound' "
+                "AND provider_message_id IS NOT NULL "
+                "AND bot_agent_link_id IS NULL"
+            ),
         ),
     )
 

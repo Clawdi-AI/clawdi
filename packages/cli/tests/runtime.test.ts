@@ -3,10 +3,12 @@ import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	readlinkSync,
 	rmSync,
 	symlinkSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -197,6 +199,7 @@ describe("runtime paths", () => {
 			() => {
 				const owner = JSON.parse(readFileSync(ownerPath, "utf-8"));
 				expect(owner.pid).toBe(process.pid);
+				expect(readdirSync(join(run, "locks"))).toEqual(["converge.lock"]);
 				return "locked";
 			},
 			{ timeoutMs: 10 },
@@ -204,6 +207,31 @@ describe("runtime paths", () => {
 
 		expect(result).toBe("locked");
 		expect(existsSync(lockDir)).toBe(false);
+		expect(readdirSync(join(run, "locks"))).toEqual([]);
+	});
+
+	it("reclaims an ownerless converge lock only after the stale timeout window", () => {
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const lockDir = join(run, "locks", "converge.lock");
+		mkdirSync(lockDir, { recursive: true });
+		const fresh = new Date(Date.now() + 60_000);
+		utimesSync(lockDir, fresh, fresh);
+
+		expect(() => withRuntimeConvergeLock(paths, () => "locked", { timeoutMs: 5 })).toThrow(
+			/timed out waiting/,
+		);
+
+		const stale = new Date(Date.now() - 60_000);
+		utimesSync(lockDir, stale, stale);
+		const result = withRuntimeConvergeLock(paths, () => "locked", { timeoutMs: 5 });
+
+		expect(result).toBe("locked");
+		expect(readdirSync(join(run, "locks"))).toEqual([]);
 	});
 });
 
@@ -1156,6 +1184,61 @@ fi
 		}
 	});
 
+	it("runtime watch reports deploy-key authentication failures in observed state", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		writeFileSync(join(run, "sync", "auth-token"), "revoked-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () => new Response("revoked", { status: 401 }),
+			},
+			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.stage).toBe("auth");
+			expect(event.error).toContain("authentication failed: HTTP 401");
+			const observed = readHostedRuntimeObserved(getRuntimePaths());
+			expect(observed?.status).toBe("error");
+			expect(observed?.convergeError).toContain("authentication failed: HTTP 401");
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
 	it("runtime observed samples supervisor program health", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1227,19 +1310,85 @@ EOF
 					name: "clawdi-runtime-watch",
 					state: "RUNNING",
 					status: "ok",
-					description: "pid 11, uptime 0:00:12",
+					description: null,
 				},
 				{
 					name: "clawdi-daemon",
 					state: "RUNNING",
 					status: "ok",
-					description: "pid 12, uptime 0:00:10",
+					description: null,
 				},
 				{
 					name: "clawdi-openclaw",
 					state: "FATAL",
 					status: "error",
 					description: "Exited too quickly (process log may have details)",
+				},
+			],
+		});
+	});
+
+	it("runtime observed ignores volatile watch timestamps and running uptimes", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		mkdirSync(join(state, "supervisor"), { recursive: true });
+		mkdirSync(run, { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		const supervisorctl = join(bin, "supervisorctl");
+		writeFileSync(
+			supervisorctl,
+			`#!/usr/bin/env bash
+if [ ! -f '${root}/supervisor-count' ]; then
+  echo 1 > '${root}/supervisor-count'
+  echo 'clawdi-runtime-watch              RUNNING   pid 11, uptime 0:00:12'
+else
+  echo 'clawdi-runtime-watch              RUNNING   pid 11, uptime 0:12:34'
+fi
+`,
+		);
+		chmodSync(supervisorctl, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SUPERVISORCTL_PATH = supervisorctl;
+		const paths = getRuntimePaths();
+		writeFileSync(paths.supervisorConfig, "[supervisord]\n");
+		writeFileSync(join(run, "supervisor.sock"), "");
+		writeRuntimeWatchStatus(
+			{ status: "applied", generation: 9, instanceId: "iid-observed-stable" },
+			paths,
+		);
+
+		const first = readHostedRuntimeObserved(paths);
+		writeRuntimeWatchStatus(
+			{ status: "applied", generation: 9, instanceId: "iid-observed-stable" },
+			paths,
+		);
+		const second = readHostedRuntimeObserved(paths);
+		const stable = (value: Record<string, unknown> | null) => {
+			if (!value) return value;
+			const copy = { ...value };
+			delete copy.reportedAt;
+			return copy;
+		};
+
+		expect(stable(second)).toEqual(stable(first));
+		expect(second?.watch).not.toHaveProperty("timestamp");
+		expect(second?.supervisor).toEqual({
+			status: "ok",
+			available: true,
+			socketExists: true,
+			programCount: 1,
+			programs: [
+				{
+					name: "clawdi-runtime-watch",
+					state: "RUNNING",
+					status: "ok",
+					description: null,
 				},
 			],
 		});
@@ -1670,24 +1819,30 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				method: "GET",
 				path: "/manifest",
 				response: () =>
-					jsonResponse({
-						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-							deploymentId: "dep_cli_update_converge_failure",
-							environmentId: "env_cli_update_converge_failure",
-							instanceId: "iid_cli_update_converge_failure",
-							generation: 16,
-							issuedAt: "2026-06-06T00:00:00Z",
-							system: { home, workspace: join(home, "clawdi") },
-							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-							clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.3-beta.0" },
-							runtimes: {
-								openclaw: { enabled: true },
-								hermes: { enabled: false },
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								deploymentId: "dep_cli_update_converge_failure",
+								environmentId: "env_cli_update_converge_failure",
+								instanceId: "iid_cli_update_converge_failure",
+								generation: 16,
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.3-beta.0" },
+								runtimes: {
+									openclaw: { enabled: true },
+									hermes: { enabled: false },
+								},
 							},
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json", etag: '"etag-projection-failed"' },
 						},
-						secretValues: {},
-					}),
+					),
 			},
 			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
 		]);
@@ -1702,6 +1857,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(event.selfReexec).toBe(true);
 			expect(event.errors[0]).toContain("runtime openclaw channel projection failed");
 			expect(event.errors[0]).toContain("projection boom");
+			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -1951,6 +2107,150 @@ chmod +x "$prefix/bin/clawdi"
 				paths,
 			),
 		).toThrow(/registry/);
+	});
+
+	it("rebuilds missing CLI bootstrap status without reinstalling the active package", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const npmLog = join(root, "npm.log");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+printf 'npm called\\n' >> '${npmLog}'
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.6-beta.0"
+  exit 0
+fi
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_status_rebuild",
+			environmentId: "env_cli_status_rebuild",
+			instanceId: "iid_cli_status_rebuild",
+			generation: 1,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.6-beta.0" },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: {},
+		};
+
+		try {
+			const installed = applyRuntimeCliDesiredState(manifest, paths);
+			expect(installed.status).toBe("installed");
+			rmSync(paths.cliBootstrapStatus, { force: true });
+			rmSync(npmLog, { force: true });
+
+			const recovered = applyRuntimeCliDesiredState(manifest, paths);
+
+			expect(recovered.status).toBe("current");
+			expect(existsSync(npmLog)).toBe(false);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(status.packageSpec).toBe("clawdi@0.13.6-beta.0");
+			expect(status.activeTarget).toBe(readlinkSync(paths.cliManagedBin));
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("prunes old versioned CLI package prefixes after successful swaps", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+package=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  package="$1"
+  shift
+done
+version="\${package#clawdi@}"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<SH
+#!/usr/bin/env bash
+if [ "\\\${1:-}" = "--version" ]; then
+  echo "$version"
+  exit 0
+fi
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const manifestFor = (packageSpec: string): RuntimeManifest => ({
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_prune",
+			environmentId: "env_cli_prune",
+			instanceId: "iid_cli_prune",
+			generation: 1,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: {},
+		});
+
+		try {
+			applyRuntimeCliDesiredState(manifestFor("clawdi@0.13.7-beta.0"), paths);
+			applyRuntimeCliDesiredState(manifestFor("clawdi@0.13.8-beta.0"), paths);
+			applyRuntimeCliDesiredState(manifestFor("clawdi@0.13.9-beta.0"), paths);
+			const packageDirs = readdirSync(join(state, "npm", "packages")).sort();
+
+			expect(packageDirs).toHaveLength(2);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(readlinkSync(paths.cliManagedBin)).toBe(status.activeTarget);
+			expect(packageDirs.map((entry) => join(state, "npm", "packages", entry))).toContain(
+				status.npmPrefix,
+			);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
 	});
 
 	it("runtime init applies remote channel desired state during first boot", async () => {
@@ -2445,6 +2745,10 @@ if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ] && [ "\${3:-}" = "clawdi" ]; t
   printf '%s\\n' "\${4:-}" > '${openclawMcp}'
   exit 0
 fi
+if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ] && [ "\${3:-}" = "clawdi" ]; then
+  rm -f '${openclawMcp}'
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 `,
@@ -2526,6 +2830,54 @@ exit 64
 			profile: "clawdi-default",
 		});
 		expect(mcpProjection.projection.tools).toEqual({ catalog: "clawdi-default" });
+
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_mcp",
+				environmentId: "env_mcp",
+				instanceId: "iid_mcp",
+				generation: 4,
+				issuedAt: "2026-06-06T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					mcp: { enabled: false },
+				},
+			}),
+		);
+		const disabled = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+		expect("manifest" in disabled).toBe(true);
+		if (!("manifest" in disabled)) throw new Error("expected disabled manifest load success");
+		const disabledConvergence = convergeRuntimeManifest(disabled, getRuntimePaths());
+
+		expect(disabledConvergence.installErrors).toEqual([]);
+		expect(existsSync(openclawMcp)).toBe(false);
+		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
 	});
 
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {
@@ -2636,6 +2988,97 @@ exit 64
 
 		expect(controlPlaneRev).not.toBe(baseRev);
 		expect(siblingRuntimeRev).toBe(baseRev);
+	});
+
+	it("allows generation reset for the same runtime instance identity", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "runtime-reset.json");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const previousManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_generation_reset",
+			environmentId: "env_generation_reset",
+			instanceId: "iid_generation_reset",
+			generation: 42,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(paths.manifestLastGood, JSON.stringify(previousManifest));
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				...previousManifest,
+				generation: 1,
+				issuedAt: "2026-06-07T00:00:00Z",
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(paths, { manifestPath });
+
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		expect(loaded.manifest.generation).toBe(1);
+		expect(loaded.manifest.instanceId).toBe("iid_generation_reset");
+	});
+
+	it("rejects fixture manifests that reference secretValues without inline values", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "runtime-secretref.json");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_fixture_secretref",
+				environmentId: "env_fixture_secretref",
+				instanceId: "iid_fixture_secretref",
+				generation: 1,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+				mitmProfiles: {
+					profiles: [
+						{
+							id: "provider-secretref",
+							kind: "provider",
+							match: { scheme: "https", host: "api.openai.com", pathPrefix: "/v1/" },
+							rewrite: {
+								upstreamBaseUrl: "https://sub2api.test/v1",
+								setHeaders: {
+									authorization: {
+										type: "secretRef",
+										secretRef: "secret://provider.default.apiKey",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					],
+				},
+				recovery: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest rejection");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.errors[0]).toContain("fixture references secretValues");
 	});
 
 	it("derives a safe API origin when manifests only include a source URL", async () => {

@@ -5,7 +5,9 @@ import {
 	constants,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
+	readlinkSync,
 	renameSync,
 	rmSync,
 	symlinkSync,
@@ -67,6 +69,23 @@ export function applyRuntimeCliDesiredState(
 			version: current.version ?? null,
 		});
 	}
+	const recovered = recoverCurrentCliInstallFromActiveLink(paths, packageSpec, registry);
+	if (recovered) {
+		writeCliBootstrapStatus(paths, {
+			packageSpec,
+			registry,
+			npmPrefix: recovered.npmPrefix,
+			activeTarget: recovered.activeTarget,
+			version: recovered.version,
+		});
+		return baseResult("current", paths, {
+			packageSpec,
+			registry,
+			npmPrefix: recovered.npmPrefix,
+			activeTarget: recovered.activeTarget,
+			version: recovered.version,
+		});
+	}
 	if (opts.deferInstall) {
 		return baseResult("deferred", paths, {
 			packageSpec,
@@ -78,6 +97,9 @@ export function applyRuntimeCliDesiredState(
 		});
 	}
 
+	const previousActivePrefix = current?.activeTarget
+		? prefixForActiveTarget(current.activeTarget)
+		: prefixForActiveLink(paths.cliManagedBin);
 	const installed = installCliPackage(paths, packageSpec, registry);
 	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
 	writeCliBootstrapStatus(paths, {
@@ -87,6 +109,7 @@ export function applyRuntimeCliDesiredState(
 		activeTarget: installed.activeTarget,
 		version: installed.version,
 	});
+	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousActivePrefix]);
 	return baseResult("installed", paths, {
 		packageSpec,
 		registry,
@@ -183,6 +206,22 @@ function isCurrentCliInstall(
 	return isExecutable(paths.cliManagedBin);
 }
 
+function recoverCurrentCliInstallFromActiveLink(
+	paths: RuntimePaths,
+	packageSpec: string,
+	registry: string | null,
+): { npmPrefix: string; activeTarget: string; version: string } | null {
+	const npmPrefix = cliPackagePrefix(paths, packageSpec, registry);
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
+	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
+	return {
+		npmPrefix,
+		activeTarget,
+		version: smokeCliVersion(activeTarget),
+	};
+}
+
 function installCliPackage(
 	paths: RuntimePaths,
 	packageSpec: string,
@@ -259,6 +298,33 @@ function cliPackagePrefix(
 
 function prefixForActiveTarget(activeTarget: string): string {
 	return dirname(dirname(activeTarget));
+}
+
+function activeLinkTarget(activePath: string): string | null {
+	try {
+		return readlinkSync(activePath);
+	} catch {
+		return null;
+	}
+}
+
+function prefixForActiveLink(activePath: string): string | null {
+	const activeTarget = activeLinkTarget(activePath);
+	return activeTarget ? prefixForActiveTarget(activeTarget) : null;
+}
+
+function pruneCliPackagePrefixes(paths: RuntimePaths, keepPrefixes: Array<string | null>): void {
+	const packageRoot = join(paths.cliNpmPrefix, "packages");
+	const keep = new Set(keepPrefixes.filter((value): value is string => Boolean(value)));
+	try {
+		for (const entry of readdirSync(packageRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const path = join(packageRoot, entry.name);
+			if (!keep.has(path)) rmSync(path, { recursive: true, force: true });
+		}
+	} catch {
+		// Best effort only; a failed prune must not block a validated CLI update.
+	}
 }
 
 function commandOutput(stdout: string | null, stderr: string | null): string {

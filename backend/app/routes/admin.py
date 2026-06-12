@@ -587,11 +587,6 @@ async def admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
-    if previous_generation is not None and body.generation < previous_generation:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "runtime state generation cannot decrease",
-        )
     changed_fields = _runtime_state_changed_fields(existing_state, body)
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)

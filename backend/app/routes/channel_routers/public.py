@@ -75,6 +75,7 @@ from app.services.audit import record_control_plane_audit
 from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
     archive_channel_account,
+    channel_bot_link_limit,
     create_pair_code,
     decrypt_agent_link_token,
     encrypt_optional_token,
@@ -205,12 +206,18 @@ def _bot_pool_item(
     account: ChannelAccount,
     *,
     user_id: UUID,
+    link_count: int = 0,
 ) -> ChannelBotPoolItem:
     access = _bot_pool_access(account, user_id=user_id)
+    max_links = channel_bot_link_limit(account)
+    available = max_links is None or link_count < max_links
     return ChannelBotPoolItem(
         **_account_response(account).model_dump(),
         access=access,
-        capabilities=_bot_pool_capabilities(access),
+        capabilities=_bot_pool_capabilities(access, available=available),
+        link_count=link_count,
+        max_links=max_links,
+        available=available,
     )
 
 
@@ -220,15 +227,38 @@ def _bot_pool_access(account: ChannelAccount, *, user_id: UUID) -> ChannelBotPoo
     return "public"
 
 
-def _bot_pool_capabilities(access: ChannelBotPoolAccess) -> ChannelBotPoolCapabilities:
+def _bot_pool_capabilities(
+    access: ChannelBotPoolAccess,
+    *,
+    available: bool,
+) -> ChannelBotPoolCapabilities:
     can_manage_account = access == "owner"
     return ChannelBotPoolCapabilities(
-        link_agent=True,
-        pair_chat=True,
+        link_agent=available,
+        pair_chat=available,
         send_message=True,
         manage_account=can_manage_account,
         sync_commands=can_manage_account,
     )
+
+
+async def _active_bot_agent_link_counts(
+    db: AsyncSession,
+    *,
+    account_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not account_ids:
+        return {}
+    result = await db.execute(
+        select(ChannelBotAgentLink.account_id, func.count())
+        .where(
+            ChannelBotAgentLink.account_id.in_(account_ids),
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .group_by(ChannelBotAgentLink.account_id)
+    )
+    return {account_id: int(count) for account_id, count in result.all()}
 
 
 @router.get("", response_model=list[ChannelAccountResponse | ChannelRuntimeAccountResponse])
@@ -273,7 +303,12 @@ async def list_channels(
             ChannelAccount.user_id == auth.user_id,
             ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
         )
-        .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
+        .order_by(
+            ChannelAccount.provider,
+            ChannelAccount.visibility,
+            ChannelAccount.name,
+            ChannelAccount.id,
+        )
     )
     payload = [
         _account_response(account).model_dump(mode="json") for account in result.scalars().all()
@@ -305,10 +340,21 @@ async def list_channel_bot_pool(
     providers: dict[str, list[ChannelBotPoolItem]] = {
         provider: [] for provider in CHANNEL_PROVIDERS
     }
-    for account in result.scalars().all():
+    accounts = list(result.scalars().all())
+    link_counts = await _active_bot_agent_link_counts(
+        db,
+        account_ids=[account.id for account in accounts],
+    )
+    for account in accounts:
         providers.setdefault(account.provider, []).append(
-            _bot_pool_item(account, user_id=auth.user_id)
+            _bot_pool_item(
+                account,
+                user_id=auth.user_id,
+                link_count=link_counts.get(account.id, 0),
+            )
         )
+    for items in providers.values():
+        items.sort(key=lambda item: (not item.available, item.link_count, item.name, str(item.id)))
     return ChannelBotPoolResponse(providers=providers)
 
 

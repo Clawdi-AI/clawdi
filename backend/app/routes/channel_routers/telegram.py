@@ -26,6 +26,7 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
+    MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
     ChannelBinding,
     ChannelBotAgentLink,
@@ -44,6 +45,7 @@ from app.routes.channel_routers.shared import (
     _validate_agent_webhook_url,
 )
 from app.schemas.channel import TelegramWebhookResponse
+from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
     TELEGRAM_REF_CALLBACK_QUERY_ID,
     TELEGRAM_REF_FILE_ID,
@@ -432,7 +434,6 @@ async def telegram_webhook(
     )
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
-        delivered_any = False
         for routed_message, binding in messages:
             delivered = await _deliver_telegram_agent_webhook_for_binding(
                 db,
@@ -442,9 +443,7 @@ async def telegram_webhook(
             )
             if delivered:
                 routed_message.delivered_at = delivered_at
-                delivered_any = True
-        if delivered_any:
-            await db.commit()
+        await db.commit()
     return TelegramWebhookResponse(
         ok=True,
         paired=binding_result.paired,
@@ -471,8 +470,46 @@ async def _deliver_telegram_agent_webhook_for_binding(
         return False
     link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
     if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+        await _record_inactive_telegram_agent_link_event(
+            db,
+            account=account,
+            binding=binding,
+            link=link,
+        )
         return False
     return await _deliver_telegram_agent_webhook(account, link, payload)
+
+
+async def _record_inactive_telegram_agent_link_event(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding,
+    link: ChannelBotAgentLink | None,
+) -> None:
+    if link is None:
+        reason = "link_missing"
+    elif link.archived_at is not None:
+        reason = "link_archived"
+    else:
+        reason = "link_disabled"
+    await record_channel_debug_event(
+        db,
+        account=account,
+        user_id=binding.user_id,
+        provider=account.provider,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        stage="agent_webhook",
+        outcome="failure",
+        external_chat_id=binding.external_chat_id,
+        error="bot agent link inactive",
+        details={
+            "reason": reason,
+            "binding_id": str(binding.id),
+            "bot_agent_link_id": str(binding.bot_agent_link_id),
+            "bot_agent_link_status": link.status if link is not None else None,
+        },
+    )
 
 
 async def _validate_telegram_webhook_url(account: Any, url: str) -> JSONResponse | None:

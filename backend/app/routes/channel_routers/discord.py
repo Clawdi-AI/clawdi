@@ -53,6 +53,7 @@ from app.routes.channel_routers.shared import (
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
+    ack_channel_inbox_events,
     dequeue_discord_gateway_events,
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
@@ -64,6 +65,7 @@ from app.services.channels import (
     get_channel_agent_reference,
     pairing_reply_for_command,
     record_discord_interaction_references,
+    record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
@@ -221,9 +223,63 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
     account: ChannelAccount | None = None
     bot_agent_link_id: UUID | None = None
     last_sequence = 0
+    last_inbox_sequence = 0
     gateway_sequence = 1
     session_id = secrets.token_urlsafe(18)
     session_state: dict[str, Any] | None = None
+
+    def inbox_sequence_for_gateway_sequence(sequence: int) -> int | None:
+        if session_state is None:
+            return None
+        inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
+        if not isinstance(inbox_by_gateway, dict):
+            return None
+        inbox_sequence = inbox_by_gateway.get(sequence)
+        return inbox_sequence if isinstance(inbox_sequence, int) else None
+
+    def max_ackable_inbox_sequence(through_sequence: int) -> int:
+        if session_state is None:
+            return 0
+        inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
+        if not isinstance(inbox_by_gateway, dict):
+            return 0
+        return max(
+            (
+                inbox_sequence
+                for gateway_sequence_key, inbox_sequence in inbox_by_gateway.items()
+                if isinstance(gateway_sequence_key, int)
+                and isinstance(inbox_sequence, int)
+                and gateway_sequence_key <= through_sequence
+            ),
+            default=0,
+        )
+
+    def remember_dispatched_inbox_sequence(
+        *,
+        gateway_sequence_value: int,
+        inbox_sequence: int,
+    ) -> None:
+        if session_state is None:
+            return
+        inbox_by_gateway = session_state.setdefault("inbox_by_gateway_sequence", {})
+        if isinstance(inbox_by_gateway, dict):
+            inbox_by_gateway[gateway_sequence_value] = inbox_sequence
+        session_state["max_dispatched_inbox_sequence"] = max(
+            int(session_state.get("max_dispatched_inbox_sequence") or 0),
+            inbox_sequence,
+        )
+
+    async def ack_gateway_sequence(through_sequence: int) -> None:
+        if account is None or bot_agent_link_id is None:
+            return
+        inbox_sequence = max_ackable_inbox_sequence(through_sequence)
+        if inbox_sequence <= 0:
+            return
+        await _ack_discord_gateway_sequence(
+            account=account,
+            bot_agent_link_id=bot_agent_link_id,
+            through_sequence=inbox_sequence,
+        )
 
     async def send_gateway_frame(payload: dict[str, Any], *, record: bool = True) -> None:
         if record and session_state is not None and payload.get("op") == 0 and payload.get("s"):
@@ -233,6 +289,11 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                 del frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
                 if frames and isinstance(frames[0].get("s"), int):
                     session_state["dropped_before_sequence"] = frames[0]["s"]
+                    inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
+                    if isinstance(inbox_by_gateway, dict):
+                        for sequence in list(inbox_by_gateway):
+                            if isinstance(sequence, int) and sequence < frames[0]["s"]:
+                                inbox_by_gateway.pop(sequence, None)
         if compressor is None:
             await websocket.send_json(payload)
             return
@@ -289,9 +350,18 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                     if resume_session_id is not None
                     else None
                 )
-                if (
-                    resume_state is None
-                    or resume_state.get("account_id") != resolved_account.id
+                if resume_state is None:
+                    if resume_session_id is None or _DISCORD_GATEWAY_SESSIONS:
+                        await send_gateway_frame({"op": 9, "d": False}, record=False)
+                        continue
+                    resume_state = {
+                        "account_id": resolved_account.id,
+                        "bot_agent_link_id": resolved_link_id,
+                        "frames": [],
+                    }
+                    _DISCORD_GATEWAY_SESSIONS[resume_session_id] = resume_state
+                elif (
+                    resume_state.get("account_id") != resolved_account.id
                     or resume_state.get("bot_agent_link_id") != resolved_link_id
                 ):
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
@@ -301,6 +371,9 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                 session_id = resume_session_id
                 session_state = resume_state
                 last_sequence = _optional_int_param(data.get("seq")) or 0
+                gateway_sequence = max(gateway_sequence, last_sequence)
+                last_inbox_sequence = max_ackable_inbox_sequence(last_sequence)
+                await ack_gateway_sequence(last_sequence)
                 dropped_before_sequence = session_state.get("dropped_before_sequence")
                 if (
                     isinstance(dropped_before_sequence, int)
@@ -318,6 +391,10 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                 ]:
                     await send_gateway_frame(replayed, record=False)
                     last_sequence = max(last_sequence, replayed["s"])
+                    gateway_sequence = max(gateway_sequence, replayed["s"])
+                    replayed_inbox_sequence = inbox_sequence_for_gateway_sequence(replayed["s"])
+                    if replayed_inbox_sequence is not None:
+                        last_inbox_sequence = max(last_inbox_sequence, replayed_inbox_sequence)
                 await send_gateway_frame(
                     {"op": 0, "t": "RESUMED", "s": last_sequence, "d": {}},
                     record=False,
@@ -348,6 +425,7 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                         },
                     }
                 )
+                last_sequence = 1
                 for guild_id in bound_guilds:
                     gateway_sequence += 1
                     await send_gateway_frame(
@@ -357,6 +435,7 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                             sequence=gateway_sequence,
                         )
                     )
+                    last_sequence = gateway_sequence
 
         while True:
             async with async_session_factory() as db:
@@ -364,13 +443,22 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                     db,
                     account=account,
                     bot_agent_link_id=bot_agent_link_id,
-                    after_sequence=last_sequence,
+                    after_sequence=last_inbox_sequence,
                     limit=100,
                 )
             if events:
                 for message in events:
-                    last_sequence = int(message.inbox_sequence)
-                    await send_gateway_frame(_discord_gateway_dispatch(message))
+                    inbox_sequence = int(message.inbox_sequence)
+                    gateway_sequence += 1
+                    last_sequence = gateway_sequence
+                    last_inbox_sequence = inbox_sequence
+                    payload = _discord_gateway_dispatch(message)
+                    payload["s"] = gateway_sequence
+                    remember_dispatched_inbox_sequence(
+                        gateway_sequence_value=gateway_sequence,
+                        inbox_sequence=inbox_sequence,
+                    )
+                    await send_gateway_frame(payload)
                 continue
 
             try:
@@ -379,6 +467,9 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                     timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
                 )
                 if isinstance(frame, dict) and frame.get("op") == 1:
+                    ack_sequence = _optional_int_param(frame.get("d"))
+                    if ack_sequence is not None:
+                        await ack_gateway_sequence(ack_sequence)
                     await send_gateway_frame({"op": 11, "d": None}, record=False)
             except TimeoutError:
                 pass
@@ -465,6 +556,7 @@ async def discord_webhook(
             message=message,
             payload=payload,
         )
+        await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     await db.commit()
     message = messages[0][0]
     if payload.get("type") == 2:
@@ -532,6 +624,24 @@ async def _replay_discord_commands_on_pair(
         )
     except HTTPException:
         return
+
+
+async def _ack_discord_gateway_sequence(
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID | None,
+    through_sequence: int,
+) -> None:
+    if through_sequence <= 0 or bot_agent_link_id is None:
+        return
+    async with async_session_factory() as db:
+        await ack_channel_inbox_events(
+            db,
+            account=account,
+            bot_agent_link_id=bot_agent_link_id,
+            through_sequence=through_sequence,
+        )
+        await db.commit()
 
 
 async def _handle_discord_interaction_callback(

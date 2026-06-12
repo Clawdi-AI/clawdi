@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import socket
 import zlib
 from collections.abc import AsyncIterator
@@ -28,6 +29,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.channel import (
+    CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -58,6 +60,7 @@ from app.services.channels import (
     decrypt_agent_link_token,
     encrypt_optional_token,
     extract_discord_routing_key,
+    generate_agent_token,
     hash_token,
     parse_pair_command,
     record_discord_dispatch,
@@ -66,16 +69,21 @@ from app.services.channels import (
 )
 from app.services.discord_gateway_worker import (
     DISCORD_DEFAULT_INTENTS,
+    DiscordGatewayWorker,
+    _GatewayState,
     discord_gateway_advisory_lock_key,
     discord_gateway_intents,
     discord_gateway_uri,
     discord_identify_payload,
+    discord_resume_payload,
     record_discord_gateway_dispatch,
 )
 from app.services.discord_rate_limiter import DiscordRateLimiter
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 
 pytestmark = pytest.mark.usefixtures("channel_agent")
+
+TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 
 
 @asynccontextmanager
@@ -298,6 +306,49 @@ class _SequencedProviderClient(_FakeProviderClient):
         self.calls.append({"url": url, **kwargs})
         status_code = self.status_codes.pop(0) if self.status_codes else 200
         return _FakeProviderResponse({}, status_code=status_code)
+
+
+class _FakeDiscordGatewaySocket:
+    def __init__(self, frames: list[dict[str, Any]], stop: asyncio.Event):
+        self._frames = list(frames)
+        self._stop = stop
+        self.sent: list[dict[str, Any]] = []
+        self.closed: list[dict[str, Any]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def recv(self):
+        if not self._frames:
+            self._stop.set()
+            await asyncio.sleep(0)
+            return json.dumps({"op": 11, "d": None})
+        frame = self._frames.pop(0)
+        if not self._frames:
+            self._stop.set()
+        return json.dumps(frame)
+
+    async def send(self, payload: str):
+        self.sent.append(json.loads(payload))
+
+    async def close(self, *, code: int, reason: str):
+        self.closed.append({"code": code, "reason": reason})
+        self._stop.set()
+
+
+class _FakeDiscordGatewayConnect:
+    def __init__(self, sockets: list[_FakeDiscordGatewaySocket]):
+        self._sockets = list(sockets)
+        self.uris: list[str] = []
+        self.options: list[dict[str, Any]] = []
+
+    def __call__(self, uri: str, **kwargs):
+        self.uris.append(uri)
+        self.options.append(kwargs)
+        return self._sockets.pop(0)
 
 
 def _reset_fake_provider_client(
@@ -549,7 +600,7 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert created["provider"] == "telegram"
     assert created["name"] == "ops-phone"
     assert created["has_provider_token"] is True
-    assert created["agent_token"].count(":") == 1
+    assert TELEGRAM_AGENT_TOKEN_RE.fullmatch(created["agent_token"])
     assert created["webhook_secret"]
     assert "telegram-secret" not in response.text
 
@@ -559,6 +610,13 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert "webhook_secret" not in listed.text
     assert "telegram-secret" not in listed.text
     assert "agent_token" not in listed.text
+
+
+def test_generate_telegram_agent_token_matches_bot_api_contract():
+    tokens = [generate_agent_token(CHANNEL_PROVIDER_TELEGRAM) for _ in range(25)]
+
+    assert len(set(tokens)) == len(tokens)
+    assert all(TELEGRAM_AGENT_TOKEN_RE.fullmatch(token) for token in tokens)
 
 
 @pytest.mark.asyncio
@@ -610,7 +668,7 @@ async def test_rotate_channel_agent_link_token_replaces_one_time_token(
     assert rotated.status_code == 200, rotated.text
     body = rotated.json()
     assert body["id"] == created["agent_link_id"]
-    assert body["agent_token"]
+    assert TELEGRAM_AGENT_TOKEN_RE.fullmatch(body["agent_token"])
     assert body["agent_token"] != old_token
     link = (
         await db_session.execute(
@@ -1230,6 +1288,8 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     pool_by_id = {item["id"]: item for item in telegram}
     assert pool_by_id[private["id"]]["visibility"] == "private"
     assert pool_by_id[private["id"]]["access"] == "owner"
+    assert pool_by_id[private["id"]]["max_links"] is None
+    assert pool_by_id[private["id"]]["available"] is True
     assert pool_by_id[private["id"]]["capabilities"] == {
         "link_agent": True,
         "pair_chat": True,
@@ -1239,6 +1299,9 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     }
     assert pool_by_id[public_body["id"]]["visibility"] == "public"
     assert pool_by_id[public_body["id"]]["access"] == "public"
+    assert pool_by_id[public_body["id"]]["max_links"] is None
+    assert pool_by_id[public_body["id"]]["link_count"] == 0
+    assert pool_by_id[public_body["id"]]["available"] is True
     assert pool_by_id[public_body["id"]]["capabilities"] == {
         "link_agent": True,
         "pair_chat": True,
@@ -1290,6 +1353,62 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     assert disabled_send.status_code == 404
     assert disabled_whatsapp_credential.status_code == 404
     assert disabled_whatsapp_auth_cert.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_bot_pool_capacity_rejects_new_agent_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-capacity-{uuid4().hex}",
+        config={"max_links": 1},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="pool-cap-a")
+    user_b, agent_b = await _create_user_with_channel_agent(db_session, label="pool-cap-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        first_link = await client_a.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_a.id)},
+        )
+        pool_after_first = await client_a.get("/api/channels/bot-pool")
+    async with _client_for_user(db_session, user_b) as client_b:
+        pool_for_second = await client_b.get("/api/channels/bot-pool")
+        second_link = await client_b.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_b.id)},
+        )
+        second_pair = await client_b.post(
+            f"/api/channels/{account_id}/pair-codes",
+            json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
+        )
+
+    assert first_link.status_code == 201, first_link.text
+    first_item = next(
+        item
+        for item in pool_after_first.json()["providers"]["telegram"]
+        if item["id"] == account_id
+    )
+    second_item = next(
+        item for item in pool_for_second.json()["providers"]["telegram"] if item["id"] == account_id
+    )
+    assert first_item["link_count"] == 1
+    assert first_item["max_links"] == 1
+    assert first_item["available"] is False
+    assert first_item["capabilities"]["link_agent"] is False
+    assert first_item["capabilities"]["pair_chat"] is False
+    assert second_item["available"] is False
+    assert second_link.status_code == 409
+    assert second_link.json()["detail"] == "channel bot link capacity reached"
+    assert second_pair.status_code == 409
+    assert second_pair.json()["detail"] == "channel bot link capacity reached"
 
 
 @pytest.mark.asyncio
@@ -3222,6 +3341,136 @@ async def test_telegram_agent_webhook_success_acks_inbox(
 
 
 @pytest.mark.asyncio
+async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([503, 200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-agent-webhook-retry-5xx",
+        provider_token=None,
+    )
+    await client.post(
+        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        json={"url": "https://agent.example/agent-hook"},
+    )
+
+    inbound = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 907,
+            "message": {
+                "message_id": 907,
+                "text": "retry 5xx immediately",
+                "chat": {"id": 42, "type": "private"},
+            },
+        },
+    )
+
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "907")
+        )
+    ).scalar_one()
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+    assert len(_SequencedProviderClient.calls) == 1
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    await db_session.refresh(message)
+
+    assert result is not None
+    assert result.message_id == message.id
+    assert result.delivered is True
+    assert message.delivered_at is not None
+    assert len(_SequencedProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_telegram_agent_webhook_inactive_link_records_debug_health(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-agent-webhook-inactive-link",
+        chat_id="4301",
+        provider_token=None,
+    )
+    await client.post(
+        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        json={"url": "https://agent.example/agent-hook"},
+    )
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    link.status = "archived"
+    link.archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    inbound = await client.post(
+        f"/api/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 908,
+            "message": {
+                "message_id": 908,
+                "text": "link is inactive",
+                "chat": {"id": 4301, "type": "private"},
+            },
+        },
+    )
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "908")
+        )
+    ).scalar_one()
+    health_response = await client.get("/api/channels/health")
+    activity_response = await client.get(
+        f"/api/channels/{created['id']}/activity",
+        params={"external_chat_id": "4301", "limit": 20},
+    )
+
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+    assert _SequencedProviderClient.calls == []
+    assert health_response.status_code == 200, health_response.text
+    health = next(
+        item for item in health_response.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert health["health_status"] == "error"
+    assert "pending_inbox" in health["reasons"]
+    assert "recent_error" in health["reasons"]
+    assert health["pending_inbox"] >= 1
+    assert health["last_error"] == "bot agent link inactive"
+    assert health["last_error_stage"] == "agent_webhook"
+    assert health["last_error_outcome"] == "failure"
+    assert activity_response.status_code == 200, activity_response.text
+    debug_item = next(
+        item for item in activity_response.json()["items"] if item["kind"] == "debug_event"
+    )
+    assert debug_item["stage"] == "agent_webhook"
+    assert debug_item["outcome"] == "failure"
+    assert debug_item["error"] == "bot agent link inactive"
+    assert debug_item["details"]["reason"] == "link_archived"
+    assert debug_item["details"]["bot_agent_link_id"] == created["agent_link_id"]
+    assert debug_item["details"]["bot_agent_link_status"] == "archived"
+
+
+@pytest.mark.asyncio
 async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -3338,7 +3587,7 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
     db_session: AsyncSession,
     monkeypatch,
 ):
-    _reset_sequenced_provider_client([503, 200])
+    _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
         "app.services.channel_webhooks.httpx.AsyncClient",
         _SequencedProviderClient,
@@ -3372,14 +3621,23 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
     assert message.delivered_at is None
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    worker = ChannelWebhookDeliveryWorker(sessionmaker)
+    first_result = await worker.run_once()
+    second_result = await worker.run_once()
+    result = await worker.run_once()
     await db_session.refresh(message)
 
+    assert first_result is not None
+    assert first_result.message_id == message.id
+    assert first_result.delivered is False
+    assert second_result is not None
+    assert second_result.message_id == message.id
+    assert second_result.delivered is False
     assert result is not None
     assert result.message_id == message.id
     assert result.delivered is True
     assert message.delivered_at is not None
-    assert len(_SequencedProviderClient.calls) == 2
+    assert len(_SequencedProviderClient.calls) == 4
 
 
 @pytest.mark.asyncio
@@ -3388,7 +3646,7 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
     db_session: AsyncSession,
     monkeypatch,
 ):
-    _reset_sequenced_provider_client([503, 200])
+    _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
         "app.services.channel_webhooks.httpx.AsyncClient",
         _SequencedProviderClient,
@@ -3454,14 +3712,23 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
     assert webhook_message.delivered_at is None
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    worker = ChannelWebhookDeliveryWorker(sessionmaker)
+    first_result = await worker.run_once()
+    second_result = await worker.run_once()
+    result = await worker.run_once()
     await db_session.refresh(webhook_message)
 
+    assert first_result is not None
+    assert first_result.message_id == webhook_message.id
+    assert first_result.delivered is False
+    assert second_result is not None
+    assert second_result.message_id == webhook_message.id
+    assert second_result.delivered is False
     assert result is not None
     assert result.message_id == webhook_message.id
     assert result.delivered is True
     assert webhook_message.delivered_at is not None
-    assert len(_SequencedProviderClient.calls) == 2
+    assert len(_SequencedProviderClient.calls) == 4
 
 
 @pytest.mark.asyncio
@@ -3470,7 +3737,7 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
     db_session: AsyncSession,
     monkeypatch,
 ):
-    _reset_sequenced_provider_client([503, 200])
+    _reset_sequenced_provider_client([503, 503, 503])
     monkeypatch.setattr(
         "app.services.channel_webhooks.httpx.AsyncClient",
         _SequencedProviderClient,
@@ -5697,10 +5964,107 @@ def test_discord_gateway_helpers_build_protocol_payloads():
             "properties": {"os": "linux", "browser": "clawdi", "device": "clawdi"},
         },
     }
+    assert discord_resume_payload(
+        token="discord-token",
+        session_id="gateway-session",
+        sequence=42,
+    ) == {
+        "op": 6,
+        "d": {
+            "token": "discord-token",
+            "session_id": "gateway-session",
+            "seq": 42,
+        },
+    }
     assert discord_gateway_intents(ChannelAccount(config=None)) == DISCORD_DEFAULT_INTENTS
     assert discord_gateway_intents(ChannelAccount(config={"gateway_intents": "513"})) == 513
     lock_key = discord_gateway_advisory_lock_key(UUID("00000000-0000-0000-0000-000000000001"))
     assert 0 <= lock_key <= 0x7FFF_FFFF_FFFF_FFFF
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_session(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-worker-resume-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    first_stop = asyncio.Event()
+    resume_stop = asyncio.Event()
+    fallback_stop = asyncio.Event()
+    first_socket = _FakeDiscordGatewaySocket(
+        [
+            {"op": 10, "d": {"heartbeat_interval": 60_000}},
+            {
+                "op": 0,
+                "t": "READY",
+                "s": 11,
+                "d": {
+                    "session_id": "gateway-session",
+                    "resume_gateway_url": "wss://gateway.discord.gg/resume",
+                },
+            },
+        ],
+        first_stop,
+    )
+    resume_socket = _FakeDiscordGatewaySocket(
+        [
+            {"op": 10, "d": {"heartbeat_interval": 60_000}},
+            {"op": 9, "d": False},
+        ],
+        resume_stop,
+    )
+    fallback_socket = _FakeDiscordGatewaySocket(
+        [
+            {"op": 10, "d": {"heartbeat_interval": 60_000}},
+            {
+                "op": 0,
+                "t": "READY",
+                "s": 1,
+                "d": {
+                    "session_id": "new-gateway-session",
+                    "resume_gateway_url": "wss://gateway.discord.gg/new-resume",
+                },
+            },
+        ],
+        fallback_stop,
+    )
+    connect_factory = _FakeDiscordGatewayConnect(
+        [first_socket, resume_socket, fallback_socket]
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = DiscordGatewayWorker(sessionmaker, connect_factory=connect_factory)
+    state = _GatewayState()
+
+    await worker._connect_and_record(account_id, first_stop, state)
+    with pytest.raises(RuntimeError, match="invalidated gateway session"):
+        await worker._connect_and_record(account_id, resume_stop, state)
+    await worker._connect_and_record(account_id, fallback_stop, state)
+
+    assert first_socket.sent[0]["op"] == 2
+    assert state.session_id == "new-gateway-session"
+    assert state.sequence == 1
+    assert resume_socket.sent[0] == {
+        "op": 6,
+        "d": {
+            "token": "discord-provider-token",
+            "session_id": "gateway-session",
+            "seq": 11,
+        },
+    }
+    assert fallback_socket.sent[0]["op"] == 2
+    assert connect_factory.uris[0].startswith("wss://gateway.discord.gg/")
+    assert connect_factory.uris[1].startswith("wss://gateway.discord.gg/resume")
+    assert connect_factory.uris[2].startswith("wss://gateway.discord.gg/")
 
 
 @pytest.mark.asyncio
@@ -5807,6 +6171,14 @@ def _install_discord_gateway_protocol_fakes(
     ):
         return [event for event in events or [] if event.inbox_sequence > after_sequence][:limit]
 
+    async def fake_ack_sequence(
+        *,
+        account: ChannelAccount,
+        bot_agent_link_id: UUID | None,
+        through_sequence: int,
+    ) -> None:
+        return None
+
     monkeypatch.setattr(
         "app.routes.channel_routers.discord.resolve_channel_agent_by_token",
         fake_resolve_agent,
@@ -5822,6 +6194,10 @@ def _install_discord_gateway_protocol_fakes(
     monkeypatch.setattr(
         "app.routes.channel_routers.discord.dequeue_discord_gateway_events",
         fake_dequeue_events,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.discord._ack_discord_gateway_sequence",
+        fake_ack_sequence,
     )
 
 
@@ -5957,6 +6333,180 @@ def test_discord_gateway_resume_replays_buffered_dispatches(monkeypatch):
     assert replayed["t"] == "MESSAGE_CREATE"
     assert replayed["d"]["content"] == "missed dispatch"
     assert resumed["t"] == "RESUMED"
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_stateless_resume_replays_unacked_db_events(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-stateless-resume",
+        channel_id="stateless-resume-channel",
+        guild_id="stateless-resume-guild",
+    )
+    account = (
+        await db_session.execute(
+            select(ChannelAccount).where(ChannelAccount.id == UUID(created["id"]))
+        )
+    ).scalar_one()
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.external_chat_id == "stateless-resume-guild",
+            )
+        )
+    ).scalar_one()
+    message = ChannelMessage(
+        account_id=account.id,
+        bot_agent_link_id=binding.bot_agent_link_id,
+        binding_id=binding.id,
+        user_id=binding.user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id="stateless-resume-channel",
+        provider_message_id="msg-stateless-resume",
+        text="from db after worker hop",
+        payload={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "msg-stateless-resume",
+                "channel_id": "stateless-resume-channel",
+                "guild_id": "stateless-resume-guild",
+                "content": "from db after worker hop",
+            },
+        },
+    )
+    db_session.add(message)
+    await db_session.flush()
+    await db_session.refresh(message)
+    await db_session.commit()
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": created["agent_token"],
+                        "session_id": "lost-worker-session",
+                        "seq": 0,
+                    },
+                }
+            )
+            resumed = websocket.receive_json()
+            dispatch = websocket.receive_json()
+            websocket.send_json({"op": 1, "d": dispatch["s"]})
+            heartbeat_ack = websocket.receive_json()
+
+    assert resumed["t"] == "RESUMED"
+    assert dispatch["t"] == "MESSAGE_CREATE"
+    assert isinstance(dispatch["s"], int)
+    assert dispatch["d"]["content"] == "from db after worker hop"
+    assert heartbeat_ack == {"op": 11, "d": None}
+    await db_session.refresh(message)
+    assert message.delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_early_heartbeat_does_not_ack_undispatched_low_inbox(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-gateway-heartbeat-low-inbox",
+        channel_id="ack-race-channel-1",
+        guild_id="ack-race-guild-1",
+    )
+    account_id = UUID(created["id"])
+    link_id = UUID(created["agent_link_id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account_id,
+                ChannelBinding.bot_agent_link_id == link_id,
+                ChannelBinding.external_chat_id == "ack-race-guild-1",
+            )
+        )
+    ).scalar_one()
+    for guild_id in ("ack-race-guild-2", "ack-race-guild-3"):
+        db_session.add(
+            ChannelBinding(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                user_id=binding.user_id,
+                external_chat_id=guild_id,
+                external_chat_type="guild",
+                external_chat_name=guild_id,
+            )
+        )
+    await db_session.commit()
+
+    previous_poll_interval = settings.discord_gateway_poll_interval_seconds
+    settings.discord_gateway_poll_interval_seconds = 1.0
+    try:
+        with TestClient(app) as sync_client:
+            with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+                assert websocket.receive_json()["op"] == 10
+                websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+                ready = websocket.receive_json()
+                guild_creates = [websocket.receive_json() for _ in range(3)]
+                highest_guild_sequence = max(frame["s"] for frame in guild_creates)
+
+                assert ready["t"] == "READY"
+                assert {frame["t"] for frame in guild_creates} == {"GUILD_CREATE"}
+                assert highest_guild_sequence > 2
+
+                await asyncio.sleep(0.05)
+                message = ChannelMessage(
+                    account_id=account_id,
+                    bot_agent_link_id=link_id,
+                    binding_id=binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    inbox_sequence=2,
+                    external_chat_id="ack-race-guild-1",
+                    provider_message_id="ack-race-message",
+                    text="low inbox after guild create",
+                    payload={
+                        "t": "MESSAGE_CREATE",
+                        "d": {
+                            "id": "ack-race-message",
+                            "channel_id": "ack-race-channel-1",
+                            "guild_id": "ack-race-guild-1",
+                            "content": "low inbox after guild create",
+                        },
+                    },
+                )
+                db_session.add(message)
+                await db_session.flush()
+                await db_session.refresh(message)
+                assert message.inbox_sequence < highest_guild_sequence
+                await db_session.commit()
+
+                websocket.send_json({"op": 1, "d": highest_guild_sequence})
+                assert websocket.receive_json() == {"op": 11, "d": None}
+                await db_session.refresh(message)
+                assert message.delivered_at is None
+
+                dispatch = websocket.receive_json()
+                assert dispatch["t"] == "MESSAGE_CREATE"
+                assert dispatch["s"] > highest_guild_sequence
+                assert dispatch["d"]["content"] == "low inbox after guild create"
+
+                websocket.send_json({"op": 1, "d": dispatch["s"]})
+                assert websocket.receive_json() == {"op": 11, "d": None}
+
+        await db_session.refresh(message)
+        assert message.delivered_at is not None
+    finally:
+        settings.discord_gateway_poll_interval_seconds = previous_poll_interval
+        _DISCORD_GATEWAY_SESSIONS.clear()
 
 
 def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
@@ -6192,6 +6742,74 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
     assert bindings.json()[0]["external_chat_id"] == "guild-1"
     assert bindings.json()[0]["external_chat_type"] == "guild_text"
     assert bindings.json()[0]["external_chat_name"] == "guild-1"
+
+
+@pytest.mark.asyncio
+async def test_discord_webhook_inactive_link_records_debug_health(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-webhook-inactive-link",
+        channel_id="discord-inactive-channel",
+        guild_id="discord-inactive-guild",
+    )
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    link.status = "archived"
+    link.archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    inbound = await client.post(
+        f"/api/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "discord-inactive-message",
+                "channel_id": "discord-inactive-channel",
+                "guild_id": "discord-inactive-guild",
+                "content": "link is inactive",
+                "author": {"id": "discord-inactive-user"},
+            },
+        },
+    )
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.provider_message_id == "discord-inactive-message"
+            )
+        )
+    ).scalar_one()
+    health_response = await client.get("/api/channels/health")
+    activity_response = await client.get(
+        f"/api/channels/{created['id']}/activity",
+        params={"external_chat_id": "discord-inactive-guild", "limit": 20},
+    )
+
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+    assert health_response.status_code == 200, health_response.text
+    health = next(
+        item for item in health_response.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert health["health_status"] == "error"
+    assert "pending_inbox" in health["reasons"]
+    assert "recent_error" in health["reasons"]
+    assert health["last_error"] == "bot agent link inactive"
+    assert health["last_error_stage"] == "agent_webhook"
+    assert health["last_error_outcome"] == "failure"
+    assert activity_response.status_code == 200, activity_response.text
+    debug_item = next(
+        item for item in activity_response.json()["items"] if item["kind"] == "debug_event"
+    )
+    assert debug_item["stage"] == "agent_webhook"
+    assert debug_item["outcome"] == "failure"
+    assert debug_item["error"] == "bot agent link inactive"
+    assert debug_item["details"]["reason"] == "link_archived"
+    assert debug_item["details"]["bot_agent_link_id"] == created["agent_link_id"]
+    assert debug_item["details"]["bot_agent_link_status"] == "archived"
 
 
 @pytest.mark.asyncio

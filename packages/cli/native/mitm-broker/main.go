@@ -878,10 +878,6 @@ func (p *proxyServer) headersMatch(matchers map[string]headerMatcher, headers ht
 	return true
 }
 
-func (p *profile) enabled() bool {
-	return p.Enabled == nil || *p.Enabled
-}
-
 func (r rewriteRule) preservePath() bool {
 	return r.PreservePath == nil || *r.PreservePath
 }

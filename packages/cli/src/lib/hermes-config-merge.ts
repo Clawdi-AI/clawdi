@@ -55,6 +55,22 @@ export function mergeHermesMcpServer(
 	});
 }
 
+export function removeHermesMcpServer(configPath: string, name: string): void {
+	if (!existsSync(configPath)) return;
+	const document = readHermesConfig(configPath);
+	const root = document.toJS();
+	if (isPlainRecord(root) && root.mcp_servers !== undefined && !isPlainRecord(root.mcp_servers)) {
+		throw new Error("Hermes config field mcp_servers must be a YAML object.");
+	}
+	if (!isPlainRecord(root) || !isPlainRecord(root.mcp_servers)) return;
+	if (!Object.hasOwn(root.mcp_servers, name)) return;
+	document.deleteIn(["mcp_servers", name]);
+	writePrivateFileAtomic(configPath, String(document), {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
+}
+
 function readHermesConfig(configPath: string): ReturnType<typeof parseDocument> {
 	const content = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
 	const document = parseDocument(content);

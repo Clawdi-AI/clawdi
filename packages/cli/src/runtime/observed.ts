@@ -43,6 +43,8 @@ export function readHostedRuntimeObserved(
 	if (supervisor) observed.supervisor = supervisor;
 	if (providers) observed.providers = providers;
 	if (boot.error) observed.error = boot.error;
+	const convergeError = runtimeConvergeError(watchStatus);
+	if (convergeError) observed.convergeError = convergeError;
 	return observed;
 }
 
@@ -112,8 +114,8 @@ function summarizeWatchStatus(status: JsonRecord | null): JsonRecord | null {
 	if (!status) return null;
 	const event = recordValue(status.event);
 	return {
-		timestamp: stringValue(status.timestamp),
 		status: stringValue(event?.status),
+		stage: stringValue(event?.stage),
 		etag: stringValue(event?.etag),
 		channelsEtag: stringValue(event?.channelsEtag),
 		generation: numberValue(event?.generation),
@@ -123,6 +125,14 @@ function summarizeWatchStatus(status: JsonRecord | null): JsonRecord | null {
 		errors: arrayValue(event?.errors),
 		cliUpdate: summarizeCliUpdate(recordValue(event?.cliUpdate)),
 	};
+}
+
+function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
+	const event = recordValue(watchStatus?.event);
+	if (event?.status !== "error") return null;
+	return (
+		stringValue(event.error) ?? arrayValue(event.errors)[0]?.toString() ?? "runtime watch failed"
+	);
 }
 
 function summarizeCliUpdate(value: JsonRecord | null): JsonRecord | null {
@@ -282,7 +292,7 @@ function parseSupervisorStatusLine(line: string): JsonRecord {
 		name,
 		state,
 		status: supervisorProgramStatus(state),
-		description: match[3]?.trim() || null,
+		description: state === "RUNNING" ? null : match[3]?.trim() || null,
 	};
 }
 

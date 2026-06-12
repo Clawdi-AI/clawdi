@@ -18,6 +18,7 @@ SECRETISH_KEY_PARTS = (
     "bearer",
     "cookie",
     "credential",
+    "pin_code",
 )
 
 
@@ -80,6 +81,6 @@ def _is_secretish_key(key: str) -> bool:
 
 
 def _sanitize_secretish_value(value: Any) -> Any:
-    if isinstance(value, (bool, int, float)) or value is None:
+    if isinstance(value, bool) or value is None:
         return value
     return "[REDACTED]"
