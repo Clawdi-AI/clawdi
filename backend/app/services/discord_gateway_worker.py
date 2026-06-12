@@ -46,11 +46,7 @@ class _GatewayState:
     resume_gateway_url: str | None = None
 
     def can_resume(self) -> bool:
-        return (
-            self.sequence is not None
-            and bool(self.session_id)
-            and bool(self.resume_gateway_url)
-        )
+        return self.sequence is not None and bool(self.session_id) and bool(self.resume_gateway_url)
 
     def clear_session(self) -> None:
         self.sequence = None
