@@ -784,11 +784,9 @@ async def sync_heartbeat(
                 )
             )
         ).scalar_one_or_none()
-        observed_changed = (
-            hosted_state is not None
-            and _runtime_observed_comparison_value(hosted_state.observed)
-            != _runtime_observed_comparison_value(runtime_observed)
-        )
+        observed_changed = hosted_state is not None and _runtime_observed_comparison_value(
+            hosted_state.observed
+        ) != _runtime_observed_comparison_value(runtime_observed)
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
