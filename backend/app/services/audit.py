@@ -59,7 +59,7 @@ def _sanitize_audit_details(value: Any) -> Any:
         for key, item in value.items():
             safe_key = str(key)
             if _is_secretish_key(safe_key):
-                result[safe_key] = "[REDACTED]"
+                result[safe_key] = _sanitize_secretish_value(item)
             else:
                 result[safe_key] = _sanitize_audit_details(item)
         return result
@@ -77,3 +77,9 @@ def _sanitize_audit_details(value: Any) -> Any:
 def _is_secretish_key(key: str) -> bool:
     normalized = key.lower().replace("-", "_")
     return any(part in normalized for part in SECRETISH_KEY_PARTS)
+
+
+def _sanitize_secretish_value(value: Any) -> Any:
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return "[REDACTED]"

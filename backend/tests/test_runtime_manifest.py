@@ -292,6 +292,7 @@ def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
             "authorization": "Bearer secret",
             "cookie": "session=secret",
             "providerCredential": "secret",
+            "has_provider_credential": True,
             "nested": {"bearer": "secret"},
         }
     )
@@ -300,6 +301,7 @@ def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
         "authorization": "[REDACTED]",
         "cookie": "[REDACTED]",
         "providerCredential": "[REDACTED]",
+        "has_provider_credential": True,
         "nested": {"bearer": "[REDACTED]"},
     }
 
