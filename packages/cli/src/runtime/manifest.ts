@@ -681,22 +681,40 @@ function applyHostedChannelProjection(
 	}
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return null;
-	if (Object.keys(channels).length === 0) return null;
 
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
-	const patch = {
-		channels,
-		plugins: { entries: channelPluginEntries(channels) },
-	};
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin"],
-		`${JSON.stringify(patch, null, 2)}\n`,
+		`${JSON.stringify(openClawManagedChannelsPatch(channels), null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
 	return observation.commandPath;
+}
+
+function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
+	const deleteEntries = openClawManagedChannelDeletes();
+	return {
+		channels: {
+			...deleteEntries,
+			...channels,
+		},
+		plugins: {
+			entries: {
+				...deleteEntries,
+				...channelPluginEntries(channels),
+			},
+		},
+	};
+}
+
+function openClawManagedChannelDeletes(): Record<string, null> {
+	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
+		string,
+		null
+	>;
 }
 
 function installOpenClawChannelPlugins(
@@ -916,6 +934,8 @@ const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> 
 	whatsapp: ["clawhub:@openclaw/whatsapp", "@openclaw/whatsapp"],
 	bluebubbles: ["@openclaw/bluebubbles@2026.5.7"],
 };
+
+const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp", "bluebubbles"] as const;
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
 	if (manifest.liveSync?.enabled === false) return [];
