@@ -713,6 +713,40 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	it("projects an empty runtime channel list as an empty projection", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				deploymentId: "dep_empty_channels",
+				environmentId: "env_empty_channels",
+				instanceId: "iid_empty_channels",
+				generation: 3,
+				issuedAt: "2026-06-14T00:00:00Z",
+				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: false },
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			secretValues: { "provider.default.apiKey": "sk-provider" },
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/api/channels",
+			etag: '"empty-channels"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		expect(projected.manifest.projection?.channels).toEqual({});
+		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
+		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
+	});
+
 	it("runtime watch applies remote changes, reloads supervisor, and saves the new ETag", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1785,6 +1819,9 @@ if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
   echo "projection boom" >&2
   exit 73
 fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 SH
@@ -1844,7 +1881,29 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						},
 					),
 			},
-			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+			{
+				method: "GET",
+				path: "/api/channels",
+				response: () =>
+					jsonResponse([
+						{
+							id: "acct-telegram-failure",
+							provider: "telegram",
+							name: "Telegram",
+							status: "active",
+							visibility: "private",
+							runtime_links: [
+								{
+									id: "link-telegram-failure",
+									account_id: "acct-telegram-failure",
+									agent_id: "env_cli_update_converge_failure",
+									status: "active",
+									agent_token: "telegram-agent-token-failure",
+								},
+							],
+						},
+					]),
+			},
 		]);
 
 		try {
@@ -2414,7 +2473,7 @@ exit 64
 				'"channels-etag-init-1"\n',
 			);
 			const patchText = readFileSync(openclawPatch, "utf-8");
-			expect(patchText).toContain('"$patch": "delete"');
+			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
 			expect(patchText).toContain('"botToken": "agent-token-init"');
 			expect(patchText).toContain('"discord"');
@@ -2439,7 +2498,7 @@ exit 64
 		}
 	});
 
-	it("converges deleted native channels with OpenClaw patch-delete semantics", () => {
+	it("converges empty native channel projection with merge-patch deletes", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2507,10 +2566,113 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"telegram": {');
-		expect(patchText).toContain('"discord": {');
-		expect(patchText).toContain('"$patch": "delete"');
+		expect(patchText).toContain('"telegram": null');
+		expect(patchText).toContain('"discord": null');
+		expect(patchText).toContain('"whatsapp": null');
+		expect(patchText).toContain('"bluebubbles": null');
+		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
+	});
+
+	it("removes stale native channels when a later projection omits them", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-channel-remove-patch.jsonl");
+		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+		mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatch}'
+  printf '\\n---\\n' >> '${openclawPatch}'
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const manifestWithChannels = (
+			channels: Record<string, unknown>,
+			generation: number,
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_channel_remove",
+				environmentId: "env_channel_remove",
+				instanceId: "iid_channel_remove",
+				generation,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: { enabled: false },
+				},
+				projection: {
+					system: { home, workspace },
+					channels,
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://channel-remove-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+
+		const initial = convergeRuntimeManifest(
+			manifestWithChannels(
+				{
+					telegram: { enabled: true, botToken: "telegram-token" },
+					discord: { enabled: true, token: "discord-token" },
+				},
+				1,
+			),
+			getRuntimePaths(),
+		);
+		const removed = convergeRuntimeManifest(
+			manifestWithChannels({ telegram: { enabled: true, botToken: "telegram-token" } }, 2),
+			getRuntimePaths(),
+		);
+
+		expect(initial.installErrors).toEqual([]);
+		expect(removed.installErrors).toEqual([]);
+		const patches = readFileSync(openclawPatch, "utf-8")
+			.split("\n---\n")
+			.filter((entry) => entry.trim().length > 0)
+			.map((entry) => JSON.parse(entry));
+		expect(patches).toHaveLength(2);
+		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
+		expect(patches[1].channels.discord).toBeNull();
+		expect(patches[1].plugins.entries.discord).toBeNull();
+		expect(patches[1].channels.telegram).toEqual({
+			enabled: true,
+			botToken: "telegram-token",
+		});
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
 	});
 
 	it("treats already-installed OpenClaw channel plugins as converged", () => {
