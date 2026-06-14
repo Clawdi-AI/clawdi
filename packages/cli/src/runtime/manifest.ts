@@ -708,9 +708,7 @@ function applyHostedChannelProjection(
 
 function deleteOpenClawManagedChannelsPatch(): Record<string, unknown> {
 	const managedChannels = ["telegram", "discord", "whatsapp", "bluebubbles"];
-	const deleteEntries = Object.fromEntries(
-		managedChannels.map((channel) => [channel, { $patch: "delete" }]),
-	);
+	const deleteEntries = Object.fromEntries(managedChannels.map((channel) => [channel, null]));
 	return {
 		channels: deleteEntries,
 		plugins: { entries: deleteEntries },

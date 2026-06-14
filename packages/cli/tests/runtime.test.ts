@@ -713,6 +713,40 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	it("projects an empty runtime channel list as managed-channel deletes", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				deploymentId: "dep_empty_channels",
+				environmentId: "env_empty_channels",
+				instanceId: "iid_empty_channels",
+				generation: 3,
+				issuedAt: "2026-06-14T00:00:00Z",
+				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: false },
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			secretValues: { "provider.default.apiKey": "sk-provider" },
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/api/channels",
+			etag: '"empty-channels"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		expect(projected.manifest.projection?.channels).toEqual({});
+		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
+		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
+	});
+
 	it("runtime watch applies remote changes, reloads supervisor, and saves the new ETag", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -2414,7 +2448,8 @@ exit 64
 				'"channels-etag-init-1"\n',
 			);
 			const patchText = readFileSync(openclawPatch, "utf-8");
-			expect(patchText).toContain('"$patch": "delete"');
+			expect(patchText).toContain('"telegram": null');
+			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
 			expect(patchText).toContain('"botToken": "agent-token-init"');
 			expect(patchText).toContain('"discord"');
@@ -2507,9 +2542,9 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"telegram": {');
-		expect(patchText).toContain('"discord": {');
-		expect(patchText).toContain('"$patch": "delete"');
+		expect(patchText).toContain('"telegram": null');
+		expect(patchText).toContain('"discord": null');
+		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
 	});
 
