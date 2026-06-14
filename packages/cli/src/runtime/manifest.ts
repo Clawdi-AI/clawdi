@@ -681,38 +681,22 @@ function applyHostedChannelProjection(
 	}
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return null;
+	if (Object.keys(channels).length === 0) return null;
+
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
+	const patch = {
+		channels,
+		plugins: { entries: channelPluginEntries(channels) },
+	};
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin"],
-		`${JSON.stringify(deleteOpenClawManagedChannelsPatch(), null, 2)}\n`,
+		`${JSON.stringify(patch, null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
-	if (Object.keys(channels).length > 0) {
-		installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
-		const patch = {
-			channels,
-			plugins: { entries: channelPluginEntries(channels) },
-		};
-		runRuntimeUserCommand(
-			observation.commandPath,
-			["config", "patch", "--stdin"],
-			`${JSON.stringify(patch, null, 2)}\n`,
-			home,
-			workspaceRoot,
-		);
-	}
 	return observation.commandPath;
-}
-
-function deleteOpenClawManagedChannelsPatch(): Record<string, unknown> {
-	const managedChannels = ["telegram", "discord", "whatsapp", "bluebubbles"];
-	const deleteEntries = Object.fromEntries(managedChannels.map((channel) => [channel, null]));
-	return {
-		channels: deleteEntries,
-		plugins: { entries: deleteEntries },
-	};
 }
 
 function installOpenClawChannelPlugins(

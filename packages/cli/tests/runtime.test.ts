@@ -713,7 +713,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("projects an empty runtime channel list as managed-channel deletes", () => {
+	it("projects an empty runtime channel list as an empty projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -1819,6 +1819,9 @@ if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
   echo "projection boom" >&2
   exit 73
 fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 SH
@@ -1878,7 +1881,29 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						},
 					),
 			},
-			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+			{
+				method: "GET",
+				path: "/api/channels",
+				response: () =>
+					jsonResponse([
+						{
+							id: "acct-telegram-failure",
+							provider: "telegram",
+							name: "Telegram",
+							status: "active",
+							visibility: "private",
+							runtime_links: [
+								{
+									id: "link-telegram-failure",
+									account_id: "acct-telegram-failure",
+									agent_id: "env_cli_update_converge_failure",
+									status: "active",
+									agent_token: "telegram-agent-token-failure",
+								},
+							],
+						},
+					]),
+			},
 		]);
 
 		try {
@@ -2448,7 +2473,6 @@ exit 64
 				'"channels-etag-init-1"\n',
 			);
 			const patchText = readFileSync(openclawPatch, "utf-8");
-			expect(patchText).toContain('"telegram": null');
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
 			expect(patchText).toContain('"botToken": "agent-token-init"');
@@ -2474,7 +2498,7 @@ exit 64
 		}
 	});
 
-	it("converges deleted native channels with OpenClaw patch-delete semantics", () => {
+	it("no-ops empty native channel projection", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2496,7 +2520,8 @@ if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
   echo "plugin install should not run for empty channels" >&2
   exit 64
 fi
-exit 0
+echo "openclaw command should not run for empty channels: $*" >&2
+exit 64
 `,
 		);
 		chmodSync(openclawBin, 0o700);
@@ -2533,7 +2558,7 @@ exit 0
 				recovery: {},
 			},
 			source: "fixture-file",
-			sourcePath: "test://channel-delete",
+			sourcePath: "test://channel-empty",
 			offline: false,
 			secretValues: {},
 		};
@@ -2541,11 +2566,7 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"telegram": null');
-		expect(patchText).toContain('"discord": null');
-		expect(patchText).not.toContain('"$patch"');
-		expect(patchText).not.toContain('"botToken"');
+		expect(existsSync(openclawPatch)).toBe(false);
 	});
 
 	it("treats already-installed OpenClaw channel plugins as converged", () => {
