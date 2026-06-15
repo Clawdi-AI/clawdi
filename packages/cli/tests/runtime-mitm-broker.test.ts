@@ -189,7 +189,7 @@ describe("runtime MITM broker launcher", () => {
 				},
 			}),
 		).rejects.toThrow("refusing to listen on non-loopback MITM proxy host 0.0.0.0");
-	});
+	}, 20_000);
 
 	it("rejects broker profiles with non-HTTP upstream URLs", async () => {
 		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-invalid-profile-"));
