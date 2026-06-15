@@ -3,6 +3,8 @@ import { createConnection, createServer, isIP, type Server, type Socket } from "
 
 export const UI_ACCESS_TOKEN_ENV = "UI_ACCESS_TOKEN";
 export const UI_ACCESS_COOKIE = "clawdi_ui";
+export const UI_FRAME_ANCESTORS_ENV = "CLAWDI_UI_FRAME_ANCESTORS";
+export const DEFAULT_UI_FRAME_ANCESTORS = "'self' https://*.clawdi.ai";
 
 export interface RuntimeUiBridgeTarget {
 	name: string;
@@ -20,6 +22,7 @@ export interface RuntimeUiBridgeServer {
 export interface RuntimeUiBridgeOptions {
 	token?: string;
 	targets?: RuntimeUiBridgeTarget[];
+	frameAncestors?: string;
 }
 
 interface ParsedHttpRequest {
@@ -92,11 +95,15 @@ export async function startRuntimeUiBridge(
 ): Promise<RuntimeUiBridgeServer> {
 	const token = options.token ?? process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "";
 	const targets = options.targets ?? DEFAULT_UI_BRIDGE_TARGETS;
+	const frameAncestors =
+		options.frameAncestors?.trim() ||
+		process.env[UI_FRAME_ANCESTORS_ENV]?.trim() ||
+		DEFAULT_UI_FRAME_ANCESTORS;
 	const servers: Server[] = [];
 	const listeningTargets: RuntimeUiBridgeTarget[] = [];
 	try {
 		for (const target of targets) {
-			const server = createBridgeServer(target, token);
+			const server = createBridgeServer(target, token, frameAncestors);
 			await listen(server, target.listenHost, target.listenPort);
 			const address = server.address();
 			const listenPort = typeof address === "object" && address ? address.port : target.listenPort;
@@ -115,15 +122,20 @@ export async function startRuntimeUiBridge(
 	};
 }
 
-function createBridgeServer(target: RuntimeUiBridgeTarget, token: string): Server {
+function createBridgeServer(
+	target: RuntimeUiBridgeTarget,
+	token: string,
+	frameAncestors: string,
+): Server {
 	return createServer((clientSocket) => {
-		handleClientConnection(target, token, clientSocket);
+		handleClientConnection(target, token, frameAncestors, clientSocket);
 	});
 }
 
 function handleClientConnection(
 	target: RuntimeUiBridgeTarget,
 	token: string,
+	frameAncestors: string,
 	clientSocket: Socket,
 ): void {
 	let buffer = Buffer.alloc(0);
@@ -162,7 +174,7 @@ function handleClientConnection(
 			writeRawHttpResponse(clientSocket, 400, "Bad Request", "Bad Request");
 			return;
 		}
-		handleParsedRequest(target, token, clientSocket, parsed, remaining);
+		handleParsedRequest(target, token, frameAncestors, clientSocket, parsed, remaining);
 	};
 	clientSocket.on("data", onData);
 }
@@ -170,6 +182,7 @@ function handleClientConnection(
 function handleParsedRequest(
 	target: RuntimeUiBridgeTarget,
 	token: string,
+	frameAncestors: string,
 	clientSocket: Socket,
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
@@ -185,11 +198,12 @@ function handleParsedRequest(
 		]);
 		return;
 	}
-	proxyRawRequest(target, clientSocket, parsed, remaining);
+	proxyRawRequest(target, frameAncestors, clientSocket, parsed, remaining);
 }
 
 function proxyRawRequest(
 	target: RuntimeUiBridgeTarget,
+	frameAncestors: string,
 	clientSocket: Socket,
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
@@ -198,6 +212,7 @@ function proxyRawRequest(
 		host: target.targetHost,
 		port: target.targetPort,
 	});
+	const isUpgrade = isUpgradeRequest(parsed.headers);
 	let connected = false;
 	let failed = false;
 	const timer = setTimeout(() => {
@@ -213,10 +228,11 @@ function proxyRawRequest(
 	upstreamSocket.once("connect", () => {
 		connected = true;
 		clearTimeout(timer);
+		if (!isUpgrade) pipeUpstreamHttpResponse(upstreamSocket, clientSocket, frameAncestors);
 		upstreamSocket.write(buildProxyRequestHead(parsed, target));
 		if (remaining.length > 0) upstreamSocket.write(remaining);
 		clientSocket.pipe(upstreamSocket);
-		upstreamSocket.pipe(clientSocket);
+		if (isUpgrade) upstreamSocket.pipe(clientSocket);
 	});
 	upstreamSocket.once("error", () => {
 		if (!connected) {
@@ -230,6 +246,80 @@ function proxyRawRequest(
 	upstreamSocket.once("close", () => {
 		if (!clientSocket.destroyed) clientSocket.end();
 	});
+}
+
+function pipeUpstreamHttpResponse(
+	upstreamSocket: Socket,
+	clientSocket: Socket,
+	frameAncestors: string,
+): void {
+	let buffer = Buffer.alloc(0);
+	let handled = false;
+	const onData = (chunk: Buffer) => {
+		if (handled) return;
+		buffer = Buffer.concat([buffer, chunk]);
+		if (buffer.length > MAX_HEADER_BYTES) {
+			handled = true;
+			upstreamSocket.off("data", onData);
+			upstreamSocket.destroy();
+			writeRawHttpResponse(clientSocket, 502, "Bad Gateway", "Bad Gateway");
+			return;
+		}
+		const headerEnd = buffer.indexOf("\r\n\r\n");
+		if (headerEnd === -1) return;
+		handled = true;
+		upstreamSocket.off("data", onData);
+		const rawHead = buffer.subarray(0, headerEnd).toString("latin1");
+		const remaining = buffer.subarray(headerEnd + 4);
+		const head = rewriteResponseHeadForFrameEmbedding(rawHead, frameAncestors);
+		clientSocket.write(Buffer.from(`${head}\r\n\r\n`, "latin1"));
+		if (remaining.length > 0) clientSocket.write(remaining);
+		upstreamSocket.pipe(clientSocket);
+	};
+	upstreamSocket.on("data", onData);
+}
+
+function rewriteResponseHeadForFrameEmbedding(rawHead: string, frameAncestors: string): string {
+	const lines = rawHead.split("\r\n");
+	const statusLine = lines.shift();
+	if (!statusLine) return rawHead;
+	const output = [statusLine];
+	const cspValues: string[] = [];
+	for (const line of lines) {
+		const index = line.indexOf(":");
+		if (index <= 0) {
+			output.push(line);
+			continue;
+		}
+		const name = line.slice(0, index);
+		const value = line.slice(index + 1).trimStart();
+		const lowerName = name.toLowerCase();
+		if (lowerName === "x-frame-options") continue;
+		if (lowerName === "content-security-policy") {
+			const sanitized = removeCspDirective(value, "frame-ancestors");
+			if (sanitized) cspValues.push(sanitized);
+			continue;
+		}
+		output.push(line);
+	}
+	for (const value of cspValues) {
+		output.push(`Content-Security-Policy: ${value}`);
+	}
+	output.push(`Content-Security-Policy: frame-ancestors ${frameAncestors}`);
+	return output.join("\r\n");
+}
+
+function removeCspDirective(value: string, directiveName: string): string {
+	const lowerDirectiveName = directiveName.toLowerCase();
+	return value
+		.split(";")
+		.map((directive) => directive.trim())
+		.filter((directive) => {
+			if (!directive) return false;
+			const name = directive.split(/\s+/, 1)[0]?.toLowerCase();
+			return name !== lowerDirectiveName;
+		})
+		.join("; ");
 }
 
 function parseHttpRequestHead(rawHead: string): ParsedHttpRequest | null {
