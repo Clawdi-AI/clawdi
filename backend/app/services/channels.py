@@ -456,6 +456,17 @@ async def rotate_bot_agent_link_token(
     return raw_token
 
 
+async def archive_bot_agent_link(
+    db: AsyncSession,
+    *,
+    link: ChannelBotAgentLink,
+) -> None:
+    link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    link.agent_token_hash = None
+    link.archived_at = datetime.now(UTC)
+    await db.flush()
+
+
 async def get_owned_private_channel_account(
     db: AsyncSession,
     *,

@@ -29,6 +29,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.channel import (
+    BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
@@ -1409,6 +1410,92 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
     assert second_link.json()["detail"] == "channel bot link capacity reached"
     assert second_pair.status_code == 409
     assert second_pair.json()["detail"] == "channel bot link capacity reached"
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-unlink-{uuid4().hex}",
+        config={"max_links": 1},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="pool-unlink-a")
+    user_b, agent_b = await _create_user_with_channel_agent(db_session, label="pool-unlink-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        first_link = await client_a.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_a.id)},
+        )
+        assert first_link.status_code == 201, first_link.text
+        first_link_id = first_link.json()["id"]
+        full_pool = await client_a.get("/api/channels/bot-pool")
+        api_key = ApiKey(user_id=user_a.id, environment_id=agent_a.id, label="hosted")
+        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
+            desired_before = await runtime_client.get("/api/channels")
+
+        deleted = await client_a.delete(f"/api/channels/{account_id}/agent-links/{first_link_id}")
+
+        links_after = await client_a.get(f"/api/channels/{account_id}/agent-links")
+        pool_after_delete = await client_a.get("/api/channels/bot-pool")
+        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
+            desired_after = await runtime_client.get("/api/channels")
+        audit_response = await client_a.get(
+            "/api/audit/events",
+            params={"channel_account_id": account_id, "limit": 20},
+        )
+    async with _client_for_user(db_session, user_b) as client_b:
+        second_link = await client_b.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_b.id)},
+        )
+
+    assert desired_before.status_code == 200, desired_before.text
+    assert [item["id"] for item in desired_before.json()] == [account_id]
+    before_item = next(
+        item for item in full_pool.json()["providers"]["telegram"] if item["id"] == account_id
+    )
+    assert before_item["link_count"] == 1
+    assert before_item["available"] is False
+
+    assert deleted.status_code == 204, deleted.text
+    assert links_after.status_code == 200, links_after.text
+    assert links_after.json() == []
+    assert desired_after.status_code == 200, desired_after.text
+    assert desired_after.json() == []
+    after_item = next(
+        item
+        for item in pool_after_delete.json()["providers"]["telegram"]
+        if item["id"] == account_id
+    )
+    assert after_item["link_count"] == 0
+    assert after_item["available"] is True
+    assert second_link.status_code == 201, second_link.text
+
+    audit_response_body = audit_response.json()
+    archive_event = next(
+        event
+        for event in audit_response_body["items"]
+        if event["action"] == "channel.agent_link.archive"
+    )
+    assert archive_event["resource_type"] == "channel_agent_link"
+    assert archive_event["resource_id"] == first_link_id
+    assert archive_event["channel_agent_link_id"] == first_link_id
+    assert archive_event["details"]["agent_id"] == str(agent_a.id)
+
+    archived_link = await db_session.get(ChannelBotAgentLink, UUID(first_link_id))
+    assert archived_link is not None
+    assert archived_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert archived_link.archived_at is not None
+    assert archived_link.agent_token_hash is None
 
 
 @pytest.mark.asyncio
