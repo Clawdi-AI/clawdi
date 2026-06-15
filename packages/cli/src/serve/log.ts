@@ -29,7 +29,11 @@ function emit(level: Level, event: string, fields?: Record<string, unknown>) {
 	});
 	// stderr — stdout is reserved for any future structured-output
 	// surface (status command piped through the daemon, etc.).
-	process.stderr.write(`${line}\n`);
+	try {
+		process.stderr.write(`${line}\n`);
+	} catch {
+		// Logging must not crash the daemon if the runtime's stderr stream is unavailable.
+	}
 }
 
 export const log = {
