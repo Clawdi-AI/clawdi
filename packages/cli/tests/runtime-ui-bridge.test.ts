@@ -1,0 +1,249 @@
+import { describe, expect, it } from "bun:test";
+import { createServer, type Server } from "node:http";
+import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
+import {
+	DEFAULT_UI_BRIDGE_TARGETS,
+	startRuntimeUiBridge,
+	UI_ACCESS_COOKIE,
+} from "../src/runtime/ui-bridge";
+
+describe("runtime UI bridge", () => {
+	it("authenticates with query token, sets a cookie, and proxies cookie-authorized HTTP", async () => {
+		const seen: Array<{ url: string; host: string | undefined }> = [];
+		const upstream = createServer((req, res) => {
+			seen.push({ url: req.url ?? "", host: req.headers.host });
+			res.writeHead(200, {
+				"Content-Type": "text/plain; charset=utf-8",
+				"X-Upstream": "openclaw",
+			});
+			res.end(`upstream:${req.url ?? ""}`);
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "secret-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const unauthorized = await fetch(`http://127.0.0.1:${bridgePort}/`);
+			expect(unauthorized.status).toBe(401);
+
+			const redirect = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?x=1&t=secret-token&y=2`,
+				{ redirect: "manual" },
+			);
+			expect(redirect.status).toBe(302);
+			expect(redirect.headers.get("location")).toBe("/control?x=1&y=2");
+			const setCookie = redirect.headers.get("set-cookie") ?? "";
+			expect(setCookie).toContain(`${UI_ACCESS_COOKIE}=secret-token`);
+			expect(setCookie).toContain("Secure");
+			expect(setCookie).toContain("HttpOnly");
+			expect(setCookie).toContain("SameSite=Strict");
+			expect(setCookie).toContain("Path=/");
+			expect(seen).toEqual([]);
+
+			const proxied = await fetch(`http://127.0.0.1:${bridgePort}/control?x=1&t=ignored`, {
+				headers: { Cookie: `${UI_ACCESS_COOKIE}=secret-token` },
+			});
+			expect(proxied.status).toBe(200);
+			expect(proxied.headers.get("x-upstream")).toBe("openclaw");
+			expect(await proxied.text()).toBe("upstream:/control?x=1");
+			expect(seen).toEqual([{ url: "/control?x=1", host: `127.0.0.1:${upstreamPort}` }]);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("passes through server-sent event responses after cookie auth", async () => {
+		const upstream = createServer((req, res) => {
+			expect(req.url).toBe("/events");
+			res.writeHead(200, {
+				"Cache-Control": "no-cache",
+				"Content-Type": "text/event-stream",
+			});
+			res.write("data: one\n\n");
+			setTimeout(() => {
+				res.end("data: two\n\n");
+			}, 5);
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "sse-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/events`, {
+				headers: { Cookie: `${UI_ACCESS_COOKIE}=sse-token` },
+			});
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("content-type")).toBe("text/event-stream");
+			expect(await response.text()).toBe("data: one\n\ndata: two\n\n");
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("passes through websocket upgrades after auth", async () => {
+		let upstreamRequest = "";
+		const upstream = createNetServer((socket) => {
+			socket.once("data", (chunk) => {
+				upstreamRequest += chunk.toString("latin1");
+				socket.write(
+					[
+						"HTTP/1.1 101 Switching Protocols",
+						"Upgrade: websocket",
+						"Connection: Upgrade",
+						"",
+						"",
+					].join("\r\n"),
+				);
+			});
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "ws-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const unauthorized = await websocketRequest({
+				port: bridgePort,
+				path: "/socket",
+			});
+			expect(unauthorized.statusCode).toBe(401);
+
+			const redirect = await websocketRequest({
+				port: bridgePort,
+				path: "/socket?t=ws-token&x=1",
+			});
+			expect(redirect.statusCode).toBe(302);
+			expect(redirect.location).toBe("/socket?x=1");
+			expect(redirect.setCookie).toContain(`${UI_ACCESS_COOKIE}=ws-token`);
+
+			const authorized = await websocketRequest({
+				port: bridgePort,
+				path: "/socket?x=1",
+				cookie: `${UI_ACCESS_COOKIE}=ws-token`,
+			});
+			expect(authorized.statusCode).toBe(101);
+			expect(authorized.setCookie).toBe("");
+			expect(upstreamRequest).toContain("GET /socket?x=1 HTTP/1.1");
+			expect(upstreamRequest).toContain(`Host: 127.0.0.1:${upstreamPort}`);
+			expect(upstreamRequest).toContain("Connection: Upgrade");
+			expect(upstreamRequest).toContain("Upgrade: websocket");
+			expect(upstreamRequest).not.toContain("ws-token");
+			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+});
+
+function websocketRequest(input: {
+	port: number;
+	path: string;
+	cookie?: string;
+}): Promise<{ statusCode: number; setCookie: string; location: string }> {
+	return new Promise((resolve, reject) => {
+		const socket = connect(input.port, "127.0.0.1");
+		let buffer = "";
+		socket.once("error", reject);
+		socket.on("data", (chunk) => {
+			buffer += chunk.toString("latin1");
+			if (!buffer.includes("\r\n\r\n")) return;
+			socket.destroy();
+			const [head] = buffer.split("\r\n\r\n");
+			const lines = (head ?? "").split("\r\n");
+			const statusCode = Number.parseInt(lines[0]?.split(" ")[1] ?? "0", 10);
+			const setCookie =
+				lines
+					.find((line) => line.toLowerCase().startsWith("set-cookie:"))
+					?.slice("set-cookie:".length)
+					.trim() ?? "";
+			const location =
+				lines
+					.find((line) => line.toLowerCase().startsWith("location:"))
+					?.slice("location:".length)
+					.trim() ?? "";
+			resolve({ statusCode, setCookie, location });
+		});
+		socket.once("connect", () => {
+			socket.write(
+				[
+					`GET ${input.path} HTTP/1.1`,
+					`Host: 127.0.0.1:${input.port}`,
+					"Connection: Upgrade",
+					"Upgrade: websocket",
+					"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+					"Sec-WebSocket-Version: 13",
+					...(input.cookie ? [`Cookie: ${input.cookie}`] : []),
+					"",
+					"",
+				].join("\r\n"),
+			);
+		});
+	});
+}
+
+function listen(server: Server | NetServer, host: string, port: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const onError = (error: Error) => {
+			server.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off("error", onError);
+			resolve();
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		server.listen(port, host);
+	});
+}
+
+function close(server: Server | NetServer): Promise<void> {
+	return new Promise((resolve, reject) => {
+		server.close((error) => {
+			if (error) reject(error);
+			else resolve();
+		});
+	});
+}
+
+function serverPort(server: Server | NetServer): number {
+	const address = server.address();
+	if (!address || typeof address !== "object") throw new Error("server has no TCP address");
+	return address.port;
+}

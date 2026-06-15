@@ -35,11 +35,13 @@ import {
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths } from "../src/runtime/paths";
+import { buildRuntimeRunConfig } from "../src/runtime/run-config";
 import {
 	buildRuntimeBootStatus,
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
+import { UI_ACCESS_TOKEN_ENV } from "../src/runtime/ui-bridge";
 import { jsonResponse, mockFetch } from "./commands/helpers";
 
 const ENV_KEYS = [
@@ -64,6 +66,7 @@ const ENV_KEYS = [
 	"CLAWDI_API_URL",
 	"CLAWDI_SUPERVISORCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
+	UI_ACCESS_TOKEN_ENV,
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -232,6 +235,30 @@ describe("runtime paths", () => {
 
 		expect(result).toBe("locked");
 		expect(readdirSync(join(run, "locks"))).toEqual([]);
+	});
+});
+
+describe("runtime run config", () => {
+	it("starts Hermes dashboard on loopback port 18793 by default", () => {
+		const config = buildRuntimeRunConfig({
+			runtime: "hermes",
+			enabled: true,
+			generatedAt: "2026-06-15T00:00:00.000Z",
+			generation: 1,
+			instanceId: "iid_hermes_ui",
+			commandPath: "/home/clawdi/.local/bin/hermes",
+			appRoot: "/home/clawdi/.hermes/hermes-agent",
+			workspaceRoot: "/home/clawdi/clawdi",
+		});
+
+		expect(config.defaultArgs).toEqual([
+			"dashboard",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"18793",
+			"--no-open",
+		]);
 	});
 });
 
@@ -535,6 +562,53 @@ describe("runtime manifest datasource", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("enables Hermes in hosted-runtime manifests when the UI bridge token is present", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "hosted-ui-token.json");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env[UI_ACCESS_TOKEN_ENV] = "ui-token";
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_ui_token",
+					environmentId: "env_ui_token",
+					instanceId: "iid_ui_token",
+					generation: 1,
+					issuedAt: "2026-06-15T00:00:00Z",
+					system: { home },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
+						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+					},
+				},
+				secretValues: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		expect(loaded.manifest.runtimes.hermes.enabled).toBe(true);
+		expect(loaded.manifest.runtimes.hermes.install?.url).toBe(
+			"https://hermes-agent.nousresearch.com/install.sh",
+		);
+		expect(loaded.manifest.runtimes.hermes.install?.args).toEqual([
+			"--skip-setup",
+			"--skip-browser",
+			"--non-interactive",
+		]);
 	});
 
 	it("honors the auth env declared by the runtime source", async () => {
@@ -3040,6 +3114,48 @@ exit 64
 		expect(disabledConvergence.installErrors).toEqual([]);
 		expect(existsSync(openclawMcp)).toBe(false);
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
+	});
+
+	it("adds the hosted UI bridge supervisor program for enabled UI runtimes", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env[UI_ACCESS_TOKEN_ENV] = "ui-secret";
+
+		const convergence = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_ui_bridge",
+					environmentId: "env_ui_bridge",
+					instanceId: "iid_ui_bridge",
+					generation: 1,
+					issuedAt: "2026-06-15T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+						hermes: { enabled: false },
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: "test://ui-bridge",
+				offline: false,
+				secretValues: {},
+			},
+			getRuntimePaths(),
+		);
+
+		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
+		expect(supervisorConfig).toContain("[program:clawdi-ui-bridge]");
+		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime ui-bridge");
+		expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
+		expect(supervisorConfig).not.toContain("ui-secret");
 	});
 
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {

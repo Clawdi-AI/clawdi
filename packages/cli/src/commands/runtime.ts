@@ -37,6 +37,7 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
+import { startRuntimeUiBridge } from "../runtime/ui-bridge";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -1949,6 +1950,35 @@ function runtimeWatchCliUpdateStatus(
 function nextCliInstallBackoffMs(previousMs: number): number {
 	if (previousMs <= 0) return 60_000;
 	return Math.min(previousMs * 2, 300_000);
+}
+
+export async function runtimeUiBridge(): Promise<void> {
+	if (detectRuntimeMode() !== "hosted") {
+		throw new Error("runtime ui-bridge is only available in hosted runtime mode");
+	}
+	const bridge = await startRuntimeUiBridge();
+	console.error(
+		`runtime ui bridge listening on ${bridge.targets
+			.map(
+				(target) =>
+					`${target.listenHost}:${target.listenPort}->${target.targetHost}:${target.targetPort}`,
+			)
+			.join(", ")}`,
+	);
+	await waitForShutdownSignal();
+	await bridge.close();
+}
+
+function waitForShutdownSignal(): Promise<void> {
+	return new Promise((resolve) => {
+		const done = () => {
+			process.off("SIGTERM", done);
+			process.off("SIGINT", done);
+			resolve();
+		};
+		process.once("SIGTERM", done);
+		process.once("SIGINT", done);
+	});
 }
 
 export async function runtimeStatus(opts: { json?: boolean } = {}) {

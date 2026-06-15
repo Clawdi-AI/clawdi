@@ -1168,6 +1168,13 @@ function daemonProgramRevision(manifest: RuntimeManifest): string {
 	});
 }
 
+function uiBridgeProgramRevision(manifest: RuntimeManifest): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		uiBridge: "hosted-runtime-auth-bridge-v1",
+	});
+}
+
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -1205,6 +1212,7 @@ function writeSupervisorConfig(
 	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
+	const shouldRunUiBridge = supportedEnabled.length > 0;
 	const runtimeNeedsSystemBoundary = hasEnabledMitmProfiles(
 		buildMitmProfileBundle({
 			generatedAt: new Date(0).toISOString(),
@@ -1280,6 +1288,32 @@ function writeSupervisorConfig(
 			"stderr_logfile=/dev/fd/2",
 			"stderr_logfile_maxbytes=0",
 			`environment=${daemonEnvironment}`,
+			"",
+		);
+	}
+
+	if (shouldRunUiBridge) {
+		const uiBridgeEnvironment = supervisorEnvironment({
+			...commonEnvironment,
+			CLAWDI_AUTH_TOKEN: "",
+			CLAWDI_RUNTIME_REV: uiBridgeProgramRevision(manifest),
+		});
+		lines.push(
+			"[program:clawdi-ui-bridge]",
+			"command=/usr/bin/env clawdi runtime ui-bridge",
+			`directory=${workspaceRoot}`,
+			`user=${runtimeUser}`,
+			"autostart=true",
+			"autorestart=true",
+			"startsecs=2",
+			"startretries=5",
+			"stopasgroup=true",
+			"killasgroup=true",
+			"stdout_logfile=/dev/fd/1",
+			"stdout_logfile_maxbytes=0",
+			"stderr_logfile=/dev/fd/2",
+			"stderr_logfile_maxbytes=0",
+			`environment=${uiBridgeEnvironment}`,
 			"",
 		);
 	}
