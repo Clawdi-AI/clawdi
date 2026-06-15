@@ -169,12 +169,134 @@ describe("runtime UI bridge", () => {
 			await close(upstream);
 		}
 	});
+
+	it("rewrites websocket browser authority headers to the OpenClaw loopback target", async () => {
+		let upstreamRequest = "";
+		const upstream = createNetServer((socket) => {
+			socket.once("data", (chunk) => {
+				upstreamRequest += chunk.toString("latin1");
+				socket.write(
+					[
+						"HTTP/1.1 101 Switching Protocols",
+						"Upgrade: websocket",
+						"Connection: Upgrade",
+						"",
+						"",
+					].join("\r\n"),
+				);
+			});
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "openclaw-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const authorized = await websocketRequest({
+				port: bridgePort,
+				path: "/control/?session=abc",
+				cookie: `${UI_ACCESS_COOKIE}=openclaw-token; app_cookie=keep`,
+				host: "agent-18789.phala-prod2.clawdi.ai",
+				origin: "https://agent-18789.phala-prod2.clawdi.ai",
+				referer: "https://agent-18789.phala-prod2.clawdi.ai/control/?session=abc",
+			});
+
+			expect(authorized.statusCode).toBe(101);
+			expect(upstreamRequest).toContain("GET /control/?session=abc HTTP/1.1");
+			expect(upstreamRequest).toContain(`Host: 127.0.0.1:${upstreamPort}`);
+			expect(upstreamRequest).toContain(`Origin: http://127.0.0.1:${upstreamPort}`);
+			expect(upstreamRequest).toContain(
+				`Referer: http://127.0.0.1:${upstreamPort}/control/?session=abc`,
+			);
+			expect(upstreamRequest).toContain("Cookie: app_cookie=keep");
+			expect(upstreamRequest).not.toContain("agent-18789.phala-prod2.clawdi.ai");
+			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("proxies Hermes dashboard websocket paths with loopback origin and app query intact", async () => {
+		let upstreamRequest = "";
+		const upstream = createNetServer((socket) => {
+			socket.once("data", (chunk) => {
+				upstreamRequest += chunk.toString("latin1");
+				const accepted =
+					upstreamRequest.includes("GET /api/ws?token=hermes-session&channel=chat-1 HTTP/1.1") &&
+					upstreamRequest.includes(`Host: 127.0.0.1:${serverPort(upstream)}`) &&
+					upstreamRequest.includes(`Origin: http://127.0.0.1:${serverPort(upstream)}`);
+				socket.write(
+					accepted
+						? [
+								"HTTP/1.1 101 Switching Protocols",
+								"Upgrade: websocket",
+								"Connection: Upgrade",
+								"",
+								"",
+							].join("\r\n")
+						: ["HTTP/1.1 403 Forbidden", "Connection: close", "Content-Length: 0", "", ""].join(
+								"\r\n",
+							),
+				);
+			});
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "hermes-bridge-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[1],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const authorized = await websocketRequest({
+				port: bridgePort,
+				path: "/api/ws?token=hermes-session&channel=chat-1",
+				cookie: `${UI_ACCESS_COOKIE}=hermes-bridge-token`,
+				host: "agent-18793.phala-prod2.clawdi.ai",
+				origin: "https://agent-18793.phala-prod2.clawdi.ai",
+				referer: "https://agent-18793.phala-prod2.clawdi.ai/chat",
+			});
+
+			expect(authorized.statusCode).toBe(101);
+			expect(upstreamRequest).toContain("GET /api/ws?token=hermes-session&channel=chat-1 HTTP/1.1");
+			expect(upstreamRequest).toContain(`Host: 127.0.0.1:${upstreamPort}`);
+			expect(upstreamRequest).toContain(`Origin: http://127.0.0.1:${upstreamPort}`);
+			expect(upstreamRequest).toContain(`Referer: http://127.0.0.1:${upstreamPort}/chat`);
+			expect(upstreamRequest).not.toContain("agent-18793.phala-prod2.clawdi.ai");
+			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
 });
 
 function websocketRequest(input: {
 	port: number;
 	path: string;
 	cookie?: string;
+	host?: string;
+	origin?: string;
+	referer?: string;
 }): Promise<{ statusCode: number; setCookie: string; location: string }> {
 	return new Promise((resolve, reject) => {
 		const socket = connect(input.port, "127.0.0.1");
@@ -203,11 +325,13 @@ function websocketRequest(input: {
 			socket.write(
 				[
 					`GET ${input.path} HTTP/1.1`,
-					`Host: 127.0.0.1:${input.port}`,
+					`Host: ${input.host ?? `127.0.0.1:${input.port}`}`,
 					"Connection: Upgrade",
 					"Upgrade: websocket",
 					"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
 					"Sec-WebSocket-Version: 13",
+					...(input.origin ? [`Origin: ${input.origin}`] : []),
+					...(input.referer ? [`Referer: ${input.referer}`] : []),
 					...(input.cookie ? [`Cookie: ${input.cookie}`] : []),
 					"",
 					"",

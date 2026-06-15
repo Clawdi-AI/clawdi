@@ -329,9 +329,13 @@ function sessionCookie(token: string): string {
 
 function buildProxyRequestHead(parsed: ParsedHttpRequest, target: RuntimeUiBridgeTarget): string {
 	const isUpgrade = isUpgradeRequest(parsed.headers);
+	const authority = targetAuthority(target);
+	const origin = `http://${authority}`;
+	let originWritten = false;
+	let refererWritten = false;
 	const lines = [
 		`${parsed.method} ${proxyPath(parsed.requestTarget)} HTTP/${parsed.httpVersion}`,
-		`Host: ${targetAuthority(target)}`,
+		`Host: ${authority}`,
 		isUpgrade ? "Connection: Upgrade" : "Connection: close",
 	];
 	const upgradeValue = firstHeaderValue(parsed.headers, "upgrade");
@@ -339,6 +343,20 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, target: RuntimeUiBridg
 	for (const [name, value] of parsed.rawHeaders) {
 		const lowerName = name.toLowerCase();
 		if (lowerName === "host" || HOP_BY_HOP_HEADERS.has(lowerName)) continue;
+		if (lowerName === "origin") {
+			if (!originWritten) {
+				lines.push(`Origin: ${origin}`);
+				originWritten = true;
+			}
+			continue;
+		}
+		if (lowerName === "referer") {
+			if (!refererWritten) {
+				lines.push(`Referer: ${rewriteReferer(value, origin)}`);
+				refererWritten = true;
+			}
+			continue;
+		}
 		if (lowerName === "cookie") {
 			const sanitizedCookie = removeBridgeCookie(value);
 			if (sanitizedCookie) lines.push(`Cookie: ${sanitizedCookie}`);
@@ -374,6 +392,15 @@ function removeBridgeCookie(value: string): string {
 			return name !== UI_ACCESS_COOKIE;
 		})
 		.join("; ");
+}
+
+function rewriteReferer(value: string, origin: string): string {
+	try {
+		const url = new URL(value);
+		return `${origin}${url.pathname}${url.search}`;
+	} catch {
+		return `${origin}/`;
+	}
 }
 
 function targetAuthority(target: RuntimeUiBridgeTarget): string {
