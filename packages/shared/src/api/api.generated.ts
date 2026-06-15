@@ -298,6 +298,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/channels/agent-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Channel Links */
+        get: operations["list_agent_channel_links_api_channels_agent_links_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/channels/{account_id}/activity": {
         parameters: {
             query?: never;
@@ -2905,6 +2922,34 @@ export interface components {
             created_at: string;
             /** Agent Token */
             agent_token?: string | null;
+        };
+        /** ChannelAgentLinkWithAccountResponse */
+        ChannelAgentLinkWithAccountResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Agent Token */
+            agent_token?: string | null;
+            account: components["schemas"]["ChannelAccountResponse"];
         };
         /** ChannelBindingResponse */
         ChannelBindingResponse: {
@@ -5826,6 +5871,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelHealthListResponse"];
+                };
+            };
+        };
+    };
+    list_agent_channel_links_api_channels_agent_links_get: {
+        parameters: {
+            query: {
+                agent_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAgentLinkWithAccountResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

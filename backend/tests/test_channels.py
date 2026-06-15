@@ -1499,6 +1499,88 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
 
 
 @pytest.mark.asyncio
+async def test_list_channel_agent_links_by_agent_returns_linked_channel_summaries(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    second_channel_agent,
+):
+    private = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"agent-links-private-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    other_private = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": f"agent-links-other-{uuid4().hex}",
+                "agent_id": str(second_channel_agent.id),
+            },
+        )
+    ).json()
+    public = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"agent-links-public-{uuid4().hex}",
+    )
+    assert public.status_code == 201, public.text
+    public_body = public.json()
+    public_link = await client.post(
+        f"/api/channels/{public_body['id']}/agent-links",
+        json={"agent_id": str(channel_agent.id)},
+    )
+    assert public_link.status_code == 201, public_link.text
+
+    other_user, other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="agent-links-other-user",
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_user_link = await other_client.post(
+            f"/api/channels/{public_body['id']}/agent-links",
+            json={"agent_id": str(other_agent.id)},
+        )
+        other_user_listing = await other_client.get(
+            "/api/channels/agent-links",
+            params={"agent_id": str(channel_agent.id)},
+        )
+    assert other_user_link.status_code == 201, other_user_link.text
+
+    listed = await client.get(
+        "/api/channels/agent-links",
+        params={"agent_id": str(channel_agent.id)},
+    )
+
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    by_account_id = {item["account_id"]: item for item in body}
+    assert set(by_account_id) == {private["id"], public_body["id"]}
+    private_item = by_account_id[private["id"]]
+    public_item = by_account_id[public_body["id"]]
+    assert private_item["id"] == private["agent_link_id"]
+    assert private_item["agent_id"] == str(channel_agent.id)
+    assert private_item["status"] == "active"
+    assert private_item["agent_token"] is None
+    assert private_item["account"]["id"] == private["id"]
+    assert private_item["account"]["name"] == private["name"]
+    assert private_item["account"]["visibility"] == "private"
+    assert public_item["id"] == public_link.json()["id"]
+    assert public_item["account"]["id"] == public_body["id"]
+    assert public_item["account"]["visibility"] == "public"
+    assert other_private["id"] not in by_account_id
+    assert other_user_listing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

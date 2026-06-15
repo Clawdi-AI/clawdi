@@ -444,6 +444,34 @@ async def list_owned_active_bot_agent_links(
     return list(result.scalars().all())
 
 
+async def list_owned_active_bot_agent_links_for_agent(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent_id: UUID,
+) -> list[tuple[ChannelBotAgentLink, ChannelAccount]]:
+    result = await db.execute(
+        select(ChannelBotAgentLink, ChannelAccount)
+        .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+        .where(
+            ChannelBotAgentLink.user_id == user_id,
+            ChannelBotAgentLink.agent_id == agent_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+        )
+        .order_by(
+            ChannelAccount.provider,
+            ChannelAccount.visibility,
+            ChannelAccount.name,
+            ChannelAccount.id,
+            ChannelBotAgentLink.created_at,
+        )
+    )
+    return list(result.all())
+
+
 async def rotate_bot_agent_link_token(
     db: AsyncSession,
     *,

@@ -54,6 +54,7 @@ from app.schemas.channel import (
     ChannelActivityListResponse,
     ChannelAgentLinkCreate,
     ChannelAgentLinkResponse,
+    ChannelAgentLinkWithAccountResponse,
     ChannelBindingResponse,
     ChannelBotPoolAccess,
     ChannelBotPoolCapabilities,
@@ -90,6 +91,7 @@ from app.services.channels import (
     get_usable_channel_account,
     hash_token,
     list_owned_active_bot_agent_links,
+    list_owned_active_bot_agent_links_for_agent,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -153,6 +155,16 @@ def _runtime_account_response(
     return ChannelRuntimeAccountResponse(
         **_account_response(account).model_dump(),
         runtime_links=[runtime_link],
+    )
+
+
+def _agent_link_with_account_response(
+    link: ChannelBotAgentLink,
+    account: ChannelAccount,
+) -> ChannelAgentLinkWithAccountResponse:
+    return ChannelAgentLinkWithAccountResponse(
+        **_agent_link_response(link).model_dump(),
+        account=_account_response(account),
     )
 
 
@@ -449,6 +461,21 @@ async def create_channel(
         agent_id=link.agent_id if link else None,
         agent_token=link_agent_token,
     )
+
+
+@router.get("/agent-links")
+async def list_agent_channel_links(
+    agent_id: UUID,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[ChannelAgentLinkWithAccountResponse]:
+    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    rows = await list_owned_active_bot_agent_links_for_agent(
+        db,
+        user_id=auth.user_id,
+        agent_id=agent_id,
+    )
+    return [_agent_link_with_account_response(link, account) for link, account in rows]
 
 
 @router.get("/{account_id}/activity")

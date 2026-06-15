@@ -108,6 +108,10 @@ class ChannelAgentLinkResponse(BaseModel):
     agent_token: str | None = None
 
 
+class ChannelAgentLinkWithAccountResponse(ChannelAgentLinkResponse):
+    account: ChannelAccountResponse
+
+
 class ChannelPairCodeCreate(BaseModel):
     agent_id: UUID | None = None
     agent_link_id: UUID | None = None
