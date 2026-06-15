@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
 import {
 	DEFAULT_UI_BRIDGE_TARGETS,
@@ -99,6 +99,73 @@ describe("runtime UI bridge", () => {
 			expect(response.status).toBe(200);
 			expect(response.headers.get("content-type")).toBe("text/event-stream");
 			expect(await response.text()).toBe("data: one\n\ndata: two\n\n");
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("strips proxy and Cloudflare forwarding headers from proxied HTTP", async () => {
+		let seenHeaders: IncomingHttpHeaders | null = null;
+		const upstream = createServer((req, res) => {
+			seenHeaders = req.headers;
+			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("ok");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "http-strip-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/control`, {
+				headers: {
+					Cookie: `${UI_ACCESS_COOKIE}=http-strip-token`,
+					"X-App-Header": "keep-me",
+					"X-Forwarded": "legacy",
+					"X-Forwarded-For": "10.42.0.1",
+					"X-Forwarded-Host": "agent-18789.phala-prod2.clawdi.ai",
+					"X-Forwarded-Port": "443",
+					"X-Forwarded-Prefix": "/control",
+					"X-Forwarded-Proto": "https",
+					"X-Forwarded-Server": "ingress",
+					"X-Real-IP": "198.51.100.8",
+					Forwarded: "for=10.42.0.1;proto=https;host=agent-18789.phala-prod2.clawdi.ai",
+					"CF-Connecting-IP": "198.51.100.9",
+					"CF-IPCountry": "US",
+					"CF-Ray": "ray-id",
+					"CF-Visitor": '{"scheme":"https"}',
+					"CF-Worker": "worker-name",
+				},
+			});
+
+			expect(response.status).toBe(200);
+			expect(seenHeaders?.host).toBe(`127.0.0.1:${upstreamPort}`);
+			expect(seenHeaders?.["x-app-header"]).toBe("keep-me");
+			expect(seenHeaders?.["x-forwarded"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-for"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-host"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-port"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-prefix"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-proto"]).toBeUndefined();
+			expect(seenHeaders?.["x-forwarded-server"]).toBeUndefined();
+			expect(seenHeaders?.["x-real-ip"]).toBeUndefined();
+			expect(seenHeaders?.forwarded).toBeUndefined();
+			expect(seenHeaders?.["cf-connecting-ip"]).toBeUndefined();
+			expect(seenHeaders?.["cf-ipcountry"]).toBeUndefined();
+			expect(seenHeaders?.["cf-ray"]).toBeUndefined();
+			expect(seenHeaders?.["cf-visitor"]).toBeUndefined();
+			expect(seenHeaders?.["cf-worker"]).toBeUndefined();
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -209,6 +276,7 @@ describe("runtime UI bridge", () => {
 				host: "agent-18789.phala-prod2.clawdi.ai",
 				origin: "https://agent-18789.phala-prod2.clawdi.ai",
 				referer: "https://agent-18789.phala-prod2.clawdi.ai/control/?session=abc",
+				headers: forwardingHeaderLines(),
 			});
 
 			expect(authorized.statusCode).toBe(101);
@@ -219,6 +287,8 @@ describe("runtime UI bridge", () => {
 				`Referer: http://127.0.0.1:${upstreamPort}/control/?session=abc`,
 			);
 			expect(upstreamRequest).toContain("Cookie: app_cookie=keep");
+			expect(upstreamRequest).toContain("X-App-Header: keep-me");
+			expectForwardingHeadersStripped(upstreamRequest);
 			expect(upstreamRequest).not.toContain("agent-18789.phala-prod2.clawdi.ai");
 			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
 		} finally {
@@ -235,7 +305,8 @@ describe("runtime UI bridge", () => {
 				const accepted =
 					upstreamRequest.includes("GET /api/ws?token=hermes-session&channel=chat-1 HTTP/1.1") &&
 					upstreamRequest.includes(`Host: 127.0.0.1:${serverPort(upstream)}`) &&
-					upstreamRequest.includes(`Origin: http://127.0.0.1:${serverPort(upstream)}`);
+					upstreamRequest.includes(`Origin: http://127.0.0.1:${serverPort(upstream)}`) &&
+					!hasForwardingHeader(upstreamRequest);
 				socket.write(
 					accepted
 						? [
@@ -274,6 +345,7 @@ describe("runtime UI bridge", () => {
 				host: "agent-18793.phala-prod2.clawdi.ai",
 				origin: "https://agent-18793.phala-prod2.clawdi.ai",
 				referer: "https://agent-18793.phala-prod2.clawdi.ai/chat",
+				headers: forwardingHeaderLines(),
 			});
 
 			expect(authorized.statusCode).toBe(101);
@@ -281,6 +353,8 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain(`Host: 127.0.0.1:${upstreamPort}`);
 			expect(upstreamRequest).toContain(`Origin: http://127.0.0.1:${upstreamPort}`);
 			expect(upstreamRequest).toContain(`Referer: http://127.0.0.1:${upstreamPort}/chat`);
+			expect(upstreamRequest).toContain("X-App-Header: keep-me");
+			expectForwardingHeadersStripped(upstreamRequest);
 			expect(upstreamRequest).not.toContain("agent-18793.phala-prod2.clawdi.ai");
 			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
 		} finally {
@@ -297,6 +371,7 @@ function websocketRequest(input: {
 	host?: string;
 	origin?: string;
 	referer?: string;
+	headers?: string[];
 }): Promise<{ statusCode: number; setCookie: string; location: string }> {
 	return new Promise((resolve, reject) => {
 		const socket = connect(input.port, "127.0.0.1");
@@ -333,11 +408,51 @@ function websocketRequest(input: {
 					...(input.origin ? [`Origin: ${input.origin}`] : []),
 					...(input.referer ? [`Referer: ${input.referer}`] : []),
 					...(input.cookie ? [`Cookie: ${input.cookie}`] : []),
+					...(input.headers ?? []),
 					"",
 					"",
 				].join("\r\n"),
 			);
 		});
+	});
+}
+
+function forwardingHeaderLines(): string[] {
+	return [
+		"X-App-Header: keep-me",
+		"X-Forwarded: legacy",
+		"X-Forwarded-For: 10.42.0.1",
+		"X-Forwarded-Host: agent-18789.phala-prod2.clawdi.ai",
+		"X-Forwarded-Port: 443",
+		"X-Forwarded-Prefix: /control",
+		"X-Forwarded-Proto: https",
+		"X-Forwarded-Server: ingress",
+		"X-Real-IP: 198.51.100.8",
+		"Forwarded: for=10.42.0.1;proto=https;host=agent-18789.phala-prod2.clawdi.ai",
+		"CF-Connecting-IP: 198.51.100.9",
+		"CF-IPCountry: US",
+		"CF-Ray: ray-id",
+		'CF-Visitor: {"scheme":"https"}',
+		"CF-Worker: worker-name",
+	];
+}
+
+function expectForwardingHeadersStripped(rawRequest: string): void {
+	expect(hasForwardingHeader(rawRequest)).toBe(false);
+}
+
+function hasForwardingHeader(rawRequest: string): boolean {
+	return rawRequest.split("\r\n").some((line) => {
+		const separator = line.indexOf(":");
+		if (separator <= 0) return false;
+		const lowerName = line.slice(0, separator).toLowerCase();
+		return (
+			lowerName === "forwarded" ||
+			lowerName === "x-forwarded" ||
+			lowerName.startsWith("x-forwarded-") ||
+			lowerName === "x-real-ip" ||
+			lowerName.startsWith("cf-")
+		);
 	});
 }
 

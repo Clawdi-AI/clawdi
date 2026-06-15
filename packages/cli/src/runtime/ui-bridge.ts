@@ -76,6 +76,16 @@ const HOP_BY_HOP_HEADERS = new Set([
 	"transfer-encoding",
 	"upgrade",
 ]);
+const PROXY_FORWARDING_HEADERS = new Set([
+	"forwarded",
+	"x-forwarded",
+	"x-forwarded-for",
+	"x-forwarded-host",
+	"x-forwarded-port",
+	"x-forwarded-proto",
+	"x-forwarded-server",
+	"x-real-ip",
+]);
 
 export async function startRuntimeUiBridge(
 	options: RuntimeUiBridgeOptions = {},
@@ -342,6 +352,7 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, target: RuntimeUiBridg
 	if (isUpgrade) lines.push(`Upgrade: ${upgradeValue || "websocket"}`);
 	for (const [name, value] of parsed.rawHeaders) {
 		const lowerName = name.toLowerCase();
+		if (isProxyForwardingHeader(lowerName)) continue;
 		if (lowerName === "host" || HOP_BY_HOP_HEADERS.has(lowerName)) continue;
 		if (lowerName === "origin") {
 			if (!originWritten) {
@@ -365,6 +376,14 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, target: RuntimeUiBridg
 		lines.push(`${name}: ${value}`);
 	}
 	return `${lines.join("\r\n")}\r\n\r\n`;
+}
+
+function isProxyForwardingHeader(lowerName: string): boolean {
+	return (
+		PROXY_FORWARDING_HEADERS.has(lowerName) ||
+		lowerName.startsWith("x-forwarded-") ||
+		lowerName.startsWith("cf-")
+	);
 }
 
 function isUpgradeRequest(headers: Map<string, string[]>): boolean {
