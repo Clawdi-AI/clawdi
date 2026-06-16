@@ -29,14 +29,19 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
+    BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
+    PAIR_CODE_STATUS_PENDING,
+    PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
@@ -1443,6 +1448,10 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
             desired_before = await runtime_client.get("/api/channels")
 
         deleted = await client_a.delete(f"/api/channels/{account_id}/agent-links/{first_link_id}")
+        second_delete = await client_a.delete(
+            f"/api/channels/{account_id}/agent-links/{first_link_id}"
+        )
+        missing_delete = await client_a.delete(f"/api/channels/{account_id}/agent-links/{uuid4()}")
 
         links_after = await client_a.get(f"/api/channels/{account_id}/agent-links")
         pool_after_delete = await client_a.get("/api/channels/bot-pool")
@@ -1467,6 +1476,8 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
     assert before_item["available"] is False
 
     assert deleted.status_code == 204, deleted.text
+    assert second_delete.status_code == 204, second_delete.text
+    assert missing_delete.status_code == 204, missing_delete.text
     assert links_after.status_code == 200, links_after.text
     assert links_after.json() == []
     assert desired_after.status_code == 200, desired_after.text
@@ -1481,11 +1492,13 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
     assert second_link.status_code == 201, second_link.text
 
     audit_response_body = audit_response.json()
-    archive_event = next(
+    archive_events = [
         event
         for event in audit_response_body["items"]
-        if event["action"] == "channel.agent_link.archive"
-    )
+        if event["action"] == "channel.agent_link.archive" and event["resource_id"] == first_link_id
+    ]
+    assert len(archive_events) == 1
+    archive_event = archive_events[0]
     assert archive_event["resource_type"] == "channel_agent_link"
     assert archive_event["resource_id"] == first_link_id
     assert archive_event["channel_agent_link_id"] == first_link_id
@@ -1496,6 +1509,166 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
     assert archived_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
     assert archived_link.archived_at is not None
     assert archived_link.agent_token_hash is None
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"agent-link-state-delete-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    target_link_id = UUID(created["agent_link_id"])
+    sibling_link_response = await client.post(
+        f"/api/channels/{account_id}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert sibling_link_response.status_code == 201, sibling_link_response.text
+    sibling_link_id = UUID(sibling_link_response.json()["id"])
+
+    now = datetime.now(UTC)
+    target_pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        user_id=seed_user.id,
+        code_hash=hash_token(f"target-{uuid4()}"),
+        expires_at=now + timedelta(minutes=15),
+    )
+    sibling_pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        user_id=seed_user.id,
+        code_hash=hash_token(f"sibling-{uuid4()}"),
+        expires_at=now + timedelta(minutes=15),
+    )
+    target_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        user_id=seed_user.id,
+        external_chat_id=f"target-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Target",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    sibling_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        user_id=seed_user.id,
+        external_chat_id=f"sibling-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Sibling",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add_all(
+        [
+            target_pair_code,
+            sibling_pair_code,
+            target_binding,
+            sibling_binding,
+        ]
+    )
+    await db_session.flush()
+
+    target_pending_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        binding_id=target_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=target_binding.external_chat_id,
+        text="queued target",
+        payload={"delivery": DELIVERY_STATUS_PENDING},
+    )
+    target_in_progress_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        binding_id=target_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=target_binding.external_chat_id,
+        text="locked target",
+        payload={"delivery": DELIVERY_STATUS_IN_PROGRESS},
+    )
+    sibling_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        binding_id=sibling_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=sibling_binding.external_chat_id,
+        text="queued sibling",
+        payload={"delivery": DELIVERY_STATUS_PENDING},
+    )
+    db_session.add_all([target_pending_message, target_in_progress_message, sibling_message])
+    await db_session.flush()
+
+    target_pending_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        message_id=target_pending_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_PENDING,
+        next_attempt_at=now,
+    )
+    target_in_progress_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        message_id=target_in_progress_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_IN_PROGRESS,
+        next_attempt_at=now,
+        locked_at=now,
+        locked_by="test-worker",
+    )
+    sibling_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        message_id=sibling_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_PENDING,
+        next_attempt_at=now,
+    )
+    db_session.add_all([target_pending_delivery, target_in_progress_delivery, sibling_delivery])
+    await db_session.commit()
+
+    deleted = await client.delete(f"/api/channels/{account_id}/agent-links/{target_link_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    for row in (
+        target_pair_code,
+        sibling_pair_code,
+        target_binding,
+        sibling_binding,
+        target_pending_delivery,
+        target_in_progress_delivery,
+        sibling_delivery,
+    ):
+        await db_session.refresh(row)
+
+    assert target_pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert sibling_pair_code.status == PAIR_CODE_STATUS_PENDING
+    assert target_binding.status == BINDING_STATUS_ARCHIVED
+    assert sibling_binding.status == BINDING_STATUS_ACTIVE
+    assert target_pending_delivery.status == DELIVERY_STATUS_FAILED
+    assert target_pending_delivery.last_error == "channel agent link archived"
+    assert target_in_progress_delivery.status == DELIVERY_STATUS_FAILED
+    assert target_in_progress_delivery.locked_at is None
+    assert target_in_progress_delivery.locked_by is None
+    assert target_in_progress_delivery.last_error == "channel agent link archived"
+    assert sibling_delivery.status == DELIVERY_STATUS_PENDING
+    assert sibling_delivery.last_error is None
 
 
 @pytest.mark.asyncio

@@ -489,9 +489,52 @@ async def archive_bot_agent_link(
     *,
     link: ChannelBotAgentLink,
 ) -> None:
+    now = datetime.now(UTC)
     link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
     link.agent_token_hash = None
-    link.archived_at = datetime.now(UTC)
+    link.archived_at = now
+
+    bindings_result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.bot_agent_link_id == link.id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+        )
+    )
+    for binding in bindings_result.scalars().all():
+        binding.status = BINDING_STATUS_ARCHIVED
+
+    pair_codes_result = await db.execute(
+        select(ChannelPairCode).where(
+            ChannelPairCode.bot_agent_link_id == link.id,
+            ChannelPairCode.status == PAIR_CODE_STATUS_PENDING,
+        )
+    )
+    for pair_code in pair_codes_result.scalars().all():
+        pair_code.status = PAIR_CODE_STATUS_REVOKED
+
+    credentials_result = await db.execute(
+        select(ChannelAgentCredential).where(
+            ChannelAgentCredential.bot_agent_link_id == link.id,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+    )
+    for credential in credentials_result.scalars().all():
+        credential.revoked_at = now
+
+    deliveries_result = await db.execute(
+        select(ChannelDelivery).where(
+            ChannelDelivery.bot_agent_link_id == link.id,
+            ChannelDelivery.status.in_(
+                (
+                    DELIVERY_STATUS_PENDING,
+                    DELIVERY_STATUS_IN_PROGRESS,
+                )
+            ),
+        )
+    )
+    for delivery in deliveries_result.scalars().all():
+        _fail_delivery(delivery, "channel agent link archived")
+
     await db.flush()
 
 

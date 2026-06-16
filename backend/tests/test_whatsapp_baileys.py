@@ -1638,6 +1638,41 @@ async def test_channel_delete_revokes_whatsapp_tenant_credentials(
 
 
 @pytest.mark.asyncio
+async def test_channel_agent_link_delete_revokes_whatsapp_tenant_credentials(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={"provider": "whatsapp", "name": "wa-creds-link-delete"},
+        )
+    ).json()
+    minted = (
+        await client.post(
+            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            json={},
+        )
+    ).json()
+
+    deleted = await client.delete(
+        f"/api/channels/{created['id']}/agent-links/{minted['agent_link_id']}"
+    )
+
+    credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
+    assert deleted.status_code == 204
+    assert credential is not None
+    assert credential.revoked_at is not None
+    assert (
+        await resolve_whatsapp_credential_by_identity(
+            db_session,
+            identity_public_key=bytes.fromhex(minted["identity_pub_key_hex"]),
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

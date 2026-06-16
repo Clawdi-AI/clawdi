@@ -704,9 +704,17 @@ async def delete_channel_agent_link(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    link = await get_owned_bot_agent_link(
-        db, account=account, link_id=link_id, user_id=auth.user_id
+    link_result = await db.execute(
+        select(ChannelBotAgentLink).where(
+            ChannelBotAgentLink.id == link_id,
+            ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == auth.user_id,
+        )
     )
+    link = link_result.scalar_one_or_none()
+    if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+        return
+
     await archive_bot_agent_link(db, link=link)
     record_control_plane_audit(
         db,
