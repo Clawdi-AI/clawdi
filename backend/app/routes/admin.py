@@ -646,6 +646,63 @@ async def admin_upsert_runtime_state(
     )
 
 
+@router.delete(
+    "/environments/{environment_id}/runtime-state",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def admin_delete_runtime_state(
+    environment_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    env = (
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState)
+            .where(HostedRuntimeState.environment_id == environment_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    details: dict[str, object] = {"existed": state is not None}
+    if state is not None:
+        details.update(
+            {
+                "deployment_id": state.deployment_id,
+                "app_id": state.app_id,
+                "instance_id": state.instance_id,
+                "generation": state.generation,
+                "provider_id": state.provider_id,
+                "enabled_runtimes": _enabled_runtime_names(state.runtimes),
+                "has_mcp": state.mcp is not None,
+                "has_tools": state.tools is not None,
+            }
+        )
+        await db.delete(state)
+
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="hosted_runtime_state.delete",
+        resource_type="hosted_runtime_state",
+        resource_id=str(environment_id),
+        environment_id=environment_id,
+        target_user_id=env.user_id,
+        source="api.admin",
+        details=details,
+    )
+    await db.commit()
+    logger.info(
+        "admin_runtime_state_deleted environment_id=%s existed=%s",
+        environment_id,
+        state is not None,
+    )
+
+
 async def _admin_get_channel_row(
     db: AsyncSession,
     *,
