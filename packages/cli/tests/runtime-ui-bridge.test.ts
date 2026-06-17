@@ -105,6 +105,108 @@ describe("runtime UI bridge", () => {
 		}
 	});
 
+	it("strips frame-blocking headers and preserves unrelated CSP directives for OpenClaw and Hermes", async () => {
+		const makeUpstream = (name: string) =>
+			createServer((req, res) => {
+				res.writeHead(200, {
+					"Content-Security-Policy":
+						"default-src 'self'; frame-ancestors 'none'; script-src 'self'",
+					"Content-Type": "text/html; charset=utf-8",
+					"X-Frame-Options": name === "openclaw" ? "DENY" : "SAMEORIGIN",
+					"X-Upstream": name,
+				});
+				res.end(`<html><body>${req.url ?? ""}</body></html>`);
+			});
+		const openclawUpstream = makeUpstream("openclaw");
+		const hermesUpstream = makeUpstream("hermes");
+		await listen(openclawUpstream, "127.0.0.1", 0);
+		await listen(hermesUpstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeUiBridge({
+			token: "frame-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: serverPort(openclawUpstream),
+				},
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[1],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: serverPort(hermesUpstream),
+				},
+			],
+		});
+		try {
+			for (const target of bridge.targets) {
+				const response = await fetch(`http://127.0.0.1:${target.listenPort}/dashboard`, {
+					headers: { Cookie: `${UI_ACCESS_COOKIE}=frame-token` },
+				});
+				const csp = response.headers.get("content-security-policy") ?? "";
+
+				expect(response.status).toBe(200);
+				expect(response.headers.get("x-upstream")).toBe(target.name);
+				expect(response.headers.get("x-frame-options")).toBeNull();
+				expect(csp).toContain("default-src 'self'");
+				expect(csp).toContain("script-src 'self'");
+				expect(csp).toContain("frame-ancestors 'self' https://*.clawdi.ai");
+				expect(csp).not.toContain("frame-ancestors 'none'");
+			}
+		} finally {
+			await bridge.close();
+			await close(openclawUpstream);
+			await close(hermesUpstream);
+		}
+	});
+
+	it("uses CLAWDI_UI_FRAME_ANCESTORS to configure allowed iframe ancestors", async () => {
+		const previousFrameAncestors = process.env.CLAWDI_UI_FRAME_ANCESTORS;
+		process.env.CLAWDI_UI_FRAME_ANCESTORS = "'self' https://console.clawdi.ai";
+		const upstream = createServer((req, res) => {
+			res.writeHead(200, {
+				"Content-Security-Policy": "connect-src 'self'",
+				"Content-Type": "text/html; charset=utf-8",
+				"X-Frame-Options": "DENY",
+			});
+			res.end(`<html><body>${req.url ?? ""}</body></html>`);
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeUiBridge({
+			token: "custom-frame-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/`, {
+				headers: { Cookie: `${UI_ACCESS_COOKIE}=custom-frame-token` },
+			});
+			const csp = response.headers.get("content-security-policy") ?? "";
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("x-frame-options")).toBeNull();
+			expect(csp).toContain("connect-src 'self'");
+			expect(csp).toContain("frame-ancestors 'self' https://console.clawdi.ai");
+			expect(csp).not.toContain("https://*.clawdi.ai");
+		} finally {
+			await bridge.close();
+			await close(upstream);
+			if (previousFrameAncestors === undefined) {
+				delete process.env.CLAWDI_UI_FRAME_ANCESTORS;
+			} else {
+				process.env.CLAWDI_UI_FRAME_ANCESTORS = previousFrameAncestors;
+			}
+		}
+	});
+
 	it("strips proxy and Cloudflare forwarding headers from proxied HTTP", async () => {
 		let seenHeaders: IncomingHttpHeaders | null = null;
 		const upstream = createServer((req, res) => {
