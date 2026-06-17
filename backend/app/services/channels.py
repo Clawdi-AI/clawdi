@@ -212,6 +212,12 @@ def store_agent_link_token(link: ChannelBotAgentLink, raw_token: str) -> None:
     link.agent_token_nonce = nonce
 
 
+def scrub_agent_link_token(link: ChannelBotAgentLink) -> None:
+    link.agent_token_hash = None
+    link.encrypted_agent_token = None
+    link.agent_token_nonce = None
+
+
 def decrypt_agent_link_token(link: ChannelBotAgentLink) -> str | None:
     if not link.encrypted_agent_token or not link.agent_token_nonce:
         return None
@@ -491,7 +497,7 @@ async def archive_bot_agent_link(
 ) -> None:
     now = datetime.now(UTC)
     link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
-    link.agent_token_hash = None
+    scrub_agent_link_token(link)
     link.archived_at = now
 
     bindings_result = await db.execute(
@@ -646,7 +652,7 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
     )
     for link in links_result.scalars().all():
         link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
-        link.agent_token_hash = None
+        scrub_agent_link_token(link)
         link.archived_at = now
 
     bindings_result = await db.execute(
@@ -1988,11 +1994,22 @@ async def claim_next_channel_delivery(
     result = await db.execute(
         select(ChannelDelivery)
         .join(ChannelAccount, ChannelAccount.id == ChannelDelivery.account_id)
+        .outerjoin(
+            ChannelBotAgentLink,
+            ChannelBotAgentLink.id == ChannelDelivery.bot_agent_link_id,
+        )
         .where(
             ChannelDelivery.status == DELIVERY_STATUS_PENDING,
             ChannelDelivery.next_attempt_at <= now,
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             ChannelAccount.archived_at.is_(None),
+            or_(
+                ChannelDelivery.bot_agent_link_id.is_(None),
+                and_(
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                ),
+            ),
         )
         .order_by(ChannelDelivery.next_attempt_at, ChannelDelivery.created_at)
         .limit(1)
@@ -2016,6 +2033,7 @@ async def deliver_channel_delivery(
 ) -> ChannelDelivery:
     try:
         account = await _delivery_account(db, delivery)
+        await _lock_active_delivery_link(db, delivery)
         message = await _delivery_message(db, delivery)
         provider_message_id, provider_response = await send_provider_outbound_payload(
             account=account,
@@ -3367,6 +3385,47 @@ async def _delivery_message(db: AsyncSession, delivery: ChannelDelivery) -> Chan
             detail="channel message not found",
         )
     return message
+
+
+async def _lock_active_delivery_link(
+    db: AsyncSession,
+    delivery: ChannelDelivery,
+) -> ChannelBotAgentLink | None:
+    if delivery.bot_agent_link_id is None:
+        return None
+
+    result = await db.execute(
+        select(ChannelBotAgentLink)
+        .where(
+            ChannelBotAgentLink.id == delivery.bot_agent_link_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .with_for_update(of=ChannelBotAgentLink, skip_locked=True)
+    )
+    link = result.scalar_one_or_none()
+    if link is not None:
+        return link
+
+    state_result = await db.execute(
+        select(ChannelBotAgentLink.status, ChannelBotAgentLink.archived_at).where(
+            ChannelBotAgentLink.id == delivery.bot_agent_link_id
+        )
+    )
+    state_row = state_result.one_or_none()
+    if (
+        state_row is not None
+        and state_row.status == BOT_AGENT_LINK_STATUS_ACTIVE
+        and state_row.archived_at is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="channel agent link is being updated",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="channel agent link archived",
+    )
 
 
 def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:

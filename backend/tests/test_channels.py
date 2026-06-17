@@ -1442,6 +1442,10 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
         )
         assert first_link.status_code == 201, first_link.text
         first_link_id = first_link.json()["id"]
+        active_link = await db_session.get(ChannelBotAgentLink, UUID(first_link_id))
+        assert active_link is not None
+        assert active_link.encrypted_agent_token is not None
+        assert active_link.agent_token_nonce is not None
         full_pool = await client_a.get("/api/channels/bot-pool")
         api_key = ApiKey(user_id=user_a.id, environment_id=agent_a.id, label="hosted")
         async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
@@ -1509,6 +1513,8 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
     assert archived_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
     assert archived_link.archived_at is not None
     assert archived_link.agent_token_hash is None
+    assert archived_link.encrypted_agent_token is None
+    assert archived_link.agent_token_nonce is None
 
 
 @pytest.mark.asyncio
@@ -8081,6 +8087,75 @@ async def test_channel_delivery_worker_retries_provider_failures(
     assert delivery.status == "pending"
     assert delivery.attempts == 1
     assert delivery.last_error == "telegram api unreachable"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-claimed-link-archive",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    sent = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "do not leak"},
+    )
+    assert sent.status_code == 201, sent.text
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    async with sessionmaker() as worker_db:
+        delivery = await channel_service.claim_next_channel_delivery(
+            worker_db,
+            worker_id="claimed-link-archive-test",
+        )
+        assert delivery is not None
+        assert delivery.id == UUID(sent.json()["delivery_id"])
+        await worker_db.commit()
+
+        deleted = await client.delete(
+            f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}"
+        )
+        assert deleted.status_code == 204, deleted.text
+
+        await channel_service.deliver_channel_delivery(worker_db, delivery=delivery)
+        await worker_db.commit()
+
+    assert _FakeProviderClient.calls == []
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == UUID(sent.json()["delivery_id"]))
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivery.status == DELIVERY_STATUS_FAILED
+    assert delivery.locked_at is None
+    assert delivery.locked_by is None
+    assert delivery.last_error == "channel agent link archived"
 
 
 @pytest.mark.asyncio
