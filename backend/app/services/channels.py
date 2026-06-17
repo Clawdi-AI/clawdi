@@ -94,6 +94,8 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
         "options": [],
     },
 )
+DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
+DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
 TELEGRAM_REF_FILE_ID = "telegram_file_id"
@@ -2042,10 +2044,13 @@ async def deliver_channel_delivery(
             provider_payload=_channel_message_provider_payload(message),
         )
     except HTTPException as exc:
-        if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
-            _fail_delivery(delivery, _http_exception_detail(exc))
+        error = _http_exception_detail(exc)
+        if _is_delivery_link_lock_contention(exc, error=error):
+            _schedule_delivery_link_contention_retry(delivery, error)
+        elif exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+            _fail_delivery(delivery, error)
         else:
-            _schedule_delivery_retry(delivery, _http_exception_detail(exc))
+            _schedule_delivery_retry(delivery, error)
         await db.flush()
         return delivery
 
@@ -3420,7 +3425,7 @@ async def _lock_active_delivery_link(
     ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="channel agent link is being updated",
+            detail=DELIVERY_LINK_LOCK_CONTENTION_ERROR,
         )
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -3440,11 +3445,32 @@ def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:
     delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
 
 
+def _schedule_delivery_link_contention_retry(delivery: ChannelDelivery, error: str) -> None:
+    refunded_attempts = max(delivery.attempts - 1, 0)
+    delay_seconds = min(
+        2 ** max(refunded_attempts, 0),
+        DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS,
+    )
+    delivery.attempts = refunded_attempts
+    delivery.locked_at = None
+    delivery.locked_by = None
+    delivery.last_error = error[:1000]
+    delivery.status = DELIVERY_STATUS_PENDING
+    delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+
+
 def _fail_delivery(delivery: ChannelDelivery, error: str) -> None:
     delivery.locked_at = None
     delivery.locked_by = None
     delivery.last_error = error[:1000]
     delivery.status = DELIVERY_STATUS_FAILED
+
+
+def _is_delivery_link_lock_contention(exc: HTTPException, *, error: str) -> bool:
+    return (
+        exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        and error == DELIVERY_LINK_LOCK_CONTENTION_ERROR
+    )
 
 
 def _http_exception_detail(exc: HTTPException) -> str:

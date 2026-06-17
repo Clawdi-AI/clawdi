@@ -8125,15 +8125,20 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
         json={"binding_id": str(binding.id), "text": "do not leak"},
     )
     assert sent.status_code == 201, sent.text
+    delivery_id = UUID(sent.json()["delivery_id"])
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     async with sessionmaker() as worker_db:
-        delivery = await channel_service.claim_next_channel_delivery(
-            worker_db,
-            worker_id="claimed-link-archive-test",
-        )
-        assert delivery is not None
-        assert delivery.id == UUID(sent.json()["delivery_id"])
+        delivery = (
+            await worker_db.execute(
+                select(ChannelDelivery).where(ChannelDelivery.id == delivery_id).with_for_update()
+            )
+        ).scalar_one()
+        delivery.status = DELIVERY_STATUS_IN_PROGRESS
+        delivery.locked_at = datetime.now(UTC)
+        delivery.locked_by = "claimed-link-archive-test"
+        delivery.attempts += 1
+        await worker_db.flush()
         await worker_db.commit()
 
         deleted = await client.delete(
@@ -8148,7 +8153,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     delivery = (
         await db_session.execute(
             select(ChannelDelivery)
-            .where(ChannelDelivery.id == UUID(sent.json()["delivery_id"]))
+            .where(ChannelDelivery.id == delivery_id)
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
@@ -8156,6 +8161,171 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     assert delivery.locked_at is None
     assert delivery.locked_by is None
     assert delivery.last_error == "channel agent link archived"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-link-lock-contention",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    contention_seen = asyncio.Event()
+    original_lock_active_delivery_link = channel_service._lock_active_delivery_link
+
+    async def lock_active_delivery_link_with_signal(
+        db: AsyncSession,
+        delivery: ChannelDelivery,
+    ):
+        try:
+            return await original_lock_active_delivery_link(db, delivery)
+        except HTTPException as exc:
+            if (
+                exc.status_code == 503
+                and exc.detail == channel_service.DELIVERY_LINK_LOCK_CONTENTION_ERROR
+            ):
+                contention_seen.set()
+            raise
+
+    monkeypatch.setattr(
+        channel_service,
+        "_lock_active_delivery_link",
+        lock_active_delivery_link_with_signal,
+    )
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    sent = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "send after contention"},
+    )
+    assert sent.status_code == 201, sent.text
+    delivery_id = UUID(sent.json()["delivery_id"])
+    delivery = (
+        await db_session.execute(select(ChannelDelivery).where(ChannelDelivery.id == delivery_id))
+    ).scalar_one()
+    assert delivery.bot_agent_link_id == UUID(created["agent_link_id"])
+    delivery.attempts = 1
+    delivery.max_attempts = 2
+    delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+
+    async def claim_delivery(worker_db: AsyncSession, *, worker_id: str) -> ChannelDelivery:
+        claimed = (
+            await worker_db.execute(
+                select(ChannelDelivery).where(ChannelDelivery.id == delivery_id).with_for_update()
+            )
+        ).scalar_one()
+        assert claimed.status == DELIVERY_STATUS_PENDING
+        claimed.status = DELIVERY_STATUS_IN_PROGRESS
+        claimed.locked_at = datetime.now(UTC)
+        claimed.locked_by = worker_id
+        claimed.attempts += 1
+        await worker_db.flush()
+        return claimed
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def run_claimed_delivery(*, worker_id: str) -> None:
+        async with sessionmaker() as worker_db:
+            claimed = await claim_delivery(worker_db, worker_id=worker_id)
+            await channel_service.deliver_channel_delivery(worker_db, delivery=claimed)
+            await worker_db.commit()
+
+    async with sessionmaker() as link_lock_db:
+        contended_task: asyncio.Task[None] | None = None
+        try:
+            async with link_lock_db.begin():
+                locked_link = (
+                    await link_lock_db.execute(
+                        select(ChannelBotAgentLink)
+                        .where(ChannelBotAgentLink.id == UUID(created["agent_link_id"]))
+                        .with_for_update()
+                    )
+                ).scalar_one()
+                assert locked_link.status == "active"
+
+                async with sessionmaker() as probe_db:
+                    skipped_link = (
+                        await probe_db.execute(
+                            select(ChannelBotAgentLink.id)
+                            .where(ChannelBotAgentLink.id == UUID(created["agent_link_id"]))
+                            .with_for_update(skip_locked=True)
+                        )
+                    ).scalar_one_or_none()
+                    assert skipped_link is None
+                    await probe_db.rollback()
+
+                contended_task = asyncio.create_task(
+                    run_claimed_delivery(worker_id="link-contention-test")
+                )
+                await asyncio.wait_for(contention_seen.wait(), timeout=5.0)
+        except Exception:
+            if contended_task is not None and not contended_task.done():
+                contended_task.cancel()
+                try:
+                    await contended_task
+                except asyncio.CancelledError:
+                    pass
+            raise
+
+        assert contended_task is not None
+        await contended_task
+
+    contended_delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert contended_delivery.status == DELIVERY_STATUS_PENDING
+    assert contended_delivery.attempts == 1
+    assert contended_delivery.locked_at is None
+    assert contended_delivery.locked_by is None
+    assert contended_delivery.last_error == channel_service.DELIVERY_LINK_LOCK_CONTENTION_ERROR
+    assert _FakeProviderClient.calls == []
+
+    contended_delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+
+    async with sessionmaker() as worker_db:
+        claimed = await claim_delivery(worker_db, worker_id="link-contention-send-test")
+        await channel_service.deliver_channel_delivery(worker_db, delivery=claimed)
+        await worker_db.commit()
+
+    assert len(_FakeProviderClient.calls) == 1
+    delivered = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivered.status == "succeeded"
+    assert delivered.attempts == 2
+    assert delivered.last_error is None
 
 
 @pytest.mark.asyncio
