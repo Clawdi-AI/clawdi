@@ -94,6 +94,8 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
         "options": [],
     },
 )
+DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
+DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
 TELEGRAM_REF_FILE_ID = "telegram_file_id"
@@ -210,6 +212,12 @@ def store_agent_link_token(link: ChannelBotAgentLink, raw_token: str) -> None:
     link.agent_token_hash = hash_token(raw_token)
     link.encrypted_agent_token = ciphertext
     link.agent_token_nonce = nonce
+
+
+def scrub_agent_link_token(link: ChannelBotAgentLink) -> None:
+    link.agent_token_hash = None
+    link.encrypted_agent_token = None
+    link.agent_token_nonce = None
 
 
 def decrypt_agent_link_token(link: ChannelBotAgentLink) -> str | None:
@@ -444,6 +452,34 @@ async def list_owned_active_bot_agent_links(
     return list(result.scalars().all())
 
 
+async def list_owned_active_bot_agent_links_for_agent(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent_id: UUID,
+) -> list[tuple[ChannelBotAgentLink, ChannelAccount]]:
+    result = await db.execute(
+        select(ChannelBotAgentLink, ChannelAccount)
+        .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+        .where(
+            ChannelBotAgentLink.user_id == user_id,
+            ChannelBotAgentLink.agent_id == agent_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+        )
+        .order_by(
+            ChannelAccount.provider,
+            ChannelAccount.visibility,
+            ChannelAccount.name,
+            ChannelAccount.id,
+            ChannelBotAgentLink.created_at,
+        )
+    )
+    return list(result.all())
+
+
 async def rotate_bot_agent_link_token(
     db: AsyncSession,
     *,
@@ -454,6 +490,60 @@ async def rotate_bot_agent_link_token(
     store_agent_link_token(link, raw_token)
     await db.flush()
     return raw_token
+
+
+async def archive_bot_agent_link(
+    db: AsyncSession,
+    *,
+    link: ChannelBotAgentLink,
+) -> None:
+    now = datetime.now(UTC)
+    link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    scrub_agent_link_token(link)
+    link.archived_at = now
+
+    bindings_result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.bot_agent_link_id == link.id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+        )
+    )
+    for binding in bindings_result.scalars().all():
+        binding.status = BINDING_STATUS_ARCHIVED
+
+    pair_codes_result = await db.execute(
+        select(ChannelPairCode).where(
+            ChannelPairCode.bot_agent_link_id == link.id,
+            ChannelPairCode.status == PAIR_CODE_STATUS_PENDING,
+        )
+    )
+    for pair_code in pair_codes_result.scalars().all():
+        pair_code.status = PAIR_CODE_STATUS_REVOKED
+
+    credentials_result = await db.execute(
+        select(ChannelAgentCredential).where(
+            ChannelAgentCredential.bot_agent_link_id == link.id,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+    )
+    for credential in credentials_result.scalars().all():
+        credential.revoked_at = now
+
+    deliveries_result = await db.execute(
+        select(ChannelDelivery).where(
+            ChannelDelivery.bot_agent_link_id == link.id,
+            ChannelDelivery.status.in_(
+                (
+                    DELIVERY_STATUS_PENDING,
+                    DELIVERY_STATUS_IN_PROGRESS,
+                )
+            ),
+        )
+    )
+    for delivery in deliveries_result.scalars().all():
+        _fail_delivery(delivery, "channel agent link archived")
+
+    await db.flush()
 
 
 async def get_owned_private_channel_account(
@@ -564,7 +654,7 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
     )
     for link in links_result.scalars().all():
         link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
-        link.agent_token_hash = None
+        scrub_agent_link_token(link)
         link.archived_at = now
 
     bindings_result = await db.execute(
@@ -1906,11 +1996,22 @@ async def claim_next_channel_delivery(
     result = await db.execute(
         select(ChannelDelivery)
         .join(ChannelAccount, ChannelAccount.id == ChannelDelivery.account_id)
+        .outerjoin(
+            ChannelBotAgentLink,
+            ChannelBotAgentLink.id == ChannelDelivery.bot_agent_link_id,
+        )
         .where(
             ChannelDelivery.status == DELIVERY_STATUS_PENDING,
             ChannelDelivery.next_attempt_at <= now,
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             ChannelAccount.archived_at.is_(None),
+            or_(
+                ChannelDelivery.bot_agent_link_id.is_(None),
+                and_(
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                ),
+            ),
         )
         .order_by(ChannelDelivery.next_attempt_at, ChannelDelivery.created_at)
         .limit(1)
@@ -1934,6 +2035,7 @@ async def deliver_channel_delivery(
 ) -> ChannelDelivery:
     try:
         account = await _delivery_account(db, delivery)
+        await _lock_active_delivery_link(db, delivery)
         message = await _delivery_message(db, delivery)
         provider_message_id, provider_response = await send_provider_outbound_payload(
             account=account,
@@ -1942,10 +2044,13 @@ async def deliver_channel_delivery(
             provider_payload=_channel_message_provider_payload(message),
         )
     except HTTPException as exc:
-        if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
-            _fail_delivery(delivery, _http_exception_detail(exc))
+        error = _http_exception_detail(exc)
+        if _is_delivery_link_lock_contention(exc, error=error):
+            _schedule_delivery_link_contention_retry(delivery, error)
+        elif exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+            _fail_delivery(delivery, error)
         else:
-            _schedule_delivery_retry(delivery, _http_exception_detail(exc))
+            _schedule_delivery_retry(delivery, error)
         await db.flush()
         return delivery
 
@@ -3287,6 +3392,47 @@ async def _delivery_message(db: AsyncSession, delivery: ChannelDelivery) -> Chan
     return message
 
 
+async def _lock_active_delivery_link(
+    db: AsyncSession,
+    delivery: ChannelDelivery,
+) -> ChannelBotAgentLink | None:
+    if delivery.bot_agent_link_id is None:
+        return None
+
+    result = await db.execute(
+        select(ChannelBotAgentLink)
+        .where(
+            ChannelBotAgentLink.id == delivery.bot_agent_link_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .with_for_update(of=ChannelBotAgentLink, skip_locked=True)
+    )
+    link = result.scalar_one_or_none()
+    if link is not None:
+        return link
+
+    state_result = await db.execute(
+        select(ChannelBotAgentLink.status, ChannelBotAgentLink.archived_at).where(
+            ChannelBotAgentLink.id == delivery.bot_agent_link_id
+        )
+    )
+    state_row = state_result.one_or_none()
+    if (
+        state_row is not None
+        and state_row.status == BOT_AGENT_LINK_STATUS_ACTIVE
+        and state_row.archived_at is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=DELIVERY_LINK_LOCK_CONTENTION_ERROR,
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="channel agent link archived",
+    )
+
+
 def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:
     delivery.locked_at = None
     delivery.locked_by = None
@@ -3299,11 +3445,32 @@ def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:
     delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
 
 
+def _schedule_delivery_link_contention_retry(delivery: ChannelDelivery, error: str) -> None:
+    refunded_attempts = max(delivery.attempts - 1, 0)
+    delay_seconds = min(
+        2 ** max(refunded_attempts, 0),
+        DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS,
+    )
+    delivery.attempts = refunded_attempts
+    delivery.locked_at = None
+    delivery.locked_by = None
+    delivery.last_error = error[:1000]
+    delivery.status = DELIVERY_STATUS_PENDING
+    delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+
+
 def _fail_delivery(delivery: ChannelDelivery, error: str) -> None:
     delivery.locked_at = None
     delivery.locked_by = None
     delivery.last_error = error[:1000]
     delivery.status = DELIVERY_STATUS_FAILED
+
+
+def _is_delivery_link_lock_contention(exc: HTTPException, *, error: str) -> bool:
+    return (
+        exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        and error == DELIVERY_LINK_LOCK_CONTENTION_ERROR
+    )
 
 
 def _http_exception_detail(exc: HTTPException) -> str:

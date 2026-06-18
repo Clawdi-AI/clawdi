@@ -54,6 +54,7 @@ from app.schemas.channel import (
     ChannelActivityListResponse,
     ChannelAgentLinkCreate,
     ChannelAgentLinkResponse,
+    ChannelAgentLinkWithAccountResponse,
     ChannelBindingResponse,
     ChannelBotPoolAccess,
     ChannelBotPoolCapabilities,
@@ -74,6 +75,7 @@ from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.audit import record_control_plane_audit
 from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
+    archive_bot_agent_link,
     archive_channel_account,
     channel_bot_link_limit,
     create_pair_code,
@@ -89,6 +91,7 @@ from app.services.channels import (
     get_usable_channel_account,
     hash_token,
     list_owned_active_bot_agent_links,
+    list_owned_active_bot_agent_links_for_agent,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -152,6 +155,16 @@ def _runtime_account_response(
     return ChannelRuntimeAccountResponse(
         **_account_response(account).model_dump(),
         runtime_links=[runtime_link],
+    )
+
+
+def _agent_link_with_account_response(
+    link: ChannelBotAgentLink,
+    account: ChannelAccount,
+) -> ChannelAgentLinkWithAccountResponse:
+    return ChannelAgentLinkWithAccountResponse(
+        **_agent_link_response(link).model_dump(),
+        account=_account_response(account),
     )
 
 
@@ -450,6 +463,21 @@ async def create_channel(
     )
 
 
+@router.get("/agent-links")
+async def list_agent_channel_links(
+    agent_id: UUID,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[ChannelAgentLinkWithAccountResponse]:
+    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    rows = await list_owned_active_bot_agent_links_for_agent(
+        db,
+        user_id=auth.user_id,
+        agent_id=agent_id,
+    )
+    return [_agent_link_with_account_response(link, account) for link, account in rows]
+
+
 @router.get("/{account_id}/activity")
 async def list_channel_activity(
     account_id: UUID,
@@ -666,6 +694,42 @@ async def rotate_channel_agent_link_token(
     await db.commit()
     await db.refresh(link)
     return _agent_link_response(link, agent_token=agent_token)
+
+
+@router.delete("/{account_id}/agent-links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_channel_agent_link(
+    account_id: UUID,
+    link_id: UUID,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    link_result = await db.execute(
+        select(ChannelBotAgentLink).where(
+            ChannelBotAgentLink.id == link_id,
+            ChannelBotAgentLink.account_id == account.id,
+            ChannelBotAgentLink.user_id == auth.user_id,
+        )
+    )
+    link = link_result.scalar_one_or_none()
+    if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+        return
+
+    await archive_bot_agent_link(db, link=link)
+    record_control_plane_audit(
+        db,
+        actor_type="user",
+        actor_user_id=auth.user_id,
+        target_user_id=auth.user_id,
+        action="channel.agent_link.archive",
+        resource_type="channel_agent_link",
+        resource_id=str(link.id),
+        channel_account_id=account.id,
+        channel_agent_link_id=link.id,
+        source="api.channels",
+        details={"provider": account.provider, "agent_id": str(link.agent_id)},
+    )
+    await db.commit()
 
 
 @router.get("/{account_id}/bindings")

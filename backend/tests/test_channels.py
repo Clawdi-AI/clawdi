@@ -29,13 +29,19 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
+    BINDING_STATUS_ARCHIVED,
+    BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
+    PAIR_CODE_STATUS_PENDING,
+    PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
@@ -1409,6 +1415,348 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
     assert second_link.json()["detail"] == "channel bot link capacity reached"
     assert second_pair.status_code == 409
     assert second_pair.json()["detail"] == "channel bot link capacity reached"
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-unlink-{uuid4().hex}",
+        config={"max_links": 1},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="pool-unlink-a")
+    user_b, agent_b = await _create_user_with_channel_agent(db_session, label="pool-unlink-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        first_link = await client_a.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_a.id)},
+        )
+        assert first_link.status_code == 201, first_link.text
+        first_link_id = first_link.json()["id"]
+        active_link = await db_session.get(ChannelBotAgentLink, UUID(first_link_id))
+        assert active_link is not None
+        assert active_link.encrypted_agent_token is not None
+        assert active_link.agent_token_nonce is not None
+        full_pool = await client_a.get("/api/channels/bot-pool")
+        api_key = ApiKey(user_id=user_a.id, environment_id=agent_a.id, label="hosted")
+        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
+            desired_before = await runtime_client.get("/api/channels")
+
+        deleted = await client_a.delete(f"/api/channels/{account_id}/agent-links/{first_link_id}")
+        second_delete = await client_a.delete(
+            f"/api/channels/{account_id}/agent-links/{first_link_id}"
+        )
+        missing_delete = await client_a.delete(f"/api/channels/{account_id}/agent-links/{uuid4()}")
+
+        links_after = await client_a.get(f"/api/channels/{account_id}/agent-links")
+        pool_after_delete = await client_a.get("/api/channels/bot-pool")
+        async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
+            desired_after = await runtime_client.get("/api/channels")
+        audit_response = await client_a.get(
+            "/api/audit/events",
+            params={"channel_account_id": account_id, "limit": 20},
+        )
+    async with _client_for_user(db_session, user_b) as client_b:
+        second_link = await client_b.post(
+            f"/api/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent_b.id)},
+        )
+
+    assert desired_before.status_code == 200, desired_before.text
+    assert [item["id"] for item in desired_before.json()] == [account_id]
+    before_item = next(
+        item for item in full_pool.json()["providers"]["telegram"] if item["id"] == account_id
+    )
+    assert before_item["link_count"] == 1
+    assert before_item["available"] is False
+
+    assert deleted.status_code == 204, deleted.text
+    assert second_delete.status_code == 204, second_delete.text
+    assert missing_delete.status_code == 204, missing_delete.text
+    assert links_after.status_code == 200, links_after.text
+    assert links_after.json() == []
+    assert desired_after.status_code == 200, desired_after.text
+    assert desired_after.json() == []
+    after_item = next(
+        item
+        for item in pool_after_delete.json()["providers"]["telegram"]
+        if item["id"] == account_id
+    )
+    assert after_item["link_count"] == 0
+    assert after_item["available"] is True
+    assert second_link.status_code == 201, second_link.text
+
+    audit_response_body = audit_response.json()
+    archive_events = [
+        event
+        for event in audit_response_body["items"]
+        if event["action"] == "channel.agent_link.archive" and event["resource_id"] == first_link_id
+    ]
+    assert len(archive_events) == 1
+    archive_event = archive_events[0]
+    assert archive_event["resource_type"] == "channel_agent_link"
+    assert archive_event["resource_id"] == first_link_id
+    assert archive_event["channel_agent_link_id"] == first_link_id
+    assert archive_event["details"]["agent_id"] == str(agent_a.id)
+
+    archived_link = await db_session.get(ChannelBotAgentLink, UUID(first_link_id))
+    assert archived_link is not None
+    assert archived_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert archived_link.archived_at is not None
+    assert archived_link.agent_token_hash is None
+    assert archived_link.encrypted_agent_token is None
+    assert archived_link.agent_token_nonce is None
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"agent-link-state-delete-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    target_link_id = UUID(created["agent_link_id"])
+    sibling_link_response = await client.post(
+        f"/api/channels/{account_id}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert sibling_link_response.status_code == 201, sibling_link_response.text
+    sibling_link_id = UUID(sibling_link_response.json()["id"])
+
+    now = datetime.now(UTC)
+    target_pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        user_id=seed_user.id,
+        code_hash=hash_token(f"target-{uuid4()}"),
+        expires_at=now + timedelta(minutes=15),
+    )
+    sibling_pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        user_id=seed_user.id,
+        code_hash=hash_token(f"sibling-{uuid4()}"),
+        expires_at=now + timedelta(minutes=15),
+    )
+    target_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        user_id=seed_user.id,
+        external_chat_id=f"target-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Target",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    sibling_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        user_id=seed_user.id,
+        external_chat_id=f"sibling-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Sibling",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add_all(
+        [
+            target_pair_code,
+            sibling_pair_code,
+            target_binding,
+            sibling_binding,
+        ]
+    )
+    await db_session.flush()
+
+    target_pending_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        binding_id=target_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=target_binding.external_chat_id,
+        text="queued target",
+        payload={"delivery": DELIVERY_STATUS_PENDING},
+    )
+    target_in_progress_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        binding_id=target_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=target_binding.external_chat_id,
+        text="locked target",
+        payload={"delivery": DELIVERY_STATUS_IN_PROGRESS},
+    )
+    sibling_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        binding_id=sibling_binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=sibling_binding.external_chat_id,
+        text="queued sibling",
+        payload={"delivery": DELIVERY_STATUS_PENDING},
+    )
+    db_session.add_all([target_pending_message, target_in_progress_message, sibling_message])
+    await db_session.flush()
+
+    target_pending_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        message_id=target_pending_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_PENDING,
+        next_attempt_at=now,
+    )
+    target_in_progress_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=target_link_id,
+        message_id=target_in_progress_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_IN_PROGRESS,
+        next_attempt_at=now,
+        locked_at=now,
+        locked_by="test-worker",
+    )
+    sibling_delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=sibling_link_id,
+        message_id=sibling_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_PENDING,
+        next_attempt_at=now,
+    )
+    db_session.add_all([target_pending_delivery, target_in_progress_delivery, sibling_delivery])
+    await db_session.commit()
+
+    deleted = await client.delete(f"/api/channels/{account_id}/agent-links/{target_link_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    for row in (
+        target_pair_code,
+        sibling_pair_code,
+        target_binding,
+        sibling_binding,
+        target_pending_delivery,
+        target_in_progress_delivery,
+        sibling_delivery,
+    ):
+        await db_session.refresh(row)
+
+    assert target_pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert sibling_pair_code.status == PAIR_CODE_STATUS_PENDING
+    assert target_binding.status == BINDING_STATUS_ARCHIVED
+    assert sibling_binding.status == BINDING_STATUS_ACTIVE
+    assert target_pending_delivery.status == DELIVERY_STATUS_FAILED
+    assert target_pending_delivery.last_error == "channel agent link archived"
+    assert target_in_progress_delivery.status == DELIVERY_STATUS_FAILED
+    assert target_in_progress_delivery.locked_at is None
+    assert target_in_progress_delivery.locked_by is None
+    assert target_in_progress_delivery.last_error == "channel agent link archived"
+    assert sibling_delivery.status == DELIVERY_STATUS_PENDING
+    assert sibling_delivery.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_list_channel_agent_links_by_agent_returns_linked_channel_summaries(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    second_channel_agent,
+):
+    private = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": f"agent-links-private-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    other_private = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "discord",
+                "name": f"agent-links-other-{uuid4().hex}",
+                "agent_id": str(second_channel_agent.id),
+            },
+        )
+    ).json()
+    public = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"agent-links-public-{uuid4().hex}",
+    )
+    assert public.status_code == 201, public.text
+    public_body = public.json()
+    public_link = await client.post(
+        f"/api/channels/{public_body['id']}/agent-links",
+        json={"agent_id": str(channel_agent.id)},
+    )
+    assert public_link.status_code == 201, public_link.text
+
+    other_user, other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="agent-links-other-user",
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_user_link = await other_client.post(
+            f"/api/channels/{public_body['id']}/agent-links",
+            json={"agent_id": str(other_agent.id)},
+        )
+        other_user_listing = await other_client.get(
+            "/api/channels/agent-links",
+            params={"agent_id": str(channel_agent.id)},
+        )
+    assert other_user_link.status_code == 201, other_user_link.text
+
+    listed = await client.get(
+        "/api/channels/agent-links",
+        params={"agent_id": str(channel_agent.id)},
+    )
+
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    by_account_id = {item["account_id"]: item for item in body}
+    assert set(by_account_id) == {private["id"], public_body["id"]}
+    private_item = by_account_id[private["id"]]
+    public_item = by_account_id[public_body["id"]]
+    assert private_item["id"] == private["agent_link_id"]
+    assert private_item["agent_id"] == str(channel_agent.id)
+    assert private_item["status"] == "active"
+    assert private_item["agent_token"] is None
+    assert private_item["account"]["id"] == private["id"]
+    assert private_item["account"]["name"] == private["name"]
+    assert private_item["account"]["visibility"] == "private"
+    assert public_item["id"] == public_link.json()["id"]
+    assert public_item["account"]["id"] == public_body["id"]
+    assert public_item["account"]["visibility"] == "public"
+    assert other_private["id"] not in by_account_id
+    assert other_user_listing.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -7739,6 +8087,245 @@ async def test_channel_delivery_worker_retries_provider_failures(
     assert delivery.status == "pending"
     assert delivery.attempts == 1
     assert delivery.last_error == "telegram api unreachable"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-claimed-link-archive",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    sent = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "do not leak"},
+    )
+    assert sent.status_code == 201, sent.text
+    delivery_id = UUID(sent.json()["delivery_id"])
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    async with sessionmaker() as worker_db:
+        delivery = (
+            await worker_db.execute(
+                select(ChannelDelivery).where(ChannelDelivery.id == delivery_id).with_for_update()
+            )
+        ).scalar_one()
+        delivery.status = DELIVERY_STATUS_IN_PROGRESS
+        delivery.locked_at = datetime.now(UTC)
+        delivery.locked_by = "claimed-link-archive-test"
+        delivery.attempts += 1
+        await worker_db.flush()
+        await worker_db.commit()
+
+        deleted = await client.delete(
+            f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}"
+        )
+        assert deleted.status_code == 204, deleted.text
+
+        await channel_service.deliver_channel_delivery(worker_db, delivery=delivery)
+        await worker_db.commit()
+
+    assert _FakeProviderClient.calls == []
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivery.status == DELIVERY_STATUS_FAILED
+    assert delivery.locked_at is None
+    assert delivery.locked_by is None
+    assert delivery.last_error == "channel agent link archived"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/api/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-link-lock-contention",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    contention_seen = asyncio.Event()
+    original_lock_active_delivery_link = channel_service._lock_active_delivery_link
+
+    async def lock_active_delivery_link_with_signal(
+        db: AsyncSession,
+        delivery: ChannelDelivery,
+    ):
+        try:
+            return await original_lock_active_delivery_link(db, delivery)
+        except HTTPException as exc:
+            if (
+                exc.status_code == 503
+                and exc.detail == channel_service.DELIVERY_LINK_LOCK_CONTENTION_ERROR
+            ):
+                contention_seen.set()
+            raise
+
+    monkeypatch.setattr(
+        channel_service,
+        "_lock_active_delivery_link",
+        lock_active_delivery_link_with_signal,
+    )
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    sent = await client.post(
+        f"/api/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "send after contention"},
+    )
+    assert sent.status_code == 201, sent.text
+    delivery_id = UUID(sent.json()["delivery_id"])
+    delivery = (
+        await db_session.execute(select(ChannelDelivery).where(ChannelDelivery.id == delivery_id))
+    ).scalar_one()
+    assert delivery.bot_agent_link_id == UUID(created["agent_link_id"])
+    delivery.attempts = 1
+    delivery.max_attempts = 2
+    delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+
+    async def claim_delivery(worker_db: AsyncSession, *, worker_id: str) -> ChannelDelivery:
+        claimed = (
+            await worker_db.execute(
+                select(ChannelDelivery).where(ChannelDelivery.id == delivery_id).with_for_update()
+            )
+        ).scalar_one()
+        assert claimed.status == DELIVERY_STATUS_PENDING
+        claimed.status = DELIVERY_STATUS_IN_PROGRESS
+        claimed.locked_at = datetime.now(UTC)
+        claimed.locked_by = worker_id
+        claimed.attempts += 1
+        await worker_db.flush()
+        return claimed
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def run_claimed_delivery(*, worker_id: str) -> None:
+        async with sessionmaker() as worker_db:
+            claimed = await claim_delivery(worker_db, worker_id=worker_id)
+            await channel_service.deliver_channel_delivery(worker_db, delivery=claimed)
+            await worker_db.commit()
+
+    async with sessionmaker() as link_lock_db:
+        contended_task: asyncio.Task[None] | None = None
+        try:
+            async with link_lock_db.begin():
+                locked_link = (
+                    await link_lock_db.execute(
+                        select(ChannelBotAgentLink)
+                        .where(ChannelBotAgentLink.id == UUID(created["agent_link_id"]))
+                        .with_for_update()
+                    )
+                ).scalar_one()
+                assert locked_link.status == "active"
+
+                async with sessionmaker() as probe_db:
+                    skipped_link = (
+                        await probe_db.execute(
+                            select(ChannelBotAgentLink.id)
+                            .where(ChannelBotAgentLink.id == UUID(created["agent_link_id"]))
+                            .with_for_update(skip_locked=True)
+                        )
+                    ).scalar_one_or_none()
+                    assert skipped_link is None
+                    await probe_db.rollback()
+
+                contended_task = asyncio.create_task(
+                    run_claimed_delivery(worker_id="link-contention-test")
+                )
+                await asyncio.wait_for(contention_seen.wait(), timeout=5.0)
+        except Exception:
+            if contended_task is not None and not contended_task.done():
+                contended_task.cancel()
+                try:
+                    await contended_task
+                except asyncio.CancelledError:
+                    pass
+            raise
+
+        assert contended_task is not None
+        await contended_task
+
+    contended_delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert contended_delivery.status == DELIVERY_STATUS_PENDING
+    assert contended_delivery.attempts == 1
+    assert contended_delivery.locked_at is None
+    assert contended_delivery.locked_by is None
+    assert contended_delivery.last_error == channel_service.DELIVERY_LINK_LOCK_CONTENTION_ERROR
+    assert _FakeProviderClient.calls == []
+
+    contended_delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+
+    async with sessionmaker() as worker_db:
+        claimed = await claim_delivery(worker_db, worker_id="link-contention-send-test")
+        await channel_service.deliver_channel_delivery(worker_db, delivery=claimed)
+        await worker_db.commit()
+
+    assert len(_FakeProviderClient.calls) == 1
+    delivered = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivery_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivered.status == "succeeded"
+    assert delivered.attempts == 2
+    assert delivered.last_error is None
 
 
 @pytest.mark.asyncio

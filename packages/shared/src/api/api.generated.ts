@@ -298,6 +298,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/channels/agent-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Channel Links */
+        get: operations["list_agent_channel_links_api_channels_agent_links_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/channels/{account_id}/activity": {
         parameters: {
             query?: never;
@@ -380,6 +397,23 @@ export interface paths {
         /** Rotate Channel Agent Link Token */
         post: operations["rotate_channel_agent_link_token_api_channels__account_id__agent_links__link_id__token_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{account_id}/agent-links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Channel Agent Link */
+        delete: operations["delete_channel_agent_link_api_channels__account_id__agent_links__link_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2888,6 +2922,34 @@ export interface components {
             created_at: string;
             /** Agent Token */
             agent_token?: string | null;
+        };
+        /** ChannelAgentLinkWithAccountResponse */
+        ChannelAgentLinkWithAccountResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Agent Token */
+            agent_token?: string | null;
+            account: components["schemas"]["ChannelAccountResponse"];
         };
         /** ChannelBindingResponse */
         ChannelBindingResponse: {
@@ -5813,6 +5875,37 @@ export interface operations {
             };
         };
     };
+    list_agent_channel_links_api_channels_agent_links_get: {
+        parameters: {
+            query: {
+                agent_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAgentLinkWithAccountResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_channel_activity_api_channels__account_id__activity_get: {
         parameters: {
             query?: {
@@ -6028,6 +6121,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ChannelAgentLinkResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_channel_agent_link_api_channels__account_id__agent_links__link_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

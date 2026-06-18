@@ -222,6 +222,129 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
 
 
 @pytest.mark.asyncio
+async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit_event(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-runtime-{uuid4().hex[:8]}",
+        machine_name="Runtime Delete",
+        agent_type="openclaw",
+    )
+    expected = await _write_runtime_state(admin_client, str(env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    assert response.status_code == 200, response.text
+    etag = response.headers["etag"]
+
+    deleted = await admin_client.delete(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+    )
+
+    assert deleted.status_code == 204, deleted.text
+    assert deleted.content == b""
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        missing = await client.get(
+            "/api/runtime/manifest",
+            headers={"If-None-Match": etag},
+        )
+        audit = await client.get(
+            "/api/audit/events",
+            params={
+                "resource_type": "hosted_runtime_state",
+                "environment_id": str(env.id),
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert missing.status_code == 404, missing.text
+    assert missing.json() == {"detail": "Hosted runtime state not found"}
+    assert audit.status_code == 200, audit.text
+    payload = audit.json()
+    assert len(payload["items"]) == 2
+    latest = payload["items"][0]
+    assert latest["action"] == "hosted_runtime_state.delete"
+    assert latest["resource_type"] == "hosted_runtime_state"
+    assert latest["environment_id"] == str(env.id)
+    assert latest["target_user_id"] == str(seed_user.id)
+    assert latest["details"]["deployment_id"] == expected["deployment_id"]
+    assert latest["details"]["generation"] == expected["generation"]
+    assert latest["details"]["enabled_runtimes"] == ["openclaw"]
+    assert "secret" not in json.dumps(payload).lower()
+    assert "token" not in json.dumps(payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_runtime_state_missing_row_is_idempotent(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-missing-{uuid4().hex[:8]}",
+        machine_name="Runtime Delete Missing",
+        agent_type="openclaw",
+    )
+
+    deleted = await admin_client.delete(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+    )
+
+    assert deleted.status_code == 204, deleted.text
+    assert deleted.content == b""
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+    async with await _runtime_client(db_session, seed_user, None) as client:
+        audit = await client.get(
+            "/api/audit/events",
+            params={
+                "resource_type": "hosted_runtime_state",
+                "environment_id": str(env.id),
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert audit.status_code == 200, audit.text
+    payload = audit.json()
+    assert len(payload["items"]) == 1
+    latest = payload["items"][0]
+    assert latest["action"] == "hosted_runtime_state.delete"
+    assert latest["details"] == {"existed": False}
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_runtime_state_requires_admin_key(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-auth-{uuid4().hex[:8]}",
+        machine_name="Runtime Delete Auth",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+
+    rejected = await admin_client.delete(f"/api/admin/environments/{env.id}/runtime-state")
+
+    assert rejected.status_code == 401, rejected.text
+    assert await db_session.get(HostedRuntimeState, env.id) is not None
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generation(
     admin_client,
     db_session,
