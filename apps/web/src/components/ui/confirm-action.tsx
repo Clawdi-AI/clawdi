@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -13,6 +13,7 @@ import {
 	AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 export function ConfirmAction({
@@ -30,10 +31,34 @@ export function ConfirmAction({
 	confirmLabel?: string;
 	cancelLabel?: string;
 	destructive?: boolean;
-	onConfirm: () => void;
+	/**
+	 * May be sync or async (any return). When it returns a promise the dialog
+	 * stays open with a spinner until it settles, then closes.
+	 */
+	onConfirm: () => unknown;
 }) {
+	const [open, setOpen] = useState(false);
+	const [pending, setPending] = useState(false);
+	// Synchronous lock: `disabled` only takes effect on the next render, leaving
+	// a sub-frame window where a fast double-click (or Enter repeat) could fire
+	// the destructive action twice before React repaints.
+	const locked = useRef(false);
+
+	async function runConfirm() {
+		if (locked.current) return;
+		locked.current = true;
+		setPending(true);
+		try {
+			await onConfirm();
+			setOpen(false);
+		} finally {
+			setPending(false);
+			locked.current = false;
+		}
+	}
+
 	return (
-		<AlertDialog>
+		<AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
 			<AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
 			<AlertDialogContent>
 				<AlertDialogHeader>
@@ -43,11 +68,22 @@ export function ConfirmAction({
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>
-					<AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
+					<AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
 					<AlertDialogAction
-						onClick={onConfirm}
+						// Keep the dialog open until the action settles — Radix's Dialog.Close
+						// composes its close with `checkForDefaultPrevented`, so preventDefault
+						// suppresses the auto-close while we run.
+						onClick={(event) => {
+							event.preventDefault();
+							// runConfirm rejects when onConfirm does; the dialog already stays open
+							// on reject and callers own their onError, so just swallow the
+							// unhandled-rejection console noise without changing behavior.
+							void runConfirm().catch(() => {});
+						}}
+						disabled={pending}
 						className={cn(destructive && buttonVariants({ variant: "destructive" }))}
 					>
+						{pending ? <Spinner /> : null}
 						{confirmLabel}
 					</AlertDialogAction>
 				</AlertDialogFooter>
