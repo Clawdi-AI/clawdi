@@ -5,6 +5,12 @@ import { env } from "@/lib/env";
 
 const DEV_AUTH_BEARER = env.NEXT_PUBLIC_DEV_AUTH_TOKEN;
 
+// Stable identity for the dev-bypass branch: returning a fresh object (and
+// fresh `getToken`) each render would churn every `useMemo`/`useQuery` that
+// depends on `getToken` (e.g. the channel-edit client), re-creating clients
+// and re-issuing in-flight requests. Keep one constant reference.
+const DEV_AUTH_TOKEN_RESULT = { getToken: async () => DEV_AUTH_BEARER };
+
 const DEV_USER = {
 	id: "dev_browser",
 	fullName: env.NEXT_PUBLIC_DEV_AUTH_NAME,
@@ -18,7 +24,7 @@ const DEV_USER = {
 
 export function useAuthToken() {
 	if (env.NEXT_PUBLIC_DEV_AUTH_BYPASS) {
-		return { getToken: async () => DEV_AUTH_BEARER };
+		return DEV_AUTH_TOKEN_RESULT;
 	}
 	const { getToken } = useAuth();
 	return { getToken };

@@ -15,7 +15,11 @@ const nextConfig: NextConfig = {
 	// Redirecting these breaks payload delivery.
 	skipTrailingSlashRedirect: isHostedBuild,
 	images: {
-		remotePatterns: [{ hostname: "img.clerk.com" }],
+		remotePatterns: [
+			{ hostname: "img.clerk.com" },
+			{ hostname: "assets.clawdi.ai" },
+			{ hostname: "cdn.simpleicons.org" },
+		],
 	},
 	// Share URLs use a file-extension UX (`/s/{id}.md`, `/s/{id}.json`)
 	// rather than `/s/{id}?format=md`. The extension is what makes
