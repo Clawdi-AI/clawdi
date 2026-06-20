@@ -24,19 +24,34 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * `fetch` wrapper that bounds every request with a timeout and maps transport
- * failures to a normalizable `ApiNetworkError`. A caller-supplied abort (none
- * today, but openapi-fetch may attach one) is preserved and re-thrown as-is so
- * an intentional cancel isn't mislabeled as a network failure.
+ * failures to a normalizable `ApiNetworkError`. A caller-supplied abort is
+ * preserved and re-thrown as-is so an intentional cancel isn't mislabeled as a
+ * network failure.
  */
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
-	const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 	const caller = init?.signal ?? request.signal;
-	const signal = caller ? AbortSignal.any([caller, timeout]) : timeout;
-	return fetch(request, { ...init, signal }).catch((cause: unknown) => {
-		if (timeout.aborted) throw new ApiNetworkError("timeout", { cause });
-		if (caller?.aborted) throw cause;
-		throw new ApiNetworkError("offline", { cause });
-	});
+	const controller = new AbortController();
+	let timedOut = false;
+	const onAbort = () => controller.abort();
+	if (caller?.aborted) {
+		controller.abort();
+	} else {
+		caller?.addEventListener("abort", onAbort, { once: true });
+	}
+	const timeoutId = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, REQUEST_TIMEOUT_MS);
+	return fetch(request, { ...init, signal: controller.signal })
+		.catch((cause: unknown) => {
+			if (timedOut) throw new ApiNetworkError("timeout", { cause });
+			if (caller?.aborted) throw cause;
+			throw new ApiNetworkError("offline", { cause });
+		})
+		.finally(() => {
+			clearTimeout(timeoutId);
+			caller?.removeEventListener("abort", onAbort);
+		});
 }
 
 /**

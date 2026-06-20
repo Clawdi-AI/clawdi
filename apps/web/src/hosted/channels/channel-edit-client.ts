@@ -11,6 +11,23 @@ const API_URL = env.NEXT_PUBLIC_API_URL;
 /** Client-side request ceiling so a stalled call can't freeze the page (matches lib/api.ts). */
 const REQUEST_TIMEOUT_MS = 20_000;
 
+async function fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
+	const controller = new AbortController();
+	let timedOut = false;
+	const timeoutId = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, REQUEST_TIMEOUT_MS);
+	try {
+		return await fetch(input, { ...init, signal: controller.signal });
+	} catch (cause) {
+		if (timedOut) throw new ApiNetworkError("timeout", { cause });
+		throw new ApiNetworkError("offline", { cause });
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
 /**
  * Account summary embedded in an agent's channel link. Handwritten to mirror
  * the cloud-api `/api/channels/agent-links` response.
@@ -61,22 +78,11 @@ export function useChannelEditApi() {
 			if (init.query) {
 				for (const [key, value] of Object.entries(init.query)) url.searchParams.set(key, value);
 			}
-			// Bound the request so a stalled connection can't freeze the surface.
-			const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 			let response: Response;
-			try {
-				response = await fetch(url.toString(), {
-					method: init.method,
-					headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-					signal: timeout,
-				});
-			} catch (cause) {
-				// fetch only rejects on transport failure (offline, DNS, CORS, abort) —
-				// never on a non-2xx. Map our timeout abort and bare network failures
-				// to a recoverable, normalizable error.
-				if (timeout.aborted) throw new ApiNetworkError("timeout", { cause });
-				throw new ApiNetworkError("offline", { cause });
-			}
+			response = await fetchWithTimeout(url.toString(), {
+				method: init.method,
+				headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+			});
 			if (!response.ok) {
 				let detail = response.statusText;
 				try {
