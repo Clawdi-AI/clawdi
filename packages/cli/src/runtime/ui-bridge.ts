@@ -4,6 +4,7 @@ import { createConnection, createServer, isIP, type Server, type Socket } from "
 export const UI_ACCESS_TOKEN_ENV = "UI_ACCESS_TOKEN";
 export const UI_ACCESS_COOKIE = "clawdi_ui";
 export const UI_FRAME_ANCESTORS_ENV = "CLAWDI_UI_FRAME_ANCESTORS";
+export const UI_BRIDGE_LISTEN_HOST_ENV = "CLAWDI_UI_BRIDGE_LISTEN_HOST";
 export const DEFAULT_UI_FRAME_ANCESTORS = "'self' https://*.clawdi.ai";
 
 export interface RuntimeUiBridgeTarget {
@@ -52,16 +53,16 @@ export const DEFAULT_UI_BRIDGE_TARGETS: RuntimeUiBridgeTarget[] = [
 	{
 		name: "openclaw",
 		listenHost: "0.0.0.0",
-		listenPort: 28789,
+		listenPort: 18789,
 		targetHost: "127.0.0.1",
 		targetPort: 18789,
 	},
 	{
 		name: "hermes",
 		listenHost: "0.0.0.0",
-		listenPort: 28793,
+		listenPort: 9119,
 		targetHost: "127.0.0.1",
-		targetPort: 18793,
+		targetPort: 9119,
 	},
 ];
 
@@ -94,7 +95,7 @@ export async function startRuntimeUiBridge(
 	options: RuntimeUiBridgeOptions = {},
 ): Promise<RuntimeUiBridgeServer> {
 	const token = options.token ?? process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "";
-	const targets = options.targets ?? DEFAULT_UI_BRIDGE_TARGETS;
+	const targets = options.targets ?? defaultRuntimeUiBridgeTargets();
 	const frameAncestors =
 		options.frameAncestors?.trim() ||
 		process.env[UI_FRAME_ANCESTORS_ENV]?.trim() ||
@@ -120,6 +121,11 @@ export async function startRuntimeUiBridge(
 			await Promise.allSettled(servers.map((server) => closeServer(server)));
 		},
 	};
+}
+
+export function defaultRuntimeUiBridgeTargets(): RuntimeUiBridgeTarget[] {
+	const listenHost = process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() || "0.0.0.0";
+	return DEFAULT_UI_BRIDGE_TARGETS.map((target) => ({ ...target, listenHost }));
 }
 
 function createBridgeServer(

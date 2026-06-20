@@ -49,6 +49,7 @@ import {
 	type SupportedRuntimeName,
 	writeRuntimeRunConfig,
 } from "./run-config";
+import { UI_BRIDGE_LISTEN_HOST_ENV } from "./ui-bridge";
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -1195,6 +1196,7 @@ function writeSupervisorConfig(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
+		[UI_BRIDGE_LISTEN_HOST_ENV]: process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		PATH: supervisorPath(paths),
 	};
 	const watcherEnvironment = supervisorEnvironment({

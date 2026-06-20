@@ -3,9 +3,43 @@ import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
 import {
 	DEFAULT_UI_BRIDGE_TARGETS,
+	defaultRuntimeUiBridgeTargets,
 	startRuntimeUiBridge,
 	UI_ACCESS_COOKIE,
+	UI_BRIDGE_LISTEN_HOST_ENV,
 } from "../src/runtime/ui-bridge";
+
+describe("runtime UI bridge defaults", () => {
+	it("uses the official runtime UI ports by default", () => {
+		withBridgeListenEnv({}, () => {
+			expect(defaultRuntimeUiBridgeTargets()).toEqual([
+				{
+					name: "openclaw",
+					listenHost: "0.0.0.0",
+					listenPort: 18789,
+					targetHost: "127.0.0.1",
+					targetPort: 18789,
+				},
+				{
+					name: "hermes",
+					listenHost: "0.0.0.0",
+					listenPort: 9119,
+					targetHost: "127.0.0.1",
+					targetPort: 9119,
+				},
+			]);
+		});
+	});
+
+	it("honors the explicit bridge listen host", () => {
+		withBridgeListenEnv({ [UI_BRIDGE_LISTEN_HOST_ENV]: "10.42.0.20" }, () => {
+			expect(defaultRuntimeUiBridgeTargets().map((target) => target.listenHost)).toEqual([
+				"10.42.0.20",
+				"10.42.0.20",
+			]);
+		});
+	});
+});
 
 describe("runtime UI bridge", () => {
 	it("authenticates with query token, sets a cookie, and proxies cookie-authorized HTTP", async () => {
@@ -236,13 +270,13 @@ describe("runtime UI bridge", () => {
 					"X-App-Header": "keep-me",
 					"X-Forwarded": "legacy",
 					"X-Forwarded-For": "10.42.0.1",
-					"X-Forwarded-Host": "agent-18789.phala-prod2.clawdi.ai",
+					"X-Forwarded-Host": "agent-18789.gateway.example.test",
 					"X-Forwarded-Port": "443",
 					"X-Forwarded-Prefix": "/control",
 					"X-Forwarded-Proto": "https",
 					"X-Forwarded-Server": "ingress",
 					"X-Real-IP": "198.51.100.8",
-					Forwarded: "for=10.42.0.1;proto=https;host=agent-18789.phala-prod2.clawdi.ai",
+					Forwarded: "for=10.42.0.1;proto=https;host=agent-18789.gateway.example.test",
 					"CF-Connecting-IP": "198.51.100.9",
 					"CF-IPCountry": "US",
 					"CF-Ray": "ray-id",
@@ -375,9 +409,9 @@ describe("runtime UI bridge", () => {
 				port: bridgePort,
 				path: "/control/?session=abc",
 				cookie: `${UI_ACCESS_COOKIE}=openclaw-token; app_cookie=keep`,
-				host: "agent-18789.phala-prod2.clawdi.ai",
-				origin: "https://agent-18789.phala-prod2.clawdi.ai",
-				referer: "https://agent-18789.phala-prod2.clawdi.ai/control/?session=abc",
+				host: "agent-18789.gateway.example.test",
+				origin: "https://agent-18789.gateway.example.test",
+				referer: "https://agent-18789.gateway.example.test/control/?session=abc",
 				headers: forwardingHeaderLines(),
 			});
 
@@ -391,7 +425,7 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain("Cookie: app_cookie=keep");
 			expect(upstreamRequest).toContain("X-App-Header: keep-me");
 			expectForwardingHeadersStripped(upstreamRequest);
-			expect(upstreamRequest).not.toContain("agent-18789.phala-prod2.clawdi.ai");
+			expect(upstreamRequest).not.toContain("agent-18789.gateway.example.test");
 			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
 		} finally {
 			await bridge.close();
@@ -444,9 +478,9 @@ describe("runtime UI bridge", () => {
 				port: bridgePort,
 				path: "/api/ws?token=hermes-session&channel=chat-1",
 				cookie: `${UI_ACCESS_COOKIE}=hermes-bridge-token`,
-				host: "agent-18793.phala-prod2.clawdi.ai",
-				origin: "https://agent-18793.phala-prod2.clawdi.ai",
-				referer: "https://agent-18793.phala-prod2.clawdi.ai/chat",
+				host: "agent-9119.gateway.example.test",
+				origin: "https://agent-9119.gateway.example.test",
+				referer: "https://agent-9119.gateway.example.test/chat",
 				headers: forwardingHeaderLines(),
 			});
 
@@ -457,7 +491,7 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain(`Referer: http://127.0.0.1:${upstreamPort}/chat`);
 			expect(upstreamRequest).toContain("X-App-Header: keep-me");
 			expectForwardingHeadersStripped(upstreamRequest);
-			expect(upstreamRequest).not.toContain("agent-18793.phala-prod2.clawdi.ai");
+			expect(upstreamRequest).not.toContain("agent-9119.gateway.example.test");
 			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
 		} finally {
 			await bridge.close();
@@ -524,19 +558,38 @@ function forwardingHeaderLines(): string[] {
 		"X-App-Header: keep-me",
 		"X-Forwarded: legacy",
 		"X-Forwarded-For: 10.42.0.1",
-		"X-Forwarded-Host: agent-18789.phala-prod2.clawdi.ai",
+		"X-Forwarded-Host: agent-18789.gateway.example.test",
 		"X-Forwarded-Port: 443",
 		"X-Forwarded-Prefix: /control",
 		"X-Forwarded-Proto: https",
 		"X-Forwarded-Server: ingress",
 		"X-Real-IP: 198.51.100.8",
-		"Forwarded: for=10.42.0.1;proto=https;host=agent-18789.phala-prod2.clawdi.ai",
+		"Forwarded: for=10.42.0.1;proto=https;host=agent-18789.gateway.example.test",
 		"CF-Connecting-IP: 198.51.100.9",
 		"CF-IPCountry: US",
 		"CF-Ray: ray-id",
 		'CF-Visitor: {"scheme":"https"}',
 		"CF-Worker: worker-name",
 	];
+}
+
+function withBridgeListenEnv(values: Record<string, string>, fn: () => void): void {
+	const keys = [UI_BRIDGE_LISTEN_HOST_ENV];
+	const previous = new Map(keys.map((key) => [key, process.env[key]]));
+	try {
+		for (const key of keys) delete process.env[key];
+		for (const [key, value] of Object.entries(values)) process.env[key] = value;
+		fn();
+	} finally {
+		for (const key of keys) {
+			const value = previous.get(key);
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
+	}
 }
 
 function expectForwardingHeadersStripped(rawRequest: string): void {
