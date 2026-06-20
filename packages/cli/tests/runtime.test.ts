@@ -564,7 +564,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("enables Hermes in hosted-runtime manifests when the UI bridge token is present", async () => {
+	it("adds Hermes to legacy hosted-runtime manifests when the UI bridge token is present", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -589,7 +589,6 @@ describe("runtime manifest datasource", () => {
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
 						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
-						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
 					},
 				},
 				secretValues: {},
@@ -609,6 +608,46 @@ describe("runtime manifest datasource", () => {
 			"--skip-browser",
 			"--non-interactive",
 		]);
+	});
+
+	it("keeps Hermes disabled when a hosted-runtime manifest explicitly disables it", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "hosted-ui-token-hermes-disabled.json");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env[UI_ACCESS_TOKEN_ENV] = "ui-token";
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_ui_token_explicit",
+					environmentId: "env_ui_token_explicit",
+					instanceId: "iid_ui_token_explicit",
+					generation: 1,
+					issuedAt: "2026-06-15T00:00:00Z",
+					system: { home },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
+						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+					},
+				},
+				secretValues: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		expect(loaded.manifest.runtimes.hermes.enabled).toBe(false);
+		expect(loaded.manifest.runtimes.hermes.install).toBeUndefined();
 	});
 
 	it("honors the auth env declared by the runtime source", async () => {

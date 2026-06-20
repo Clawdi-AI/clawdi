@@ -533,12 +533,14 @@ function hostedRuntimeEntries(
 ): HostedRuntimeManifest["runtimes"] {
 	const token = process.env[UI_ACCESS_TOKEN_ENV]?.trim();
 	if (!token) return runtimes;
+	const hermes = runtimes.hermes;
+	if (hermes?.enabled === false) return runtimes;
 	return {
 		...runtimes,
 		hermes: {
-			...runtimes.hermes,
+			...hermes,
 			enabled: true,
-			install: runtimes.hermes?.install ?? { source: "official" },
+			install: hermes?.install ?? { source: "official" },
 		},
 	};
 }
