@@ -41,7 +41,7 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
-import { UI_ACCESS_TOKEN_ENV } from "../src/runtime/ui-bridge";
+import { UI_ACCESS_TOKEN_ENV, UI_BRIDGE_LISTEN_HOST_ENV } from "../src/runtime/ui-bridge";
 import { jsonResponse, mockFetch } from "./commands/helpers";
 
 const ENV_KEYS = [
@@ -67,6 +67,7 @@ const ENV_KEYS = [
 	"CLAWDI_SUPERVISORCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
 	UI_ACCESS_TOKEN_ENV,
+	UI_BRIDGE_LISTEN_HOST_ENV,
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -239,7 +240,7 @@ describe("runtime paths", () => {
 });
 
 describe("runtime run config", () => {
-	it("starts Hermes dashboard on loopback port 18793 by default", () => {
+	it("starts Hermes dashboard on its default loopback port", () => {
 		const config = buildRuntimeRunConfig({
 			runtime: "hermes",
 			enabled: true,
@@ -251,14 +252,7 @@ describe("runtime run config", () => {
 			workspaceRoot: "/home/clawdi/clawdi",
 		});
 
-		expect(config.defaultArgs).toEqual([
-			"dashboard",
-			"--host",
-			"127.0.0.1",
-			"--port",
-			"18793",
-			"--no-open",
-		]);
+		expect(config.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
 	});
 });
 
@@ -3165,6 +3159,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env[UI_ACCESS_TOKEN_ENV] = "ui-secret";
+		process.env[UI_BRIDGE_LISTEN_HOST_ENV] = "10.42.0.20";
 
 		const convergence = convergeRuntimeManifest(
 			{
@@ -3193,6 +3188,7 @@ exit 64
 		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
 		expect(supervisorConfig).toContain("[program:clawdi-ui-bridge]");
 		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime ui-bridge");
+		expect(supervisorConfig).toContain('CLAWDI_UI_BRIDGE_LISTEN_HOST="10.42.0.20"');
 		expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
 		expect(supervisorConfig).not.toContain("ui-secret");
 	});

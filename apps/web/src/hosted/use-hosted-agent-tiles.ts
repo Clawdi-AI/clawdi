@@ -116,7 +116,7 @@ function isKnownRuntime(s: string): s is Runtime {
 
 /**
  * One deployment fans out to one tile per running runtime. OpenClaw
- * (:18789) and Hermes (:18793) are completely separate dashboard
+ * (:18789) and Hermes (:9119) are completely separate dashboard
  * surfaces in clawdi.ai — different web servers, capability sets,
  * management URLs — so the unified grid renders them as distinct
  * agents.

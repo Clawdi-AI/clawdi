@@ -3,9 +3,53 @@ import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
 import {
 	DEFAULT_UI_BRIDGE_TARGETS,
+	defaultRuntimeUiBridgeTargets,
+	KUBERNETES_POD_IP_ENV,
 	startRuntimeUiBridge,
 	UI_ACCESS_COOKIE,
+	UI_BRIDGE_LISTEN_HOST_ENV,
 } from "../src/runtime/ui-bridge";
+
+describe("runtime UI bridge defaults", () => {
+	it("uses the official runtime UI ports by default", () => {
+		withBridgeListenEnv({}, () => {
+			expect(defaultRuntimeUiBridgeTargets()).toEqual([
+				{
+					name: "openclaw",
+					listenHost: "0.0.0.0",
+					listenPort: 18789,
+					targetHost: "127.0.0.1",
+					targetPort: 18789,
+				},
+				{
+					name: "hermes",
+					listenHost: "0.0.0.0",
+					listenPort: 9119,
+					targetHost: "127.0.0.1",
+					targetPort: 9119,
+				},
+			]);
+		});
+	});
+
+	it("honors the explicit bridge listen host", () => {
+		withBridgeListenEnv({ [UI_BRIDGE_LISTEN_HOST_ENV]: "10.42.0.20" }, () => {
+			expect(defaultRuntimeUiBridgeTargets().map((target) => target.listenHost)).toEqual([
+				"10.42.0.20",
+				"10.42.0.20",
+			]);
+		});
+	});
+
+	it("falls back to the Kubernetes Pod IP for the bridge listen host", () => {
+		withBridgeListenEnv({ [KUBERNETES_POD_IP_ENV]: "10.42.0.21" }, () => {
+			expect(defaultRuntimeUiBridgeTargets().map((target) => target.listenHost)).toEqual([
+				"10.42.0.21",
+				"10.42.0.21",
+			]);
+		});
+	});
+});
 
 describe("runtime UI bridge", () => {
 	it("authenticates with query token, sets a cookie, and proxies cookie-authorized HTTP", async () => {
@@ -444,9 +488,9 @@ describe("runtime UI bridge", () => {
 				port: bridgePort,
 				path: "/api/ws?token=hermes-session&channel=chat-1",
 				cookie: `${UI_ACCESS_COOKIE}=hermes-bridge-token`,
-				host: "agent-18793.phala-prod2.clawdi.ai",
-				origin: "https://agent-18793.phala-prod2.clawdi.ai",
-				referer: "https://agent-18793.phala-prod2.clawdi.ai/chat",
+				host: "agent-9119.phala-prod2.clawdi.ai",
+				origin: "https://agent-9119.phala-prod2.clawdi.ai",
+				referer: "https://agent-9119.phala-prod2.clawdi.ai/chat",
 				headers: forwardingHeaderLines(),
 			});
 
@@ -457,7 +501,7 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain(`Referer: http://127.0.0.1:${upstreamPort}/chat`);
 			expect(upstreamRequest).toContain("X-App-Header: keep-me");
 			expectForwardingHeadersStripped(upstreamRequest);
-			expect(upstreamRequest).not.toContain("agent-18793.phala-prod2.clawdi.ai");
+			expect(upstreamRequest).not.toContain("agent-9119.phala-prod2.clawdi.ai");
 			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
 		} finally {
 			await bridge.close();
@@ -537,6 +581,25 @@ function forwardingHeaderLines(): string[] {
 		'CF-Visitor: {"scheme":"https"}',
 		"CF-Worker: worker-name",
 	];
+}
+
+function withBridgeListenEnv(values: Record<string, string>, fn: () => void): void {
+	const keys = [UI_BRIDGE_LISTEN_HOST_ENV, KUBERNETES_POD_IP_ENV];
+	const previous = new Map(keys.map((key) => [key, process.env[key]]));
+	try {
+		for (const key of keys) delete process.env[key];
+		for (const [key, value] of Object.entries(values)) process.env[key] = value;
+		fn();
+	} finally {
+		for (const key of keys) {
+			const value = previous.get(key);
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
+	}
 }
 
 function expectForwardingHeadersStripped(rawRequest: string): void {
