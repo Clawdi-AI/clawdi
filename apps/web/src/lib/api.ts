@@ -3,19 +3,40 @@
 import { extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
+import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
+// `ApiError` and the cloud-api error-toast helper live in `api-errors` (a
+// dependency-free module so they're unit-testable); re-export so the many
+// existing `@/lib/api` import sites keep working.
+export { ApiError, toastApiError } from "@/lib/api-errors";
+
 const API_URL = env.NEXT_PUBLIC_API_URL;
 
-export class ApiError extends Error {
-	constructor(
-		public status: number,
-		public detail: string,
-	) {
-		super(`API ${status}: ${detail}`);
-		this.name = "ApiError";
-	}
+/**
+ * Client-side request ceiling. A hung backend or a black-holed connection must
+ * not leave a surface spinning forever — abort after this and surface a
+ * recoverable `ApiNetworkError("timeout")` instead. Matches the hosted billing
+ * client's 20s bound.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * `fetch` wrapper that bounds every request with a timeout and maps transport
+ * failures to a normalizable `ApiNetworkError`. A caller-supplied abort (none
+ * today, but openapi-fetch may attach one) is preserved and re-thrown as-is so
+ * an intentional cancel isn't mislabeled as a network failure.
+ */
+function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
+	const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+	const caller = init?.signal ?? request.signal;
+	const signal = caller ? AbortSignal.any([caller, timeout]) : timeout;
+	return fetch(request, { ...init, signal }).catch((cause: unknown) => {
+		if (timeout.aborted) throw new ApiNetworkError("timeout", { cause });
+		if (caller?.aborted) throw cause;
+		throw new ApiNetworkError("offline", { cause });
+	});
 }
 
 /**
@@ -28,7 +49,7 @@ export class ApiError extends Error {
 export function useApi() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const client = createClient<paths>({ baseUrl: API_URL });
+		const client = createClient<paths>({ baseUrl: API_URL, fetch: fetchWithTimeout });
 		client.use({
 			async onRequest({ request }) {
 				const token = await getToken();
