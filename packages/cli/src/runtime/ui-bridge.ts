@@ -5,7 +5,6 @@ export const UI_ACCESS_TOKEN_ENV = "UI_ACCESS_TOKEN";
 export const UI_ACCESS_COOKIE = "clawdi_ui";
 export const UI_FRAME_ANCESTORS_ENV = "CLAWDI_UI_FRAME_ANCESTORS";
 export const UI_BRIDGE_LISTEN_HOST_ENV = "CLAWDI_UI_BRIDGE_LISTEN_HOST";
-export const KUBERNETES_POD_IP_ENV = "POD_IP";
 export const DEFAULT_UI_FRAME_ANCESTORS = "'self' https://*.clawdi.ai";
 
 export interface RuntimeUiBridgeTarget {
@@ -125,10 +124,7 @@ export async function startRuntimeUiBridge(
 }
 
 export function defaultRuntimeUiBridgeTargets(): RuntimeUiBridgeTarget[] {
-	const listenHost =
-		process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() ||
-		process.env[KUBERNETES_POD_IP_ENV]?.trim() ||
-		"0.0.0.0";
+	const listenHost = process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() || "0.0.0.0";
 	return DEFAULT_UI_BRIDGE_TARGETS.map((target) => ({ ...target, listenHost }));
 }
 
