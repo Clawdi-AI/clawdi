@@ -1,0 +1,184 @@
+/**
+ * Error handling for the hosted billing API.
+ *
+ * The deploy/cloud-api backend raises FastAPI `HTTPException`s whose body is
+ * `{ "detail": "<message-or-code>" }`. This module captures the status + the
+ * parsed detail, and normalizes the user-facing copy for hosted billing cases:
+ * most importantly the managed-AI balance-exhausted 403, which
+ * must read as "insufficient balance / top up", never a raw gateway error
+ * from the upstream provider.
+ */
+
+import { toast } from "sonner";
+
+export class BillingApiError extends Error {
+	constructor(
+		public status: number,
+		/** Parsed `detail` string (or the raw status text). */
+		public detail: string,
+	) {
+		super(`Billing API ${status}: ${detail}`);
+		this.name = "BillingApiError";
+	}
+
+	static async fromResponse(response: Response): Promise<BillingApiError> {
+		let detail = response.statusText;
+		try {
+			const body = (await response.json()) as { detail?: unknown };
+			if (typeof body?.detail === "string") {
+				detail = body.detail;
+			} else if (body?.detail != null) {
+				detail = JSON.stringify(body.detail);
+			}
+		} catch {
+			// Non-JSON body (proxy/gateway error page) — keep statusText.
+		}
+		return new BillingApiError(response.status, detail);
+	}
+}
+
+/**
+ * Transport-level failure (the request never produced an HTTP response):
+ * the network is down, DNS failed, the API host is unreachable, or our
+ * client-side timeout aborted the request. Distinct from `BillingApiError`
+ * (which always carries a real status) so the UI can show a "check your
+ * connection / try again" recovery path instead of a raw status message.
+ */
+export class BillingNetworkError extends Error {
+	constructor(
+		public readonly kind: "timeout" | "offline",
+		options?: { cause?: unknown },
+	) {
+		super(kind === "timeout" ? "Billing API request timed out" : "Billing API request failed");
+		this.name = "BillingNetworkError";
+		if (options?.cause !== undefined) this.cause = options.cause;
+	}
+}
+
+/** Auth expired / invalid token mid-session (401). Needs re-auth, not a retry. */
+export function isAuthError(error: unknown): boolean {
+	return error instanceof BillingApiError && error.status === 401;
+}
+
+/** Authenticated but not permitted (403) — distinct from a 401 re-auth case. */
+export function isForbiddenError(error: unknown): boolean {
+	return error instanceof BillingApiError && error.status === 403;
+}
+
+/** Backend fault (5xx) or rate-limit (429) — transient; safe to retry. */
+export function isServerError(error: unknown): boolean {
+	return error instanceof BillingApiError && (error.status >= 500 || error.status === 429);
+}
+
+/** True when the request never reached the server (offline / DNS / timeout). */
+export function isNetworkError(error: unknown): boolean {
+	return error instanceof BillingNetworkError;
+}
+
+/**
+ * Whether an automatic retry could plausibly succeed. Network blips, timeouts,
+ * 5xx, and 429 are transient; 4xx (auth, validation, not-found, conflict) are
+ * deterministic and must surface immediately instead of retrying three times.
+ */
+export function isRetryableError(error: unknown): boolean {
+	return isNetworkError(error) || isServerError(error);
+}
+
+/**
+ * Shared TanStack Query `retry` predicate for the billing surfaces. Retries
+ * transient failures up to twice; lets deterministic 4xx (the legacy-wallet
+ * 403, validation errors, auth) fall through on the first attempt so their
+ * tailored UI shows without a multi-second spinner.
+ */
+export function billingQueryRetry(failureCount: number, error: unknown): boolean {
+	return failureCount < 2 && isRetryableError(error);
+}
+
+/**
+ * Redemption Turnstile gates. The backend only enforces Turnstile after
+ * repeated invalid redeem attempts;
+ * a fresh, valid code redeems without a token. These detect the risk-triggered
+ * 403s so the redeem card can surface a Turnstile challenge on demand.
+ */
+export function isTurnstileRequiredError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 403 &&
+		error.detail === "turnstile_required"
+	);
+}
+
+export function isInvalidTurnstileTokenError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 403 &&
+		error.detail === "invalid_turnstile_token"
+	);
+}
+
+/** True when the user/account cannot use the wallet (legacy / not enrolled). */
+export function isWalletNotEnabledError(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status === 403 &&
+		/wallet billing is not enabled/i.test(error.detail)
+	);
+}
+
+const INSUFFICIENT_BALANCE_PATTERNS = [
+	/insufficient[_\s-]?balance/i,
+	/insufficient funds/i,
+	/balance.*(too low|exhausted|depleted)/i,
+];
+
+/**
+ * Detect the managed-AI balance-exhausted condition. The gateway emits a 403
+ * `INSUFFICIENT_BALANCE`; cloud-api may also surface it as a detail string.
+ * Used to swap in the normalized "top up / enable auto-reload" UX.
+ */
+export function isInsufficientBalanceError(error: unknown): boolean {
+	if (!(error instanceof BillingApiError)) return false;
+	if (error.status !== 403 && error.status !== 402) return false;
+	return INSUFFICIENT_BALANCE_PATTERNS.some((re) => re.test(error.detail));
+}
+
+/**
+ * Turn an API error into a single user-facing sentence. Hides backend
+ * internals; normalizes balance exhaustion to the product narrative.
+ */
+export function normalizeBillingError(error: unknown): string {
+	if (isInsufficientBalanceError(error)) {
+		return "Your AI Credits balance is too low. Top up or enable auto-reload to keep using managed AI — your agent keeps running.";
+	}
+	if (isWalletNotEnabledError(error)) {
+		return "Wallet billing isn't enabled for this account yet.";
+	}
+	if (error instanceof BillingNetworkError) {
+		return error.kind === "timeout"
+			? "This is taking longer than usual. Check your connection and try again."
+			: "We couldn't reach the billing service. Check your connection and try again.";
+	}
+	if (isAuthError(error)) {
+		return "Your session has expired. Please sign in again to continue.";
+	}
+	if (isServerError(error)) {
+		return "The billing service is having trouble right now. Please try again in a moment.";
+	}
+	if (error instanceof BillingApiError) {
+		// Snake_case error codes → readable text; pass through real sentences.
+		if (/^[a-z0-9_]+$/.test(error.detail)) {
+			return error.detail.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+		}
+		return error.detail;
+	}
+	if (error instanceof Error) return error.message;
+	return "Something went wrong. Please try again.";
+}
+
+/**
+ * Mutation `onError` handler for billing-client hooks: toast `title` with the
+ * normalized, product-narrative billing copy as the description.
+ */
+export function toastBillingError(title: string) {
+	return (error: unknown) => toast.error(title, { description: normalizeBillingError(error) });
+}
