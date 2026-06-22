@@ -5,13 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useHostedV2Access } from "@/lib/hosted-v2-access";
 import { cn } from "@/lib/utils";
 
 /**
  * Routed settings chrome — a left sub-nav plus a content column, replacing
  * the old settings modal. General/Profile/API Keys ship in every build;
- * AI Providers and Billing are hosted-only surfaces gated by `IS_HOSTED`
- * (OSS builds never render those nav items or routes).
+ * AI Providers are hosted-only via `IS_HOSTED`. Billing is stricter: it is
+ * also hidden until the hosted backend says this user can use v2.
  *
  * The shell owns no horizontal content padding: each panel (and the nested
  * billing pages) carries its own `px-4 lg:px-6`, so a hosted billing page
@@ -43,7 +44,8 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 
 export function SettingsShell({ children }: { children: ReactNode }) {
 	const pathname = usePathname();
-	const items = SETTINGS_NAV.filter((item) => IS_HOSTED || !item.hosted);
+	const hostedV2 = useHostedV2Access();
+	const items = SETTINGS_NAV.filter((item) => !item.hosted || (IS_HOSTED && hostedV2.canUseV2));
 
 	return (
 		<div className="flex flex-col gap-3 md:flex-row md:gap-2 lg:gap-6">
