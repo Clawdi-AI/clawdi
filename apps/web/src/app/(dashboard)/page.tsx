@@ -21,6 +21,7 @@ import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
+import { useV2Access } from "@/lib/v2-access";
 
 const RECENT_SESSIONS_LIMIT = 15;
 
@@ -44,8 +45,7 @@ function countProjectTypes(
 // the flag is false (OSS), the conditional collapses, the
 // `dynamic(…)` calls are unreachable, the bundler eliminates the
 // `import()` sites, and the entire `@/hosted/hosted-agents-section`
-// chunk — along with its `clawdi-api.ts` and `use-hosted-agent-tiles`
-// dependencies — never ships in the OSS bundle.
+// chunk never ships in the OSS bundle.
 //
 // Two exports from the same module: `HostedAgentsSection` for the
 // left-column agent panel, and `HostedSecondaryCTA` for the
@@ -69,6 +69,7 @@ const HostedSecondaryCTA = IS_HOSTED
 
 export default function DashboardPage() {
 	const api = useApi();
+	const v2Access = useV2Access();
 
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -139,6 +140,7 @@ export default function DashboardPage() {
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
 	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
+	const hostedAgentsEnabled = Boolean(HostedAgentsSection && v2Access.canUseV2);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -161,7 +163,7 @@ export default function DashboardPage() {
 				    `lg` breakpoint that means single-column overflow → cards
 				    spill past the viewport. */}
 				<div className="min-w-0 space-y-4 lg:col-span-2">
-					{HostedAgentsSection ? (
+					{hostedAgentsEnabled && HostedAgentsSection ? (
 						<HostedAgentsSection
 							selfManagedTiles={selfManagedTiles}
 							envsLoading={envsLoading}
@@ -224,7 +226,7 @@ export default function DashboardPage() {
 				    to a sibling component so it can include hosted tiles in
 				    the count. */}
 				<div className="min-w-0 space-y-4">
-					{HostedSecondaryCTA ? (
+					{hostedAgentsEnabled && HostedSecondaryCTA ? (
 						<HostedSecondaryCTA
 							selfManagedCount={selfManagedCount}
 							envsLoading={envsLoading}
@@ -238,7 +240,7 @@ export default function DashboardPage() {
 						projectCount={projects?.length}
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
-						hasConnectedAgent={HostedAgentsSection || envsLoading ? undefined : hasAgents}
+						hasConnectedAgent={hostedAgentsEnabled || envsLoading ? undefined : hasAgents}
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>

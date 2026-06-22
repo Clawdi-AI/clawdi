@@ -4,36 +4,36 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthToken } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { DEPLOY_API_URL, hostedApiBaseUrl, isDeployApiConfigured } from "@/lib/hosted-api";
-import { type HostedAccessProfile, hostedV2AccessFromProfile } from "@/lib/hosted-v2-access-model";
+import { type V2AccessProfile, v2AccessFromProfile } from "@/lib/v2-access-model";
 
-export const hostedV2AccessKeys = {
-	me: ["hosted", "v2-access", "me"] as const,
+export const v2AccessKeys = {
+	me: ["v2-access", "me"] as const,
 };
 
-async function fetchHostedAccessProfile(
+async function fetchV2AccessProfile(
 	getToken: () => Promise<string | null>,
-): Promise<HostedAccessProfile> {
+): Promise<V2AccessProfile> {
 	const token = await getToken();
 	const headers = new Headers();
 	if (token) headers.set("Authorization", `Bearer ${token}`);
 	const response = await fetch(`${hostedApiBaseUrl(DEPLOY_API_URL)}/me`, { headers });
 	if (!response.ok) {
-		throw new Error(`Hosted access check failed with ${response.status}`);
+		throw new Error(`V2 access check failed with ${response.status}`);
 	}
-	return (await response.json()) as HostedAccessProfile;
+	return (await response.json()) as V2AccessProfile;
 }
 
-export function useHostedV2Access() {
+export function useV2Access() {
 	const { getToken } = useAuthToken();
 	const enabled = IS_HOSTED && isDeployApiConfigured();
 	const query = useQuery({
-		queryKey: hostedV2AccessKeys.me,
-		queryFn: () => fetchHostedAccessProfile(getToken),
+		queryKey: v2AccessKeys.me,
+		queryFn: () => fetchV2AccessProfile(getToken),
 		enabled,
 		retry: false,
 		staleTime: 60_000,
 	});
-	const access = hostedV2AccessFromProfile(query.data);
+	const access = v2AccessFromProfile(query.data);
 	return {
 		...access,
 		isLoading: enabled && query.isLoading,

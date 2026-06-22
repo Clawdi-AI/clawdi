@@ -105,9 +105,8 @@ export function HostedSecondaryCTA({
 	envsLoading: boolean;
 	cloudEnvs: Env[];
 }) {
-	// Reuses the same TanStack Query cache (`["hosted-deployments"]`)
-	// as `HostedAgentsSection` so passing cloudEnvs here is just
-	// re-running the join, not re-fetching.
+	// Reuses the same TanStack Query cache as `HostedAgentsSection`, so passing
+	// cloudEnvs here is just re-running the join, not re-fetching.
 	const hosted = useHostedAgentTiles({ cloudEnvs });
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.

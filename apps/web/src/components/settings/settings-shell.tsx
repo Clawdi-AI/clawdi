@@ -5,14 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useHostedV2Access } from "@/lib/hosted-v2-access";
 import { cn } from "@/lib/utils";
+import { useV2Access } from "@/lib/v2-access";
 
 /**
  * Routed settings chrome — a left sub-nav plus a content column, replacing
- * the old settings modal. General/Profile/API Keys ship in every build;
- * AI Providers are hosted-only via `IS_HOSTED`. Billing is stricter: it is
- * also hidden until the hosted backend says this user can use v2.
+ * the old settings modal. General/Profile/API Keys ship in every build.
+ * Billing is a v2-only surface and stays hidden until the backend says this
+ * user can use v2.
  *
  * The shell owns no horizontal content padding: each panel (and the nested
  * billing pages) carries its own `px-4 lg:px-6`, so a hosted billing page
@@ -26,7 +26,7 @@ interface SettingsNavItem {
 	/** Active when the pathname starts with this prefix (sections with
 	 *  sub-routes, e.g. Billing). Defaults to an exact href match. */
 	prefix?: string;
-	hosted?: boolean;
+	v2Only?: boolean;
 }
 
 const SETTINGS_NAV: SettingsNavItem[] = [
@@ -38,14 +38,14 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 		label: "Billing",
 		icon: CreditCard,
 		prefix: "/settings/billing",
-		hosted: true,
+		v2Only: true,
 	},
 ];
 
 export function SettingsShell({ children }: { children: ReactNode }) {
 	const pathname = usePathname();
-	const hostedV2 = useHostedV2Access();
-	const items = SETTINGS_NAV.filter((item) => !item.hosted || (IS_HOSTED && hostedV2.canUseV2));
+	const v2Access = useV2Access();
+	const items = SETTINGS_NAV.filter((item) => !item.v2Only || (IS_HOSTED && v2Access.canUseV2));
 
 	return (
 		<div className="flex flex-col gap-3 md:flex-row md:gap-2 lg:gap-6">
@@ -82,7 +82,7 @@ export function SettingsShell({ children }: { children: ReactNode }) {
 /**
  * Per-panel header (title + optional description and action slot), sized
  * for a routed settings page. Shared by every settings panel — including
- * the hosted AI Providers surface — so headings stay consistent.
+ * v2-only settings surfaces — so headings stay consistent.
  */
 export function SettingsPanelHeader({
 	title,

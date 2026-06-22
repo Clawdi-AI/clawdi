@@ -51,7 +51,6 @@ import {
 import { UserMenuItems } from "@/components/user-menu";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useHostedV2Access } from "@/lib/hosted-v2-access";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	type ProjectResourceId,
@@ -60,6 +59,7 @@ import {
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { cn } from "@/lib/utils";
+import { useV2Access } from "@/lib/v2-access";
 
 // Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
 // builds collapse the conditional, the bundler eliminates the
@@ -117,7 +117,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [addAgentOpen, setAddAgentOpen] = useState(false);
-	const hostedV2 = useHostedV2Access();
+	const v2Access = useV2Access();
 
 	return (
 		<>
@@ -223,7 +223,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 								</SidebarMenuItem>
 								{/* `DeployTrigger` is `null` in OSS builds and additionally hidden
 								    until the hosted backend allows this user to use v2. */}
-								{DeployTrigger && hostedV2.canUseV2 ? <DeployTrigger /> : null}
+								{DeployTrigger && v2Access.canUseV2 ? <DeployTrigger /> : null}
 								<SidebarMenuItem>
 									<SidebarMenuButton asChild tooltip="Docs">
 										<a

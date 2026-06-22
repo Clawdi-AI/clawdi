@@ -37,6 +37,7 @@ import type {
 	Plan,
 	Subscription,
 } from "@/hosted/billing/contracts";
+import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
@@ -389,11 +390,7 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
-			// Land on the new agent's detail (shows provisioning status). Use the
-			// deployment id — the cloud-api env ids aren't minted until
-			// provisioning finishes, and `useAgentDeployment` resolves the detail
-			// route by deployment id too.
-			router.push(`/agents/${encodeURIComponent(deployment.id)}`);
+			router.push(hostedEnvironmentHref(deployment) ?? "/settings/billing/plan");
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {

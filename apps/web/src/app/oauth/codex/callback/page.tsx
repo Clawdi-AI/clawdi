@@ -2,10 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { V2Gate } from "@/components/v2-gate";
 import { IS_HOSTED } from "@/lib/hosted";
 
-// Codex "Sign in with ChatGPT" OAuth callback. Hosted-only; the OSS bundle
-// tree-shakes it via the IS_HOSTED-gated dynamic import.
+// Codex "Sign in with ChatGPT" OAuth callback for the v2 AI Providers surface.
+// OSS builds tree-shake it via the IS_HOSTED-gated dynamic import.
 const CodexOAuthCallback = IS_HOSTED
 	? dynamic(
 			() => import("@/hosted/ai-providers/codex-oauth-callback").then((m) => m.CodexOAuthCallback),
@@ -15,5 +16,9 @@ const CodexOAuthCallback = IS_HOSTED
 
 export default function CodexOAuthCallbackPage() {
 	if (!CodexOAuthCallback) return null;
-	return <CodexOAuthCallback />;
+	return (
+		<V2Gate fallbackHref="/">
+			<CodexOAuthCallback />
+		</V2Gate>
+	);
 }

@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { StatusBadge } from "@/components/ui/status-badge";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
+import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
 import { env } from "@/lib/env";
 
@@ -33,12 +34,6 @@ function manageUrl(deployment: HostedDeployment): string {
 	const url = new URL(env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL);
 	url.searchParams.set("deployment", deployment.id);
 	return url.toString();
-}
-
-/** In-app manifest editor href when the deployment has a joined cloud env. */
-function inAppManageHref(d: HostedDeployment): string | null {
-	const envId = Object.values(d.config_info?.clawdi_cloud_environments ?? {}).find(Boolean);
-	return envId ? `/agents/${envId}?source=on-clawdi` : null;
 }
 
 function deploymentLabel(d: HostedDeployment): string {
@@ -104,6 +99,7 @@ export function HostedAgentControls() {
 					const openclaw = d.openclaw_ui_url;
 					const hermes = d.hermes_ui_url;
 					const meta = metaLine(d);
+					const inAppHref = hostedEnvironmentHref(d);
 					const provisioning = !openclaw && !hermes;
 					return (
 						<div key={d.id} className="flex flex-col gap-2.5 rounded-lg border p-3">
@@ -151,9 +147,9 @@ export function HostedAgentControls() {
 										<Sparkles /> Hermes
 									</Button>
 								)}
-								{inAppManageHref(d) ? (
+								{inAppHref ? (
 									<Button asChild size="sm" variant="ghost">
-										<Link href={inAppManageHref(d) as string}>
+										<Link href={inAppHref}>
 											<Settings2 /> Manage
 										</Link>
 									</Button>

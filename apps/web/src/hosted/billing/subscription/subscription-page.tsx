@@ -10,6 +10,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { HostedAgentControls } from "@/hosted/billing/agents/hosted-agent-controls";
 import {
 	BillingEmpty,
 	BillingError,
@@ -182,6 +183,8 @@ export function SubscriptionPage() {
 			<ActivationCard />
 
 			<ActivationRequirementCard />
+
+			<HostedAgentControls />
 
 			{/* Dunning — payment failed; in a grace period. */}
 			{sub && isInDunning(sub) ? (

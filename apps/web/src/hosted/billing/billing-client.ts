@@ -21,9 +21,9 @@ import type {
 	WalletTopupResult,
 } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
-import { isDeployApiConfigured } from "@/hosted/clawdi-api";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
+import { isDeployApiConfigured } from "@/lib/hosted-api";
 
 const BASE_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
@@ -58,11 +58,9 @@ function buildUrl(baseUrl: string, path: string, query?: CallOptions["query"]): 
 /**
  * Cross-origin, Clerk-authenticated client for the hosted billing surfaces.
  *
- * Mirrors `useClawdiApi` (same backend, same JWT pattern) but with
- * hand-typed methods because the wallet/subscription paths aren't in the
- * generated `DeployPaths` allowlist. Every method throws `BillingApiError`
- * on a non-2xx so TanStack Query routes failures through its error path and
- * the surfaces can normalize the copy.
+ * Hand-typed methods for the v2 hosted runtime and billing API. Every method
+ * throws `BillingApiError` on a non-2xx so TanStack Query routes failures
+ * through its error path and the surfaces can normalize the copy.
  */
 export function useBillingClient() {
 	const { getToken } = useAuthToken();

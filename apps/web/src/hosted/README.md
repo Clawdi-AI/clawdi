@@ -1,7 +1,11 @@
 # `apps/web/src/hosted/`
 
-Components and helpers that render only on the hosted instance
+Components and helpers that render only in the Clawdi-hosted build
 (`cloud.clawdi.ai`, where `NEXT_PUBLIC_CLAWDI_HOSTED=true`).
+
+This directory is a build/bundle quarantine, not a product taxonomy. Some
+surfaces here are v2-gated OSS product features that we do not show in OSS
+builds yet; others are hosted runtime/billing surfaces.
 
 OSS users running their own Clawdi instance see none of this UI.
 
@@ -48,10 +52,11 @@ OSS users running their own Clawdi instance see none of this UI.
 
 ## What lives here today
 
-- `clawdi-api.ts` — Typed cross-origin client for clawdi.ai's deploy
-  API (port 50021), keyed off the user's Clerk JWT.
 - `use-hosted-agent-tiles.ts` — Lists the user's deployed agents on
-  clawdi.ai, polled while any tile is in a transient state.
+  the v2 hosted runtime API, polled while any tile is in a transient
+  state.
+- `channels/` and `ai-providers/` — V2-gated product surfaces, hidden
+  from OSS builds until they are ready to expose there.
 - `deploy-trigger.tsx` — Sidebar entry that opens the Deploy flow.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted

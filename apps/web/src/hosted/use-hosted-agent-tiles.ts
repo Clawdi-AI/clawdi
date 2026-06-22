@@ -1,16 +1,17 @@
 "use client";
 
-import type { components, Deployment } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import type { components } from "@clawdi/shared/api";
 import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import { isDeployApiConfigured, unwrapClawdi, useClawdiApi } from "@/hosted/clawdi-api";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
+import { isNetworkError } from "@/hosted/billing/errors";
+import { useHostedDeployments } from "@/hosted/billing/hooks";
 import { env } from "@/lib/env";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
- * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
+ * Bridges a v2 hosted deployment to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
  *
@@ -25,24 +26,7 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * + external management URL distinguish hosted in the UI.
  */
 export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
-	const api = useClawdiApi();
-	// Not configured (preview/self-hosted mirror pointing at the default
-	// localhost deploy API) → don't fetch, don't error-banner. See
-	// isDeployApiConfigured.
-	const configured = isDeployApiConfigured();
-	const query = useQuery({
-		queryKey: ["hosted-deployments"],
-		enabled: configured,
-		queryFn: async () => unwrapClawdi(await api.GET("/deployments")),
-		// Status changes (Provisioning → Ready) — refetch periodically
-		// while a deployment is still spinning up. 10s is the balance
-		// between snappy feedback and not hammering clawdi.ai.
-		refetchInterval: (q) => {
-			const items = q.state.data ?? [];
-			const transient = items.some((d) => isTransientStatus(d.status));
-			return transient ? 10_000 : false;
-		},
-	});
+	const query = useHostedDeployments();
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead
 	// of O(N×M) on every render of the hosted-agent grid.
@@ -88,22 +72,13 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 		return s;
 	}, [query.data]);
 
-	// CORS/network-level failures (fetch throws TypeError before any HTTP
-	// response is readable) mean this ORIGIN can't talk to the deploy API
-	// at all — api.clawdi.ai's CORS allowlist covers cloud.clawdi.ai, not
-	// preview/self-hosted mirrors. That's "hosted isn't available here",
-	// not an outage: stay silent. Readable HTTP errors (5xx/4xx from an
-	// allowed origin) keep the banner — those are real failures on hosts
-	// where the integration genuinely works.
-	const unreachableFromOrigin = query.error instanceof TypeError;
+	const unreachableFromOrigin = isNetworkError(query.error);
 
 	return {
 		tiles,
 		claimedEnvIds,
-		// Disabled queries report isLoading=true forever in v5 (status
-		// stays 'pending'); mask both flags when we never fetch.
-		isLoading: configured ? query.isLoading : false,
-		error: configured && !unreachableFromOrigin ? query.error : null,
+		isLoading: query.isLoading,
+		error: !unreachableFromOrigin ? query.error : null,
 	};
 }
 
@@ -136,7 +111,7 @@ function isKnownRuntime(s: string): s is Runtime {
  * We never synthesize a runtime that isn't surfaced by one of these
  * sources (the pod doesn't have that process running).
  */
-function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[] {
+function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);
 	const slug = deploymentSlug(d);
 	const statusLabel = displayStatus(d.status);
@@ -199,7 +174,7 @@ function deploymentToTiles(d: Deployment, envById: Map<string, Env>): AgentTile[
 	});
 }
 
-function resolveRuntimes(d: Deployment): Runtime[] {
+function resolveRuntimes(d: HostedDeployment): Runtime[] {
 	// `clawdi_cloud_environments` is the most authoritative source
 	// post-Phase-4a: every agent that has a live-sync env on cloud-api
 	// is by definition a daemon running in the pod. If it's there, it's
@@ -248,7 +223,7 @@ function runtimeDisplayName(runtime: Runtime): string {
  * If the user gave their deployment a real name, no prefix matches
  * and we keep it intact.
  */
-function deploymentSlug(d: Deployment): string {
+function deploymentSlug(d: HostedDeployment): string {
 	const stripped = d.name.replace(/^(openclaw|hermes)-/i, "");
 	return stripped || d.name;
 }
@@ -263,17 +238,13 @@ function displayStatus(status: string): string {
 	return status;
 }
 
-function isTransientStatus(status: string): boolean {
-	return status === "pending" || status === "provisioning" || status === "starting";
-}
-
 /**
  * Deep-link into clawdi.ai/dashboard for one (deployment, runtime).
  * Pairs with clawdi.ai's `useAgentTypeStore` which hydrates from
  * `?agent_type=` so the sidebar dropdown matches the tile clicked.
  * Override the base via `NEXT_PUBLIC_DEPLOY_DASHBOARD_URL`.
  */
-function deploymentManageUrl(deployment: Deployment, runtime?: string): string {
+function deploymentManageUrl(deployment: HostedDeployment, runtime?: string): string {
 	const url = new URL(env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL);
 	url.searchParams.set("deployment", deployment.id);
 	if (runtime === "openclaw" || runtime === "hermes") {

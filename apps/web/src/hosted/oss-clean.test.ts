@@ -278,6 +278,34 @@ describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
 	});
 });
 
+describe("v2 route exposure", () => {
+	test("v2-only routes are behind the per-user V2 gate, not only the build flag", () => {
+		const routeFiles = [
+			"app/(dashboard)/deploy/page.tsx",
+			"app/(dashboard)/settings/billing/layout.tsx",
+			"app/(dashboard)/channels/page.tsx",
+			"app/(dashboard)/channels/[id]/page.tsx",
+			"app/(dashboard)/ai-providers/page.tsx",
+			"app/oauth/codex/callback/page.tsx",
+		];
+
+		const offenders: string[] = [];
+		for (const routeFile of routeFiles) {
+			const full = join(SRC_DIR, routeFile);
+			const src = readFileSync(full, "utf8");
+			if (!src.includes('from "@/components/v2-gate"') || !/<V2Gate(?:\s|>)/.test(src)) {
+				offenders.push(routeFile);
+			}
+		}
+
+		if (offenders.length > 0) {
+			throw new Error(
+				`V2-only routes must render through <V2Gate>, not just IS_HOSTED:\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
 describe("posthog-js is hosted-only", () => {
 	test("non-hosted source files do not import posthog-js", () => {
 		const offenders: string[] = [];

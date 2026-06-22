@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
-import { HostedV2Gate } from "@/components/hosted-v2-gate";
+import { V2Gate } from "@/components/v2-gate";
 import { IS_HOSTED } from "@/lib/hosted";
 
 const DeployWizard = IS_HOSTED
@@ -15,8 +15,8 @@ const DeployWizard = IS_HOSTED
 
 export default function Page() {
 	return DeployWizard ? (
-		<HostedV2Gate fallbackHref="/">
+		<V2Gate fallbackHref="/">
 			<DeployWizard />
-		</HostedV2Gate>
+		</V2Gate>
 	) : null;
 }
