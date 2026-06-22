@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { hostedV2ApiBaseUrl } from "@/hosted/billing/billing-url";
+import { hostedApiBaseUrl, hostedV2ApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	ActivationFeeStatus,
 	CheckoutRequest,
@@ -9,16 +9,9 @@ import type {
 	DeployRequest,
 	HostedDeployment,
 	HostedUser,
-	MyReferralCode,
-	MyReferrals,
 	Plan,
 	PortalRequest,
 	PortalResult,
-	RedeemPreview,
-	RedeemPreviewRequest,
-	RedeemRequest,
-	RedeemResult,
-	ReferralRewardInfo,
 	Subscription,
 	UsageSummary,
 	WalletAutoReloadRequest,
@@ -33,6 +26,7 @@ import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
 const BASE_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
+const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
 const V2_BASE_URL = hostedV2ApiBaseUrl(BASE_URL);
 
 /**
@@ -51,8 +45,8 @@ interface CallOptions {
 	headers?: Record<string, string>;
 }
 
-function buildUrl(path: string, query?: CallOptions["query"]): string {
-	const url = new URL(`${V2_BASE_URL}${path}`);
+function buildUrl(baseUrl: string, path: string, query?: CallOptions["query"]): string {
+	const url = new URL(`${baseUrl}${path}`);
 	if (query) {
 		for (const [key, value] of Object.entries(query)) {
 			if (value !== undefined) url.searchParams.set(key, String(value));
@@ -73,7 +67,11 @@ function buildUrl(path: string, query?: CallOptions["query"]): string {
 export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		async function call<T>(path: string, opts: CallOptions = {}): Promise<T> {
+		async function call<T>(
+			path: string,
+			opts: CallOptions = {},
+			baseUrl = V2_BASE_URL,
+		): Promise<T> {
 			const token = await getToken();
 			const headers: Record<string, string> = { ...opts.headers };
 			if (token) headers.Authorization = `Bearer ${token}`;
@@ -84,7 +82,7 @@ export function useBillingClient() {
 			const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 			let response: Response;
 			try {
-				response = await fetch(buildUrl(path, opts.query), {
+				response = await fetch(buildUrl(baseUrl, path, opts.query), {
 					method: opts.method ?? "GET",
 					headers,
 					body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -114,8 +112,8 @@ export function useBillingClient() {
 				call<WalletTopupResult>("/wallet/topup", {
 					method: "POST",
 					body,
-					// Collapse a timeout-retry / double-tab into one charge (redeem does
-					// the same) — a real PaymentIntent must never be created twice.
+					// Collapse a timeout-retry / double-tab into one charge: a real
+					// PaymentIntent must never be created twice.
 					headers: { "Idempotency-Key": idempotencyKey },
 				}),
 			setAutoReload: (body: WalletAutoReloadRequest) =>
@@ -129,29 +127,11 @@ export function useBillingClient() {
 				call<CheckoutResult>("/subscription/checkout", { method: "POST", body }),
 			portal: (body: PortalRequest) =>
 				call<PortalResult>("/subscription/portal", { method: "POST", body }),
-			restoreSubscription: () =>
-				call<Subscription | null>("/subscription/restore", { method: "POST" }),
-
-			// Redemption
-			redeemPreview: (body: RedeemPreviewRequest) =>
-				call<RedeemPreview>("/subscription/redeem/preview", { method: "POST", body }),
-			redeem: (body: RedeemRequest, idempotencyKey: string) =>
-				call<RedeemResult>("/subscription/redeem", {
-					method: "POST",
-					body,
-					headers: { "Idempotency-Key": idempotencyKey },
-				}),
-
 			// Usage
 			getUsage: () => call<UsageSummary>("/usage"),
 
-			// Identity
-			getMe: () => call<HostedUser>("/me"),
-
-			// Referral
-			getReferralCode: () => call<MyReferralCode>("/me/referral-code"),
-			getReferralRewards: () => call<ReferralRewardInfo>("/referral-reward-info"),
-			getMyReferrals: () => call<MyReferrals>("/me/referrals"),
+			// Identity is a shared cloud-api route, not under /v2.
+			getMe: () => call<HostedUser>("/me", {}, ROOT_BASE_URL),
 
 			// Deployments (hosted, with UI-exposure fields)
 			listDeployments: () => call<HostedDeployment[]>("/deployments"),

@@ -23,7 +23,6 @@ import {
 	useCheckout,
 	usePlans,
 	usePortal,
-	useRestoreSubscription,
 	useSubscription,
 	useWallet,
 } from "@/hosted/billing/hooks";
@@ -47,7 +46,6 @@ export function SubscriptionPage() {
 	const wallet = useWallet();
 	const checkout = useCheckout();
 	const portal = usePortal();
-	const restore = useRestoreSubscription();
 	const runAction = useActionLock();
 	const [term, setTerm] = useState(1);
 
@@ -114,24 +112,6 @@ export function SubscriptionPage() {
 		}
 	}
 
-	async function keepPerformance() {
-		try {
-			// restore returns the live subscription on success, or null when the
-			// backend couldn't confirm the resume — don't fake a success toast.
-			const next = await restore.mutateAsync();
-			if (next) {
-				toast.success("Performance kept", { description: "Your plan will continue to renew." });
-			} else {
-				toast.message("Couldn’t confirm right away", {
-					description: "We’re still processing — refresh in a moment to check your plan.",
-				});
-				subscription.refetch();
-			}
-		} catch (e) {
-			toast.error("Couldn’t resume Performance", { description: normalizeBillingError(e) });
-		}
-	}
-
 	async function manageBilling() {
 		try {
 			const res = await portal.mutateAsync({});
@@ -192,7 +172,7 @@ export function SubscriptionPage() {
 	}
 
 	const ending = !!sub && (sub.cancel_at_period_end || !!sub.pending_downgrade_plan_slug);
-	const pending = portal.isPending || restore.isPending || checkout.isPending;
+	const pending = portal.isPending || checkout.isPending;
 	const showUsage = !!sub && sub.budget_credits_total > 0;
 
 	return (
@@ -303,9 +283,9 @@ export function SubscriptionPage() {
 					{/* Pending downgrade / cancel notice */}
 					{ending && sub ? (
 						<div className="rounded-md border border-warning/40 bg-warning-muted/40 p-3 text-sm">
-							Moving to Free on{" "}
-							{shortDate(sub.pending_downgrade_effective_at ?? sub.current_period_end)}. Resume
-							Performance to keep your current plan.
+							Performance is scheduled to end on{" "}
+							{shortDate(sub.pending_downgrade_effective_at ?? sub.current_period_end)}. Open
+							billing to manage renewal.
 						</div>
 					) : null}
 
@@ -315,8 +295,8 @@ export function SubscriptionPage() {
 					{isPerformance ? (
 						<div className="space-y-4">
 							{ending ? (
-								<Button onClick={() => runAction(keepPerformance)} disabled={pending}>
-									{pending ? <Spinner /> : null} Keep Performance
+								<Button onClick={() => runAction(manageBilling)} disabled={pending}>
+									{pending ? <Spinner /> : <CreditCard />} Open billing
 								</Button>
 							) : (
 								<div className="space-y-4">
@@ -337,13 +317,12 @@ export function SubscriptionPage() {
 										</div>
 									) : null}
 									<ConfirmAction
-										title="Switch to Free at the end of this period?"
+										title="Switch to Free now?"
 										description={
 											<>
-												You’ll keep Performance until {shortDate(sub?.current_period_end)}. After
-												that you’ll lose dual engines and higher burst, and the monthly AI Credits
-												grant stops — your agent keeps running on Free. You can resume Performance
-												any time before then.
+												This takes effect immediately. You’ll lose dual engines and higher burst,
+												and the monthly AI Credits grant stops — your agent keeps running on Free.
+												You can upgrade to Performance again later.
 											</>
 										}
 										confirmLabel="Switch to Free"

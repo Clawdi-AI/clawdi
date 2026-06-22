@@ -12,8 +12,6 @@ import type {
 	CheckoutRequest,
 	DeployRequest,
 	PortalRequest,
-	RedeemPreviewRequest,
-	RedeemRequest,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
@@ -26,9 +24,6 @@ export const billingKeys = {
 	subscription: ["billing", "subscription"] as const,
 	activationFee: ["billing", "activation-fee"] as const,
 	deployments: ["billing", "deployments"] as const,
-	referralCode: ["billing", "referral-code"] as const,
-	referralRewards: ["billing", "referral-rewards"] as const,
-	myReferrals: ["billing", "my-referrals"] as const,
 	me: ["billing", "me"] as const,
 	usage: ["billing", "usage"] as const,
 };
@@ -173,18 +168,6 @@ export function usePortal() {
 	});
 }
 
-export function useRestoreSubscription() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: () => client.restoreSubscription(),
-		onSuccess: (next) => {
-			if (next) qc.setQueryData(billingKeys.subscription, next);
-			qc.invalidateQueries({ queryKey: billingKeys.subscription });
-		},
-	});
-}
-
 // ── Usage ────────────────────────────────────────────────────────────────────
 
 export function useUsage() {
@@ -192,57 +175,6 @@ export function useUsage() {
 	return useBillingQuery({
 		queryKey: billingKeys.usage,
 		queryFn: () => client.getUsage(),
-	});
-}
-
-// ── Redemption ─────────────────────────────────────────────────────────────────
-
-export function useRedeemPreview() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: RedeemPreviewRequest) => client.redeemPreview(body),
-	});
-}
-
-export function useRedeem() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: { body: RedeemRequest; idempotencyKey: string }) =>
-			client.redeem(body, idempotencyKey),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.subscription });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			// A redemption grant lands as a ledger entry too.
-			qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
-		},
-	});
-}
-
-// ── Referral ──────────────────────────────────────────────────────────────────
-
-export function useReferralCode() {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.referralCode,
-		queryFn: () => client.getReferralCode(),
-	});
-}
-
-export function useReferralRewards() {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.referralRewards,
-		queryFn: () => client.getReferralRewards(),
-		staleTime: 5 * 60_000,
-	});
-}
-
-export function useMyReferrals() {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.myReferrals,
-		queryFn: () => client.getMyReferrals(),
 	});
 }
 

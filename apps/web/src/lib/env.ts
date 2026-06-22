@@ -84,13 +84,6 @@ export const env = createEnv({
 		// cleanly; the top-up dialog degrades to an invoice-redirect path when
 		// this is absent.
 		NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1).optional(),
-
-		// Cloudflare Turnstile site key for the redemption flow. The backend
-		// only enforces Turnstile after repeated invalid redeem attempts
-		// (risk-triggered) and does not expose a site key, so the widget is
-		// gated on this public key. Optional: when absent and a challenge is
-		// triggered, the redeem card shows a clear "try again later" message.
-		NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
 	},
 	runtimeEnv: {
 		VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
@@ -107,7 +100,6 @@ export const env = createEnv({
 		NEXT_PUBLIC_DEV_AUTH_EMAIL: process.env.NEXT_PUBLIC_DEV_AUTH_EMAIL,
 		NEXT_PUBLIC_POSTHOG_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_TOKEN,
 		NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-		NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
 	},
 	// `bun test` preloads `test-setup.ts` to seed required vars, so
 	// validation runs in tests too — this preserves the schema's

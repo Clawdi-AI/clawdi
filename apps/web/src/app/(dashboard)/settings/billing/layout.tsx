@@ -1,10 +1,7 @@
 import { pageMetadata } from "@/app/page-metadata";
 import { BillingTabsNav } from "@/components/settings/billing-tabs-nav";
 
-export const metadata = pageMetadata(
-	"Billing",
-	"Wallet, plan, usage, and rewards for your hosted agents.",
-);
+export const metadata = pageMetadata("Billing", "Wallet, plan, and usage for your hosted agents.");
 
 export default function BillingLayout({ children }: { children: React.ReactNode }) {
 	return (

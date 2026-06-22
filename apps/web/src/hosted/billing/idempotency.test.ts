@@ -4,7 +4,7 @@ import { newIdempotencyKey } from "./idempotency";
 describe("newIdempotencyKey", () => {
 	test("carries the caller's prefix", () => {
 		expect(newIdempotencyKey("topup")).toMatch(/^topup-/);
-		expect(newIdempotencyKey("redeem")).toMatch(/^redeem-/);
+		expect(newIdempotencyKey("deploy")).toMatch(/^deploy-/);
 	});
 
 	test("mints a distinct key per call (so distinct attempts don't collide)", () => {

@@ -10,7 +10,6 @@ import { isWalletNotEnabledError } from "@/hosted/billing/errors";
 import { formatCredits } from "@/hosted/billing/format";
 import { useSubscription, useUsage } from "@/hosted/billing/hooks";
 import { shortDate } from "@/hosted/billing/subscription/subscription-utils";
-import { formatNumber } from "@/lib/utils";
 
 const DESCRIPTION = "AI Credit consumption across your agents this period.";
 
@@ -170,7 +169,7 @@ export function UsagePage() {
 							</div>
 							<div className="text-xs text-muted-foreground">
 								{m.provider ? `${m.provider} · ` : ""}
-								{formatNumber(m.tokens)} tokens · {m.requests.toLocaleString()} requests
+								{m.requests.toLocaleString()} requests
 							</div>
 						</div>
 					))}

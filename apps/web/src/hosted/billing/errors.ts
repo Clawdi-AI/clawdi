@@ -94,28 +94,6 @@ export function billingQueryRetry(failureCount: number, error: unknown): boolean
 	return failureCount < 2 && isRetryableError(error);
 }
 
-/**
- * Redemption Turnstile gates. The backend only enforces Turnstile after
- * repeated invalid redeem attempts;
- * a fresh, valid code redeems without a token. These detect the risk-triggered
- * 403s so the redeem card can surface a Turnstile challenge on demand.
- */
-export function isTurnstileRequiredError(error: unknown): boolean {
-	return (
-		error instanceof BillingApiError &&
-		error.status === 403 &&
-		error.detail === "turnstile_required"
-	);
-}
-
-export function isInvalidTurnstileTokenError(error: unknown): boolean {
-	return (
-		error instanceof BillingApiError &&
-		error.status === 403 &&
-		error.detail === "invalid_turnstile_token"
-	);
-}
-
 /** True when the user/account cannot use the wallet (legacy / not enrolled). */
 export function isWalletNotEnabledError(error: unknown): boolean {
 	return (

@@ -2,7 +2,7 @@
  * Typed contracts for the hosted billing and deployment surfaces.
  *
  * These mirror the hosted API response/request models for the wallet,
- * subscription, deployment, redemption, and referral routes.
+ * subscription, deployment, usage, and shared profile routes.
  *
  * Why hand-written instead of generated: `packages/shared/src/api/
  * deploy.generated.ts` is a FILTERED subset (only `/deployments`, and even
@@ -216,85 +216,6 @@ export interface PortalResult {
 	amount_due_usd: number | null;
 }
 
-// ── Redemption (subscription routes) ─────────────────────────────────────────
-
-export interface RedeemPreviewRequest {
-	code: string;
-	turnstile_token?: string | null;
-}
-
-export interface RedeemPreview {
-	valid: boolean;
-	reason: string | null;
-	offer_code: string | null;
-	plan_slug: string | null;
-	plan_name: string | null;
-	duration_months: number | null;
-	allowance_credits: number | null;
-	renewal_collection_method: string | null;
-	renewal_monthly_price_cents: number | null;
-	currency_code: string | null;
-	starts_at: string | null;
-	ends_at: string | null;
-}
-
-export interface RedeemRequest {
-	code: string;
-	locale?: string | null;
-	turnstile_token?: string | null;
-	deploy_config?: DeployRequest | null;
-}
-
-export interface RedeemResult {
-	success: boolean;
-	request_id: string;
-	subscription: Subscription;
-	deployment_queued: boolean;
-	deploy_request_id: string | null;
-}
-
-// ── Referral ────────────────────────────────────────────────────────────────
-
-export interface MyReferralCode {
-	referral_code_id: number;
-	code: string;
-	url: string;
-	status: string;
-	code_last4: string;
-	total_referrals: number;
-	converted_referrals: number;
-}
-
-export interface ReferralRewardTier {
-	plan_slug: string;
-	reward_credits: number;
-}
-
-export interface ReferralRewardInfo {
-	tiers: ReferralRewardTier[];
-}
-
-export interface MyReferralItem {
-	referral_attribution_id: number;
-	referred_user_id: number | null;
-	referred_user_label: string | null;
-	status: string;
-	source: string;
-	capture_surface: string;
-	first_captured_at: string;
-	converted_at: string | null;
-	subscription_id: number | null;
-	referred_plan_slug: string | null;
-	reward_credits_granted: number | null;
-	code_last4: string;
-}
-
-export interface MyReferrals {
-	items: MyReferralItem[];
-	total_referrals: number;
-	converted_referrals: number;
-}
-
 // ── Identity ────────────────────────────────────────────────────────────────
 
 /** Minimal slice of the cloud-api user profile the billing UI needs. */
@@ -312,7 +233,6 @@ export interface UsageModelBreakdown {
 	model: string;
 	provider: string | null;
 	credits: number;
-	tokens: number;
 	requests: number;
 }
 

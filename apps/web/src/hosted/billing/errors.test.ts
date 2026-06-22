@@ -114,8 +114,8 @@ describe("normalizeBillingError", () => {
 	});
 
 	test("snake_case codes become readable, real sentences pass through", () => {
-		expect(normalizeBillingError(new BillingApiError(400, "code_already_redeemed"))).toBe(
-			"Code Already Redeemed",
+		expect(normalizeBillingError(new BillingApiError(400, "payment_method_required"))).toBe(
+			"Payment Method Required",
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),

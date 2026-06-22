@@ -15,7 +15,6 @@ const BILLING_TABS = [
 	{ href: "/settings/billing/wallet", label: "Wallet" },
 	{ href: "/settings/billing/plan", label: "Plan" },
 	{ href: "/settings/billing/usage", label: "Usage" },
-	{ href: "/settings/billing/rewards", label: "Rewards" },
 ];
 
 export function BillingTabsNav() {

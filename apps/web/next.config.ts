@@ -69,7 +69,6 @@ const nextConfig: NextConfig = {
 				destination: "/settings/billing/plan",
 				permanent: false,
 			},
-			{ source: "/rewards", destination: "/settings/billing/rewards", permanent: false },
 		];
 	},
 };

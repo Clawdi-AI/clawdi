@@ -1,7 +1,14 @@
-export function hostedV2ApiBaseUrl(rawBaseUrl: string): string {
+export function hostedApiBaseUrl(rawBaseUrl: string): string {
 	const url = new URL(rawBaseUrl);
-	const normalizedPath = url.pathname.replace(/\/+$/, "");
-	url.pathname = normalizedPath.endsWith("/v2") ? normalizedPath : `${normalizedPath}/v2`;
+	url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/v2$/, "");
+	url.search = "";
+	url.hash = "";
+	return url.toString().replace(/\/$/, "");
+}
+
+export function hostedV2ApiBaseUrl(rawBaseUrl: string): string {
+	const url = new URL(hostedApiBaseUrl(rawBaseUrl));
+	url.pathname = `${url.pathname.replace(/\/+$/, "")}/v2`;
 	url.search = "";
 	url.hash = "";
 	return url.toString().replace(/\/$/, "");
