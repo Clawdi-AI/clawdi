@@ -4,7 +4,6 @@ export interface HostedProductCapabilities {
 
 export interface HostedAccessProfile {
 	capabilities?: HostedProductCapabilities | null;
-	product_generation?: string | null;
 }
 
 export interface HostedV2Access {
