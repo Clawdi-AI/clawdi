@@ -445,9 +445,7 @@ async def get_environment(
         )
     ).scalar_one_or_none()
     sibling_deployment_id = (
-        None
-        if bound_env is not None
-        else await _hosted_deployment_id_for_machine(db, env, state)
+        None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
     )
     return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
@@ -479,9 +477,7 @@ async def get_environment_runtime_observed(
         )
     ).scalar_one_or_none()
     sibling_deployment_id = (
-        None
-        if bound_env is not None
-        else await _hosted_deployment_id_for_machine(db, env, state)
+        None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
     )
     return RuntimeObservedResponse(
         environment=_env_to_response(env, state, hosted_deployment_id=sibling_deployment_id),
@@ -501,9 +497,7 @@ def _env_to_response(
     resolved_hosted_deployment_id = (
         hosted_state.deployment_id if hosted_state is not None else hosted_deployment_id
     )
-    hosted_managed = (
-        resolved_hosted_deployment_id is not None or _is_legacy_hosted_managed_env(env)
-    )
+    hosted_managed = resolved_hosted_deployment_id is not None or _is_legacy_hosted_managed_env(env)
     return EnvironmentResponse(
         id=str(env.id),
         machine_name=env.machine_name,
