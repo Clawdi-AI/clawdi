@@ -1,0 +1,308 @@
+name: Clawdi Image Release
+
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build. Defaults to the workflow SHA."
+        required: false
+      deploy:
+        description: "Update and deploy the Coolify Applications after publishing."
+        required: false
+        type: boolean
+        default: false
+      wait:
+        description: "Wait for Coolify deployments to finish when deploy=true."
+        required: false
+        type: boolean
+        default: true
+      deploy_scope:
+        description: "Coolify Applications to deploy after updating image tags."
+        required: false
+        type: choice
+        options:
+          - api-only
+          - all
+        default: api-only
+      build_web:
+        description: "Also publish the web image. Requires matching public web build variables."
+        required: false
+        type: boolean
+        default: false
+      web_public_api_url:
+        description: "NEXT_PUBLIC_API_URL baked into the web image."
+        required: false
+        default: "http://localhost:8000"
+      web_clerk_publishable_key:
+        description: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY baked into the web image."
+        required: false
+      web_public_deploy_api_url:
+        description: "NEXT_PUBLIC_DEPLOY_API_URL baked into the web image."
+        required: false
+        default: "http://localhost:50021"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: clawdi-image-release-production
+  cancel-in-progress: false
+
+env:
+  BACKEND_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-backend
+  WEB_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-web
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image_tag: ${{ steps.rev.outputs.sha }}
+      build_required: ${{ steps.runtime-changes.outputs.build }}
+      deploy_scope: ${{ steps.deploy-mode.outputs.deploy_scope }}
+      should_deploy: ${{ steps.deploy-mode.outputs.should_deploy }}
+    steps:
+      - name: Resolve source ref
+        id: source-ref
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            ref="${{ github.event.workflow_run.head_sha }}"
+          else
+            ref="${{ inputs.ref }}"
+            if [ -z "$ref" ]; then
+              ref="${GITHUB_SHA}"
+            fi
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source-ref.outputs.ref }}
+          fetch-depth: 2
+
+      - id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve deploy mode
+        id: deploy-mode
+        env:
+          AUTO_DEPLOY: ${{ vars.CLAWDI_COOLIFY_AUTO_DEPLOY }}
+        run: |
+          should_deploy=false
+          deploy_scope="${{ inputs.deploy_scope }}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            deploy_scope=all
+            if [ "${AUTO_DEPLOY}" = "true" ]; then
+              should_deploy=true
+            fi
+          elif [ "${{ inputs.deploy }}" = "true" ]; then
+            should_deploy=true
+          fi
+          if [ -z "$deploy_scope" ]; then
+            deploy_scope=api-only
+          fi
+          echo "deploy_scope=${deploy_scope}" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=${should_deploy}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect backend image changes
+        id: runtime-changes
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "reason=workflow_dispatch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff-tree --no-commit-id --name-only -r -m --first-parent "${{ steps.rev.outputs.sha }}")"
+          printf '%s\n' "$changed_files"
+
+          build=false
+          readarray -t files <<< "$changed_files"
+          for file in "${files[@]}"; do
+            case "$file" in
+              backend/*|.dockerignore)
+                build=true
+                ;;
+            esac
+          done
+
+          echo "build=${build}" >> "$GITHUB_OUTPUT"
+          if [ "$build" = "true" ]; then
+            echo "reason=backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
+          else
+            echo "reason=no_backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.runtime-changes.outputs.build == 'true'
+
+      - uses: docker/login-action@v4
+        if: steps.runtime-changes.outputs.build == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve OCI label metadata
+        if: steps.runtime-changes.outputs.build == 'true'
+        id: labels
+        run: |
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "created=${created}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        if: steps.runtime-changes.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.created=${{ steps.labels.outputs.created }}
+            org.opencontainers.image.title=Clawdi Backend
+            org.opencontainers.image.description=Open-source Clawdi FastAPI backend image for self-hosted and Coolify deployments.
+          provenance: false
+          cache-from: type=gha,scope=clawdi-backend-image
+          cache-to: type=gha,mode=max,scope=clawdi-backend-image
+
+      - name: Validate web image inputs
+        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        env:
+          WEB_CLERK_PUBLISHABLE_KEY: ${{ inputs.web_clerk_publishable_key }}
+        run: |
+          if [ -z "$WEB_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "web_clerk_publishable_key is required when build_web=true." >&2
+            exit 1
+          fi
+
+      - name: Build and push web image
+        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ inputs.web_public_api_url }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ inputs.web_clerk_publishable_key }}
+            NEXT_PUBLIC_CLAWDI_HOSTED=
+            NEXT_PUBLIC_DEPLOY_API_URL=${{ inputs.web_public_deploy_api_url }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.created=${{ steps.labels.outputs.created }}
+            org.opencontainers.image.title=Clawdi Web
+            org.opencontainers.image.description=Open-source Clawdi Next.js dashboard image for self-hosted deployments.
+          provenance: false
+          cache-from: type=gha,scope=clawdi-web-image
+          cache-to: type=gha,mode=max,scope=clawdi-web-image
+
+      - name: Print image summary
+        if: steps.runtime-changes.outputs.build == 'true'
+        run: |
+          echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend: \`${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.build_web }}" = "true" ]; then
+            echo "- Web: \`${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Web: skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Print skipped image summary
+        if: steps.runtime-changes.outputs.build != 'true'
+        run: |
+          echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend image build: skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reason: \`${{ steps.runtime-changes.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Ref: \`${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build.outputs.image_tag }}
+
+      - name: Deploy Coolify Applications
+        env:
+          COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          CLAWDI_BACKEND_RUNTIME_IMAGE: ${{ env.BACKEND_IMAGE_NAME }}
+          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.build.outputs.image_tag }}
+          CLAWDI_DEPLOY_SCOPE: ${{ needs.build.outputs.deploy_scope }}
+          CLAWDI_WAIT_FOR_DEPLOY: ${{ inputs.wait }}
+        run: |
+          if [ -z "$COOLIFY_API_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "COOLIFY_API_URL and COOLIFY_TOKEN secrets are required when deploy=true." >&2
+            exit 1
+          fi
+
+          args=()
+          if [ "$CLAWDI_WAIT_FOR_DEPLOY" != "false" ]; then
+            args+=(--wait)
+          fi
+          args+=(--deploy-scope "$CLAWDI_DEPLOY_SCOPE")
+          python3 infra/deploy/coolify/deploy_ghcr_runtime.py "${args[@]}"
+
+      - name: Audit Coolify Applications
+        env:
+          COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.build.outputs.image_tag }}
+          CLAWDI_DEPLOY_SCOPE: ${{ needs.build.outputs.deploy_scope }}
+        run: |
+          if [ "$CLAWDI_DEPLOY_SCOPE" = "api-only" ]; then
+            phase=api-only
+          else
+            phase=live
+          fi
+
+          python3 infra/deploy/coolify/audit_stack.py \
+            --phase "$phase" \
+            --expect-commit "$CLAWDI_BACKEND_RUNTIME_TAG"
+
+  audit:
+    needs: build
+    if: needs.build.outputs.build_required != 'true' && needs.build.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build.outputs.image_tag }}
+
+      - name: Audit Coolify Applications
+        env:
+          COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$COOLIFY_API_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "COOLIFY_API_URL and COOLIFY_TOKEN secrets are required for automated Coolify audit." >&2
+            exit 1
+          fi
+
+          python3 infra/deploy/coolify/audit_stack.py --phase live

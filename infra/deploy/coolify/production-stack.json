@@ -1,0 +1,110 @@
+{
+	"project": "clawdi",
+	"environment": "production",
+	"deployment_tag": "clawdi-runtime",
+	"runtime_image": {
+		"name": "ghcr.io/clawdi-ai/clawdi-backend",
+		"tag": "EXPECT_COMMIT",
+		"visibility": "public",
+		"producer": ".github/workflows/clawdi-image-release.yml"
+	},
+	"operational_constraints": {
+		"clawdi-channels-worker": {
+			"replicas": 1,
+			"reason": "The combined channels worker is operated as a singleton until every loop has an explicit multi-replica lease or claim contract."
+		}
+	},
+	"destination": {
+		"name": "CONFIGURE_IN_COOLIFY",
+		"network": "CONFIGURE_IN_COOLIFY"
+	},
+	"application_settings": {
+		"is_auto_deploy_enabled": false,
+		"is_preview_deployments_enabled": false,
+		"is_pr_deployments_public_enabled": false,
+		"is_git_submodules_enabled": false,
+		"is_git_lfs_enabled": false,
+		"is_git_shallow_clone_enabled": true,
+		"use_build_secrets": false,
+		"is_preserve_repository_enabled": false,
+		"disable_build_cache": false,
+		"include_source_commit_in_build": false,
+		"is_consistent_container_name_enabled": false,
+		"is_container_label_readonly_enabled": true,
+		"is_container_label_escape_enabled": true,
+		"connect_to_docker_network": true
+	},
+	"applications": {
+		"clawdi-backend": {
+			"role": "api",
+			"fields": {
+				"name": "clawdi-backend",
+				"git_repository": "Clawdi-AI/clawdi",
+				"git_branch": "main",
+				"git_commit_sha": "EXPECT_COMMIT",
+				"build_pack": "dockerimage",
+				"docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
+				"docker_registry_image_tag": "EXPECT_COMMIT",
+				"base_directory": "/",
+				"fqdn": "CONFIGURE_IN_COOLIFY",
+				"ports_exposes": "8000",
+				"ports_mappings": null,
+				"health_check_enabled": true,
+				"health_check_path": "/health",
+				"health_check_port": "8000",
+				"health_check_interval": 5,
+				"health_check_retries": 12,
+				"health_check_start_period": 60,
+				"limits_memory": "2g",
+				"limits_cpus": "2",
+				"start_command": "cd /app/backend && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
+				"custom_docker_run_options": "--add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+			},
+			"storages": [
+				{
+					"name": "clawdi-backend-files",
+					"host_path": "CONFIGURE_IN_COOLIFY",
+					"mount_path": "/data/files"
+				},
+				{
+					"name": "clawdi-backend-fastembed-cache",
+					"host_path": null,
+					"mount_path": "/home/app/.cache/fastembed"
+				}
+			]
+		},
+		"clawdi-channels-worker": {
+			"role": "channels-worker",
+			"fields": {
+				"name": "clawdi-channels-worker",
+				"git_repository": "Clawdi-AI/clawdi",
+				"git_branch": "main",
+				"git_commit_sha": "EXPECT_COMMIT",
+				"build_pack": "dockerimage",
+				"docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
+				"docker_registry_image_tag": "EXPECT_COMMIT",
+				"base_directory": "/",
+				"fqdn": null,
+				"ports_exposes": null,
+				"ports_mappings": null,
+				"health_check_enabled": false,
+				"limits_memory": "1g",
+				"limits_cpus": "1",
+				"start_command": "cd /app/backend && exec python -m app.workers.channels",
+				"custom_docker_run_options": "--add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+			},
+			"storages": [
+				{
+					"name": "clawdi-channels-worker-files",
+					"host_path": "CONFIGURE_IN_COOLIFY",
+					"mount_path": "/data/files"
+				},
+				{
+					"name": "clawdi-channels-worker-fastembed-cache",
+					"host_path": null,
+					"mount_path": "/home/app/.cache/fastembed"
+				}
+			]
+		}
+	}
+}

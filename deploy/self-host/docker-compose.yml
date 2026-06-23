@@ -1,0 +1,125 @@
+name: ${COMPOSE_PROJECT_NAME:-clawdi-self-host}
+
+x-backend-image: &backend-image
+  image: ${CLAWDI_BACKEND_IMAGE:-ghcr.io/clawdi-ai/clawdi-backend}:${CLAWDI_BACKEND_IMAGE_TAG:-local}
+  build:
+    context: ../..
+    dockerfile: backend/Dockerfile
+
+x-web-image: &web-image
+  image: ${CLAWDI_WEB_IMAGE:-ghcr.io/clawdi-ai/clawdi-web}:${CLAWDI_WEB_IMAGE_TAG:-local}
+  build:
+    context: ../..
+    dockerfile: apps/web/Dockerfile
+    args:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      NEXT_PUBLIC_CLAWDI_HOSTED: ""
+      NEXT_PUBLIC_DEPLOY_API_URL: ${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-clawdi}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-clawdi}
+  ENVIRONMENT: production
+  DEBUG: "false"
+  FILE_STORE_TYPE: local
+  FILE_STORE_LOCAL_PATH: /data/files
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+  CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+  TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-false}
+  CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY:-}
+  VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:-}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+  COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+  MEMORY_EMBEDDING_MODE: ${MEMORY_EMBEDDING_MODE:-local}
+  MEMORY_EMBEDDING_API_KEY: ${MEMORY_EMBEDDING_API_KEY:-}
+  MEMORY_EMBEDDING_BASE_URL: ${MEMORY_EMBEDDING_BASE_URL:-}
+  MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-clawdi}
+      POSTGRES_USER: ${POSTGRES_USER:-clawdi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  migrate:
+    <<: *backend-image
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *backend-env
+    volumes:
+      - files:/data/files
+    command: ["alembic", "upgrade", "head"]
+
+  api:
+    <<: *backend-image
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment: *backend-env
+    ports:
+      - "${API_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    volumes:
+      - files:/data/files
+      - fastembed_cache:/home/app/.cache/fastembed
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  channels-worker:
+    <<: *backend-image
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment: *backend-env
+    volumes:
+      - files:/data/files
+      - fastembed_cache:/home/app/.cache/fastembed
+    command: ["python", "-m", "app.workers.channels"]
+
+  web:
+    <<: *web-image
+    profiles: ["web"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      NEXT_PUBLIC_CLAWDI_HOSTED: ""
+      NEXT_PUBLIC_DEPLOY_API_URL: ${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+    ports:
+      - "${WEB_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+
+volumes:
+  pg_data:
+  files:
+  fastembed_cache:

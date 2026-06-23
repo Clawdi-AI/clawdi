@@ -4,20 +4,30 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "infra/deploy/coolify/**"
+      - "deploy/self-host/**"
+      - "apps/web/Dockerfile"
+      - ".dockerignore"
       - "packages/shared/src/api/api.generated.ts"
       - "package.json"
       - "bun.lock"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/clawdi-image-release.yml"
   push:
     branches: [main]
     paths:
       - "backend/**"
+      - "infra/deploy/coolify/**"
+      - "deploy/self-host/**"
+      - "apps/web/Dockerfile"
+      - ".dockerignore"
       - "packages/shared/src/api/api.generated.ts"
       - "package.json"
       - "bun.lock"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/clawdi-image-release.yml"
 
 permissions:
   contents: read
@@ -44,17 +54,24 @@ jobs:
               - "backend/pyproject.toml"
               - "backend/uv.lock"
               - "backend/alembic.ini"
+              - "backend/Dockerfile"
+              - "infra/deploy/coolify/**"
+              - "deploy/self-host/**"
+              - "apps/web/Dockerfile"
+              - ".dockerignore"
               - "packages/shared/src/api/api.generated.ts"
               - "package.json"
               - "bun.lock"
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/backend-ci.yml"
+              - ".github/workflows/clawdi-image-release.yml"
             test:
               - "backend/app/**"
               - "backend/tests/**"
               - "backend/alembic/**"
               - "backend/pyproject.toml"
               - "backend/uv.lock"
+              - "backend/Dockerfile"
               - ".github/workflows/backend-ci.yml"
 
   lint-and-typecheck:
@@ -93,6 +110,10 @@ jobs:
         run: uv run deptry app
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
+      - name: Coolify deploy contract sanity
+        run: |
+          python3 -m py_compile ../infra/deploy/coolify/*.py
+          python3 -m json.tool ../infra/deploy/coolify/production-stack.json >/dev/null
 
   test:
     needs: changes
