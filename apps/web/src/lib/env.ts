@@ -47,7 +47,7 @@ export const env = createEnv({
 			? z.string().min(1).optional()
 			: z.string().min(1),
 
-		// Clawdi-hosted build flag, transformed to a real boolean. `"true"`
+		// Hosted build flag, transformed to a real boolean. `"true"`
 		// enables surfaces we do not ship in OSS builds yet: v2-gated
 		// channels/AI providers, hosted deployments, billing, and analytics.
 		// Anything else = OSS.

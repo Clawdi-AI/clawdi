@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
@@ -270,6 +270,11 @@ function ConnectAnotherCard() {
 }
 
 /** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
+function currentDaypart(): "morning" | "afternoon" | "evening" {
+	const hour = new Date().getHours();
+	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+}
+
 function Greeting({
 	activeCount,
 	total,
@@ -282,9 +287,10 @@ function Greeting({
 	lastActive?: string | null;
 }) {
 	const { user } = useCurrentUser();
-	const hour = new Date().getHours();
-	const daypart =
-		hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
+	useEffect(() => {
+		setDaypart(currentDaypart());
+	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
 	const summary =
 		total === 0
@@ -295,7 +301,7 @@ function Greeting({
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">
-				Good {daypart}
+				{daypart ? `Good ${daypart}` : "Welcome"}
 				{firstName ? `, ${firstName}` : ""}
 			</h1>
 			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>

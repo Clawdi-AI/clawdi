@@ -1,7 +1,7 @@
 # `apps/web/src/hosted/`
 
 Components and helpers for the hosted agent service and hosted billing surfaces.
-They render only in the Clawdi-hosted build (`NEXT_PUBLIC_CLAWDI_HOSTED=true`).
+They render only in the hosted build (`NEXT_PUBLIC_CLAWDI_HOSTED=true`).
 
 OSS users running their own Clawdi instance see none of this UI.
 

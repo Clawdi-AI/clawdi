@@ -19,7 +19,7 @@ function wallet(over: Partial<WalletState> = {}): WalletState {
 
 function action(over: Partial<WalletAutoReloadAction> = {}): WalletAutoReloadAction {
 	return {
-		attempt_id: "att_1",
+		attempt_id: 1,
 		payment_intent_id: "pi_1",
 		client_secret: "pi_1_secret",
 		error_code: null,

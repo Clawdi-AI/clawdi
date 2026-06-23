@@ -44,10 +44,7 @@ export default function AgentsIndexPage() {
 
 	return (
 		<div className="space-y-6 px-4 lg:px-6">
-			<PageHeader
-				title="Agents"
-				description="Every agent connected to or hosted on your account."
-			/>
+			<PageHeader title="Agents" description="Every agent connected to your account." />
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
 			) : hostedAgentsEnabled && HostedAgentsByCompute ? (

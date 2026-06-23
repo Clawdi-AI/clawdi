@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { hostedApiBaseUrl, hostedV2ApiBaseUrl } from "@/hosted/billing/billing-url";
+import { unwrapDeploy } from "@/hosted/billing/billing-client";
+import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
+import { BillingApiError } from "@/hosted/billing/errors";
 
 describe("hostedApiBaseUrl", () => {
 	it("normalizes a deploy API origin for shared routes", () => {
@@ -13,18 +15,24 @@ describe("hostedApiBaseUrl", () => {
 	});
 });
 
-describe("hostedV2ApiBaseUrl", () => {
-	it("adds the v2 prefix to a deploy API origin", () => {
-		expect(hostedV2ApiBaseUrl("https://api.clawdi.ai")).toBe("https://api.clawdi.ai/v2");
+describe("unwrapDeploy", () => {
+	it("throws on parsed API errors", () => {
+		expect(() =>
+			unwrapDeploy({
+				error: { detail: "insufficient_balance" },
+				response: new Response(JSON.stringify({ detail: "insufficient_balance" }), {
+					status: 403,
+					statusText: "Forbidden",
+				}),
+			}),
+		).toThrow(BillingApiError);
 	});
 
-	it("does not duplicate an existing v2 prefix", () => {
-		expect(hostedV2ApiBaseUrl("https://api.clawdi.ai/v2/")).toBe("https://api.clawdi.ai/v2");
-	});
-
-	it("preserves non-v2 base paths before adding the v2 prefix", () => {
-		expect(hostedV2ApiBaseUrl("https://example.com/backend")).toBe(
-			"https://example.com/backend/v2",
-		);
+	it("throws on empty-bodied non-2xx responses", () => {
+		expect(() =>
+			unwrapDeploy({
+				response: new Response(null, { status: 503, statusText: "Service Unavailable" }),
+			}),
+		).toThrow("Billing API 503: Service Unavailable");
 	});
 });

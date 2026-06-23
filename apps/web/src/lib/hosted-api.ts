@@ -1,9 +1,9 @@
 import { env } from "@/lib/env";
-import { hostedApiBaseUrl, hostedV2ApiBaseUrl } from "@/lib/hosted-url";
+import { hostedApiBaseUrl } from "@/lib/hosted-url";
 
 export const DEPLOY_API_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
 
-export { hostedApiBaseUrl, hostedV2ApiBaseUrl };
+export { hostedApiBaseUrl };
 
 /**
  * Whether the hosted backend can possibly be reached from this origin.

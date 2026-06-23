@@ -34,7 +34,7 @@ export function ActivationRequirementCard() {
 
 	async function openPortal() {
 		try {
-			const res = await portal.mutateAsync({});
+			const res = await portal.mutateAsync({ confirm_upgrade: false });
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;

@@ -57,7 +57,7 @@ import {
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
 import { BillingError } from "@/hosted/billing/components/state-views";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { HostedDeployment, RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
@@ -483,7 +483,10 @@ function AiProviderTab({
 	const dirty = selected !== initial || primaryModel !== currentModel;
 
 	function apply() {
-		const body: Record<string, unknown> = { primary_model: primaryModel.trim() || null };
+		const body: RebindAgentAiProviderRequest = {
+			primary_model: primaryModel.trim() || null,
+			ai_provider_auth_kind: "managed",
+		};
 		if (selected === "managed") {
 			body.ai_provider_auth_kind = "managed";
 			body.ai_provider_id = null;

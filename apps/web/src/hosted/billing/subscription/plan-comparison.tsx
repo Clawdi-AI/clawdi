@@ -100,6 +100,7 @@ export function PlanComparison({
 			const result = await checkout.mutateAsync({
 				plan_slug: performance.slug,
 				billing_term_months: term,
+				collection_method: "charge_automatically",
 				ui_mode: "hosted",
 			});
 			const url = result.action_url || result.checkout_url || result.invoice_url;

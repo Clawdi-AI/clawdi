@@ -378,6 +378,13 @@ describe("v2 route exposure", () => {
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toContain('href="https://www.clawdi.ai/dashboard"');
 	});
+
+	test("v2-off agent index copy stays neutral", () => {
+		const agentsIndex = readFileSync(join(SRC_DIR, "app/(dashboard)/agents/page.tsx"), "utf8");
+		const agentsCard = readFileSync(join(SRC_DIR, "components/dashboard/agents-card.tsx"), "utf8");
+		expect(agentsIndex).not.toContain("hosted on your account");
+		expect(agentsCard).not.toContain("deploy a hosted one");
+	});
 });
 
 describe("posthog-js is hosted-only", () => {

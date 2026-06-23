@@ -69,6 +69,7 @@ export function SubscriptionPage() {
 			const res = await checkout.mutateAsync({
 				plan_slug: perfPlan.slug,
 				billing_term_months: term,
+				collection_method: "charge_automatically",
 				ui_mode: "hosted",
 			});
 			const url = res.action_url || res.checkout_url || res.invoice_url;
@@ -104,7 +105,7 @@ export function SubscriptionPage() {
 
 	async function manageBilling() {
 		try {
-			const res = await portal.mutateAsync({});
+			const res = await portal.mutateAsync({ confirm_upgrade: false });
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;
@@ -244,12 +245,12 @@ export function SubscriptionPage() {
 							<div className="flex items-center justify-between text-sm">
 								<span className="text-muted-foreground">Monthly AI Credits</span>
 								<span className="tabular-nums">
-									{formatCredits(sub.budget_credits_used)} of{" "}
+									{formatCredits(sub.budget_credits_used ?? 0)} of{" "}
 									{formatCredits(sub.budget_credits_total)} used
 								</span>
 							</div>
 							<UsageMeter
-								used={sub.budget_credits_used}
+								used={sub.budget_credits_used ?? 0}
 								total={sub.budget_credits_total}
 								label="Monthly AI Credits used"
 							/>

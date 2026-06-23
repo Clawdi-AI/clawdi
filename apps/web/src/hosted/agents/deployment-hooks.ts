@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
+import type { RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
 import { toastBillingError } from "@/hosted/billing/errors";
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
 
@@ -71,7 +72,7 @@ export function useSetAgentAiProvider() {
 		mutationFn: async (vars: {
 			id: string;
 			agentTypes: string[];
-			body: Record<string, unknown>;
+			body: RebindAgentAiProviderRequest;
 		}) => {
 			let last: Awaited<ReturnType<typeof client.setAgentAiProvider>> | undefined;
 			for (const agentType of vars.agentTypes) {
@@ -102,10 +103,7 @@ export function useOnboardAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (vars: { id: string; agentType: string }) =>
-			client.onboardAgent(vars.id, {
-				agent_type: vars.agentType,
-				ai_provider_auth_kind: "managed",
-			}),
+			client.onboardAgent(vars.id, vars.agentType),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			toast.success("Runtime added");

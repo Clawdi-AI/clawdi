@@ -25,7 +25,8 @@ export function NewAgentButton() {
 	const checkingDeployAccess = IS_HOSTED && v2Access.isLoading;
 
 	function handleClick() {
-		if (canDeployManagedAgent || checkingDeployAccess) {
+		if (checkingDeployAccess) return;
+		if (canDeployManagedAgent) {
 			setChooserOpen(true);
 			return;
 		}
@@ -49,6 +50,7 @@ export function NewAgentButton() {
 				<SidebarMenuButton
 					tooltip="New agent"
 					onClick={handleClick}
+					disabled={checkingDeployAccess}
 					className="bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
 				>
 					<CirclePlus />

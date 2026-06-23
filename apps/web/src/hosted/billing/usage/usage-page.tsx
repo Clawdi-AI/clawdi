@@ -99,12 +99,12 @@ export function UsagePage() {
 						<div className="flex items-center justify-between text-sm">
 							<span className="text-muted-foreground">Plan allowance</span>
 							<span className="tabular-nums">
-								{formatCredits(sub.budget_credits_used)} of{" "}
+								{formatCredits(sub.budget_credits_used ?? 0)} of{" "}
 								{formatCredits(sub.budget_credits_total)} used
 							</span>
 						</div>
 						<UsageMeter
-							used={sub.budget_credits_used}
+							used={sub.budget_credits_used ?? 0}
 							total={sub.budget_credits_total}
 							label="Monthly AI Credits used"
 						/>

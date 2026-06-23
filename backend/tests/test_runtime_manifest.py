@@ -16,6 +16,7 @@ from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.user import User
 from app.services.audit import _sanitize_audit_details
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
@@ -702,6 +703,40 @@ async def test_runtime_manifest_allows_unbound_cli_key_with_explicit_environment
 
     assert response.status_code == 200, response.text
     assert response.json()["manifest"]["environmentId"] == str(env.id)
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_rejects_unbound_cli_key_for_other_user_environment(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    other_user = User(
+        clerk_id=f"runtime_other_{uuid4().hex[:12]}",
+        email=f"runtime-other-{uuid4().hex[:8]}@clawdi.local",
+        name="Runtime Other User",
+    )
+    db_session.add(other_user)
+    await db_session.flush()
+    other_env = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"runtime-cross-user-{uuid4().hex[:8]}",
+        machine_name="Runtime Cross User",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(other_env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, label="unbound")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get(
+            "/api/runtime/manifest",
+            params={"environment_id": str(other_env.id)},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404, response.text
+    assert response.json() == {"detail": "Agent environment not found"}
 
 
 @pytest.mark.asyncio

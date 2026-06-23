@@ -138,7 +138,7 @@ export function AgentLabel({
 	meta?: ReactNode[];
 	/** Tag rendered immediately to the right of the title — for
 	 * identity-level adornments that aren't meta-data (e.g. a
-	 * "Clawdi-hosted" pill). Goes here, not in meta, so it stays
+	 * "hosted-on-Clawdi" pill). Goes here, not in meta, so it stays
 	 * with the name as a single visual unit no matter how the
 	 * subtitle wraps. */
 	titleAdornment?: ReactNode;

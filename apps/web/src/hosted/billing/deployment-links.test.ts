@@ -17,6 +17,11 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 		config_info: envs
 			? {
 					mux_enabled: true,
+					telegram_mux_enabled: false,
+					discord_mux_enabled: false,
+					whatsapp_mux_enabled: false,
+					imessage_mux_enabled: false,
+					kobb_available: false,
 					channel: null,
 					primary_model: null,
 					ai_provider_id: null,
@@ -33,6 +38,7 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 				}
 			: null,
 		created_at: "2026-06-22T00:00:00Z",
+		upgrade_available: false,
 		profile: "free",
 	};
 }

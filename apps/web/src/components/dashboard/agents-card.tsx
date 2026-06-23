@@ -177,7 +177,7 @@ export function AgentsCard({
 					<EmptyState
 						fillHeight={false}
 						title="No agents yet"
-						description="Connect a CLI agent or deploy a hosted one to see it here."
+						description="Connect an agent to see it here."
 					/>
 				)}
 				{hostedStatus?.error ? <HostedUnavailableBanner /> : null}

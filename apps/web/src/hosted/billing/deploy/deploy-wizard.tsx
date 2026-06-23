@@ -346,6 +346,7 @@ export function DeployWizard() {
 					const result = await checkout.mutateAsync({
 						plan_slug: perfPlan.slug,
 						billing_term_months: term,
+						collection_method: "charge_automatically",
 						ui_mode: "hosted",
 						deploy_config: deployConfig,
 					});
@@ -362,6 +363,7 @@ export function DeployWizard() {
 				const result = await checkout.mutateAsync({
 					plan_slug: freePlan.slug,
 					billing_term_months: 1,
+					collection_method: "charge_automatically",
 					ui_mode: "hosted",
 				});
 				// A pending checkout action means the entitlement needs confirmation
