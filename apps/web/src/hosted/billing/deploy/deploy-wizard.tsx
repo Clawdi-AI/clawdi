@@ -314,8 +314,9 @@ export function DeployWizard() {
 			if (!aiFields) return;
 			const deployConfig = buildDeployRequest(aiFields);
 
-			// Performance requested but not yet active — change plan via portal
-			// (existing sub) or carry the deploy config through checkout.
+			// Performance deploys require an active Performance plan. Existing
+			// subscribers change plan via portal; new subscribers carry the
+			// deploy config through checkout.
 			if (compute === "performance" && !hasPerformance && perfPlan) {
 				if (sub) {
 					const res = await portal.mutateAsync({

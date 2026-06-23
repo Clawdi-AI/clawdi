@@ -207,7 +207,7 @@ export function AddProviderDialog({
 
 		// Codex "Sign in with ChatGPT": create the canonical openai-codex provider
 		// with the app callback redirect, then open ChatGPT. The callback route
-		// hands code+state back and we complete automatically (paste fallback in
+		// hands code+state back and we complete automatically (paste path in
 		// the sub-screen). redirect_uri stays identical across start/complete.
 		if (authMethod === "oauth") {
 			const redirectUri = codexRedirectUri();

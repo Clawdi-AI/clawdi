@@ -5,12 +5,12 @@ import { BillingApiError } from "@/hosted/billing/errors";
 
 describe("hostedApiBaseUrl", () => {
 	it("normalizes a deploy API origin for shared routes", () => {
-		expect(hostedApiBaseUrl("https://api.clawdi.ai/")).toBe("https://api.clawdi.ai");
+		expect(hostedApiBaseUrl("https://deploy.example.com/")).toBe("https://deploy.example.com");
 	});
 
 	it("strips an existing v2 suffix for shared routes", () => {
-		expect(hostedApiBaseUrl("https://api.clawdi.ai/backend/v2/")).toBe(
-			"https://api.clawdi.ai/backend",
+		expect(hostedApiBaseUrl("https://deploy.example.com/backend/v2/")).toBe(
+			"https://deploy.example.com/backend",
 		);
 	});
 });

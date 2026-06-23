@@ -70,7 +70,7 @@ export const IMESSAGE_AUTH_MODES = [
 	{ value: "bearer", label: "Bearer token" },
 ] as const;
 
-const FALLBACK: ChannelProviderMeta = {
+const DEFAULT_PROVIDER_META: ChannelProviderMeta = {
 	id: "telegram",
 	label: "Channel",
 	tint: "bg-muted text-muted-foreground",
@@ -79,7 +79,7 @@ const FALLBACK: ChannelProviderMeta = {
 };
 
 export function providerMeta(id: string): ChannelProviderMeta {
-	return PROVIDER_META[id as ChannelProviderId] ?? { ...FALLBACK, label: id };
+	return PROVIDER_META[id as ChannelProviderId] ?? { ...DEFAULT_PROVIDER_META, label: id };
 }
 
 export function isChannelProvider(id: string): id is ChannelProviderId {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 /**
  * OSS-clean invariant tests.
@@ -21,6 +21,9 @@ import { join, relative } from "node:path";
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const V2_DIR = join(SRC_DIR, "v2");
+const APP_DIR = join(SRC_DIR, "app");
+const V2_ONLY_ROUTE_IMPORT =
+	/\bimport\s*\(\s*["']@\/(?:v2\/|hosted\/billing\/(?:deploy|subscription|usage|wallet)\/)[^"']+["']\s*\)/;
 
 function listTsx(dir: string): string[] {
 	const out: string[] = [];
@@ -48,6 +51,55 @@ function walkSrcExceptQuarantined(dir: string, out: string[] = []): string[] {
 		}
 	}
 	return out;
+}
+
+function hasV2Gate(file: string): boolean {
+	const src = readFileSync(file, "utf8");
+	return src.includes('from "@/components/v2-gate"') && /<V2Gate(?:\s|>)/.test(src);
+}
+
+function nearestV2GateFile(routeFile: string): string | null {
+	if (hasV2Gate(routeFile)) return routeFile;
+
+	let dir = dirname(routeFile);
+	while (dir.startsWith(APP_DIR)) {
+		const layoutFile = join(dir, "layout.tsx");
+		if (layoutFile !== routeFile && existsSync(layoutFile) && hasV2Gate(layoutFile)) {
+			return layoutFile;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+
+	return null;
+}
+
+function discoverV2OnlyRouteFiles(): string[] {
+	const gateFiles = new Set<string>();
+	const ungatedRouteFiles: string[] = [];
+
+	for (const file of listTsx(APP_DIR)) {
+		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
+		const src = readFileSync(file, "utf8");
+		if (!V2_ONLY_ROUTE_IMPORT.test(src)) continue;
+
+		const gateFile = nearestV2GateFile(file);
+		if (gateFile) {
+			gateFiles.add(relative(SRC_DIR, gateFile));
+		} else {
+			ungatedRouteFiles.push(relative(SRC_DIR, file));
+		}
+	}
+
+	if (ungatedRouteFiles.length > 0) {
+		throw new Error(
+			`V2-only route entrypoints must render inside <V2Gate> directly or through a parent layout:\n  ${ungatedRouteFiles.join("\n  ")}`,
+		);
+	}
+
+	expect(gateFiles.size).toBeGreaterThan(0);
+	return [...gateFiles].sort();
 }
 
 describe("IS_HOSTED flag", () => {
@@ -344,14 +396,7 @@ describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
 
 describe("v2 route exposure", () => {
 	test("v2-only routes are behind the per-user V2 gate, not only the build flag", () => {
-		const routeFiles = [
-			"app/(dashboard)/deploy/page.tsx",
-			"app/(dashboard)/settings/billing/layout.tsx",
-			"app/(dashboard)/channels/page.tsx",
-			"app/(dashboard)/channels/[id]/page.tsx",
-			"app/(dashboard)/ai-providers/page.tsx",
-			"app/oauth/codex/callback/page.tsx",
-		];
+		const routeFiles = discoverV2OnlyRouteFiles();
 
 		const offenders: string[] = [];
 		for (const routeFile of routeFiles) {
@@ -376,7 +421,7 @@ describe("v2 route exposure", () => {
 		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
 		expect(src).toContain('router.push("/deploy")');
 		expect(src).not.toContain('from "@/hosted/');
-		expect(src).not.toContain('href="https://www.clawdi.ai/dashboard"');
+		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
 	});
 
 	test("v2-off agent index copy stays neutral", () => {

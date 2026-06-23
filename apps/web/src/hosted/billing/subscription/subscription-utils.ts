@@ -46,8 +46,8 @@ export function shortDate(iso: string | null): string {
 }
 
 /**
- * The plan's offer for a billing term, with a synthetic monthly fallback when
- * the backend returns no offers — so callers always have a price to show.
+ * The plan's offer for a billing term, with a synthetic monthly offer when the
+ * backend returns no offers — so callers always have a price to show.
  */
 export function selectOfferForTerm(plan: Plan, term: number): BillingOffer {
 	const offers = plan.offers.length

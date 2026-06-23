@@ -70,9 +70,9 @@ function isPermanentError(raw: string | null | undefined): boolean {
  * retries have failed for a transient condition (network outage,
  * 5xx, 408/429). Distinct from `permanent:` because the periodic
  * rescan auto-re-enqueues the same content once the underlying
- * condition clears — no user action required. UI shows "the
- * daemon gave up retrying for now; next sync cycle will pick
- * this up automatically when connectivity is back." */
+ * condition clears — no user action required. UI shows that the
+ * daemon stopped this retry cycle and will pick the item up again
+ * automatically when connectivity is back. */
 function isRetryExhaustedError(raw: string | null | undefined): boolean {
 	return typeof raw === "string" && raw.startsWith("retry_exhausted: ");
 }
@@ -158,8 +158,7 @@ export function DaemonStatusBadge({
 	 * agent Compute tab) so the dead-end
 	 * "the daemon is broken and you can't fix it from here" UX
 	 * becomes "click here to restart the pod." Self-managed callers
-	 * omit it; hosted callers that lack a deployment link
-	 * (pre-Phase-4a fallback path) may also omit it and get a plain
+	 * omit it; hosted callers without a deployment link get a plain
 	 * "contact support / check agent settings" message. */
 	manageHref?: string;
 }) {
@@ -575,8 +574,8 @@ function PromptBlock({ text }: { text: string }) {
 }
 
 /** Two of the self-managed errored-state branches ("daemon stopped"
- * and the generic "keep retrying" fallback) end with the same nudge
- * to `clawdi auth login`. Inline both was 8 lines of identical JSX. */
+ * and the generic "keep retrying" branch) end with the same nudge to
+ * `clawdi auth login`. Inline both was 8 lines of identical JSX. */
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
@@ -588,10 +587,8 @@ function AuthLoginHint() {
 
 /** Affordance for hosted-pod remediation. Renders a button-styled link
  * to the hosted agent Compute tab (Restart / Stop / Delete) when
- * `manageHref` is provided. Falls back to a static muted-text breadcrumb
- * when it isn't — legacy hosted tiles can land here without a deployment
- * link on hand, and showing "no link" is still better than
- * advertising a CLI fix that doesn't apply. */
+ * `manageHref` is provided. Without that link, render neutral support
+ * guidance instead of self-managed CLI remediation. */
 function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (

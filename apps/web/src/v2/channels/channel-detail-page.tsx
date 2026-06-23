@@ -364,8 +364,8 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 		<div className="max-w-xl space-y-4">
 			<InfoCard icon={Smartphone} title="Link a WhatsApp number">
 				WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by
-				scanning it in WhatsApp → Linked devices. The live in-dashboard QR is coming soon — for now
-				the credential is handed to the agent runtime to complete pairing.
+				scanning it in WhatsApp → Linked devices. The credential is handed to the agent runtime to
+				complete pairing.
 			</InfoCard>
 
 			{links.isLoading ? (

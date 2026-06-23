@@ -69,7 +69,7 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 /**
  * UI-side projection of an agent for the dashboard grid. The dashboard
  * page composes this from cloud-api environments and (for hosted users)
- * clawdi.ai deployments — `AgentsCard` itself stays generic and
+ * hosted deployments — `AgentsCard` itself stays generic and
  * never imports cross-origin clients or `@/hosted/*`.
  */
 export interface AgentTile {
@@ -85,11 +85,10 @@ export interface AgentTile {
 	lastSeenAt?: string | null;
 	/** Primary click target. Always points at the in-app env detail
 	 * page (`/agents/{env_id}`) when an env is available — for both
-	 * self-managed and hosted-with-Phase-4a-env tiles, so the
-	 * sessions/skills/memory experience stays unified. Falls back to
-	 * the in-app deployment-id route for hosted tiles whose cloud-api
-	 * env hasn't been registered yet (pre-Phase-4a legacy pods,
-	 * mint-failed deploys). `external` reflects whichever applies. */
+	 * self-managed and hosted tiles with a registered env, so the
+	 * sessions/skills/memory experience stays unified. Uses the in-app
+	 * deployment-id route for hosted tiles whose cloud-api env has not
+	 * been registered yet. `external` reflects whichever applies. */
 	href: string;
 	external?: boolean;
 	/** Secondary click target rendered as a small "Manage" button on
@@ -104,8 +103,8 @@ export interface AgentTile {
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with
-	 * the same shape; only legacy hosted pods (no env registered)
-	 * leave this null. */
+	 * the same shape; hosted deployments without a registered env leave
+	 * this null. */
 	env?: Env | null;
 	/** Hosted only: the compute (deployment) this runtime-agent belongs to.
 	 * Lets the /agents index group sibling runtime-agents under their shared
@@ -267,8 +266,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	}
 
 	// Trailing-edge slot. Hosted tiles with a distinct `manageHref` get a
-	// dedicated in-app Compute-tab affordance. Hosted fallback tiles that
-	// truly leave the app (`external`) get the original ArrowUpRight glyph.
+	// dedicated in-app Compute-tab affordance. Tiles that truly leave the
+	// app (`external`) get the ArrowUpRight glyph.
 	const manageHrefIsExternal = tile.manageHref ? /^https?:\/\//i.test(tile.manageHref) : false;
 	const manageClassName =
 		"relative z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary";

@@ -53,7 +53,7 @@ export function codexProviderBody(defaultModel?: string): AiProviderUpsert {
 
 /**
  * Parse a pasted OAuth callback URL (or raw `?code=…&state=…` query) — the
- * manual fallback for when the redirect can't reach the app automatically
+ * manual completion path for when the redirect can't reach the app automatically
  * (e.g. the backend hasn't whitelisted the app redirect_uri yet).
  */
 export function parseCodexCallback(input: string): CodexOAuthResult | null {

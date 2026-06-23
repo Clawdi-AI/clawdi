@@ -59,12 +59,5 @@ OSS users running their own Clawdi instance see none of this UI.
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).
 
-The connector flow used to live here too (`use-hosted-connectors.ts`)
-but was removed once cloud-api adopted Clerk-id-based Composio
-entities — both deploy modes now read connectors from the same
-`/api/connectors` route.
-
-Future additions (later phases, not yet built):
-
-- `welcome-card.tsx` — First-day onboarding card with starter skills
-  preview
+Connector UI does not live here. Hosted and self-managed sessions both
+read connectors from the shared `/api/connectors` route.

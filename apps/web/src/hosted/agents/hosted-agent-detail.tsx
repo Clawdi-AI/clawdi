@@ -343,7 +343,7 @@ function OverviewTab({
  * Live agent console embedded inline. The deployment's `openclaw_ui_url` /
  * `hermes_ui_url` point at owner-only runtime bridge URLs. When the runtime
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
- * the full-screen link is the fallback.
+ * the full-screen link is the alternate path.
  */
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
@@ -663,7 +663,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 		return [...mine, ...shared].filter((c) => !linkedIds.has(c.id));
 	}, [channels.data, botPool.data, linkedIds]);
 
-	// Provider/name fallback for linked rows whose API payload omits the nested
+	// Provider/name labels for linked rows whose API payload omits the nested
 	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
 	// Resolved from the already-loaded channels + shared bot-pool by account id.
 	const accountSummaries = useMemo(() => {

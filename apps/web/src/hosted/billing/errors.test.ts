@@ -113,7 +113,7 @@ describe("normalizeBillingError", () => {
 		).toBe("That code has already been used.");
 	});
 
-	test("unknown shapes get a safe fallback", () => {
+	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
 	});
 });
