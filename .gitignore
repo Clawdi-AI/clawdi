@@ -19,6 +19,8 @@ __pycache__/
 .env.local
 .clawdi.env
 .paseo/
+infra/deploy/coolify/*.local.json
+infra/deploy/coolify/*.live.json
 
 # File Store (local dev)
 data/
