@@ -156,9 +156,23 @@ Set `deploy=false` to build and publish an image without touching Coolify.
 Set `deploy=true` with one of these deployment scopes. The script updates image
 tags only for the Applications selected by the deployment scope:
 
-- `api-only`: update and deploy only the API.
-- `workers-only`: update and deploy only workers.
+- `api-only`: update and deploy only the API. Use this for pre-cutover
+  validation while worker Applications remain stopped.
 - `all`: update all Applications, then deploy API first and workers second.
+  Use this for normal live releases so the API and worker run the same image
+  commit.
+
+After deployment, the workflow audits the live Coolify configuration with
+`audit_stack.py`. `api-only` dispatches audit with `--phase api-only`; `all`
+dispatches audit with `--phase live --expect-commit <full-git-sha>`.
+
+Automatic releases can be enabled after the Coolify stack is the live runtime.
+When `Backend CI` succeeds on `main`, `.github/workflows/clawdi-image-release.yml`
+checks whether backend image inputs changed. If they did, and the repository
+variable `CLAWDI_COOLIFY_AUTO_DEPLOY` is set to `true`, the workflow builds the
+backend image, deploys the `all` scope through Coolify, waits for completion,
+and runs the live audit. If backend image inputs did not change, the automatic
+path runs a live audit without publishing or deploying a new image.
 
 The workflow uses the public `production-stack.json` template by default, which
 is safe because deploy only needs the app names, roles, and deployment tag to

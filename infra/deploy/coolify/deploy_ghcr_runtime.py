@@ -283,8 +283,6 @@ def apps_for_deploy_scope(
 ) -> list[tuple[str, str]]:
     if deploy_scope == "api-only":
         return [api_app]
-    if deploy_scope == "workers-only":
-        return worker_apps
     return [api_app, *worker_apps]
 
 
@@ -312,7 +310,7 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=int, default=900)
     parser.add_argument(
         "--deploy-scope",
-        choices=("api-only", "workers-only", "all"),
+        choices=("api-only", "all"),
         default=os.environ.get("CLAWDI_DEPLOY_SCOPE", "api-only"),
         help="Applications to deploy after updating image tags.",
     )
@@ -402,7 +400,7 @@ def main() -> int:
                 tag=args.tag,
                 timeout_seconds=args.timeout_seconds,
             )
-    elif args.deploy_scope == "api-only":
+    else:
         log("deployment_strategy=api-only")
         api_deployment_uuid = deploy_application(
             api_url=args.api_url,
@@ -421,8 +419,6 @@ def main() -> int:
                 timeout_seconds=args.timeout_seconds,
             )
         return 0
-    else:
-        log("deployment_strategy=workers-only")
 
     queued_worker_deployments = deploy_applications(
         api_url=args.api_url,
