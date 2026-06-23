@@ -2,6 +2,18 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
+def _normalize_pem_env_value(value: str) -> str:
+    # Coolify can preserve escaped newlines either as literal "\n" pairs or as
+    # a line-continuation backslash followed by a real newline. Build the latter
+    # pattern explicitly so Python source line-continuation rules cannot change
+    # the string we are matching.
+    return (
+        value.replace("\\" + "\r\n", "\n")
+        .replace("\\" + "\n", "\n")
+        .replace("\\n", "\n")
+    )
+
+
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -31,7 +43,7 @@ class Settings(BaseSettings):
         if isinstance(v, str) and len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
             v = v[1:-1]
         if isinstance(v, str) and "BEGIN PUBLIC KEY" in v:
-            return v.replace("\\\r\n", "\n").replace("\\\n", "\n").replace("\\n", "\n")
+            return _normalize_pem_env_value(v)
         return v
 
     app_name: str = "clawdi"
