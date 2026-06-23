@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -74,6 +75,8 @@ log = logging.getLogger(__name__)
 file_store = get_file_store()
 _MAX_RUNTIME_OBSERVED_BYTES = 64 * 1024
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
+_HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
+_LEGACY_HOSTED_MACHINE_NAME_RE = re.compile(r"^v2-hosted-[a-f0-9]{6,16}$")
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
@@ -331,7 +334,28 @@ async def list_environments(
         stmt = stmt.where(AgentEnvironment.id == bound_env)
     result = await db.execute(stmt)
     envs = result.scalars().all()
-    return [_env_to_response(e) for e in envs]
+    states_by_env: dict[UUID, HostedRuntimeState] = {}
+    env_ids = [env.id for env in envs]
+    if env_ids:
+        states = (
+            (
+                await db.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        states_by_env = {state.environment_id: state for state in states}
+    hosted_deployments_by_machine = _hosted_deployments_by_machine(envs, states_by_env)
+    return [
+        _env_to_response(
+            e,
+            states_by_env.get(e.id),
+            hosted_deployment_id=hosted_deployments_by_machine.get(e.machine_id),
+        )
+        for e in envs
+    ]
 
 
 @router.get("/api/environments/runtime-observed")
@@ -370,6 +394,7 @@ async def list_environment_runtime_observed(
             .all()
         )
         states_by_env = {state.environment_id: state for state in states}
+    hosted_deployments_by_machine = _hosted_deployments_by_machine(envs, states_by_env)
 
     counts = RuntimeObservedSummaryCountsResponse()
     items: list[RuntimeObservedSummaryItemResponse] = []
@@ -379,7 +404,11 @@ async def list_environment_runtime_observed(
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
-                environment=_env_to_response(env),
+                environment=_env_to_response(
+                    env,
+                    state,
+                    hosted_deployment_id=hosted_deployments_by_machine.get(env.machine_id),
+                ),
                 desired=_runtime_observed_desired(state) if state is not None else None,
                 health=health,
                 provider_health=_runtime_observed_provider_health(state),
@@ -410,7 +439,17 @@ async def get_environment(
     env = result.scalar_one_or_none()
     if not env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    return _env_to_response(env)
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    sibling_deployment_id = (
+        None
+        if bound_env is not None
+        else await _hosted_deployment_id_for_machine(db, env, state)
+    )
+    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
 
 @router.get("/api/environments/{environment_id}/runtime-observed")
@@ -439,8 +478,13 @@ async def get_environment_runtime_observed(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
+    sibling_deployment_id = (
+        None
+        if bound_env is not None
+        else await _hosted_deployment_id_for_machine(db, env, state)
+    )
     return RuntimeObservedResponse(
-        environment=_env_to_response(env),
+        environment=_env_to_response(env, state, hosted_deployment_id=sibling_deployment_id),
         desired=_runtime_observed_desired(state) if state is not None else None,
         observed=state.observed if state is not None else None,
         health=_runtime_observed_health(env, state),
@@ -448,7 +492,18 @@ async def get_environment_runtime_observed(
     )
 
 
-def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
+def _env_to_response(
+    env: AgentEnvironment,
+    hosted_state: HostedRuntimeState | None = None,
+    *,
+    hosted_deployment_id: str | None = None,
+) -> EnvironmentResponse:
+    resolved_hosted_deployment_id = (
+        hosted_state.deployment_id if hosted_state is not None else hosted_deployment_id
+    )
+    hosted_managed = (
+        resolved_hosted_deployment_id is not None or _is_legacy_hosted_managed_env(env)
+    )
     return EnvironmentResponse(
         id=str(env.id),
         machine_name=env.machine_name,
@@ -462,10 +517,58 @@ def _env_to_response(env: AgentEnvironment) -> EnvironmentResponse:
         queue_depth_high_water=env.queue_depth_high_water_since_start,
         dropped_count=env.dropped_count_since_start,
         sync_enabled=env.sync_enabled,
+        hosted_managed=hosted_managed,
+        hosted_deployment_id=resolved_hosted_deployment_id,
         # NOT NULL per schema; the heal path in register_environment
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
+    )
+
+
+def _hosted_deployments_by_machine(
+    envs: list[AgentEnvironment],
+    states_by_env: dict[UUID, HostedRuntimeState],
+) -> dict[str, str]:
+    deployments: dict[str, str] = {}
+    for env in envs:
+        state = states_by_env.get(env.id)
+        if state is not None:
+            deployments[env.machine_id] = state.deployment_id
+    return deployments
+
+
+async def _hosted_deployment_id_for_machine(
+    db: AsyncSession,
+    env: AgentEnvironment,
+    state: HostedRuntimeState | None,
+) -> str | None:
+    if state is not None:
+        return state.deployment_id
+    return (
+        await db.execute(
+            select(HostedRuntimeState.deployment_id)
+            .join(
+                AgentEnvironment,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.user_id == env.user_id,
+                AgentEnvironment.machine_id == env.machine_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def _is_legacy_hosted_managed_env(env: AgentEnvironment) -> bool:
+    # Older hosted runtimes registered cloud-api envs before the dedicated
+    # hosted_runtime_states table existed. Keep those envs out of the
+    # self-managed UI, but keep hosted_deployment_id null because there is no
+    # authoritative deployment id to expose.
+    return (
+        env.agent_type in _HOSTED_MANAGED_AGENT_TYPES
+        and _LEGACY_HOSTED_MACHINE_NAME_RE.fullmatch(env.machine_name.strip().lower()) is not None
     )
 
 

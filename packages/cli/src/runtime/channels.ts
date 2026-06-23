@@ -1,3 +1,4 @@
+import { directProviderPassthroughProfile } from "./hosted-mitm-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeChannelAccount,
@@ -63,6 +64,9 @@ function applyRuntimeChannelProjection(
 	manifest: RuntimeManifest,
 	links: ManagedChannelLink[],
 ): RuntimeManifest {
+	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
+	const directProviderPassthrough =
+		managedProfiles.length > 0 ? directProviderPassthroughProfile(manifest.projection ?? {}) : null;
 	return {
 		...manifest,
 		projection: {
@@ -71,7 +75,7 @@ function applyRuntimeChannelProjection(
 		},
 		mitmProfiles: mergeMitmProfiles(
 			manifest.mitmProfiles,
-			buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl),
+			directProviderPassthrough ? [...managedProfiles, directProviderPassthrough] : managedProfiles,
 		),
 	};
 }
@@ -216,6 +220,21 @@ function buildManagedChannelMitmProfiles(
 				priority: 101,
 				owner: "clawdi-native-channels",
 			});
+			profiles.push({
+				id: `native-${idSuffix}-gateway-passthrough`,
+				enabled: true,
+				kind: "passthrough",
+				match: {
+					scheme: "wss",
+					host: "gateway.discord.gg",
+					pathPrefix: "/",
+					headers: {},
+					query: {},
+				},
+				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+				priority: 201,
+				owner: "clawdi-native-channels",
+			});
 		}
 		if (link.account.provider === "whatsapp") {
 			profiles.push({
@@ -258,15 +277,15 @@ function mergeMitmProfiles(
 	return {
 		profiles: [
 			...profiles.filter(
-				(profile) => !managedIds.has(profile.id) && !isManagedChannelProfile(profile),
+				(profile) => !managedIds.has(profile.id) && !isChannelProjectionProfile(profile),
 			),
 			...managed,
 		],
 	};
 }
 
-function isManagedChannelProfile(profile: MitmProfile): boolean {
-	return profile.owner === "clawdi-native-channels" && profile.id.endsWith("-managed");
+function isChannelProjectionProfile(profile: MitmProfile): boolean {
+	return profile.owner === "clawdi-native-channels" || profile.id === "direct-provider-passthrough";
 }
 
 function channelSecretValues(links: ManagedChannelLink[]): Record<string, string> {

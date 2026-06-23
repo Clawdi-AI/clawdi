@@ -2,9 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useChannelEditApi } from "@/hosted/channels/channel-edit-client";
-import type { ChannelCreate } from "@/hosted/channels/channel-types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { useChannelEditApi } from "@/v2/channels/channel-edit-client";
+import type { ChannelCreate } from "@/v2/channels/channel-types";
 
 /**
  * Typed data hooks for the native channels surface. All reads/writes go

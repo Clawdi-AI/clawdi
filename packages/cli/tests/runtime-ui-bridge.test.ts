@@ -10,20 +10,20 @@ import {
 } from "../src/runtime/ui-bridge";
 
 describe("runtime UI bridge defaults", () => {
-	it("uses the official runtime UI ports by default", () => {
+	it("uses bridge listen ports that do not collide with runtime loopback ports", () => {
 		withBridgeListenEnv({}, () => {
 			expect(defaultRuntimeUiBridgeTargets()).toEqual([
 				{
 					name: "openclaw",
 					listenHost: "0.0.0.0",
-					listenPort: 18789,
+					listenPort: 28789,
 					targetHost: "127.0.0.1",
 					targetPort: 18789,
 				},
 				{
 					name: "hermes",
 					listenHost: "0.0.0.0",
-					listenPort: 9119,
+					listenPort: 28793,
 					targetHost: "127.0.0.1",
 					targetPort: 9119,
 				},

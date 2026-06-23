@@ -4,7 +4,7 @@ import type {
 	AiProviderAuth as RuntimeAiProviderAuth,
 } from "@clawdi/shared";
 import { validateAiProviderCatalog } from "@clawdi/shared";
-import type { AiProvider } from "@/hosted/ai-providers/types";
+import type { AiProvider } from "@/v2/ai-providers/types";
 
 export type RuntimeAiProviderAuthKind = "api_key" | "codex_oauth";
 

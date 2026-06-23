@@ -177,6 +177,15 @@ class EnvironmentResponse(BaseModel):
     queue_depth_high_water: int = 0
     dropped_count: int = 0
     sync_enabled: bool = False
+    # Present when this cloud-api env is registered by the hosted agent
+    # service. UI uses it to keep hosted-managed runtimes out of the
+    # self-managed/connected agent list without relying on machine-name
+    # conventions.
+    hosted_managed: bool = False
+    # Real deployment id when cloud-api has runtime desired state for this
+    # env or a sibling env in the same hosted compute. Legacy hosted envs may
+    # be marked hosted_managed without a known deployment id.
+    hosted_deployment_id: str | None = None
     # Schema-enforced NOT NULL on agent_environments — every env
     # has a default project after register_environment runs (which
     # heals legacy rows that lost their value). Daemons rely on this

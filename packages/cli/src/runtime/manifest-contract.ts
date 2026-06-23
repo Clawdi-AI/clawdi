@@ -169,6 +169,8 @@ export const hostedRuntimeManifestSchema = z
 						kind: z.string().min(1).optional(),
 						baseUrl: z.string().url().optional(),
 						model: z.string().min(1).optional(),
+						apiMode: z.string().min(1).optional(),
+						runtimeEnvName: z.string().min(1).optional(),
 						apiKeySecretRef: z.string().min(1).nullable().optional(),
 					})
 					.passthrough(),

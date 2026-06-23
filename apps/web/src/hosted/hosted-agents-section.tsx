@@ -1,7 +1,13 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { AgentsCard, type AgentTile } from "@/components/dashboard/agents-card";
+import { Cloud } from "lucide-react";
+import {
+	AgentsCard,
+	type AgentTile,
+	AgentTileGrid,
+	HostedUnavailableBanner,
+} from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 
@@ -90,7 +96,7 @@ export function HostedAgentsSection({
 /**
  * Right-column "Connect another" CTA — only renders once we know
  * the user has at least one agent (hosted OR self-managed). Shares
- * the `useHostedAgentTiles` cache with `HostedAgentsSection` via
+ * the hosted deployments query cache with `HostedAgentsSection` via
  * TanStack Query, so it costs no extra network. Without this
  * component the page-level `hasAgents` check would only see
  * self-managed counts and a hosted-only user would never see the
@@ -105,12 +111,98 @@ export function HostedSecondaryCTA({
 	envsLoading: boolean;
 	cloudEnvs: Env[];
 }) {
-	// Reuses the same TanStack Query cache as `HostedAgentsSection`, so passing
-	// cloudEnvs here is just re-running the join, not re-fetching.
+	// Reuses the same hosted deployments TanStack Query cache
+	// as `HostedAgentsSection` so passing cloudEnvs here is just
+	// re-running the join, not re-fetching.
 	const hosted = useHostedAgentTiles({ cloudEnvs });
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.
 	if (envsLoading || hosted.isLoading) return null;
 	const hasAnyAgent = selfManagedCount > 0 || hosted.tiles.length > 0;
 	return hasAnyAgent ? <OnboardingCard variant="additional-agent" /> : null;
+}
+
+/**
+ * The /agents index list: each runtime is a SEPARATE agent, grouped under its
+ * shared compute (pod). Hosted runtime-agents are bucketed by `computeId`;
+ * self-managed (connected) agents get their own section. Mirrors the per-runtime
+ * model the agent-detail page enforces.
+ */
+export function HostedAgentsByCompute({
+	selfManagedTiles,
+	envsLoading,
+	selfManagedCount,
+	cloudEnvs,
+}: {
+	selfManagedTiles: AgentTile[];
+	envsLoading: boolean;
+	selfManagedCount: number;
+	cloudEnvs: Env[];
+}) {
+	const hosted = useHostedAgentTiles({ cloudEnvs });
+	const dedupedSelfManaged = selfManagedTiles.filter(
+		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
+	);
+
+	// Bucket hosted runtime-tiles by their shared compute, preserving order.
+	const groups: { key: string; name: string; tiles: AgentTile[] }[] = [];
+	const byKey = new Map<string, { key: string; name: string; tiles: AgentTile[] }>();
+	for (const tile of hosted.tiles) {
+		const key = tile.computeId ?? tile.id;
+		let group = byKey.get(key);
+		if (!group) {
+			group = { key, name: tile.computeName ?? tile.name, tiles: [] };
+			byKey.set(key, group);
+			groups.push(group);
+		}
+		group.tiles.push(tile);
+	}
+
+	const isEmptyState =
+		!envsLoading &&
+		selfManagedCount === 0 &&
+		hosted.tiles.length === 0 &&
+		!hosted.isLoading &&
+		!hosted.error;
+	if (isEmptyState) {
+		return (
+			<div data-hosted="true">
+				<OnboardingCard variant="first-agent" />
+			</div>
+		);
+	}
+
+	if ((envsLoading || hosted.isLoading) && groups.length === 0 && dedupedSelfManaged.length === 0) {
+		return (
+			<div data-hosted="true">
+				<AgentsCard agents={[]} isLoading />
+			</div>
+		);
+	}
+
+	return (
+		<div data-hosted="true" className="space-y-6">
+			{groups.map((group) => (
+				<section key={group.key} className="space-y-2">
+					<div className="flex items-center gap-2 px-0.5">
+						<Cloud className="size-3.5 text-muted-foreground" />
+						<span className="text-sm font-medium">{group.name}</span>
+						<span className="text-xs text-muted-foreground">
+							{group.tiles.length} runtime{group.tiles.length === 1 ? "" : "s"}
+						</span>
+					</div>
+					<AgentTileGrid tiles={group.tiles} />
+				</section>
+			))}
+
+			{dedupedSelfManaged.length > 0 ? (
+				<section className="space-y-2">
+					<div className="px-0.5 text-sm font-medium">Connected agents</div>
+					<AgentTileGrid tiles={dedupedSelfManaged} />
+				</section>
+			) : null}
+
+			{hosted.error ? <HostedUnavailableBanner /> : null}
+		</div>
+	);
 }

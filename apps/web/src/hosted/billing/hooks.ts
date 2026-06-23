@@ -15,7 +15,7 @@ import type {
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
-import { billingQueryRetry, isWalletNotEnabledError } from "@/hosted/billing/errors";
+import { billingQueryRetry } from "@/hosted/billing/errors";
 
 export const billingKeys = {
 	wallet: ["billing", "wallet"] as const,
@@ -30,8 +30,8 @@ export const billingKeys = {
 
 /**
  * Shared billing read: gates fetches on `isDeployApiConfigured()` and applies
- * the transient-only `billingQueryRetry` so deterministic 4xx (legacy-wallet
- * 403, auth, validation) surface immediately. Per-query options (staleTime,
+ * the transient-only `billingQueryRetry` so deterministic 4xx (auth,
+ * validation, not-found, conflict) surface immediately. Per-query options (staleTime,
  * refetchInterval, placeholderData) are spread last and override the defaults.
  */
 function useBillingQuery<TData>(
@@ -54,9 +54,9 @@ export function useHostedUser() {
 /**
  * Wallet balance + auto-reload config. The balance is a sub2api snapshot, so
  * it can lag a few seconds — poll every 30s to keep it reasonably fresh while
- * the page is open. `billingQueryRetry` keeps a 403 (legacy / not enrolled)
- * surfacing immediately for `useBillingProfile` (4xx isn't retried) while still
- * absorbing transient 5xx / network blips with up to two retries.
+ * the page is open. `billingQueryRetry` keeps deterministic 4xx failures
+ * surfacing immediately while still absorbing transient 5xx / network blips
+ * with up to two retries.
  */
 export function useWallet() {
 	const client = useBillingClient();
@@ -65,24 +65,6 @@ export function useWallet() {
 		queryFn: () => client.getWallet(),
 		refetchInterval: 30_000,
 	});
-}
-
-/**
- * Derived wallet-vs-legacy gate. `billing_model == "wallet"` isn't on the
- * user profile response, so we read it off the wallet endpoint: 200 = wallet
- * user, 403 "wallet billing is not enabled" = legacy. Shares the wallet
- * query cache (no extra request).
- */
-export function useBillingProfile() {
-	const wallet = useWallet();
-	const isLegacy = isWalletNotEnabledError(wallet.error);
-	const isWalletUser = wallet.data != null ? true : isLegacy ? false : null;
-	return {
-		isWalletUser,
-		isLoading: wallet.isLoading,
-		// A real error is anything that isn't the expected legacy 403.
-		error: isLegacy ? null : wallet.error,
-	};
 }
 
 export function useWalletLedger(limit = 50) {

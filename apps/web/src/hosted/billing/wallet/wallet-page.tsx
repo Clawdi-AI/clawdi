@@ -1,16 +1,11 @@
 "use client";
 
-import { CreditCard, Wallet as WalletIcon } from "lucide-react";
+import { CreditCard } from "lucide-react";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
-import {
-	BillingEmpty,
-	BillingError,
-	WalletSkeleton,
-} from "@/hosted/billing/components/state-views";
-import { isWalletNotEnabledError } from "@/hosted/billing/errors";
+import { BillingError, WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
@@ -41,19 +36,10 @@ export function WalletPage() {
 	}
 
 	if (wallet.error || !wallet.data) {
-		const legacy = isWalletNotEnabledError(wallet.error);
 		return (
 			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
 				<PageHeader title="Wallet" description={DESCRIPTION} />
-				{legacy ? (
-					<BillingEmpty
-						icon={<WalletIcon />}
-						title="Wallet billing isn’t enabled"
-						description="This account uses the classic plan model. The AI Credits wallet is part of the new billing experience."
-					/>
-				) : (
-					<BillingError error={wallet.error} onRetry={() => wallet.refetch()} />
-				)}
+				<BillingError error={wallet.error} onRetry={() => wallet.refetch()} />
 			</div>
 		);
 	}

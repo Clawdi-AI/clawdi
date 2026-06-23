@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
+import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
@@ -66,6 +66,13 @@ const HostedSecondaryCTA = IS_HOSTED
 			})),
 		)
 	: null;
+const HostedAgentControls = IS_HOSTED
+	? dynamic(() =>
+			import("@/hosted/billing/agents/hosted-agent-controls").then((m) => ({
+				default: m.HostedAgentControls,
+			})),
+		)
+	: null;
 
 export default function DashboardPage() {
 	const api = useApi();
@@ -115,20 +122,7 @@ export default function DashboardPage() {
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
-	const selfManagedTiles: AgentTile[] = useMemo(() => {
-		return (environments ?? []).map((env) => ({
-			id: env.id,
-			source: "self-managed" as const,
-			name: env.machine_name,
-			agentType: env.agent_type,
-			runtimeLabel: formatRuntime(env.agent_type),
-			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
-			lastSeenAt: env.last_seen_at,
-			href: `/agents/${env.id}`,
-			active: isAgentActive(env.last_seen_at),
-			env,
-		}));
-	}, [environments]);
+	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
@@ -136,10 +130,11 @@ export default function DashboardPage() {
 	// deployed agents on clawdi.ai — that decision lives inside
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
-	const selfManagedCount = environments?.length ?? 0;
+	const selfManagedCount = selfManagedTiles.length;
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
 	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
+	const hostedAccessLoading = Boolean(HostedAgentsSection && v2Access.isLoading);
 	const hostedAgentsEnabled = Boolean(HostedAgentsSection && v2Access.canUseV2);
 
 	return (
@@ -163,7 +158,9 @@ export default function DashboardPage() {
 				    `lg` breakpoint that means single-column overflow → cards
 				    spill past the viewport. */}
 				<div className="min-w-0 space-y-4 lg:col-span-2">
-					{hostedAgentsEnabled && HostedAgentsSection ? (
+					{hostedAccessLoading ? (
+						<AgentsCard agents={selfManagedTiles} isLoading />
+					) : hostedAgentsEnabled && HostedAgentsSection ? (
 						<HostedAgentsSection
 							selfManagedTiles={selfManagedTiles}
 							envsLoading={envsLoading}
@@ -226,7 +223,7 @@ export default function DashboardPage() {
 				    to a sibling component so it can include hosted tiles in
 				    the count. */}
 				<div className="min-w-0 space-y-4">
-					{hostedAgentsEnabled && HostedSecondaryCTA ? (
+					{hostedAccessLoading ? null : hostedAgentsEnabled && HostedSecondaryCTA ? (
 						<HostedSecondaryCTA
 							selfManagedCount={selfManagedCount}
 							envsLoading={envsLoading}
@@ -235,12 +232,15 @@ export default function DashboardPage() {
 					) : hasAgents ? (
 						<ConnectAnotherCard />
 					) : null}
+					{hostedAgentsEnabled && HostedAgentControls ? <HostedAgentControls /> : null}
 					<ResourcesCard
 						stats={stats}
 						projectCount={projects?.length}
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
-						hasConnectedAgent={hostedAgentsEnabled || envsLoading ? undefined : hasAgents}
+						hasConnectedAgent={
+							hostedAccessLoading || hostedAgentsEnabled || envsLoading ? undefined : hasAgents
+						}
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
@@ -301,20 +301,4 @@ function Greeting({
 			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>
 		</div>
 	);
-}
-
-function formatRuntime(agentType: string): string {
-	switch (agentType) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-		case "claude_code":
-		case "claude-code":
-			return "Claude Code";
-		case "codex":
-			return "Codex";
-		default:
-			return agentType;
-	}
 }

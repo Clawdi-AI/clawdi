@@ -3,8 +3,8 @@ import {
 	aiProviderRuntimeId,
 	buildAiProviderBootstrap,
 	toRuntimeAiProvider,
-} from "@/hosted/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/hosted/ai-providers/types";
+} from "@/v2/ai-providers/runtime-bootstrap";
+import type { AiProvider } from "@/v2/ai-providers/types";
 
 const provider: AiProvider = {
 	id: "db-record-uuid",

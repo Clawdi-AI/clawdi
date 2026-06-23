@@ -8,7 +8,7 @@ import { IS_HOSTED } from "@/lib/hosted";
 const ChannelDetailPage = IS_HOSTED
 	? dynamic(
 			() =>
-				import("@/hosted/channels/channel-detail-page").then((m) => ({
+				import("@/v2/channels/channel-detail-page").then((m) => ({
 					default: m.ChannelDetailPage,
 				})),
 			{ loading: HostedRouteSkeleton },

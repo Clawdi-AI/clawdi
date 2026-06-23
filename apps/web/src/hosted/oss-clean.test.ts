@@ -6,42 +6,43 @@ import { join, relative } from "node:path";
 /**
  * OSS-clean invariant tests.
  *
- * The hosted/ directory must stay quarantined: every component
- * inside it sets `data-hosted="true"` on its root element, and
- * every consumer outside hosted/ is gated by `IS_HOSTED` somewhere
- * in the same file.
+ * The hosted/ and v2/ directories must stay quarantined: hosted components set
+ * `data-hosted="true"`, v2 components set `data-v2="true"`, and every
+ * consumer outside those quarantines is gated by `IS_HOSTED` somewhere in the
+ * same file.
  *
  * Static regex / file-walk checks instead of React render tests —
  * apps/web has no jsdom / @testing-library setup and adding it for
  * one invariant would be overkill. The static gates catch the
- * failure modes that matter: forgetting `data-hosted`, forgetting
- * the IS_HOSTED guard when importing hosted modules.
+ * failure modes that matter: forgetting DOM markers, forgetting
+ * the IS_HOSTED guard when importing gated modules.
  */
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
+const V2_DIR = join(SRC_DIR, "v2");
 
-function listHostedTsx(): string[] {
+function listTsx(dir: string): string[] {
 	const out: string[] = [];
-	const walk = (dir: string) => {
-		for (const entry of readdirSync(dir)) {
-			const full = join(dir, entry);
+	const walk = (current: string) => {
+		for (const entry of readdirSync(current)) {
+			const full = join(current, entry);
 			const st = statSync(full);
 			if (st.isDirectory()) walk(full);
 			else if (entry.endsWith(".tsx")) out.push(full);
 		}
 	};
-	walk(HOSTED_DIR);
+	walk(dir);
 	return out;
 }
 
-function walkSrcExceptHosted(dir: string, out: string[] = []): string[] {
+function walkSrcExceptQuarantined(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir)) {
 		const full = join(dir, entry);
 		const st = statSync(full);
 		if (st.isDirectory()) {
-			if (full === HOSTED_DIR) continue;
-			walkSrcExceptHosted(full, out);
+			if (full === HOSTED_DIR || full === V2_DIR) continue;
+			walkSrcExceptQuarantined(full, out);
 		} else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
 			out.push(full);
 		}
@@ -194,7 +195,7 @@ function findMatchingBrace(src: string, openBraceIndex: number): number {
 
 describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
-		const files = listHostedTsx();
+		const files = listTsx(HOSTED_DIR);
 		expect(files.length).toBeGreaterThan(0);
 
 		for (const file of files) {
@@ -215,6 +216,50 @@ describe("hosted/ directory invariants", () => {
 	});
 });
 
+describe("v2/ directory invariants", () => {
+	test('every .tsx file sets data-v2="true" on its root', () => {
+		const files = listTsx(V2_DIR);
+		expect(files.length).toBeGreaterThan(0);
+
+		for (const file of files) {
+			const src = stripComments(readFileSync(file, "utf8"));
+			const hasDataV2 = /\bdata-v2=(?:"true"|\{"true"\})/.test(src);
+			if (!hasDataV2) {
+				throw new Error(
+					`${relative(SRC_DIR, file)}: v2 .tsx must set data-v2="true" on its rendered root`,
+				);
+			}
+		}
+	});
+
+	test("v2 product modules do not depend on hosted agent infrastructure", () => {
+		const offenders: string[] = [];
+		for (const file of [...listTsx(V2_DIR), ...listTs(V2_DIR)]) {
+			const src = readFileSync(file, "utf8");
+			if (/@\/hosted\//.test(src)) offenders.push(relative(SRC_DIR, file));
+		}
+		if (offenders.length > 0) {
+			throw new Error(
+				`v2 product modules must not import hosted agent infrastructure:\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
+function listTs(dir: string): string[] {
+	const out: string[] = [];
+	const walk = (current: string) => {
+		for (const entry of readdirSync(current)) {
+			const full = join(current, entry);
+			const st = statSync(full);
+			if (st.isDirectory()) walk(full);
+			else if (entry.endsWith(".ts")) out.push(full);
+		}
+	};
+	walk(dir);
+	return out;
+}
+
 describe("no static @/hosted/* imports outside hosted/", () => {
 	test("non-hosted files only reach hosted/ via dynamic imports", () => {
 		// Static imports of `@/hosted/*` from any OSS-reachable file
@@ -225,7 +270,7 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 		// statically eliminates the import() site. This test fails if
 		// anyone re-introduces a static `from "@/hosted/…"` import.
 		const offenders: string[] = [];
-		for (const file of walkSrcExceptHosted(SRC_DIR)) {
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
 			// Match top-of-file `import … from "@/hosted/…"` — `dynamic`
 			// arrow-callbacks use `import("…")` (no `from` keyword).
@@ -241,10 +286,28 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 	});
 });
 
-describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
-	test('every `dynamic(import("@/hosted/…"))` is constructed inside `IS_HOSTED ? … : null`', () => {
+describe("no static @/v2/* imports outside v2/ or hosted/", () => {
+	test("OSS-reachable files only reach v2/ via dynamic imports", () => {
+		const offenders: string[] = [];
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
+			const src = readFileSync(file, "utf8");
+			if (/^\s*import\s+[^"']+from\s+["']@\/v2\//m.test(src)) {
+				offenders.push(relative(SRC_DIR, file));
+			}
+		}
+		if (offenders.length > 0) {
+			throw new Error(
+				`Static @/v2/* imports leak the v2 chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nUse dynamic imports gated on IS_HOSTED instead.`,
+			);
+		}
+	});
+});
+
+describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
+	test('every `dynamic(import("@/hosted/…"))` or `dynamic(import("@/v2/…"))` is constructed inside `IS_HOSTED ? … : null`', () => {
 		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
-		// at module top level would register the hosted chunk in the OSS
+		// or `dynamic(() => import("@/v2/x"))` at module top level would
+		// register the gated chunk in the OSS
 		// build's webpack/turbopack manifest even though `IS_HOSTED &&
 		// <Component />` keeps it from rendering. The runtime bundler
 		// only eliminates the import() call when the surrounding
@@ -257,10 +320,11 @@ describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
 		// then walk backwards to the most recent `const ` keyword. The
 		// snippet between the two must contain `IS_HOSTED ?` — that's
 		// the gate the bundler folds at build time.
-		const hostedDynamic = /dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/hosted\/[^"']+["']/g;
-		for (const file of walkSrcExceptHosted(SRC_DIR)) {
+		const gatedDynamic =
+			/dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			for (const match of src.matchAll(hostedDynamic)) {
+			for (const match of src.matchAll(gatedDynamic)) {
 				const idx = match.index ?? 0;
 				const lastConst = src.lastIndexOf("\nconst ", idx);
 				const start = lastConst >= 0 ? lastConst : 0;
@@ -272,7 +336,7 @@ describe("dynamic @/hosted/* imports are gated by IS_HOSTED", () => {
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated dynamic imports of @/hosted/* leak the hosted chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
+				`Ungated dynamic imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
 			);
 		}
 	});
@@ -304,6 +368,13 @@ describe("v2 route exposure", () => {
 			);
 		}
 	});
+
+	test("the unified new-agent entrypoint opens the in-app v2 wizard", () => {
+		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
+		expect(src).toContain('router.push("/deploy")');
+		expect(src).not.toContain('from "@/hosted/');
+		expect(src).not.toContain('href="https://www.clawdi.ai/dashboard"');
+	});
 });
 
 describe("posthog-js is hosted-only", () => {
@@ -312,7 +383,7 @@ describe("posthog-js is hosted-only", () => {
 		const posthogImport =
 			/(?:^\s*import\s+[^"']+\s+from\s+["']posthog-js["'])|(?:\bimport\s*\(\s*["']posthog-js["']\s*\))/m;
 
-		for (const file of walkSrcExceptHosted(SRC_DIR)) {
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
 			if (posthogImport.test(src)) offenders.push(relative(SRC_DIR, file));
 		}

@@ -34,12 +34,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { providerMeta } from "@/hosted/channels/channel-providers";
+import { providerMeta } from "@/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,
 	ChannelAgentLink,
 	ChannelBinding,
-} from "@/hosted/channels/channel-types";
+} from "@/v2/channels/channel-types";
 import {
 	ChannelError,
 	CopyInline,
@@ -47,7 +47,7 @@ import {
 	HealthBadge,
 	ProviderChip,
 	TokenReveal,
-} from "@/hosted/channels/channel-ui";
+} from "@/v2/channels/channel-ui";
 import {
 	useChannel,
 	useChannelActivity,
@@ -63,8 +63,8 @@ import {
 	useSyncCommands,
 	useUnlinkChannelAgent,
 	useWhatsappTenantCreds,
-} from "@/hosted/channels/channels-hooks";
-import { LinkAgentDialog } from "@/hosted/channels/link-agent-dialog";
+} from "@/v2/channels/channels-hooks";
+import { LinkAgentDialog } from "@/v2/channels/link-agent-dialog";
 
 function formatWhen(iso: string | null | undefined): string {
 	if (!iso) return "—";
@@ -105,7 +105,7 @@ export function ChannelDetailPage() {
 
 	if (channel.isLoading) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-v2="true" className="space-y-6 px-4 lg:px-6">
 				<Skeleton className="h-12 w-64" />
 				<Skeleton className="h-64 w-full rounded-lg" />
 			</div>
@@ -114,7 +114,7 @@ export function ChannelDetailPage() {
 
 	if (channel.error) {
 		return (
-			<div data-hosted="true" className="px-4 lg:px-6">
+			<div data-v2="true" className="px-4 lg:px-6">
 				<ChannelError
 					error={channel.error}
 					onRetry={() => channel.refetch()}
@@ -126,7 +126,7 @@ export function ChannelDetailPage() {
 
 	if (!channel.data) {
 		return (
-			<div data-hosted="true" className="px-4 lg:px-6">
+			<div data-v2="true" className="px-4 lg:px-6">
 				<EmptyState
 					icon={MessageSquareDashed}
 					title="Channel not found"
@@ -145,7 +145,7 @@ export function ChannelDetailPage() {
 	const meta = providerMeta(ch.provider);
 
 	return (
-		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+		<div data-v2="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title={ch.name}
 				description={`${meta.label} · ${ch.visibility === "public" ? "Shared bot" : "Private bot"}`}

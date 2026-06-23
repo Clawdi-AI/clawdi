@@ -33,7 +33,7 @@ const OPERATION_LABELS: Record<string, string> = {
 	grant_signup: "Signup grant",
 	grant_subscription: "Monthly grant",
 	grant_redemption: "Redeemed credits",
-	grant_referral: "Referral reward",
+	grant_referral: "Referral grant",
 	admin_adjust: "Adjustment",
 	proxy: "Usage",
 	refund: "Refund",

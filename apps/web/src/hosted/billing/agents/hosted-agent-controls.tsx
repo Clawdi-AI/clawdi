@@ -9,7 +9,6 @@ import { BillingError } from "@/hosted/billing/components/state-views";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
-import { env } from "@/lib/env";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -28,12 +27,6 @@ function statusLabel(status: string): string {
 	if (status === "failed" || status === "error") return "Failed";
 	if (status === "stopped") return "Stopped";
 	return status;
-}
-
-function manageUrl(deployment: HostedDeployment): string {
-	const url = new URL(env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL);
-	url.searchParams.set("deployment", deployment.id);
-	return url.toString();
 }
 
 function deploymentLabel(d: HostedDeployment): string {
@@ -99,7 +92,7 @@ export function HostedAgentControls() {
 					const openclaw = d.openclaw_ui_url;
 					const hermes = d.hermes_ui_url;
 					const meta = metaLine(d);
-					const inAppHref = hostedEnvironmentHref(d);
+					const inAppHref = hostedEnvironmentHref(d) ?? `/agents/${encodeURIComponent(d.id)}`;
 					const provisioning = !openclaw && !hermes;
 					return (
 						<div key={d.id} className="flex flex-col gap-2.5 rounded-lg border p-3">
@@ -147,19 +140,11 @@ export function HostedAgentControls() {
 										<Sparkles /> Hermes
 									</Button>
 								)}
-								{inAppHref ? (
-									<Button asChild size="sm" variant="ghost">
-										<Link href={inAppHref}>
-											<Settings2 /> Manage
-										</Link>
-									</Button>
-								) : (
-									<Button asChild size="sm" variant="ghost">
-										<a href={manageUrl(d)} target="_blank" rel="noopener noreferrer">
-											<Settings2 /> Manage <ExternalLink className="size-3.5" />
-										</a>
-									</Button>
-								)}
+								<Button asChild size="sm" variant="ghost">
+									<Link href={inAppHref}>
+										<Settings2 /> Manage
+									</Link>
+								</Button>
 							</div>
 						</div>
 					);

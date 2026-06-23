@@ -13,10 +13,10 @@ import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { providerMeta } from "@/hosted/channels/channel-providers";
-import { useCopyToClipboard } from "@/hosted/use-copy-to-clipboard";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
+import { providerMeta } from "@/v2/channels/channel-providers";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -28,7 +28,7 @@ function reauthenticate() {
 }
 
 /**
- * Cloud-api error panel for the hosted channel / provider surfaces. Normalizes
+ * Cloud-api error panel for the v2 channel / provider surfaces. Normalizes
  * the failure to internal-free copy and, on a session-expiry 401, leads with a
  * "Sign in again" action (a retry can't fix a dead token) while keeping Retry
  * as a secondary affordance for the race where Clerk already refreshed it.
@@ -44,7 +44,7 @@ export function ChannelError({
 }) {
 	const expired = isApiAuthError(error);
 	return (
-		<Alert data-hosted="true" variant="destructive">
+		<Alert data-v2="true" variant="destructive">
 			<CircleAlert />
 			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">
@@ -141,10 +141,7 @@ export function TokenReveal({
 }) {
 	const { copied, copy } = useCopy();
 	return (
-		<div
-			data-hosted="true"
-			className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
-		>
+		<div data-v2="true" className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
 			<div className="text-xs font-medium text-primary">{label}</div>
 			<div className="flex items-center gap-2">
 				<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
@@ -171,7 +168,7 @@ export function CopyInline({ value, className }: { value: string; className?: st
 	return (
 		<button
 			type="button"
-			data-hosted="true"
+			data-v2="true"
 			onClick={() => copy(value)}
 			className={cn(
 				"inline-flex items-center gap-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground",

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { isWalletNotEnabledError, normalizeBillingError } from "@/hosted/billing/errors";
+import { normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCentsCompact } from "@/hosted/billing/format";
 import { useActivationFee, usePortal, useSubscription } from "@/hosted/billing/hooks";
 import { activationRequirement } from "@/hosted/billing/subscription/activation-requirement.logic";
@@ -25,10 +25,6 @@ export function ActivationRequirementCard() {
 	const activationFee = useActivationFee();
 	const portal = usePortal();
 	const runAction = useActionLock();
-
-	if (isWalletNotEnabledError(subscription.error) || isWalletNotEnabledError(activationFee.error)) {
-		return null;
-	}
 
 	const sub = subscription.data ?? null;
 	const fee = activationFee.data ?? null;

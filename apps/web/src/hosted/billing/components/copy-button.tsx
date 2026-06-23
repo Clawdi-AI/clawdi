@@ -2,7 +2,7 @@
 
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCopyToClipboard } from "@/hosted/use-copy-to-clipboard";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 
 /**
  * Copy-to-clipboard icon button with the app's success affordance: the icon

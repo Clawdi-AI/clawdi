@@ -1,11 +1,7 @@
 # `apps/web/src/hosted/`
 
-Components and helpers that render only in the Clawdi-hosted build
-(`cloud.clawdi.ai`, where `NEXT_PUBLIC_CLAWDI_HOSTED=true`).
-
-This directory is a build/bundle quarantine, not a product taxonomy. Some
-surfaces here are v2-gated OSS product features that we do not show in OSS
-builds yet; others are hosted runtime/billing surfaces.
+Components and helpers for the hosted agent service and hosted billing surfaces.
+They render only in the Clawdi-hosted build (`NEXT_PUBLIC_CLAWDI_HOSTED=true`).
 
 OSS users running their own Clawdi instance see none of this UI.
 
@@ -29,15 +25,17 @@ OSS users running their own Clawdi instance see none of this UI.
    import dynamic from "next/dynamic";
    import { IS_HOSTED } from "@/lib/hosted";
 
-   const DeployTrigger = IS_HOSTED
+   const ChannelsPage = IS_HOSTED
      ? dynamic(() =>
-         import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })),
+         import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
+           default: m.DeployWizard,
+         })),
        )
      : null;
 
    // …
 
-   {DeployTrigger ? <DeployTrigger /> : null}
+   {ChannelsPage ? <ChannelsPage /> : null}
    ```
    Why this shape: the bundler folds `IS_HOSTED ? … : null` at
    build time using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS
@@ -55,9 +53,8 @@ OSS users running their own Clawdi instance see none of this UI.
 - `use-hosted-agent-tiles.ts` — Lists the user's deployed agents on
   the v2 hosted runtime API, polled while any tile is in a transient
   state.
-- `channels/` and `ai-providers/` — V2-gated product surfaces, hidden
-  from OSS builds until they are ready to expose there.
-- `deploy-trigger.tsx` — Sidebar entry that opens the Deploy flow.
+- `agents/` — Hosted agent detail, runtime controls, and manifest editing.
+- `billing/` — Wallet, subscription, usage, and managed agent deployment.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).
@@ -71,4 +68,3 @@ Future additions (later phases, not yet built):
 
 - `welcome-card.tsx` — First-day onboarding card with starter skills
   preview
-- `deploy-agent-dialog.tsx` — In-app Deploy dialog

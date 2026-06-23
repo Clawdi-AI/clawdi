@@ -11,22 +11,12 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { HostedAgentControls } from "@/hosted/billing/agents/hosted-agent-controls";
-import {
-	BillingEmpty,
-	BillingError,
-	SubscriptionSkeleton,
-} from "@/hosted/billing/components/state-views";
+import { BillingError, SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { UsageMeter } from "@/hosted/billing/components/usage-meter";
-import { isWalletNotEnabledError, normalizeBillingError } from "@/hosted/billing/errors";
+import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCentsCompact, formatCredits } from "@/hosted/billing/format";
-import {
-	useCheckout,
-	usePlans,
-	usePortal,
-	useSubscription,
-	useWallet,
-} from "@/hosted/billing/hooks";
+import { useCheckout, usePlans, usePortal, useSubscription } from "@/hosted/billing/hooks";
 import { ActivationCard } from "@/hosted/billing/subscription/activation-card";
 import { ActivationRequirementCard } from "@/hosted/billing/subscription/activation-requirement-card";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
@@ -44,7 +34,6 @@ const DESCRIPTION = "Your Clawdi Compute plan.";
 export function SubscriptionPage() {
 	const subscription = useSubscription();
 	const plans = usePlans();
-	const wallet = useWallet();
 	const checkout = useCheckout();
 	const portal = usePortal();
 	const runAction = useActionLock();
@@ -133,19 +122,6 @@ export function SubscriptionPage() {
 			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
 				<PageHeader title="Plan" description={DESCRIPTION} />
 				<SubscriptionSkeleton />
-			</div>
-		);
-	}
-
-	if (isWalletNotEnabledError(wallet.error)) {
-		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
-				<PageHeader title="Plan" description={DESCRIPTION} />
-				<BillingEmpty
-					icon={<Zap />}
-					title="Compute subscriptions aren’t enabled"
-					description="This account uses the classic plan model."
-				/>
 			</div>
 		);
 	}

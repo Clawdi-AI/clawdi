@@ -9,17 +9,17 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
 	providerMeta,
-} from "@/hosted/channels/channel-providers";
-import type { ChannelAccount } from "@/hosted/channels/channel-types";
-import { ChannelError, HealthBadge } from "@/hosted/channels/channel-ui";
-import { useChannelHealth, useChannels } from "@/hosted/channels/channels-hooks";
-import { ConnectBotDialog } from "@/hosted/channels/connect-bot-dialog";
-import { SharedBotsPool } from "@/hosted/channels/shared-bots-pool";
-import { cn } from "@/lib/utils";
+} from "@/v2/channels/channel-providers";
+import type { ChannelAccount } from "@/v2/channels/channel-types";
+import { ChannelError, HealthBadge } from "@/v2/channels/channel-ui";
+import { useChannelHealth, useChannels } from "@/v2/channels/channels-hooks";
+import { ConnectBotDialog } from "@/v2/channels/connect-bot-dialog";
+import { SharedBotsPool } from "@/v2/channels/shared-bots-pool";
 
 const DESCRIPTION = "Connect Telegram, Discord, WhatsApp, and iMessage to your agents.";
 
@@ -27,7 +27,7 @@ export function ChannelsPage() {
 	const [connectOpen, setConnectOpen] = useState(false);
 
 	return (
-		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+		<div data-v2="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Channels"
 				description={DESCRIPTION}

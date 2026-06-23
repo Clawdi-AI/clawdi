@@ -9,7 +9,6 @@ import {
 	isNetworkError,
 	isRetryableError,
 	isServerError,
-	isWalletNotEnabledError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 
@@ -68,10 +67,8 @@ describe("billingQueryRetry", () => {
 		expect(billingQueryRetry(2, e)).toBe(false);
 	});
 
-	test("never retries deterministic 4xx (legacy-wallet 403, auth)", () => {
-		expect(billingQueryRetry(0, new BillingApiError(403, "wallet billing is not enabled"))).toBe(
-			false,
-		);
+	test("never retries deterministic 4xx", () => {
+		expect(billingQueryRetry(0, new BillingApiError(403, "Clawdi v2 is not enabled"))).toBe(false);
 		expect(billingQueryRetry(0, new BillingApiError(401, "expired"))).toBe(false);
 	});
 });
@@ -105,12 +102,6 @@ describe("normalizeBillingError", () => {
 		const e = new BillingApiError(403, "INSUFFICIENT_BALANCE");
 		expect(isInsufficientBalanceError(e)).toBe(true);
 		expect(normalizeBillingError(e)).toMatch(/balance is too low/i);
-	});
-
-	test("legacy wallet 403 reads as not-enabled", () => {
-		const e = new BillingApiError(403, "wallet billing is not enabled for this account");
-		expect(isWalletNotEnabledError(e)).toBe(true);
-		expect(normalizeBillingError(e)).toMatch(/isn't enabled/i);
 	});
 
 	test("snake_case codes become readable, real sentences pass through", () => {

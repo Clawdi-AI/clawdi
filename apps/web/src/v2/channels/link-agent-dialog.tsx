@@ -21,8 +21,8 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChannelError, TokenReveal } from "@/hosted/channels/channel-ui";
-import { useEnvironments, useLinkAgent } from "@/hosted/channels/channels-hooks";
+import { ChannelError, TokenReveal } from "@/v2/channels/channel-ui";
+import { useEnvironments, useLinkAgent } from "@/v2/channels/channels-hooks";
 
 /**
  * Link a connected agent to a channel — instant, no token paste. On success
@@ -71,7 +71,7 @@ export function LinkAgentDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent data-hosted="true" className="sm:max-w-md">
+			<DialogContent data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Link an agent</DialogTitle>
 					<DialogDescription>

@@ -10,7 +10,7 @@ import { IS_HOSTED } from "@/lib/hosted";
 const AiProvidersPage = IS_HOSTED
 	? dynamic(
 			() =>
-				import("@/hosted/ai-providers/ai-providers-page").then((m) => ({
+				import("@/v2/ai-providers/ai-providers-page").then((m) => ({
 					default: m.AiProvidersPage,
 				})),
 			{ loading: HostedRouteSkeleton },

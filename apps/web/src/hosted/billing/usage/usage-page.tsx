@@ -1,12 +1,11 @@
 "use client";
 
-import { Activity, BarChart3 } from "lucide-react";
+import { Activity } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
 import { UsageMeter } from "@/hosted/billing/components/usage-meter";
-import { isWalletNotEnabledError } from "@/hosted/billing/errors";
 import { formatCredits } from "@/hosted/billing/format";
 import { useSubscription, useUsage } from "@/hosted/billing/hooks";
 import { shortDate } from "@/hosted/billing/subscription/subscription-utils";
@@ -23,19 +22,6 @@ export function UsagePage() {
 				<PageHeader title="Usage" description={DESCRIPTION} />
 				<Skeleton className="h-28 w-full rounded-lg" />
 				<Skeleton className="h-48 w-full rounded-lg" />
-			</div>
-		);
-	}
-
-	if (isWalletNotEnabledError(usage.error)) {
-		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
-				<PageHeader title="Usage" description={DESCRIPTION} />
-				<BillingEmpty
-					icon={<BarChart3 />}
-					title="Usage isn’t available"
-					description="This account uses the classic plan model."
-				/>
 			</div>
 		);
 	}

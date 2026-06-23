@@ -36,6 +36,93 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_environments_mark_hosted_runtime_siblings(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
+):
+    from app.models.hosted_runtime import HostedRuntimeState
+    from tests.conftest import create_env_with_project
+
+    machine_id = f"hosted-runtime-{uuid.uuid4().hex[:8]}"
+    openclaw = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=machine_id,
+        machine_name="Hosted Runtime",
+        agent_type="openclaw",
+    )
+    codex = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=machine_id,
+        machine_name="Hosted Runtime",
+        agent_type="codex",
+    )
+    laptop = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"laptop-{uuid.uuid4().hex[:8]}",
+        machine_name="Laptop",
+        agent_type="claude-code",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=openclaw.id,
+            deployment_id="hdep_test",
+            instance_id="instance-test",
+            generation=1,
+            runtimes={"openclaw": {"enabled": True}},
+        )
+    )
+    await db_session.commit()
+
+    r = await client.get("/api/environments")
+    assert r.status_code == 200, r.text
+    by_id = {item["id"]: item for item in r.json()}
+
+    assert by_id[str(openclaw.id)]["hosted_managed"] is True
+    assert by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
+    assert by_id[str(codex.id)]["hosted_managed"] is True
+    assert by_id[str(codex.id)]["hosted_deployment_id"] == "hdep_test"
+    assert by_id[str(laptop.id)]["hosted_managed"] is False
+    assert by_id[str(laptop.id)]["hosted_deployment_id"] is None
+
+    detail = await client.get(f"/api/environments/{codex.id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["hosted_managed"] is True
+    assert detail.json()["hosted_deployment_id"] == "hdep_test"
+
+
+@pytest.mark.asyncio
+async def test_legacy_hosted_runtime_envs_are_marked_without_fake_deployment_id(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
+):
+    from tests.conftest import create_env_with_project
+
+    legacy = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"legacy-hosted-{uuid.uuid4().hex[:8]}",
+        machine_name=f"v2-hosted-{uuid.uuid4().hex[:8]}",
+        agent_type="openclaw",
+    )
+    similarly_named_self_managed = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"self-managed-{uuid.uuid4().hex[:8]}",
+        machine_name=f"v2-hosted-{uuid.uuid4().hex[:8]}",
+        agent_type="claude-code",
+    )
+
+    r = await client.get("/api/environments")
+    assert r.status_code == 200, r.text
+    by_id = {item["id"]: item for item in r.json()}
+
+    assert by_id[str(legacy.id)]["hosted_managed"] is True
+    assert by_id[str(legacy.id)]["hosted_deployment_id"] is None
+    assert by_id[str(similarly_named_self_managed.id)]["hosted_managed"] is False
+
+
+@pytest.mark.asyncio
 async def test_session_batch_upserts_and_returns_needs_content(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()

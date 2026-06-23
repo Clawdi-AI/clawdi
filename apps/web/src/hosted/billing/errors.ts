@@ -86,21 +86,12 @@ export function isRetryableError(error: unknown): boolean {
 
 /**
  * Shared TanStack Query `retry` predicate for the billing surfaces. Retries
- * transient failures up to twice; lets deterministic 4xx (the legacy-wallet
- * 403, validation errors, auth) fall through on the first attempt so their
+ * transient failures up to twice; lets deterministic 4xx (validation errors,
+ * auth, not-found, conflict) fall through on the first attempt so their
  * tailored UI shows without a multi-second spinner.
  */
 export function billingQueryRetry(failureCount: number, error: unknown): boolean {
 	return failureCount < 2 && isRetryableError(error);
-}
-
-/** True when the user/account cannot use the wallet (legacy / not enrolled). */
-export function isWalletNotEnabledError(error: unknown): boolean {
-	return (
-		error instanceof BillingApiError &&
-		error.status === 403 &&
-		/wallet billing is not enabled/i.test(error.detail)
-	);
 }
 
 const INSUFFICIENT_BALANCE_PATTERNS = [
@@ -127,9 +118,6 @@ export function isInsufficientBalanceError(error: unknown): boolean {
 export function normalizeBillingError(error: unknown): string {
 	if (isInsufficientBalanceError(error)) {
 		return "Your AI Credits balance is too low. Top up or enable auto-reload to keep using managed AI — your agent keeps running.";
-	}
-	if (isWalletNotEnabledError(error)) {
-		return "Wallet billing isn't enabled for this account yet.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"

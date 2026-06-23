@@ -9,7 +9,7 @@ import { IS_HOSTED } from "@/lib/hosted";
 // true so OSS builds eliminate the chunk entirely.
 const ChannelsPage = IS_HOSTED
 	? dynamic(
-			() => import("@/hosted/channels/channels-page").then((m) => ({ default: m.ChannelsPage })),
+			() => import("@/v2/channels/channels-page").then((m) => ({ default: m.ChannelsPage })),
 			{ loading: HostedRouteSkeleton },
 		)
 	: null;

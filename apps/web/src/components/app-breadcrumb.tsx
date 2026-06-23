@@ -39,7 +39,6 @@ const SEGMENT_LABELS: Record<string, string> = {
 	plan: "Plan",
 	usage: "Usage",
 	pricing: "Pricing",
-	rewards: "Rewards",
 };
 
 // Looks like a UUID? Truncate it for the loading state — full UUIDs in a

@@ -41,11 +41,6 @@ export const env = createEnv({
 		// listing in hosted mode.
 		NEXT_PUBLIC_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
-		// Where the "Manage" link on hosted agent tiles points. Production
-		// override per-environment so dev/preview can route to local
-		// dashboards without a code change.
-		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: httpsOrHttp().default("https://www.clawdi.ai/dashboard"),
-
 		// Clerk publishable key. Local `next dev` auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: isLocalDevAuthBypass
@@ -92,7 +87,6 @@ export const env = createEnv({
 		VERCEL_ENV: process.env.VERCEL_ENV,
 		NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
 		NEXT_PUBLIC_DEPLOY_API_URL: process.env.NEXT_PUBLIC_DEPLOY_API_URL,
-		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
 		NEXT_PUBLIC_DEV_AUTH_BYPASS: process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS,

@@ -9,7 +9,7 @@ import { IS_HOSTED } from "@/lib/hosted";
 // OSS builds tree-shake it via the IS_HOSTED-gated dynamic import.
 const CodexOAuthCallback = IS_HOSTED
 	? dynamic(
-			() => import("@/hosted/ai-providers/codex-oauth-callback").then((m) => m.CodexOAuthCallback),
+			() => import("@/v2/ai-providers/codex-oauth-callback").then((m) => m.CodexOAuthCallback),
 			{ loading: HostedRouteSkeleton },
 		)
 	: null;

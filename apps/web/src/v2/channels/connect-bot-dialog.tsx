@@ -28,10 +28,10 @@ import {
 	IMESSAGE_AUTH_MODES,
 	PROVIDER_META,
 	providerMeta,
-} from "@/hosted/channels/channel-providers";
-import type { ChannelCreate, ChannelCreated } from "@/hosted/channels/channel-types";
-import { ProviderChip, TokenReveal } from "@/hosted/channels/channel-ui";
-import { useCreateChannel } from "@/hosted/channels/channels-hooks";
+} from "@/v2/channels/channel-providers";
+import type { ChannelCreate, ChannelCreated } from "@/v2/channels/channel-types";
+import { ProviderChip, TokenReveal } from "@/v2/channels/channel-ui";
+import { useCreateChannel } from "@/v2/channels/channels-hooks";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
@@ -129,7 +129,7 @@ export function ConnectBotDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent data-hosted="true" className="sm:max-w-md">
+			<DialogContent data-v2="true" className="sm:max-w-md">
 				{created ? (
 					<>
 						<DialogHeader>

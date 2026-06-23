@@ -3667,6 +3667,13 @@ export interface components {
              * @default false
              */
             sync_enabled: boolean;
+            /**
+             * Hosted Managed
+             * @default false
+             */
+            hosted_managed: boolean;
+            /** Hosted Deployment Id */
+            hosted_deployment_id?: string | null;
             /** Default Project Id */
             default_project_id: string;
         };
@@ -7440,7 +7447,9 @@ export interface operations {
     };
     get_runtime_manifest_api_runtime_manifest_get: {
         parameters: {
-            query?: never;
+            query?: {
+                environment_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7454,6 +7463,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

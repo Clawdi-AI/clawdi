@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { isWalletNotEnabledError } from "@/hosted/billing/errors";
 import { formatCredits } from "@/hosted/billing/format";
 import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 
@@ -15,7 +14,7 @@ import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billi
  * Renders for a freshly-activated wallet user who hasn't deployed yet: it
  * confirms the $5 AI Credits grant landed (reading the `grant_signup` ledger
  * row) and points them at the deploy wizard. Returns null once the user has an
- * agent, or for legacy/non-wallet accounts, so it can be dropped onto any page.
+ * agent or when the v2 billing reads are unavailable.
  */
 export function ActivationCard() {
 	const router = useRouter();
@@ -23,10 +22,10 @@ export function ActivationCard() {
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
 
-	if (isWalletNotEnabledError(wallet.error)) return null;
 	// Past onboarding — they already have at least one agent.
 	if ((deployments.data?.length ?? 0) > 0) return null;
-	if (ledger.isLoading || wallet.isLoading) return null;
+	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) return null;
+	if (wallet.error || ledger.error || deployments.error || !wallet.data) return null;
 
 	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
 	const grantApplied = grant?.status === "applied";

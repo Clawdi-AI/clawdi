@@ -1,17 +1,19 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { isNetworkError } from "@/hosted/billing/errors";
-import { useHostedDeployments } from "@/hosted/billing/hooks";
-import { env } from "@/lib/env";
+import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
+import { billingKeys } from "@/hosted/billing/hooks";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
- * Bridges a v2 hosted deployment to the unified `AgentTile`
+ * Bridges clawdi.ai's `Deployment` to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
  *
@@ -26,7 +28,25 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * + external management URL distinguish hosted in the UI.
  */
 export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
-	const query = useHostedDeployments();
+	const client = useBillingClient();
+	// Not configured (preview/self-hosted mirror pointing at the default
+	// localhost deploy API) → don't fetch, don't error-banner. See
+	// isDeployApiConfigured.
+	const configured = isDeployApiConfigured();
+	const query = useQuery<HostedDeployment[], Error>({
+		queryKey: billingKeys.deployments,
+		enabled: configured,
+		queryFn: () => client.listDeployments(),
+		retry: billingQueryRetry,
+		// Status changes (Provisioning → Ready) — refetch periodically
+		// while a deployment is still spinning up. 10s is the balance
+		// between snappy feedback and not hammering clawdi.ai.
+		refetchInterval: (q) => {
+			const items = q.state.data ?? [];
+			const transient = items.some((d) => isTransientStatus(d.status));
+			return transient ? 10_000 : false;
+		},
+	});
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead
 	// of O(N×M) on every render of the hosted-agent grid.
@@ -72,13 +92,22 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 		return s;
 	}, [query.data]);
 
+	// CORS/network-level failures (fetch throws TypeError before any HTTP
+	// response is readable) mean this ORIGIN can't talk to the deploy API
+	// at all — api.clawdi.ai's CORS allowlist covers cloud.clawdi.ai, not
+	// preview/self-hosted mirrors. That's "hosted isn't available here",
+	// not an outage: stay silent. Readable HTTP errors (5xx/4xx from an
+	// allowed origin) keep the banner — those are real failures on hosts
+	// where the integration genuinely works.
 	const unreachableFromOrigin = isNetworkError(query.error);
 
 	return {
 		tiles,
 		claimedEnvIds,
-		isLoading: query.isLoading,
-		error: !unreachableFromOrigin ? query.error : null,
+		// Disabled queries report isLoading=true forever in v5 (status
+		// stays 'pending'); mask both flags when we never fetch.
+		isLoading: configured ? query.isLoading : false,
+		error: configured && !unreachableFromOrigin ? query.error : null,
 	};
 }
 
@@ -113,7 +142,7 @@ function isKnownRuntime(s: string): s is Runtime {
  */
 function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);
-	const slug = deploymentSlug(d);
+	const slug = deploymentDisplayName(d.name);
 	const statusLabel = displayStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	const active = d.status === "running" || d.status === "ready";
@@ -125,16 +154,17 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		// (last_sync_at, queue depth, status badge) from cloud-api,
 		// AND the primary click target points at the in-app env detail
 		// page — same UX as a self-managed agent. Lifecycle ops
-		// (Restart/Stop/Delete) live on the SaaS dashboard, surfaced
-		// via the secondary `manageHref` button on the tile.
+		// (Restart/Stop/Delete) live in that detail page's Compute tab.
 		//
 		// Missing match (legacy pre-Phase-4a deployment, mint failed,
 		// or `CLAWDI_CLOUD_LIVE_SYNC_ENABLED=false`) → fall back to the
-		// SaaS dashboard URL as the primary, so the tile still has a
-		// useful place to click.
+		// deployment-id route. `AgentHome` resolves deployment ids without
+		// pretending they are cloud-api environment ids, so the tile still
+		// has a useful in-app place to click.
 		const envId = cloudEnvIds[runtime];
 		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
-		const manageUrl = deploymentManageUrl(d, runtime);
+		const detailHref = matchedEnv ? `/agents/${matchedEnv.id}?source=on-clawdi` : `/agents/${d.id}`;
+		const computeHref = `${detailHref}${detailHref.includes("?") ? "&" : "?"}tab=compute`;
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
@@ -156,20 +186,14 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			// that intent; a self-managed user who happens to navigate
 			// to the same env without the param defaults to the standard
 			// self-managed badge.
-			href: matchedEnv ? `/agents/${matchedEnv.id}?source=on-clawdi` : manageUrl,
-			external: !matchedEnv,
-			// Only surface a separate "Manage" affordance when the
-			// primary link goes IN-APP (matchedEnv present). On the
-			// fallback path (no cloud-api env join — typically a SaaS
-			// deployment that pre-dates the admin-mint integration)
-			// the primary link already goes to the SaaS dashboard, so
-			// a trailing "Manage" button pointing at the same URL is
-			// pure visual noise. Leaving manageHref undefined falls
-			// the tile back to the plain ArrowUpRight glyph, which is
-			// exactly the pre-Phase-4a UX.
-			manageHref: matchedEnv ? manageUrl : undefined,
+			href: detailHref,
+			external: false,
+			manageHref: computeHref,
 			active,
 			env: matchedEnv ?? null,
+			// Group sibling runtime-agents under their shared compute on /agents.
+			computeId: d.id,
+			computeName: slug,
 		};
 	});
 }
@@ -215,19 +239,6 @@ function runtimeDisplayName(runtime: Runtime): string {
 	}
 }
 
-/**
- * Strip clawdi.ai's auto-generated `openclaw-` / `hermes-` prefix
- * from a deployment name. The prefix is an app-slug artifact (every
- * pod gets it regardless of which runtimes are active), so it reads
- * as misleading runtime metadata on a tile for the *other* runtime.
- * If the user gave their deployment a real name, no prefix matches
- * and we keep it intact.
- */
-function deploymentSlug(d: HostedDeployment): string {
-	const stripped = d.name.replace(/^(openclaw|hermes)-/i, "");
-	return stripped || d.name;
-}
-
 function displayStatus(status: string): string {
 	if (status === "running" || status === "ready") return "Running";
 	if (status === "pending") return "Pending";
@@ -238,17 +249,6 @@ function displayStatus(status: string): string {
 	return status;
 }
 
-/**
- * Deep-link into clawdi.ai/dashboard for one (deployment, runtime).
- * Pairs with clawdi.ai's `useAgentTypeStore` which hydrates from
- * `?agent_type=` so the sidebar dropdown matches the tile clicked.
- * Override the base via `NEXT_PUBLIC_DEPLOY_DASHBOARD_URL`.
- */
-function deploymentManageUrl(deployment: HostedDeployment, runtime?: string): string {
-	const url = new URL(env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL);
-	url.searchParams.set("deployment", deployment.id);
-	if (runtime === "openclaw" || runtime === "hermes") {
-		url.searchParams.set("agent_type", runtime);
-	}
-	return url.toString();
+function isTransientStatus(status: string): boolean {
+	return status === "pending" || status === "provisioning" || status === "starting";
 }

@@ -678,6 +678,67 @@ async def test_runtime_manifest_rejects_unbound_cli_key(db_session, seed_user):
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_allows_unbound_cli_key_with_explicit_environment_id(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-unbound-{uuid4().hex[:8]}",
+        machine_name="Runtime Unbound",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, label="unbound")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get(
+            "/api/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["environmentId"] == str(env.id)
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_rejects_bound_cli_key_environment_id_mismatch(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-bound-{uuid4().hex[:8]}",
+        machine_name="Runtime Bound",
+        agent_type="openclaw",
+    )
+    other_env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-other-{uuid4().hex[:8]}",
+        machine_name="Runtime Other",
+        agent_type="codex",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    await _write_runtime_state(admin_client, str(other_env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bound")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get(
+            "/api/runtime/manifest",
+            params={"environment_id": str(other_env.id)},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_projects_provider_secret_values(
     admin_client,
     db_session,
@@ -702,6 +763,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="clawdi",
+            runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
         )
     )
     db_session.add(
@@ -729,6 +791,8 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "kind": "openai-compatible",
         "baseUrl": "https://sub2api.test/v1",
         "model": "gpt-5.5",
+        "apiMode": "codex_responses",
+        "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.default.apiKey",
     }
     assert payload["secretValues"] == {"provider.default.apiKey": "sk-test-provider"}

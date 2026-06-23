@@ -20,15 +20,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { AddProviderDialog } from "@/hosted/ai-providers/add-provider-dialog";
-import { useAiProviders } from "@/hosted/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/hosted/ai-providers/ai-providers-ui";
-import {
-	aiProviderRuntimeId,
-	buildAiProviderBootstrap,
-	type RuntimeAiProviderAuthKind,
-} from "@/hosted/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/hosted/ai-providers/types";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
@@ -37,7 +28,6 @@ import type {
 	Plan,
 	Subscription,
 } from "@/hosted/billing/contracts";
-import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
@@ -49,8 +39,17 @@ import {
 } from "@/hosted/billing/hooks";
 import { selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { ConnectBotDialog } from "@/hosted/channels/connect-bot-dialog";
 import { cn } from "@/lib/utils";
+import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
+import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
+import {
+	aiProviderRuntimeId,
+	buildAiProviderBootstrap,
+	type RuntimeAiProviderAuthKind,
+} from "@/v2/ai-providers/runtime-bootstrap";
+import type { AiProvider } from "@/v2/ai-providers/types";
+import { ConnectBotDialog } from "@/v2/channels/connect-bot-dialog";
 
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
@@ -390,7 +389,7 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
-			router.push(hostedEnvironmentHref(deployment) ?? "/settings/billing/plan");
+			router.push(`/agents/${encodeURIComponent(deployment.id)}?source=on-clawdi`);
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {
