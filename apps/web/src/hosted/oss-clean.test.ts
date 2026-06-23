@@ -22,8 +22,8 @@ const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const V2_DIR = join(SRC_DIR, "v2");
 const APP_DIR = join(SRC_DIR, "app");
-const V2_ONLY_ROUTE_IMPORT =
-	/\bimport\s*\(\s*["']@\/(?:v2\/|hosted\/billing\/(?:deploy|subscription|usage|wallet)\/)[^"']+["']\s*\)/;
+const GATED_ROUTE_DYNAMIC_IMPORT =
+	/\bimport\s*\(\s*["'](@\/(?:v2\/|hosted\/billing\/)[^"']+)["']\s*\)/g;
 
 function listTsx(dir: string): string[] {
 	const out: string[] = [];
@@ -75,6 +75,20 @@ function nearestV2GateFile(routeFile: string): string | null {
 	return null;
 }
 
+function routeUsesV2OnlyModule(src: string): boolean {
+	for (const match of src.matchAll(GATED_ROUTE_DYNAMIC_IMPORT)) {
+		const target = match[1];
+		if (target.startsWith("@/v2/")) return true;
+		// Hosted billing routes are per-user v2 surfaces, except the agents
+		// dashboard control strip. That strip is an IS_HOSTED-only dashboard
+		// adornment and not a standalone v2 route.
+		if (target.startsWith("@/hosted/billing/") && !target.startsWith("@/hosted/billing/agents/")) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function discoverV2OnlyRouteFiles(): string[] {
 	const gateFiles = new Set<string>();
 	const ungatedRouteFiles: string[] = [];
@@ -82,7 +96,7 @@ function discoverV2OnlyRouteFiles(): string[] {
 	for (const file of listTsx(APP_DIR)) {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
 		const src = readFileSync(file, "utf8");
-		if (!V2_ONLY_ROUTE_IMPORT.test(src)) continue;
+		if (!routeUsesV2OnlyModule(src)) continue;
 
 		const gateFile = nearestV2GateFile(file);
 		if (gateFile) {
