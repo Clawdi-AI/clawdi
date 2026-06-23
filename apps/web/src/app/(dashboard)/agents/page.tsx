@@ -11,10 +11,10 @@ import { useV2Access } from "@/lib/v2-access";
 
 /**
  * Flat index of every agent — self-managed (connected) and, for hosted users,
- * agents deployed on clawdi.ai. The 'Agents' breadcrumb parent and the
+ * hosted deployments. The 'Agents' breadcrumb parent and the
  * sidebar's "View all (N)" overflow both resolve here.
  *
- * Hosted merges clawdi.ai deployments into the list via `HostedAgentsSection`;
+ * Hosted merges deployments into the list via `HostedAgentsSection`;
  * the IS_HOSTED-gated dynamic import keeps that cross-origin chunk out of OSS
  * bundles (same pattern as the Overview agent panel).
  */

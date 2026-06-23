@@ -127,7 +127,7 @@ export default function DashboardPage() {
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
 	// hosted code path may still render an AgentsCard if the user has
-	// deployed agents on clawdi.ai — that decision lives inside
+	// hosted deployments — that decision lives inside
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
 	const selfManagedCount = selfManagedTiles.length;

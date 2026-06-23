@@ -13,16 +13,14 @@ import { unwrap, useApi } from "@/lib/api";
 /**
  * Connector data hooks. Always talk to cloud-api — there is no
  * hosted/cloud branching here. cloud-api uses the user's Clerk id
- * as the Composio entity_id, which means a cloud.clawdi.ai
- * deployment can configure cloud-api with the same Composio API
- * key clawdi.ai's own backend uses and reach the exact same
- * connection namespace; self-hosters get an isolated namespace
- * keyed by their own Clerk app's user ids.
+ * as the Composio entity_id, so hosted deployments and self-hosted
+ * installs both use the same cloud-api connector contract while each
+ * Clerk app keeps its own user namespace.
  *
  * The earlier `IS_HOSTED` proxy that pointed connector calls
- * cross-origin at clawdi.ai has been removed; that bypass made the
- * connector backend logic live in two places and forced the
- * frontend to maintain shape adapters. Single source of truth wins.
+ * cross-origin has been removed; that bypass made the connector
+ * backend logic live in two places and forced the frontend to maintain
+ * shape adapters. Single source of truth wins.
  */
 
 // ─────────────────────────────────────────────────────────────────────

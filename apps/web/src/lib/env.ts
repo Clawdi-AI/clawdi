@@ -37,8 +37,8 @@ export const env = createEnv({
 		// `javascript:` schemes that `z.string().url()` would let through.
 		NEXT_PUBLIC_API_URL: httpsOrHttp().default("http://localhost:8000"),
 
-		// clawdi.ai backend URL — used for cross-origin Composio + deploy
-		// listing in hosted mode.
+		// Hosted deploy API URL — used for deploy, billing, and hosted
+		// profile calls in hosted builds.
 		NEXT_PUBLIC_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
 		// Clerk publishable key. Local `next dev` auth bypass can run without
