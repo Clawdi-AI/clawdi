@@ -25,7 +25,7 @@ OSS users running their own Clawdi instance see none of this UI.
    import dynamic from "next/dynamic";
    import { IS_HOSTED } from "@/lib/hosted";
 
-   const ChannelsPage = IS_HOSTED
+   const DeployWizard = IS_HOSTED
      ? dynamic(() =>
          import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
            default: m.DeployWizard,
@@ -35,7 +35,7 @@ OSS users running their own Clawdi instance see none of this UI.
 
    // …
 
-   {ChannelsPage ? <ChannelsPage /> : null}
+   {DeployWizard ? <DeployWizard /> : null}
    ```
    Why this shape: the bundler folds `IS_HOSTED ? … : null` at
    build time using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS
