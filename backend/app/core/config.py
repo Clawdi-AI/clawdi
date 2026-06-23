@@ -30,8 +30,8 @@ class Settings(BaseSettings):
         # so downstream code never has to think about it.
         if isinstance(v, str) and len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
             v = v[1:-1]
-        if isinstance(v, str) and "BEGIN PUBLIC KEY" in v and "\\n" in v:
-            return v.replace("\\n", "\n")
+        if isinstance(v, str) and "BEGIN PUBLIC KEY" in v:
+            return v.replace("\\\r\n", "\n").replace("\\\n", "\n").replace("\\n", "\n")
         return v
 
     app_name: str = "clawdi"
