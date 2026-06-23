@@ -1,11 +1,11 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpen,
 	Brain,
 	ChevronsUpDown,
 	CircleHelp,
-	CirclePlus,
 	ExternalLink,
 	FolderKanban,
 	Key,
@@ -14,19 +14,24 @@ import {
 	Mail,
 	MessageCircle,
 	MessageSquare,
+	MessagesSquare,
 	Plug,
 	Search,
 	Settings,
 	Sparkles,
 } from "lucide-react";
-import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 import { useCommandPalette } from "@/components/command-palette";
-import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { SettingsDialog } from "@/components/settings-dialog";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import {
+	agentTypeLabel,
+	cleanMachineName,
+	displayMachineName,
+} from "@/components/dashboard/agent-label";
+import { isHostedManagedEnv } from "@/components/dashboard/agents-card";
+import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
 	DropdownMenu,
@@ -49,6 +54,7 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { UserMenuItems } from "@/components/user-menu";
+import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
@@ -59,14 +65,7 @@ import {
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { cn } from "@/lib/utils";
-
-// Dynamic import gated on the build-time `IS_HOSTED` constant. OSS
-// builds collapse the conditional, the bundler eliminates the
-// import() site, and the hosted DeployTrigger chunk (which carries
-// the `https://www.clawdi.ai/dashboard` URL constant) never ships.
-const DeployTrigger = IS_HOSTED
-	? dynamic(() => import("@/hosted/deploy-trigger").then((m) => ({ default: m.DeployTrigger })))
-	: null;
+import { useV2Access } from "@/lib/v2-access";
 
 const RESOURCE_ICONS = {
 	projects: FolderKanban,
@@ -95,6 +94,65 @@ function NavIconChip({ tint, children }: { tint: string; children: React.ReactNo
 	);
 }
 
+const SIDEBAR_AGENTS_CAP = 6;
+
+function SidebarAgents() {
+	const pathname = usePathname();
+	const api = useApi();
+	const { data: environments } = useQuery({
+		queryKey: ["environments"],
+		queryFn: async () => unwrap(await api.GET("/api/environments")),
+	});
+
+	const agents = (environments ?? []).filter((env) => !isHostedManagedEnv(env));
+	if (agents.length === 0) return null;
+	const shown = agents.slice(0, SIDEBAR_AGENTS_CAP);
+
+	return (
+		<SidebarGroup className="pt-0">
+			<SidebarGroupLabel>Agents</SidebarGroupLabel>
+			<SidebarGroupContent>
+				<SidebarMenu>
+					{shown.map((env) => {
+						const name = cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+						const active = pathname === `/agents/${env.id}`;
+						return (
+							<SidebarMenuItem key={env.id}>
+								<SidebarMenuButton
+									asChild
+									isActive={active}
+									tooltip={`${name} - ${agentTypeLabel(env.agent_type)}`}
+								>
+									<Link href={`/agents/${env.id}`}>
+										<AgentIcon agent={env.agent_type} size="sm" />
+										<span>{displayMachineName(name)}</span>
+									</Link>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						);
+					})}
+					{agents.length > SIDEBAR_AGENTS_CAP ? (
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								asChild
+								isActive={pathname === "/agents"}
+								tooltip="View all agents"
+							>
+								<Link href="/agents">
+									<NavIconChip tint={RESOURCE_TINT_CLASSES.overview}>
+										<LayoutDashboard />
+									</NavIconChip>
+									<span className="text-muted-foreground">View all ({agents.length})</span>
+								</Link>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					) : null}
+				</SidebarMenu>
+			</SidebarGroupContent>
+		</SidebarGroup>
+	);
+}
+
 function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 	return (
 		<svg
@@ -114,228 +172,253 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	const { user } = useCurrentUser();
 	const { isMobile } = useSidebar();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
-	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [addAgentOpen, setAddAgentOpen] = useState(false);
+	const v2Access = useV2Access();
+	const showV2AccountResources = IS_HOSTED && v2Access.canUseV2;
 
 	return (
-		<>
-			<Sidebar collapsible="icon" {...props}>
-				<SidebarHeader>
-					<SidebarMenu>
-						<SidebarMenuItem>
-							<SidebarMenuButton size="lg" asChild>
-								<Link href="/">
-									<Image
-										src="/clawdi-logo-transparent.png"
-										alt=""
-										width={32}
-										height={32}
-										className="size-8 shrink-0"
-									/>
-									<span className="truncate text-base font-semibold">Clawdi Cloud</span>
-								</Link>
-							</SidebarMenuButton>
-						</SidebarMenuItem>
-					</SidebarMenu>
-				</SidebarHeader>
+		<Sidebar collapsible="icon" {...props}>
+			<SidebarHeader>
+				<SidebarMenu>
+					<SidebarMenuItem>
+						<SidebarMenuButton size="lg" asChild>
+							<Link href="/">
+								<Image
+									src="/clawdi-logo-transparent.png"
+									alt=""
+									width={32}
+									height={32}
+									className="size-8 shrink-0"
+								/>
+								<span className="truncate text-base font-semibold">Clawdi Cloud</span>
+							</Link>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				</SidebarMenu>
+			</SidebarHeader>
 
-				<SidebarContent>
-					{/* Primary nav — mirrors dashboard-01's NavMain: a Quick Create
+			<SidebarContent>
+				{/* Primary nav — mirrors dashboard-01's NavMain: a Quick Create
 					    button up top, main nav items below. */}
-					<SidebarGroup>
-						<SidebarGroupContent className="flex flex-col gap-2">
-							<SidebarMenu>
-								<SidebarMenuItem>
-									<SidebarMenuButton
-										tooltip="Add agent"
-										onClick={() => setAddAgentOpen(true)}
-										className="bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
-									>
-										<CirclePlus />
-										<span>Add agent</span>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-							</SidebarMenu>
-							<SidebarMenu>
-								<SidebarMenuItem>
-									<SidebarMenuButton asChild isActive={pathname === "/"} tooltip="Overview">
-										<Link href="/">
-											<NavIconChip tint={RESOURCE_TINT_CLASSES.overview}>
-												<LayoutDashboard />
-											</NavIconChip>
-											<span>Overview</span>
-										</Link>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-							</SidebarMenu>
-						</SidebarGroupContent>
-					</SidebarGroup>
+				<SidebarGroup>
+					<SidebarGroupContent className="flex flex-col gap-2">
+						<SidebarMenu>
+							<NewAgentButton />
+						</SidebarMenu>
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton asChild isActive={pathname === "/"} tooltip="Overview">
+									<Link href="/">
+										<NavIconChip tint={RESOURCE_TINT_CLASSES.overview}>
+											<LayoutDashboard />
+										</NavIconChip>
+										<span>Overview</span>
+									</Link>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
 
-					{PROJECT_RESOURCE_GROUPS.map((group) => (
-						<SidebarGroup key={group.id} className="pt-0">
-							<SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-							<SidebarGroupContent>
-								<SidebarMenu>
-									{projectResourceDefinitionsForGroup(group.id).map((definition) => {
-										const Icon = RESOURCE_ICONS[definition.id];
-										const active =
-											pathname === definition.href || pathname.startsWith(`${definition.href}/`);
-										return (
-											<SidebarMenuItem key={definition.id}>
-												<SidebarMenuButton
-													asChild
-													isActive={active}
-													tooltip={`${definition.navLabel} - ${projectResourceScopeLabel(
-														definition.projectScope,
-													)}`}
-												>
-													<Link href={definition.href}>
-														<NavIconChip tint={RESOURCE_TINT_CLASSES[definition.id]}>
-															<Icon />
-														</NavIconChip>
-														<span>{definition.navLabel}</span>
-													</Link>
-												</SidebarMenuButton>
-											</SidebarMenuItem>
-										);
-									})}
-								</SidebarMenu>
-							</SidebarGroupContent>
-						</SidebarGroup>
-					))}
+				<SidebarAgents />
 
-					{/* Secondary nav pinned to the bottom of SidebarContent — matches
-					    dashboard-01's NavSecondary pattern. */}
-					<SidebarGroup className="mt-auto">
+				{PROJECT_RESOURCE_GROUPS.map((group) => (
+					<SidebarGroup key={group.id} className="pt-0">
+						<SidebarGroupLabel>{group.label}</SidebarGroupLabel>
 						<SidebarGroupContent>
 							<SidebarMenu>
-								<SidebarMenuItem>
-									<SidebarMenuButton tooltip="Search (⌘K)" onClick={() => setPaletteOpen(true)}>
-										<Search />
-										<span>Search</span>
-										<KbdGroup className="ml-auto">
-											<Kbd>⌘</Kbd>
-											<Kbd>K</Kbd>
-										</KbdGroup>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-								{/* `DeployTrigger` is `null` in OSS builds — the dynamic import is
-								    only constructed when `IS_HOSTED` is true (see top of file). */}
-								{DeployTrigger ? <DeployTrigger /> : null}
-								<SidebarMenuItem>
-									<SidebarMenuButton asChild tooltip="Docs">
-										<a
-											href="https://deepwiki.com/Clawdi-AI/clawdi"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<BookOpen />
-											<span>Docs</span>
-											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-										</a>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-								<SidebarMenuItem>
-									<SidebarMenuButton asChild tooltip="GitHub">
-										<a
-											href="https://github.com/Clawdi-AI/clawdi"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<GitHubIcon />
-											<span>GitHub</span>
-											<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-										</a>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-								<SidebarMenuItem>
-									<SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
-										<Settings />
-										<span>Settings</span>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-								<SidebarMenuItem>
-									{/* Help → support email + Telegram. Mirrors the navbar
-									    pattern from the public clawdi repo so users hit the
-									    same channels everywhere. */}
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<SidebarMenuButton tooltip="Help">
-												<CircleHelp />
-												<span>Help</span>
+								{group.id === "user-resources" && showV2AccountResources ? (
+									<>
+										<SidebarMenuItem>
+											<SidebarMenuButton
+												asChild
+												isActive={pathname === "/channels" || pathname.startsWith("/channels/")}
+												tooltip="Channels - Account resources"
+											>
+												<Link href="/channels">
+													<NavIconChip tint="bg-identity-5-bg text-identity-5-fg">
+														<MessagesSquare />
+													</NavIconChip>
+													<span>Channels</span>
+												</Link>
 											</SidebarMenuButton>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent
-											side={isMobile ? "bottom" : "right"}
-											align="end"
-											className="min-w-56"
-										>
-											<DropdownMenuItem asChild>
-												<a href="mailto:support@clawdi.ai">
-													<Mail />
-													support@clawdi.ai
-												</a>
-											</DropdownMenuItem>
-											<DropdownMenuItem asChild>
-												<a
-													href="https://t.me/clawdiofficial"
-													target="_blank"
-													rel="noopener noreferrer"
-												>
-													<MessageCircle />
-													Telegram @clawdiofficial
-												</a>
-											</DropdownMenuItem>
-										</DropdownMenuContent>
-									</DropdownMenu>
-								</SidebarMenuItem>
+										</SidebarMenuItem>
+										<SidebarMenuItem>
+											<SidebarMenuButton
+												asChild
+												isActive={
+													pathname === "/ai-providers" || pathname.startsWith("/ai-providers/")
+												}
+												tooltip="AI Providers - Account resources"
+											>
+												<Link href="/ai-providers">
+													<NavIconChip tint="bg-identity-2-bg text-identity-2-fg">
+														<Sparkles />
+													</NavIconChip>
+													<span>AI Providers</span>
+												</Link>
+											</SidebarMenuButton>
+										</SidebarMenuItem>
+									</>
+								) : null}
+								{projectResourceDefinitionsForGroup(group.id).map((definition) => {
+									const Icon = RESOURCE_ICONS[definition.id];
+									const active =
+										pathname === definition.href || pathname.startsWith(`${definition.href}/`);
+									return (
+										<SidebarMenuItem key={definition.id}>
+											<SidebarMenuButton
+												asChild
+												isActive={active}
+												tooltip={`${definition.navLabel} - ${projectResourceScopeLabel(
+													definition.projectScope,
+												)}`}
+											>
+												<Link href={definition.href}>
+													<NavIconChip tint={RESOURCE_TINT_CLASSES[definition.id]}>
+														<Icon />
+													</NavIconChip>
+													<span>{definition.navLabel}</span>
+												</Link>
+											</SidebarMenuButton>
+										</SidebarMenuItem>
+									);
+								})}
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
-				</SidebarContent>
+				))}
 
-				<SidebarFooter>
-					<SidebarMenu>
-						<SidebarMenuItem>
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<SidebarMenuButton
-										size="lg"
-										className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+				{/* Secondary nav pinned to the bottom of SidebarContent — matches
+					    dashboard-01's NavSecondary pattern. */}
+				<SidebarGroup className="mt-auto">
+					<SidebarGroupContent>
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton tooltip="Search (⌘K)" onClick={() => setPaletteOpen(true)}>
+									<Search />
+									<span>Search</span>
+									<KbdGroup className="ml-auto">
+										<Kbd>⌘</Kbd>
+										<Kbd>K</Kbd>
+									</KbdGroup>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton asChild tooltip="Docs">
+									<a
+										href="https://deepwiki.com/Clawdi-AI/clawdi"
+										target="_blank"
+										rel="noopener noreferrer"
 									>
-										<Avatar className="h-8 w-8 rounded-lg">
-											{user?.imageUrl ? (
-												<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
-											) : null}
-											<AvatarFallback className="rounded-lg">
-												{user?.fullName?.[0] ?? "U"}
-											</AvatarFallback>
-										</Avatar>
-										<div className="grid flex-1 text-left text-sm leading-tight">
-											<span className="truncate font-medium">{user?.fullName}</span>
-											<span className="truncate text-xs text-muted-foreground">
-												{user?.primaryEmailAddress?.emailAddress}
-											</span>
-										</div>
-										<ChevronsUpDown className="ml-auto size-4" />
-									</SidebarMenuButton>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent
-									className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
-									side={isMobile ? "bottom" : "right"}
-									align="end"
-									sideOffset={4}
+										<BookOpen />
+										<span>Docs</span>
+										<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+									</a>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton asChild tooltip="GitHub">
+									<a
+										href="https://github.com/Clawdi-AI/clawdi"
+										target="_blank"
+										rel="noopener noreferrer"
+									>
+										<GitHubIcon />
+										<span>GitHub</span>
+										<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
+									</a>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									asChild
+									isActive={pathname.startsWith("/settings")}
+									tooltip="Settings"
 								>
-									<UserMenuItems />
-								</DropdownMenuContent>
-							</DropdownMenu>
-						</SidebarMenuItem>
-					</SidebarMenu>
-				</SidebarFooter>
-			</Sidebar>
+									<Link href="/settings">
+										<Settings />
+										<span>Settings</span>
+									</Link>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								{/* Help → support email + Telegram. Mirrors the navbar
+									    pattern from the public clawdi repo so users hit the
+									    same channels everywhere. */}
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<SidebarMenuButton tooltip="Help">
+											<CircleHelp />
+											<span>Help</span>
+										</SidebarMenuButton>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent
+										side={isMobile ? "bottom" : "right"}
+										align="end"
+										className="min-w-56"
+									>
+										<DropdownMenuItem asChild>
+											<a href="mailto:support@clawdi.ai">
+												<Mail />
+												support@clawdi.ai
+											</a>
+										</DropdownMenuItem>
+										<DropdownMenuItem asChild>
+											<a
+												href="https://t.me/clawdiofficial"
+												target="_blank"
+												rel="noopener noreferrer"
+											>
+												<MessageCircle />
+												Telegram @clawdiofficial
+											</a>
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
+			</SidebarContent>
 
-			<SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-			<AddAgentDialog open={addAgentOpen} onClose={() => setAddAgentOpen(false)} />
-		</>
+			<SidebarFooter>
+				<SidebarMenu>
+					<SidebarMenuItem>
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<SidebarMenuButton
+									size="lg"
+									className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+								>
+									<Avatar className="h-8 w-8 rounded-lg">
+										{user?.imageUrl ? (
+											<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
+										) : null}
+										<AvatarFallback className="rounded-lg">
+											{user?.fullName?.[0] ?? "U"}
+										</AvatarFallback>
+									</Avatar>
+									<div className="grid flex-1 text-left text-sm leading-tight">
+										<span className="truncate font-medium">{user?.fullName}</span>
+										<span className="truncate text-xs text-muted-foreground">
+											{user?.primaryEmailAddress?.emailAddress}
+										</span>
+									</div>
+									<ChevronsUpDown className="ml-auto size-4" />
+								</SidebarMenuButton>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent
+								className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+								side={isMobile ? "bottom" : "right"}
+								align="end"
+								sideOffset={4}
+							>
+								<UserMenuItems />
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</SidebarMenuItem>
+				</SidebarMenu>
+			</SidebarFooter>
+		</Sidebar>
 	);
 }

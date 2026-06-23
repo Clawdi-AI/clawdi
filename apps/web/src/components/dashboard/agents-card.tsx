@@ -4,11 +4,14 @@ import type { components } from "@clawdi/shared/api";
 import { AlertCircle, ArrowUpRight, Cloud } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
-import { AgentLabel } from "@/components/dashboard/agent-label";
+import { cleanMachineName, displayMachineName } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
+import { ENTITY_CARD_BASE, EntityMeta } from "@/components/entity-card";
+import { EntityIcon } from "@/components/entity-icon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -20,10 +23,53 @@ export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
 }
 
+export function isHostedManagedEnv(env: Env): boolean {
+	return env.hosted_managed === true || Boolean(env.hosted_deployment_id);
+}
+
+/** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
+export function formatRuntime(agentType: string): string {
+	switch (agentType) {
+		case "openclaw":
+			return "OpenClaw";
+		case "hermes":
+			return "Hermes";
+		case "claude_code":
+		case "claude-code":
+			return "Claude Code";
+		case "codex":
+			return "Codex";
+		default:
+			return agentType;
+	}
+}
+
+/**
+ * Build self-managed AgentTiles from cloud-api environments. Shared by the
+ * Overview grid and the `/agents` index so the tile shape stays identical
+ * across both surfaces (single source of truth for the connected-agent row).
+ */
+export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTile[] {
+	return (environments ?? [])
+		.filter((env) => !isHostedManagedEnv(env))
+		.map((env) => ({
+			id: env.id,
+			source: "self-managed" as const,
+			name: env.machine_name,
+			agentType: env.agent_type,
+			runtimeLabel: formatRuntime(env.agent_type),
+			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
+			lastSeenAt: env.last_seen_at,
+			href: `/agents/${env.id}`,
+			active: isAgentActive(env.last_seen_at),
+			env,
+		}));
+}
+
 /**
  * UI-side projection of an agent for the dashboard grid. The dashboard
  * page composes this from cloud-api environments and (for hosted users)
- * clawdi.ai deployments — `AgentsCard` itself stays generic and
+ * hosted deployments — `AgentsCard` itself stays generic and
  * never imports cross-origin clients or `@/hosted/*`.
  */
 export interface AgentTile {
@@ -39,18 +85,16 @@ export interface AgentTile {
 	lastSeenAt?: string | null;
 	/** Primary click target. Always points at the in-app env detail
 	 * page (`/agents/{env_id}`) when an env is available — for both
-	 * self-managed and hosted-with-Phase-4a-env tiles, so the
-	 * sessions/skills/memory experience stays unified. Falls back to
-	 * the external SaaS dashboard URL only for hosted tiles whose
-	 * cloud-api env hasn't been registered yet (pre-Phase-4a legacy
-	 * pods, mint-failed deploys). `external` reflects whichever
-	 * applies. */
+	 * self-managed and hosted tiles with a registered env, so the
+	 * sessions/skills/memory experience stays unified. Uses the in-app
+	 * deployment-id route for hosted tiles whose cloud-api env has not
+	 * been registered yet. `external` reflects whichever applies. */
 	href: string;
 	external?: boolean;
-	/** Secondary click target rendered as a small "Manage on Clawdi"
-	 * button on hosted tiles only. Goes to the SaaS dashboard for
-	 * lifecycle ops (Restart / Stop / Delete) that don't live in the
-	 * OSS dashboard. Self-managed tiles leave this undefined.
+	/** Secondary click target rendered as a small "Manage" button on
+	 * hosted tiles only. Points at the in-app hosted agent Compute tab,
+	 * where lifecycle ops (Restart / Stop / Delete) live. Self-managed
+	 * tiles leave this undefined.
 	 * Stretched-link pattern means this button needs `relative z-10`
 	 * so it captures clicks above the inset-0 primary link overlay. */
 	manageHref?: string;
@@ -59,9 +103,14 @@ export interface AgentTile {
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with
-	 * the same shape; only legacy hosted pods (no env registered)
-	 * leave this null. */
+	 * the same shape; hosted deployments without a registered env leave
+	 * this null. */
 	env?: Env | null;
+	/** Hosted only: the compute (deployment) this runtime-agent belongs to.
+	 * Lets the /agents index group sibling runtime-agents under their shared
+	 * pod. Self-managed tiles leave these undefined. */
+	computeId?: string;
+	computeName?: string;
 }
 
 export function AgentsCard({
@@ -126,17 +175,41 @@ export function AgentsCard({
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
 						fillHeight={false}
-						description="No AI connected yet. The card on the right walks you through it."
+						title="No agents yet"
+						description="Connect an agent to see it here."
 					/>
 				)}
-				{hostedStatus?.error ? (
-					<div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-						<AlertCircle className="size-3.5 text-destructive" />
-						<span>Hosted agents unavailable. Self-managed agents listed above.</span>
-					</div>
-				) : null}
+				{hostedStatus?.error ? <HostedUnavailableBanner /> : null}
 			</div>
 		</section>
+	);
+}
+
+/**
+ * One canonical banner for "the hosted-deployments fetch failed but the rest
+ * of the page is fine." Used by both AgentsCard (Overview) and the grouped
+ * /agents view so the copy + chrome match. Self-managed and connected agents
+ * are the same thing here, so the copy stays neutral.
+ */
+export function HostedUnavailableBanner() {
+	return (
+		<div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
+			<AlertCircle className="size-3.5 shrink-0 text-destructive" />
+			<span>Hosted agents are unavailable right now. Your other agents are listed above.</span>
+		</div>
+	);
+}
+
+/** Bare responsive grid of agent tiles — no card chrome, cap, or empty state.
+ * Used by grouped surfaces (e.g. the /agents index grouped by compute) that
+ * supply their own section headers. */
+export function AgentTileGrid({ tiles }: { tiles: AgentTile[] }) {
+	return (
+		<div className="grid gap-2 sm:grid-cols-2">
+			{tiles.map((tile) => (
+				<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
+			))}
+		</div>
 	);
 }
 
@@ -192,45 +265,64 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		);
 	}
 
-	// Trailing-edge slot. Hosted tiles with a `manageHref` get a
-	// dedicated "Manage on Clawdi" affordance pointing at the SaaS
-	// dashboard's lifecycle UI (Restart/Stop/Delete) — clicked
-	// independently of the primary link via `relative z-10`. Hosted
-	// fallback tiles (env not yet registered → primary IS the SaaS
-	// URL via `external`) get the original ArrowUpRight glyph so the
-	// affordance still reads as "this leaves the app".
-	const trailing = tile.manageHref ? (
-		<a
-			href={tile.manageHref}
-			target="_blank"
-			rel="noopener noreferrer"
-			onClick={(e) => e.stopPropagation()}
-			title="Manage on Clawdi"
-			className="relative z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-		>
-			<Cloud className="size-3" />
-			Manage
-			<ArrowUpRight className="size-2.5" />
-		</a>
-	) : tile.external ? (
-		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-	) : null;
+	// Trailing-edge slot. Hosted tiles with a distinct `manageHref` get a
+	// dedicated in-app Compute-tab affordance. Tiles that truly leave the
+	// app (`external`) get the ArrowUpRight glyph.
+	const manageHrefIsExternal = tile.manageHref ? /^https?:\/\//i.test(tile.manageHref) : false;
+	const manageClassName =
+		"relative z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary";
+	const trailing =
+		tile.manageHref && tile.manageHref !== tile.href ? (
+			manageHrefIsExternal ? (
+				<a
+					href={tile.manageHref}
+					target="_blank"
+					rel="noopener noreferrer"
+					onClick={(e) => e.stopPropagation()}
+					title="Manage"
+					className={manageClassName}
+				>
+					<Cloud className="size-3" />
+					Manage
+					<ArrowUpRight className="size-2.5" />
+				</a>
+			) : (
+				<Link
+					href={tile.manageHref}
+					onClick={(e) => e.stopPropagation()}
+					title="Manage"
+					className={manageClassName}
+				>
+					<Cloud className="size-3" />
+					Manage
+				</Link>
+			)
+		) : tile.external ? (
+			<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+		) : null;
 
+	// Strip mDNS suffixes (`.local`/`.lan`) and middle-truncate generated pod
+	// names so the distinguishing tail survives; the full name stays on hover.
+	const cleanedName = cleanMachineName(tile.name) || tile.name;
 	const card = (
-		<Card className="h-full py-0 transition-colors group-hover:bg-accent/40">
-			<CardContent className="flex items-center gap-3 p-4">
-				<AgentLabel
-					machineName={tile.name}
-					type={tile.agentType}
-					size="lg"
-					primary="machine"
-					meta={meta}
-					titleAdornment={clawdiPill}
-					className="min-w-0 flex-1"
-				/>
-				{trailing}
-			</CardContent>
-		</Card>
+		<div
+			className={cn(
+				ENTITY_CARD_BASE,
+				"flex h-full items-center gap-3 bg-card transition-colors group-hover:bg-muted/50",
+			)}
+		>
+			<EntityIcon kind="framework" id={tile.agentType ?? ""} label={cleanedName} size="md" />
+			<div className="min-w-0 flex-1">
+				<div className="flex items-center gap-2">
+					<span className="truncate text-sm font-medium" title={cleanedName}>
+						{displayMachineName(cleanedName)}
+					</span>
+					{clawdiPill}
+				</div>
+				<EntityMeta items={meta} />
+			</div>
+			{trailing}
+		</div>
 	);
 
 	const linkClassName =

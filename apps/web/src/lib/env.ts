@@ -37,14 +37,9 @@ export const env = createEnv({
 		// `javascript:` schemes that `z.string().url()` would let through.
 		NEXT_PUBLIC_API_URL: httpsOrHttp().default("http://localhost:8000"),
 
-		// clawdi.ai backend URL — used for cross-origin Composio + deploy
-		// listing in hosted mode.
+		// Hosted deploy API URL — used for deploy, billing, and hosted
+		// profile calls in hosted builds.
 		NEXT_PUBLIC_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
-
-		// Where the "Manage" link on hosted agent tiles points. Production
-		// override per-environment so dev/preview can route to local
-		// dashboards without a code change.
-		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: httpsOrHttp().default("https://www.clawdi.ai/dashboard"),
 
 		// Clerk publishable key. Local `next dev` auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.
@@ -52,9 +47,10 @@ export const env = createEnv({
 			? z.string().min(1).optional()
 			: z.string().min(1),
 
-		// Hosted-only build flag, transformed to a real boolean. `"true"`
-		// enables clawdi.ai cross-origin surfaces (deploy listing,
-		// Composio proxy, DeployTrigger sidebar). Anything else = OSS.
+		// Hosted build flag, transformed to a real boolean. `"true"`
+		// enables surfaces we do not ship in OSS builds yet: v2-gated
+		// channels/AI providers, hosted deployments, billing, and analytics.
+		// Anything else = OSS.
 		NEXT_PUBLIC_CLAWDI_HOSTED: z
 			.string()
 			.optional()
@@ -78,6 +74,12 @@ export const env = createEnv({
 		// Hosted-only analytics token. Optional so OSS and hosted-without-
 		// analytics both validate cleanly.
 		NEXT_PUBLIC_POSTHOG_TOKEN: z.string().min(1).optional(),
+
+		// Stripe publishable key for hosted wallet top-up PaymentIntent
+		// confirmation. Optional: OSS and hosted-without-card builds validate
+		// cleanly; the top-up dialog degrades to an invoice-redirect path when
+		// this is absent.
+		NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1).optional(),
 	},
 	runtimeEnv: {
 		VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
@@ -85,7 +87,6 @@ export const env = createEnv({
 		VERCEL_ENV: process.env.VERCEL_ENV,
 		NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
 		NEXT_PUBLIC_DEPLOY_API_URL: process.env.NEXT_PUBLIC_DEPLOY_API_URL,
-		NEXT_PUBLIC_DEPLOY_DASHBOARD_URL: process.env.NEXT_PUBLIC_DEPLOY_DASHBOARD_URL,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
 		NEXT_PUBLIC_DEV_AUTH_BYPASS: process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS,
@@ -93,6 +94,7 @@ export const env = createEnv({
 		NEXT_PUBLIC_DEV_AUTH_NAME: process.env.NEXT_PUBLIC_DEV_AUTH_NAME,
 		NEXT_PUBLIC_DEV_AUTH_EMAIL: process.env.NEXT_PUBLIC_DEV_AUTH_EMAIL,
 		NEXT_PUBLIC_POSTHOG_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_TOKEN,
+		NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
 	},
 	// `bun test` preloads `test-setup.ts` to seed required vars, so
 	// validation runs in tests too — this preserves the schema's

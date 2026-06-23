@@ -27,7 +27,18 @@ const SEGMENT_LABELS: Record<string, string> = {
 	skills: "Skills",
 	vault: "Vaults",
 	connectors: "Connectors",
+	channels: "Channels",
 	agents: "Agents",
+	settings: "Settings",
+	general: "General",
+	profile: "Profile",
+	"api-keys": "API Keys",
+	"ai-providers": "AI Providers",
+	billing: "Billing",
+	wallet: "Wallet",
+	plan: "Plan",
+	usage: "Usage",
+	pricing: "Pricing",
 };
 
 // Looks like a UUID? Truncate it for the loading state — full UUIDs in a

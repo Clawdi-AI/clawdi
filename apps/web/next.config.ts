@@ -17,7 +17,9 @@ const nextConfig: NextConfig = {
 	images: {
 		remotePatterns: [
 			{ hostname: "img.clerk.com" },
+			// Full-color brand/app icons for channels (and any future entity icons).
 			{ hostname: "assets.clawdi.ai" },
+			// Colored brand-logo fallback for AI providers without a CDN icon.
 			{ hostname: "cdn.simpleicons.org" },
 		],
 	},
@@ -49,6 +51,25 @@ const nextConfig: NextConfig = {
 		}
 
 		return rewrites;
+	},
+	// Billing surfaces moved under routed Settings (`/settings/billing/*`).
+	// Keep the old top-level paths working for any saved deep links. Hosted
+	// builds only — these routes never resolve to content in OSS. Temporary
+	// (307) redirects so the mapping can still evolve without sticky browser
+	// caches.
+	async redirects() {
+		if (!isHostedBuild) return [];
+		return [
+			{ source: "/wallet", destination: "/settings/billing/wallet", permanent: false },
+			{ source: "/subscription", destination: "/settings/billing/plan", permanent: false },
+			// Pricing folded into the Plan tab's upgrade flow — old links land there.
+			{ source: "/pricing", destination: "/settings/billing/plan", permanent: false },
+			{
+				source: "/settings/billing/pricing",
+				destination: "/settings/billing/plan",
+				permanent: false,
+			},
+		];
 	},
 };
 

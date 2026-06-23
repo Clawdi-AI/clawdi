@@ -2,14 +2,15 @@
 
 import dynamic from "next/dynamic";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { V2Gate } from "@/components/v2-gate";
 import { IS_HOSTED } from "@/lib/hosted";
 
-// Hosted-only surface. The dynamic import is constructed only when
-// `IS_HOSTED` is true so OSS builds eliminate the chunk entirely.
+// V2-gated surface. The dynamic import is constructed only when `IS_HOSTED` is
+// true so OSS builds eliminate the chunk entirely.
 const AiProvidersPage = IS_HOSTED
 	? dynamic(
 			() =>
-				import("@/hosted/ai-providers/ai-providers-page").then((m) => ({
+				import("@/v2/ai-providers/ai-providers-page").then((m) => ({
 					default: m.AiProvidersPage,
 				})),
 			{ loading: HostedRouteSkeleton },
@@ -17,5 +18,5 @@ const AiProvidersPage = IS_HOSTED
 	: null;
 
 export default function Page() {
-	return AiProvidersPage ? <AiProvidersPage /> : null;
+	return <V2Gate fallbackHref="/">{AiProvidersPage ? <AiProvidersPage /> : null}</V2Gate>;
 }

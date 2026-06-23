@@ -1,11 +1,62 @@
-import { redirect } from "next/navigation";
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import dynamic from "next/dynamic";
+import { useMemo } from "react";
+import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import { PageHeader } from "@/components/page-header";
+import { unwrap, useApi } from "@/lib/api";
+import { IS_HOSTED } from "@/lib/hosted";
+import { useV2Access } from "@/lib/v2-access";
 
 /**
- * Agents are surfaced through the Overview page (Agents card) — there's no
- * dedicated `/agents` list view by design. Without this redirect, deep
- * links from the breadcrumb's "Agents" segment 404. Send the user to the
- * Overview where the agent grid lives.
+ * Flat index of every agent — self-managed (connected) and, for hosted users,
+ * hosted deployments. The 'Agents' breadcrumb parent and the
+ * sidebar's "View all (N)" overflow both resolve here.
+ *
+ * Hosted merges deployments into the list via `HostedAgentsSection`;
+ * the IS_HOSTED-gated dynamic import keeps that cross-origin chunk out of OSS
+ * bundles (same pattern as the Overview agent panel).
  */
-export default function AgentsIndexPage(): never {
-	redirect("/");
+const HostedAgentsByCompute = IS_HOSTED
+	? dynamic(() =>
+			import("@/hosted/hosted-agents-section").then((m) => ({
+				default: m.HostedAgentsByCompute,
+			})),
+		)
+	: null;
+
+export default function AgentsIndexPage() {
+	const api = useApi();
+	const v2Access = useV2Access();
+	const { data: environments, isLoading: envsLoading } = useQuery({
+		queryKey: ["environments"],
+		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		// Match the Overview/agent-detail 10s cadence so the live status badges
+		// stay live on this list too.
+		refetchInterval: 10_000,
+	});
+
+	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
+	const selfManagedCount = selfManagedTiles.length;
+	const hostedAccessLoading = Boolean(HostedAgentsByCompute && v2Access.isLoading);
+	const hostedAgentsEnabled = Boolean(HostedAgentsByCompute && v2Access.canUseV2);
+
+	return (
+		<div className="space-y-6 px-4 lg:px-6">
+			<PageHeader title="Agents" description="Every agent connected to your account." />
+			{hostedAccessLoading ? (
+				<AgentsCard agents={selfManagedTiles} isLoading />
+			) : hostedAgentsEnabled && HostedAgentsByCompute ? (
+				<HostedAgentsByCompute
+					selfManagedTiles={selfManagedTiles}
+					envsLoading={envsLoading}
+					selfManagedCount={selfManagedCount}
+					cloudEnvs={environments ?? []}
+				/>
+			) : (
+				<AgentsCard agents={selfManagedTiles} isLoading={envsLoading} />
+			)}
+		</div>
+	);
 }

@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AiProviderCatalog } from "@clawdi/shared";
+import type { AiProviderApiMode, AiProviderCatalog } from "@clawdi/shared";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	mergeHermesConfig,
@@ -124,8 +124,13 @@ function writeSecretValues(
 		mode: 0o600,
 		dirMode: 0o700,
 	});
-	makeSystemOwned(dirname(path));
-	makeSystemOwned(path);
+	makeRuntimeUserPrivateDir(dirname(path));
+	makeRuntimeUserOwned(path);
+	try {
+		chmodSync(path, 0o600);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
 	return path;
 }
 
@@ -215,17 +220,6 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
-}
-
-function makeSystemOwned(path: string): void {
-	if (!runningAsRoot()) return;
-	const isSecretFile = path.endsWith("secrets.json");
-	try {
-		chownSync(path, 0, 0);
-		chmodSync(path, isSecretFile ? 0o600 : 0o755);
-	} catch {
-		// Best effort for non-POSIX local development environments.
-	}
 }
 
 function makeRuntimeUserOwned(path: string): void {
@@ -602,17 +596,23 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 			const input = raw as Record<string, unknown>;
 			const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl : undefined;
 			const model = typeof input.model === "string" ? input.model : undefined;
+			const apiMode = hostedProviderApiMode(input);
+			const apiKeySecretRef =
+				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
+			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
 			if (!baseUrl || !model) return null;
 			return {
 				id,
 				type: "custom_openai_compatible" as const,
 				base_url: baseUrl,
 				default_model: model,
-				api_mode: "codex_responses" as const,
-				auth: { type: "api_key" as const, source: "managed" as const },
+				api_mode: apiMode,
+				auth: apiKeySecretRef
+					? { type: "api_key" as const, source: "managed" as const }
+					: { type: "none" as const },
 				managed_by: "clawdi" as const,
-				runtime_env_name: "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN",
-				models: [{ id: model, api_mode: "codex_responses" as const }],
+				runtime_env_name: apiKeySecretRef ? runtimeEnvName : undefined,
+				models: [{ id: model, api_mode: apiMode }],
 			};
 		})
 		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
@@ -622,6 +622,44 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 		providers: entries,
 		defaults: { chat_provider_id: entries[0]?.id },
 	};
+}
+
+function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
+	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
+	if (raw === "openai_chat" || raw === "openai_responses" || raw === "codex_responses") {
+		return raw;
+	}
+	return "codex_responses";
+}
+
+function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
+	const raw =
+		typeof input.runtimeEnvName === "string"
+			? input.runtimeEnvName
+			: typeof input.runtime_env_name === "string"
+				? input.runtime_env_name
+				: null;
+	if (raw && isEnvKey(raw)) return raw;
+	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+}
+
+function hostedProviderSecretEnv(manifest: RuntimeManifest): Record<string, string> {
+	const providers = manifest.projection?.providers;
+	if (!providers || Object.keys(providers).length === 0) return {};
+	const secretEnv: Record<string, string> = {};
+	for (const [providerId, raw] of Object.entries(providers)) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
+		const input = raw as Record<string, unknown>;
+		const apiKeySecretRef =
+			typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
+		if (!apiKeySecretRef) continue;
+		secretEnv[hostedProviderRuntimeEnvName(providerId, input)] = apiKeySecretRef;
+	}
+	return secretEnv;
+}
+
+function isEnvKey(value: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function applyHostedAiProviderProjection(
@@ -1461,6 +1499,7 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
+	const providerSecretEnv = hostedProviderSecretEnv(manifest);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
@@ -1549,6 +1588,8 @@ export function convergeRuntimeManifest(
 					workspaceRoot,
 					mitmProfileBundlePath,
 					settings: runtime.run,
+					secretEnv: providerSecretEnv,
+					secretFilePath: mitmSecretFile,
 				}),
 				paths,
 			);

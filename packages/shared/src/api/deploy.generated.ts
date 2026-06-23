@@ -4,17 +4,328 @@
  */
 
 export interface paths {
-    "/deployments": {
+    "/me": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Deployments */
-        get: operations["list_deployments_deployments_get"];
+        /** Me */
+        get: operations["me_me_get"];
         put?: never;
         post?: never;
+        /** Delete Account */
+        delete: operations["delete_account_me_delete"];
+        options?: never;
+        head?: never;
+        /** Update Me */
+        patch: operations["update_me_me_patch"];
+        trace?: never;
+    };
+    "/v2/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Deployments */
+        get: operations["list_v2_deployments_v2_deployments_get"];
+        put?: never;
+        /** Create V2 Deployment */
+        post: operations["create_v2_deployment_v2_deployments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Deployment */
+        get: operations["get_v2_deployment_v2_deployments__deployment_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete V2 Deployment */
+        delete: operations["delete_v2_deployment_v2_deployments__deployment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update V2 Deployment */
+        patch: operations["update_v2_deployment_v2_deployments__deployment_id__patch"];
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/agents/{agent_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set V2 Agent Enabled */
+        patch: operations["set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch"];
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rebind V2 Agent Ai Provider */
+        patch: operations["rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch"];
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/onboard-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Onboard V2 Agent */
+        post: operations["onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart V2 Deployment */
+        post: operations["restart_v2_deployment_v2_deployments__deployment_id__restart_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start V2 Deployment */
+        post: operations["start_v2_deployment_v2_deployments__deployment_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop V2 Deployment */
+        post: operations["stop_v2_deployment_v2_deployments__deployment_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/activation-fee": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** V2 Activation Fee Status */
+        get: operations["v2_activation_fee_status_v2_subscription_activation_fee_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Checkout V2 Subscription */
+        post: operations["checkout_v2_subscription_v2_subscription_checkout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Current V2 Subscription */
+        get: operations["current_v2_subscription_v2_subscription_current_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Subscription Plans */
+        get: operations["list_v2_subscription_plans_v2_subscription_plans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Portal V2 Subscription */
+        post: operations["portal_v2_subscription_v2_subscription_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Hosted V2 Usage Summary */
+        get: operations["hosted_v2_usage_summary_v2_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/wallet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wallet */
+        get: operations["get_wallet_v2_wallet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/wallet/auto-reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Wallet Auto Reload */
+        put: operations["update_wallet_auto_reload_v2_wallet_auto_reload_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/wallet/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Wallet Ledger */
+        get: operations["list_v2_wallet_ledger_v2_wallet_ledger_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/wallet/topup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Wallet Topup */
+        post: operations["create_wallet_topup_v2_wallet_topup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -25,8 +336,177 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivationFeeStatusResponse */
+        ActivationFeeStatusResponse: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Satisfied
+             * @default false
+             */
+            satisfied: boolean;
+        };
+        /** AiProviderBindingInfo */
+        AiProviderBindingInfo: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Auth Kind
+             * @enum {string}
+             */
+            auth_kind: "managed" | "api_key" | "codex_oauth";
+            /** Primary Model */
+            primary_model?: string | null;
+        };
+        /** BillingOfferResponse */
+        BillingOfferResponse: {
+            /** Billing Term Months */
+            billing_term_months: number;
+            /** Price Cents */
+            price_cents: number;
+            /** Effective Monthly Price Cents */
+            effective_monthly_price_cents: number;
+            /** Discount Percent */
+            discount_percent: number;
+        };
+        /** CheckoutRequest */
+        CheckoutRequest: {
+            /** Plan Slug */
+            plan_slug: string;
+            /**
+             * Billing Term Months
+             * @default 1
+             */
+            billing_term_months: number;
+            /**
+             * Collection Method
+             * @default charge_automatically
+             * @enum {string}
+             */
+            collection_method: "charge_automatically" | "send_invoice";
+            /** Invoice Days Until Due */
+            invoice_days_until_due?: number | null;
+            deploy_config?: components["schemas"]["DeployRequest"] | null;
+            /**
+             * Ui Mode
+             * @default hosted
+             */
+            ui_mode: string;
+            /** Locale */
+            locale?: string | null;
+        };
+        /** CheckoutResponse */
+        CheckoutResponse: {
+            /**
+             * Flow Type
+             * @default checkout_session
+             */
+            flow_type: string;
+            /** Action Url */
+            action_url?: string | null;
+            /**
+             * Checkout Url
+             * @default
+             */
+            checkout_url: string;
+            /** Client Secret */
+            client_secret?: string | null;
+            /** Invoice Url */
+            invoice_url?: string | null;
+            /** Invoice Id */
+            invoice_id?: string | null;
+        };
+        /**
+         * DeployRequest
+         * @description Deploy request — accepts flat fields (mobile) or nested config (web).
+         */
+        DeployRequest: {
+            /** Profile */
+            profile?: string | null;
+            /** Primary Model */
+            primary_model?: string | null;
+            /** Channel */
+            channel?: string | null;
+            /** Telegram Bot Token */
+            telegram_bot_token?: string | null;
+            /** Telegram Allowed Usernames */
+            telegram_allowed_usernames?: string[] | null;
+            /** Discord Bot Token */
+            discord_bot_token?: string | null;
+            /** Discord Guild Id */
+            discord_guild_id?: string | null;
+            /** Slack Bot Token */
+            slack_bot_token?: string | null;
+            /** Slack App Token */
+            slack_app_token?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Assistant Name */
+            assistant_name?: string | null;
+            /** Personality */
+            personality?: string | null;
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Public Ports */
+            public_ports?: number[] | null;
+            /** Enable Openclaw */
+            enable_openclaw?: boolean | null;
+            /**
+             * Enable Hermes
+             * @default false
+             */
+            enable_hermes: boolean;
+            /** Deploy Request Id */
+            deploy_request_id?: string | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /** Ai Provider Auth Kind */
+            ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
+            /** Ai Provider Bootstrap */
+            ai_provider_bootstrap?: {
+                [key: string]: unknown;
+            } | null;
+            config?: components["schemas"]["OpenClawConfigRequest"] | null;
+        };
+        /** DeploymentDeleteResponse */
+        DeploymentDeleteResponse: {
+            /** Status */
+            status: string;
+            /** Cvm Deleted */
+            cvm_deleted: boolean;
+        };
         /** DeploymentDetailsInfo */
         DeploymentDetailsInfo: {
+            /**
+             * Mux Enabled
+             * @default false
+             */
+            mux_enabled: boolean;
+            /**
+             * Telegram Mux Enabled
+             * @default false
+             */
+            telegram_mux_enabled: boolean;
+            /**
+             * Discord Mux Enabled
+             * @default false
+             */
+            discord_mux_enabled: boolean;
+            /**
+             * Whatsapp Mux Enabled
+             * @default false
+             */
+            whatsapp_mux_enabled: boolean;
+            /**
+             * Imessage Mux Enabled
+             * @default false
+             */
+            imessage_mux_enabled: boolean;
             /**
              * Kobb Available
              * @default false
@@ -36,6 +516,18 @@ export interface components {
             channel?: string | null;
             /** Primary Model */
             primary_model?: string | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /**
+             * Ai Provider Auth Kind
+             * @default managed
+             * @enum {string}
+             */
+            ai_provider_auth_kind: "managed" | "api_key" | "codex_oauth";
+            /** Ai Provider Bindings */
+            ai_provider_bindings?: {
+                [key: string]: components["schemas"]["AiProviderBindingInfo"];
+            };
             /** Telegram Allowed Usernames */
             telegram_allowed_usernames?: string[] | null;
             /** Telegram Bot Username */
@@ -49,12 +541,19 @@ export interface components {
             /** Public Ports */
             public_ports?: number[];
             /**
+             * Enable Openclaw
+             * @default true
+             */
+            enable_openclaw: boolean;
+            /**
              * Enable Hermes
              * @default false
              */
             enable_hermes: boolean;
             /** Onboarded Agents */
             onboarded_agents?: string[];
+            /** Configured Agents */
+            configured_agents?: string[];
             /** Clawdi Cloud Environments */
             clawdi_cloud_environments?: {
                 [key: string]: string;
@@ -66,13 +565,18 @@ export interface components {
             /** Disk Gb */
             disk_gb?: number | null;
         };
+        /** DeploymentLifecycleResponse */
+        DeploymentLifecycleResponse: {
+            /** Status */
+            status: string;
+            /** Upgrade Task Id */
+            upgrade_task_id?: string | null;
+            /** Upgrade Status */
+            upgrade_status?: string | null;
+        };
         /** DeploymentResponse */
         DeploymentResponse: {
-            /**
-             * Id
-             * Format: sqid
-             * @example dep_K8fJ3pQm
-             */
+            /** Id */
             id: string;
             /**
              * User Id
@@ -102,6 +606,12 @@ export interface components {
             endpoints: string[];
             /** Gateway Token */
             gateway_token?: string | null;
+            /** Ui Access Token */
+            ui_access_token?: string | null;
+            /** Openclaw Ui Url */
+            openclaw_ui_url?: string | null;
+            /** Hermes Ui Url */
+            hermes_ui_url?: string | null;
             config_info?: components["schemas"]["DeploymentDetailsInfo"] | null;
             /**
              * Created At
@@ -122,6 +632,488 @@ export interface components {
             /** Profile */
             profile?: string | null;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HostedUsageDay */
+        HostedUsageDay: {
+            /** Date */
+            date: string;
+            /** Credits */
+            credits: number;
+        };
+        /** HostedUsageModelBreakdown */
+        HostedUsageModelBreakdown: {
+            /** Model */
+            model: string;
+            /** Provider */
+            provider?: string | null;
+            /** Credits */
+            credits: number;
+            /** Requests */
+            requests: number;
+        };
+        /** HostedUsageSummaryResponse */
+        HostedUsageSummaryResponse: {
+            /** Period Start */
+            period_start: string;
+            /** Period End */
+            period_end: string;
+            /** Total Credits */
+            total_credits: number;
+            /** Total Requests */
+            total_requests: number;
+            /** By Model */
+            by_model: components["schemas"]["HostedUsageModelBreakdown"][];
+            /** By Day */
+            by_day: components["schemas"]["HostedUsageDay"][];
+        };
+        /** OnboardAgentRequest */
+        OnboardAgentRequest: {
+            /**
+             * Agent Type
+             * @enum {string}
+             */
+            agent_type: "openclaw" | "hermes";
+            /** Primary Model */
+            primary_model?: string | null;
+            /** Assistant Name */
+            assistant_name?: string | null;
+            /** Personality */
+            personality?: string | null;
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /** Ai Provider Auth Kind */
+            ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
+            /** Ai Provider Bootstrap */
+            ai_provider_bootstrap?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** OpenClawConfigRequest */
+        OpenClawConfigRequest: {
+            /** Primary Model */
+            primary_model?: string | null;
+            /** Channel */
+            channel?: string | null;
+            /** Telegram Bot Token */
+            telegram_bot_token?: string | null;
+            /** Telegram Allowed Usernames */
+            telegram_allowed_usernames?: string[] | null;
+            /** Discord Bot Token */
+            discord_bot_token?: string | null;
+            /** Discord Guild Id */
+            discord_guild_id?: string | null;
+            /** Slack Bot Token */
+            slack_bot_token?: string | null;
+            /** Slack App Token */
+            slack_app_token?: string | null;
+            /** Assistant Name */
+            assistant_name?: string | null;
+            /** Personality */
+            personality?: string | null;
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Public Ports */
+            public_ports?: number[] | null;
+            /**
+             * Enable Openclaw
+             * @default true
+             */
+            enable_openclaw: boolean;
+            /**
+             * Enable Hermes
+             * @default false
+             */
+            enable_hermes: boolean;
+        };
+        /** PlanResponse */
+        PlanResponse: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Price Cents */
+            price_cents: number;
+            /** Monthly Budget Credits */
+            monthly_budget_credits: number;
+            /** Points Per Usd */
+            points_per_usd: number;
+            /** Vcpu */
+            vcpu: number;
+            /** Ram Gb */
+            ram_gb: number;
+            /** Disk Size */
+            disk_size: number;
+            /** Instance Type */
+            instance_type?: string | null;
+            /**
+             * Offers
+             * @default []
+             */
+            offers: components["schemas"]["BillingOfferResponse"][];
+        };
+        /** PortalRequest */
+        PortalRequest: {
+            /** Target Plan Slug */
+            target_plan_slug?: string | null;
+            /** Target Billing Term Months */
+            target_billing_term_months?: number | null;
+            /**
+             * Confirm Upgrade
+             * @default false
+             */
+            confirm_upgrade: boolean;
+            /** Locale */
+            locale?: string | null;
+        };
+        /** PortalResponse */
+        PortalResponse: {
+            /** Url */
+            url: string;
+            /** Portal Url */
+            portal_url: string;
+            /** Status */
+            status?: string | null;
+            /** Redirect Url */
+            redirect_url?: string | null;
+            /** Payment Intent Client Secret */
+            payment_intent_client_secret?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Effective At */
+            effective_at?: string | null;
+            /** Amount Due Usd */
+            amount_due_usd?: number | null;
+        };
+        /** RebindAgentAiProviderRequest */
+        RebindAgentAiProviderRequest: {
+            /** Primary Model */
+            primary_model?: string | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /**
+             * Ai Provider Auth Kind
+             * @enum {string}
+             */
+            ai_provider_auth_kind: "managed" | "api_key" | "codex_oauth";
+            /** Ai Provider Bootstrap */
+            ai_provider_bootstrap?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** SetAgentEnabledRequest */
+        SetAgentEnabledRequest: {
+            /** Enabled */
+            enabled: boolean;
+            /** Personality */
+            personality?: string | null;
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+        };
+        /** SubscriptionResponse */
+        SubscriptionResponse: {
+            /**
+             * Id
+             * Format: sqid
+             * @example sub_K8fJ3pQm
+             */
+            id: string;
+            /** Plan Slug */
+            plan_slug: string;
+            /** Payment Provider */
+            payment_provider?: string | null;
+            /** Status */
+            status: string;
+            /** Current Period Start */
+            current_period_start: string | null;
+            /** Current Period End */
+            current_period_end: string | null;
+            /** Budget Credits Total */
+            budget_credits_total: number;
+            /** Budget Credits Used */
+            budget_credits_used?: number;
+            /** Addon Credits Remaining */
+            addon_credits_remaining: number;
+            /** Points Per Usd */
+            points_per_usd: number;
+            /**
+             * Use Addon Credits
+             * @default true
+             */
+            use_addon_credits: boolean;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            /**
+             * Billing Term Months
+             * @default 1
+             */
+            billing_term_months: number;
+            /** Billing Price Cents Snapshot */
+            billing_price_cents_snapshot?: number | null;
+            /** Pending Billing Term Months */
+            pending_billing_term_months?: number | null;
+            /** Pending Billing Term Effective At */
+            pending_billing_term_effective_at?: string | null;
+            /** Pending Downgrade Plan Slug */
+            pending_downgrade_plan_slug?: string | null;
+            /** Pending Downgrade Effective At */
+            pending_downgrade_effective_at?: string | null;
+            /**
+             * Card On File
+             * @default false
+             */
+            card_on_file: boolean;
+            /**
+             * Card Setup Required
+             * @default false
+             */
+            card_setup_required: boolean;
+            /** Card Brand */
+            card_brand?: string | null;
+            /** Card Last4 */
+            card_last4?: string | null;
+            /** Card Exp Month */
+            card_exp_month?: number | null;
+            /** Card Exp Year */
+            card_exp_year?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Collection Method
+             * @default charge_automatically
+             */
+            collection_method: string;
+            /**
+             * Entitled
+             * @default true
+             */
+            entitled: boolean;
+            /**
+             * Activation Fee Amount Cents
+             * @default 0
+             */
+            activation_fee_amount_cents: number;
+            /**
+             * Activation Fee Satisfied
+             * @default false
+             */
+            activation_fee_satisfied: boolean;
+            /** Pending Collection Method */
+            pending_collection_method?: string | null;
+            /** Pending Collection Method Effective At */
+            pending_collection_method_effective_at?: string | null;
+            /** Entitled Until */
+            entitled_until?: string | null;
+            /** Invoice Days Until Due */
+            invoice_days_until_due?: number | null;
+            /** Invoice Due At */
+            invoice_due_at?: string | null;
+            /** Contract Source */
+            contract_source?: string | null;
+            /** Prepaid Ends At */
+            prepaid_ends_at?: string | null;
+            /** Allowance Period Start */
+            allowance_period_start?: string | null;
+            /** Allowance Period End */
+            allowance_period_end?: string | null;
+            /** Next Allowance Reset At */
+            next_allowance_reset_at?: string | null;
+        };
+        /** UpdateDeploymentRequest */
+        UpdateDeploymentRequest: {
+            /** Assistant Name */
+            assistant_name?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** UserFeatureResolution */
+        UserFeatureResolution: {
+            /** Enabled */
+            enabled: boolean;
+            source: components["schemas"]["UserFeatureResolutionSource"];
+        };
+        /**
+         * UserFeatureResolutionSource
+         * @enum {string}
+         */
+        UserFeatureResolutionSource: "default" | "rule_user_id" | "rule_clerk_id" | "rule_email" | "rule_email_domain" | "rule_referral_l1";
+        /** UserProductCapabilities */
+        UserProductCapabilities: {
+            /**
+             * Can Use V1
+             * @default true
+             */
+            can_use_v1: boolean;
+            /**
+             * Can Use V2
+             * @default false
+             */
+            can_use_v2: boolean;
+        };
+        /**
+         * UserProfileUpdateRequest
+         * @description Partial profile update. ``None`` = leave unchanged, ``""`` = unbind.
+         */
+        UserProfileUpdateRequest: {
+            /** Evm Wallet Address */
+            evm_wallet_address?: string | null;
+        };
+        /** UserResponse */
+        UserResponse: {
+            /**
+             * Id
+             * Format: sqid
+             * @example usr_K8fJ3pQm
+             */
+            id: string;
+            /** Clerk Id */
+            clerk_id: string;
+            /** Email */
+            email: string | null;
+            /** Name */
+            name: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Settings */
+            settings: {
+                [key: string]: components["schemas"]["UserFeatureResolution"];
+            };
+            /** Evm Wallet Address */
+            evm_wallet_address?: string | null;
+            capabilities: components["schemas"]["UserProductCapabilities"];
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
+        };
+        /** WalletAutoReloadActionResponse */
+        WalletAutoReloadActionResponse: {
+            /** Attempt Id */
+            attempt_id: number;
+            /** Payment Intent Id */
+            payment_intent_id: string;
+            /** Client Secret */
+            client_secret: string;
+            /** Error Code */
+            error_code?: string | null;
+        };
+        /** WalletAutoReloadRequest */
+        WalletAutoReloadRequest: {
+            /** Payment Mode */
+            payment_mode?: ("card" | "invoice") | null;
+            /** Auto Reload Enabled */
+            auto_reload_enabled?: boolean | null;
+            /** Auto Reload Threshold Credits */
+            auto_reload_threshold_credits?: number | string | null;
+            /** Auto Reload Amount Cents */
+            auto_reload_amount_cents?: number | null;
+            /** Auto Reload Monthly Cap Cents */
+            auto_reload_monthly_cap_cents?: number | null;
+        };
+        /** WalletLedgerItemResponse */
+        WalletLedgerItemResponse: {
+            /** Id */
+            id: string;
+            /** Operation */
+            operation: string;
+            /** Request Id */
+            request_id: string;
+            /** Credits Amount */
+            credits_amount: number;
+            /** Status */
+            status: string;
+            /** Notes */
+            notes?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Applied At */
+            applied_at?: string | null;
+        };
+        /** WalletLedgerResponse */
+        WalletLedgerResponse: {
+            /** Items */
+            items: components["schemas"]["WalletLedgerItemResponse"][];
+        };
+        /** WalletResponse */
+        WalletResponse: {
+            /** Balance Credits */
+            balance_credits: number;
+            /** Balance Snapshot At */
+            balance_snapshot_at?: string | null;
+            /**
+             * Payment Mode
+             * @enum {string}
+             */
+            payment_mode: "card" | "invoice";
+            /** Auto Reload Enabled */
+            auto_reload_enabled: boolean;
+            /** Auto Reload Threshold Credits */
+            auto_reload_threshold_credits: number;
+            /** Auto Reload Amount Cents */
+            auto_reload_amount_cents: number;
+            /** Auto Reload Monthly Cap Cents */
+            auto_reload_monthly_cap_cents: number;
+            auto_reload_action?: components["schemas"]["WalletAutoReloadActionResponse"] | null;
+            /** Points Per Usd */
+            points_per_usd: number;
+        };
+        /** WalletTopupRequest */
+        WalletTopupRequest: {
+            /** Amount Cents */
+            amount_cents: number;
+            /** Locale */
+            locale?: string | null;
+        };
+        /** WalletTopupResponse */
+        WalletTopupResponse: {
+            /** Status */
+            status: string;
+            /** Flow Type */
+            flow_type?: string | null;
+            /** Payment Intent Id */
+            payment_intent_id?: string | null;
+            /** Client Secret */
+            client_secret?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Invoice Url */
+            invoice_url?: string | null;
+            /** Invoice Id */
+            invoice_id?: string | null;
+            /** Credits Added */
+            credits_added?: number | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -131,7 +1123,78 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    list_deployments_deployments_get: {
+    me_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    delete_account_me_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_me_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_deployments_v2_deployments_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -147,6 +1210,601 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeploymentResponse"][];
+                };
+            };
+        };
+    };
+    create_v2_deployment_v2_deployments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeployRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_deployment_v2_deployments__deployment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_v2_deployment_v2_deployments__deployment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_v2_deployment_v2_deployments__deployment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDeploymentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_type: "openclaw" | "hermes";
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAgentEnabledRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_type: "openclaw" | "hermes";
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RebindAgentAiProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restart_v2_deployment_v2_deployments__deployment_id__restart_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_v2_deployment_v2_deployments__deployment_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_v2_deployment_v2_deployments__deployment_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    v2_activation_fee_status_v2_subscription_activation_fee_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivationFeeStatusResponse"];
+                };
+            };
+        };
+    };
+    checkout_v2_subscription_v2_subscription_checkout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    current_v2_subscription_v2_subscription_current_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionResponse"] | null;
+                };
+            };
+        };
+    };
+    list_v2_subscription_plans_v2_subscription_plans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResponse"][];
+                };
+            };
+        };
+    };
+    portal_v2_subscription_v2_subscription_portal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PortalRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hosted_v2_usage_summary_v2_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostedUsageSummaryResponse"];
+                };
+            };
+        };
+    };
+    get_wallet_v2_wallet_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletResponse"];
+                };
+            };
+        };
+    };
+    update_wallet_auto_reload_v2_wallet_auto_reload_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalletAutoReloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_wallet_ledger_v2_wallet_ledger_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletLedgerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_wallet_topup_v2_wallet_topup_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalletTopupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletTopupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

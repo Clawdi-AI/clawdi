@@ -103,10 +103,9 @@ function ConnectorsList() {
 		if (page !== 1) void setPage(1);
 	};
 
-	// Hosted (clawdi.ai/connections cross-origin) vs OSS (cloud-api
-	// `/api/connectors`) is decided inside `connectors-data.ts`. The
+	// Connector access is decided inside `connectors-data.ts`. The
 	// "Connected" rail and the paginated "All" grid both flow through
-	// these unified hooks so the page stays branch-free.
+	// the unified cloud-api hooks so the page stays branch-free.
 	const connected = useConnectedAppCards();
 	const catalogQ = useAvailableApps({
 		page,

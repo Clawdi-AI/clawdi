@@ -1,0 +1,1107 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	ArrowUpRight,
+	Cpu,
+	ExternalLink,
+	Info,
+	Link2,
+	Link2Off,
+	Lock,
+	Maximize2,
+	MonitorPlay,
+	Plus,
+	QrCode,
+	RefreshCw,
+	Trash2,
+	Wrench,
+	Zap,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { EmptyState } from "@/components/empty-state";
+import { InfoCard } from "@/components/info-card";
+import { PageHeader } from "@/components/page-header";
+import { SessionFeed } from "@/components/sessions/session-feed";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import {
+	useDeleteDeployment,
+	useDeploymentLifecycle,
+	useOnboardAgent,
+	useRenameDeployment,
+	useSetAgentAiProvider,
+	useSetAgentEnabled,
+} from "@/hosted/agents/deployment-hooks";
+import { BillingError } from "@/hosted/billing/components/state-views";
+import type { HostedDeployment, RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
+import { toastApiError, unwrap, useApi } from "@/lib/api";
+import type { SessionListItem } from "@/lib/api-schemas";
+import { formatModelLabel } from "@/lib/format";
+import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
+import { aiProviderRuntimeId, buildAiProviderBootstrap } from "@/v2/ai-providers/runtime-bootstrap";
+import type { AgentChannelLink } from "@/v2/channels/channel-edit-client";
+import { providerMeta } from "@/v2/channels/channel-providers";
+import { ChannelError, ProviderChip, TokenReveal } from "@/v2/channels/channel-ui";
+import {
+	useAgentChannelLinks,
+	useBotPool,
+	useChannels,
+	useCreatePairCode,
+	useUnlinkAgentChannel,
+} from "@/v2/channels/channels-hooks";
+
+type Runtime = "openclaw" | "hermes";
+type HostedAgentTab = "overview" | "console" | "ai" | "channels" | "tools" | "compute";
+const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
+	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
+	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
+];
+const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
+	"overview",
+	"console",
+	"ai",
+	"channels",
+	"tools",
+	"compute",
+]);
+
+/** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
+function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
+	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
+		? "codex_oauth"
+		: "api_key";
+}
+
+function statusTone(status: string): "success" | "info" | "warning" | "destructive" | "neutral" {
+	if (status === "running" || status === "ready") return "success";
+	if (status === "provisioning" || status === "starting" || status === "pending") return "info";
+	if (status === "stopped") return "neutral";
+	if (status === "failed" || status === "error") return "destructive";
+	return "neutral";
+}
+
+function statusLabel(status: string): string {
+	if (status === "running" || status === "ready") return "Running";
+	if (status === "provisioning") return "Provisioning";
+	if (status === "starting") return "Starting";
+	if (status === "stopped") return "Stopped";
+	if (status === "failed" || status === "error") return "Failed";
+	return status;
+}
+
+function parseHostedAgentTab(value: string | null): HostedAgentTab | null {
+	return value && HOSTED_AGENT_TABS.has(value as HostedAgentTab) ? (value as HostedAgentTab) : null;
+}
+
+/** A flag banner for facets the backend doesn't yet expose for live edit. */
+function NotExposedNote({ children }: { children: React.ReactNode }) {
+	return (
+		<div className="flex items-start gap-2 rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+			<Lock className="mt-0.5 size-3.5 shrink-0" />
+			<span>{children}</span>
+		</div>
+	);
+}
+
+function LiveNote({ children }: { children: React.ReactNode }) {
+	return (
+		<p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+			<Info className="size-3.5 shrink-0" />
+			{children}
+		</p>
+	);
+}
+
+const RUNTIME_LABEL: Record<Runtime, string> = { openclaw: "OpenClaw", hermes: "Hermes" };
+
+/**
+ * PER-RUNTIME agent detail. A compute (deployment) hosts 1–2 runtime agents
+ * (OpenClaw / Hermes); each is a separate agent with its OWN env id, AI
+ * provider binding, channel links, sessions, and console. This view is scoped
+ * to a single `runtime` — its provider/channels/sessions/console — plus a
+ * shared "Compute" tab (plan, lifecycle, runtime toggles, sibling-runtime link)
+ * that operates on the whole pod.
+ */
+export function HostedAgentDetail({
+	environmentId,
+	deployment,
+	runtime,
+}: {
+	environmentId: string;
+	deployment: HostedDeployment;
+	runtime: Runtime;
+}) {
+	const api = useApi();
+	const pathname = usePathname();
+	const ci = deployment.config_info;
+	const name = deploymentDisplayName(deployment.name);
+	const runtimeLabel = RUNTIME_LABEL[runtime];
+	useSetBreadcrumbTitle(`${name} · ${runtimeLabel}`);
+
+	const isPerformance = deployment.profile === "performance" || (ci?.vcpu ?? 0) >= 4;
+	const consoleUrl = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
+	const router = useRouter();
+	const searchParams = useSearchParams();
+	const activeTab = parseHostedAgentTab(searchParams.get("tab")) ?? "overview";
+
+	const sessions = useQuery({
+		queryKey: ["agent-sessions", environmentId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/sessions", {
+					params: { query: { environment_id: environmentId, page_size: 20 } },
+				}),
+			),
+		enabled: isCloudEnvId(environmentId),
+	});
+
+	const setTab = (tab: HostedAgentTab) => {
+		const next = new URLSearchParams(searchParams.toString());
+		if (tab === "overview") next.delete("tab");
+		else next.set("tab", tab);
+		const query = next.toString();
+		router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+	};
+
+	return (
+		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			{/* Header — shared PageHeader chassis, scoped to THIS runtime agent. */}
+			<PageHeader
+				title={name}
+				adornment={<AgentIcon agent={runtime} size="lg" className="ring-2 ring-background" />}
+				status={
+					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+						<StatusBadge status={statusTone(deployment.status)} withDot>
+							{statusLabel(deployment.status)}
+						</StatusBadge>
+						<span>{runtimeLabel} runtime</span>
+						<span>·</span>
+						<span className="inline-flex items-center gap-1">
+							{isPerformance ? <Zap className="size-3.5" /> : <Cpu className="size-3.5" />}
+							{isPerformance ? "Performance" : "Free"}
+						</span>
+					</div>
+				}
+				actions={
+					consoleUrl ? (
+						<Button asChild variant="outline" size="sm">
+							<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
+								Open {runtimeLabel}
+								<ExternalLink className="size-3.5" />
+							</a>
+						</Button>
+					) : undefined
+				}
+			/>
+
+			<Tabs
+				value={activeTab}
+				onValueChange={(value) => {
+					const tab = parseHostedAgentTab(value);
+					if (tab) setTab(tab);
+				}}
+			>
+				{/* Per-runtime facets first, then the shared Compute tab. */}
+				<TabsList className="flex-wrap">
+					<TabsTrigger value="overview">Overview</TabsTrigger>
+					<TabsTrigger value="console">Console</TabsTrigger>
+					<TabsTrigger value="ai">AI Provider</TabsTrigger>
+					<TabsTrigger value="channels">Channels</TabsTrigger>
+					<TabsTrigger value="tools">
+						Tools &amp; MCP
+						<Badge variant="secondary" className="ml-1.5">
+							Managed
+						</Badge>
+					</TabsTrigger>
+					<TabsTrigger value="compute">Compute</TabsTrigger>
+				</TabsList>
+
+				<TabsContent value="overview" className="mt-4">
+					<OverviewTab
+						deployment={deployment}
+						runtime={runtime}
+						isPerformance={isPerformance}
+						sessions={sessions.data?.items ?? []}
+						sessionsLoading={sessions.isLoading}
+						sessionsError={sessions.error}
+						onRetrySessions={() => sessions.refetch()}
+					/>
+				</TabsContent>
+				<TabsContent value="console" className="mt-4">
+					<ConsoleTab deployment={deployment} runtime={runtime} />
+				</TabsContent>
+				<TabsContent value="ai" className="mt-4">
+					<AiProviderTab deployment={deployment} runtime={runtime} />
+				</TabsContent>
+				<TabsContent value="channels" className="mt-4">
+					<ChannelsTab environmentId={environmentId} />
+				</TabsContent>
+				<TabsContent value="tools" className="mt-4">
+					<ToolsTab />
+				</TabsContent>
+				<TabsContent value="compute" className="mt-4">
+					<ComputeTab deployment={deployment} isPerformance={isPerformance} runtime={runtime} />
+				</TabsContent>
+			</Tabs>
+		</div>
+	);
+}
+
+// ── Overview ─────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
+	return (
+		<div className="rounded-lg border p-3">
+			<div className="text-sm font-medium">{value}</div>
+			<div className="text-xs text-muted-foreground">{label}</div>
+		</div>
+	);
+}
+
+function OverviewTab({
+	deployment,
+	runtime,
+	isPerformance,
+	sessions,
+	sessionsLoading,
+	sessionsError,
+	onRetrySessions,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+	isPerformance: boolean;
+	sessions: SessionListItem[];
+	sessionsLoading: boolean;
+	sessionsError: unknown;
+	onRetrySessions: () => void;
+}) {
+	const ci = deployment.config_info;
+	const binding = ci?.ai_provider_bindings?.[runtime];
+	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
+	return (
+		<div className="space-y-5">
+			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+				<StatCard label="Status" value={statusLabel(deployment.status)} />
+				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
+				<StatCard label="Model" value={model} />
+				<StatCard
+					label="Resources"
+					value={ci ? `${ci.vcpu ?? "—"} vCPU · ${ci.ram_gb ?? "—"} GB` : "—"}
+				/>
+			</div>
+			<div>
+				<div className="mb-2 text-sm font-medium">Recent sessions</div>
+				<div className="max-w-4xl">
+					{sessionsError ? (
+						<ChannelError
+							error={sessionsError}
+							onRetry={onRetrySessions}
+							title="Couldn't load sessions"
+						/>
+					) : (
+						<SessionFeed
+							sessions={sessions}
+							isLoading={sessionsLoading}
+							emptyMessage="No sessions from this agent yet."
+							showAgent={false}
+						/>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// ── Console ──────────────────────────────────────────────────────────────────
+
+/**
+ * Live agent console embedded inline. The deployment's `openclaw_ui_url` /
+ * `hermes_ui_url` point at owner-only runtime bridge URLs. When the runtime
+ * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
+ * the full-screen link is the alternate path.
+ */
+function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
+	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const label = RUNTIME_LABEL[runtime];
+	const url = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
+
+	// Not running yet — the pod UI (and its bridge) only exist once the agent boots.
+	if (!isRunning) {
+		return (
+			<EmptyState
+				bordered
+				icon={MonitorPlay}
+				title="Console available once running"
+				description={`The live ${label} UI opens here as soon as the agent is running — currently ${statusLabel(
+					deployment.status,
+				).toLowerCase()}.`}
+			/>
+		);
+	}
+
+	// Running, but this runtime hasn't published a UI endpoint.
+	if (!url) {
+		return (
+			<EmptyState
+				bordered
+				icon={MonitorPlay}
+				title="No console URL yet"
+				description={
+					<span>
+						This {label} runtime is running but hasn&apos;t published a UI endpoint. Reach it by
+						linking a channel from{" "}
+						<Link href="/channels" className="underline">
+							Channels
+						</Link>
+						.
+					</span>
+				}
+			/>
+		);
+	}
+
+	return (
+		<div className="space-y-3">
+			<LiveNote>This is the live {label} UI, embedded from the running agent.</LiveNote>
+
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<span className="text-sm font-medium">{label}</span>
+				<Button asChild variant="outline" size="sm">
+					<a href={url} target="_blank" rel="noopener noreferrer">
+						Open full screen
+						<Maximize2 className="size-3.5" />
+					</a>
+				</Button>
+			</div>
+
+			{/* Desktop: embed the live UI. Mobile: an iframe is too cramped for the
+			    pod console, so offer the full-screen link instead. */}
+			<iframe
+				key={runtime}
+				src={url}
+				title={`${label} console`}
+				className="hidden h-[70vh] min-h-[520px] w-full rounded-lg border bg-background sm:block"
+				allow="clipboard-read; clipboard-write"
+			/>
+			<div className="rounded-lg border border-dashed p-6 text-center sm:hidden">
+				<p className="text-sm text-muted-foreground">
+					The console is best viewed full screen on a small screen.
+				</p>
+				<Button asChild variant="outline" size="sm" className="mt-3">
+					<a href={url} target="_blank" rel="noopener noreferrer">
+						Open {label} full screen
+						<Maximize2 className="size-3.5" />
+					</a>
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+// ── AI Provider ──────────────────────────────────────────────────────────────
+
+function selectableCard(active: boolean): string {
+	return `w-full rounded-lg border p-4 text-left transition-colors ${
+		active
+			? "border-primary bg-primary/5 ring-1 ring-primary/30"
+			: "border-border hover:bg-accent/40"
+	}`;
+}
+
+function AiProviderTab({
+	deployment,
+	runtime,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+}) {
+	const providers = useAiProviders();
+	const setProvider = useSetAgentAiProvider();
+	const ci = deployment.config_info;
+	const list = providers.data?.providers ?? [];
+	// PER-RUNTIME binding (not the deployment-level field): each runtime binds
+	// its own provider in ai_provider_bindings[runtime].
+	const binding = ci?.ai_provider_bindings?.[runtime];
+	const boundRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
+	const currentManaged =
+		!boundRef ||
+		boundRef === "clawdi-managed" ||
+		(binding?.auth_kind ?? ci?.ai_provider_auth_kind) === "managed";
+	// The binding stores the provider's id (UUID); map it back to the slug the
+	// select uses as its value.
+	const inUseSlug = currentManaged
+		? null
+		: (list.find((p) => p.id === boundRef || p.provider_id === boundRef)?.provider_id ?? null);
+	const unresolvedProviderRef = !currentManaged && !inUseSlug ? boundRef : null;
+	const showUnresolvedProvider =
+		Boolean(unresolvedProviderRef) && !providers.isLoading && !providers.error;
+	const currentModel = binding?.primary_model ?? ci?.primary_model ?? "";
+
+	const initial = currentManaged ? "managed" : (inUseSlug ?? `unresolved:${unresolvedProviderRef}`);
+	const [selected, setSelected] = useState<string>(initial);
+	const [primaryModel, setPrimaryModel] = useState<string>(currentModel);
+
+	// Re-seed the form only when the server-side binding genuinely changes (the
+	// user's own apply reconciling, or an out-of-band change) — never on a plain
+	// background poll. Keyed on the binding identity: identical server truth →
+	// same identity → in-progress edits stay untouched; a real change → reset to
+	// the new truth. This is React's "adjust state during render" idiom, which
+	// replaces an effect that re-ran on every keystroke.
+	const bindingIdentity = JSON.stringify([initial, currentModel]);
+	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
+	if (bindingIdentity !== syncedIdentity) {
+		setSyncedIdentity(bindingIdentity);
+		setSelected(initial);
+		setPrimaryModel(currentModel);
+	}
+
+	const dirty = selected !== initial || primaryModel !== currentModel;
+
+	function apply() {
+		const body: RebindAgentAiProviderRequest = {
+			primary_model: primaryModel.trim() || null,
+			ai_provider_auth_kind: "managed",
+		};
+		if (selected === "managed") {
+			body.ai_provider_auth_kind = "managed";
+			body.ai_provider_id = null;
+		} else {
+			const p = list.find((x) => x.provider_id === selected);
+			if (!p) {
+				toast.error("Provider unavailable", {
+					description: "Refresh providers or choose Managed by Clawdi.",
+				});
+				return;
+			}
+			const kind = aiAuthKind(p);
+			try {
+				body.ai_provider_auth_kind = kind;
+				body.ai_provider_id = aiProviderRuntimeId(p);
+				body.ai_provider_bootstrap = buildAiProviderBootstrap(p, kind);
+			} catch (error) {
+				toast.error("Provider unavailable", {
+					description:
+						error instanceof Error
+							? error.message
+							: "Refresh providers or choose Managed by Clawdi.",
+				});
+				return;
+			}
+		}
+		// Scope the edit to THIS runtime only — not every enabled runtime.
+		setProvider.mutate(
+			{ id: deployment.id, agentTypes: [runtime], body },
+			{
+				onSuccess: () =>
+					toast.success("Provider updated", { description: "Reconciling to the running pod…" }),
+			},
+		);
+	}
+
+	return (
+		<div className="space-y-4">
+			<LiveNote>Provider changes reconcile to the running pod — no restart.</LiveNote>
+
+			<div className="space-y-2">
+				<button
+					type="button"
+					onClick={() => setSelected("managed")}
+					className={selectableCard(selected === "managed")}
+				>
+					<div className="flex items-center justify-between gap-2">
+						<span className="text-sm font-medium">Managed by Clawdi</span>
+						{currentManaged ? <Badge variant="secondary">In use</Badge> : null}
+					</div>
+					<p className="mt-0.5 text-sm text-muted-foreground">
+						Clawdi-managed Claude models, billed from your wallet.
+					</p>
+				</button>
+				{providers.isLoading ? <Skeleton className="h-20 w-full rounded-lg" /> : null}
+				{providers.error ? (
+					<BillingError
+						error={providers.error}
+						onRetry={() => providers.refetch()}
+						title="Couldn't load providers"
+					/>
+				) : null}
+				{showUnresolvedProvider ? (
+					<button type="button" disabled className={selectableCard(selected === initial)}>
+						<div className="flex items-center justify-between gap-2">
+							<span className="text-sm font-medium">Provider unavailable</span>
+							<Badge variant="secondary">In use</Badge>
+						</div>
+						<p className="mt-0.5 text-sm text-muted-foreground">
+							This runtime is bound to {unresolvedProviderRef}, but that provider could not be
+							loaded. Choose Managed by Clawdi to replace it.
+						</p>
+					</button>
+				) : null}
+				{list.map((p) => (
+					<button
+						key={p.provider_id}
+						type="button"
+						onClick={() => setSelected(p.provider_id)}
+						className={`flex items-center gap-3 ${selectableCard(selected === p.provider_id)}`}
+					>
+						<ProviderTypeChip type={p.type} />
+						<span className="min-w-0 flex-1">
+							<span className="flex items-center gap-2">
+								<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
+								<AuthBadge auth={p.auth} />
+							</span>
+							{p.default_model ? (
+								<span className="block text-xs text-muted-foreground">
+									{formatModelLabel(p.default_model)}
+								</span>
+							) : null}
+						</span>
+						{p.provider_id === inUseSlug ? <Badge variant="secondary">In use</Badge> : null}
+					</button>
+				))}
+				<Button asChild variant="ghost" size="sm" className="justify-start text-muted-foreground">
+					<Link href="/ai-providers">
+						<Plus className="size-3.5" />
+						Add a provider
+					</Link>
+				</Button>
+			</div>
+
+			<div className="max-w-sm space-y-1.5">
+				<Label htmlFor="primary-model">Primary model (optional)</Label>
+				<Input
+					id="primary-model"
+					value={primaryModel}
+					onChange={(e) => setPrimaryModel(e.target.value)}
+					placeholder="claude-sonnet-4-5"
+					autoComplete="off"
+					spellCheck={false}
+				/>
+			</div>
+
+			<div className="flex items-center gap-2">
+				<Button
+					onClick={apply}
+					disabled={
+						!dirty ||
+						setProvider.isPending ||
+						(selected !== "managed" && (providers.isLoading || !!providers.error))
+					}
+				>
+					{setProvider.isPending ? <Spinner className="size-3.5" /> : null}
+					{setProvider.isPending ? "Applying live…" : "Apply changes"}
+				</Button>
+				{setProvider.isPending ? (
+					<span className="text-xs text-muted-foreground">Reconciling to the pod…</span>
+				) : null}
+			</div>
+
+			<p className="text-xs text-muted-foreground">
+				Add, validate, or remove providers on{" "}
+				<Link href="/ai-providers" className="underline">
+					AI Providers
+				</Link>
+				.
+			</p>
+		</div>
+	);
+}
+
+// ── Channels ─────────────────────────────────────────────────────────────────
+
+function ChannelsTab({ environmentId }: { environmentId: string }) {
+	const api = useApi();
+	const qc = useQueryClient();
+	const channels = useChannels();
+	const botPool = useBotPool();
+	const hasEnvironmentId = isCloudEnvId(environmentId);
+	const linked = useAgentChannelLinks(environmentId, hasEnvironmentId);
+	const unlink = useUnlinkAgentChannel(environmentId);
+	// "" = no channel selected. Sentinel keeps the Select controlled (no
+	// undefined↔string flip) while staying falsy for the gated Link button.
+	const [accountId, setAccountId] = useState("");
+	const [token, setToken] = useState<string | null>(null);
+
+	const linkedIds = useMemo(
+		() => new Set((linked.data ?? []).map((l) => l.account_id)),
+		[linked.data],
+	);
+	const linkable = useMemo(() => {
+		const mine = (channels.data ?? []).map((c) => ({
+			id: c.id,
+			provider: c.provider,
+			name: c.name,
+		}));
+		const shared = Object.values(botPool.data?.providers ?? {})
+			.flat()
+			.filter((b) => b.access === "public" && b.available)
+			.map((b) => ({ id: b.id, provider: b.provider, name: b.name }));
+		return [...mine, ...shared].filter((c) => !linkedIds.has(c.id));
+	}, [channels.data, botPool.data, linkedIds]);
+
+	// Provider/name labels for linked rows whose API payload omits the nested
+	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
+	// Resolved from the already-loaded channels + shared bot-pool by account id.
+	const accountSummaries = useMemo(() => {
+		const map = new Map<string, { provider: string; name: string }>();
+		for (const c of channels.data ?? []) map.set(c.id, { provider: c.provider, name: c.name });
+		for (const list of Object.values(botPool.data?.providers ?? {}))
+			for (const b of list) map.set(b.id, { provider: b.provider, name: b.name });
+		return map;
+	}, [channels.data, botPool.data]);
+
+	const link = useMutation({
+		mutationFn: async (channelId: string) =>
+			unwrap(
+				await api.POST("/api/channels/{account_id}/agent-links", {
+					params: { path: { account_id: channelId } },
+					body: { agent_id: environmentId },
+				}),
+			),
+		onSuccess: (data) => {
+			setToken(data.agent_token ?? null);
+			setAccountId("");
+			qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
+			qc.invalidateQueries({ queryKey: ["channel-agent-links", data.account_id] });
+			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
+			qc.invalidateQueries({ queryKey: ["channels"] });
+			toast.success("Channel linked");
+		},
+		onError: toastApiError("Couldn't link channel"),
+	});
+
+	if (!hasEnvironmentId) {
+		return (
+			<EmptyState
+				bordered
+				icon={Link2}
+				title="Channels available once provisioning finishes"
+				description="The deployment is still minting its cloud agent id. When the agent is ready, link channels here."
+			/>
+		);
+	}
+
+	return (
+		<div className="space-y-4">
+			<LiveNote>Linking a channel projects its token to the pod live — no restart.</LiveNote>
+
+			{/* Linked channels */}
+			<div className="space-y-2">
+				<div className="text-sm font-medium">Linked channels</div>
+				{linked.isLoading ? (
+					<Skeleton className="h-16 w-full rounded-lg" />
+				) : linked.error ? (
+					<ChannelError
+						error={linked.error}
+						onRetry={() => linked.refetch()}
+						title="Couldn't load linked channels"
+					/>
+				) : (linked.data ?? []).length === 0 ? (
+					<EmptyState
+						bordered
+						fillHeight={false}
+						title="No channels linked"
+						description="Link a channel below so this agent can send and receive messages."
+					/>
+				) : (
+					(linked.data ?? []).map((l) => (
+						<LinkedChannelRow
+							key={l.id}
+							link={l}
+							fallbackAccount={accountSummaries.get(l.account_id)}
+							unlinking={unlink.isPending}
+							onUnlink={() => unlink.mutate({ accountId: l.account_id, linkId: l.id })}
+						/>
+					))
+				)}
+			</div>
+
+			{/* Link a channel */}
+			<div className="space-y-2 rounded-lg border p-4">
+				<div className="text-sm font-medium">Link a channel</div>
+				<p className="text-xs text-muted-foreground">
+					Connect this agent to one of your channels or a shared-pool bot.
+				</p>
+				<div className="flex flex-col gap-2 sm:flex-row">
+					<Select value={accountId} onValueChange={setAccountId}>
+						<SelectTrigger className="flex-1">
+							<SelectValue placeholder="Choose a channel…" />
+						</SelectTrigger>
+						<SelectContent>
+							{linkable.map((c) => (
+								<SelectItem key={c.id} value={c.id}>
+									{providerMeta(c.provider).label} · {c.name}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<Button
+						onClick={() => accountId && link.mutate(accountId)}
+						disabled={!accountId || link.isPending || channels.isLoading || botPool.isLoading}
+					>
+						{link.isPending ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+						Link
+					</Button>
+				</div>
+				{channels.error || botPool.error ? (
+					<ChannelError
+						error={channels.error ?? botPool.error}
+						onRetry={() => {
+							channels.refetch();
+							botPool.refetch();
+						}}
+						title="Couldn't load available channels"
+					/>
+				) : null}
+				{token ? (
+					<TokenReveal
+						label="Agent token"
+						value={token}
+						note="Copy it now — used by the runtime to send and receive on this channel."
+					/>
+				) : null}
+			</div>
+
+			<p className="text-xs text-muted-foreground">
+				Health, activity, and command sync for each channel live on{" "}
+				<Link href="/channels" className="underline">
+					Channels
+				</Link>
+				.
+			</p>
+		</div>
+	);
+}
+
+function LinkedChannelRow({
+	link,
+	onUnlink,
+	unlinking,
+	fallbackAccount,
+}: {
+	link: AgentChannelLink;
+	onUnlink: () => void;
+	unlinking: boolean;
+	fallbackAccount?: { provider: string; name: string };
+}) {
+	const pair = useCreatePairCode(link.account_id);
+	const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
+	// The list-by-agent payload may omit the nested `account`. Fall back to the
+	// loaded channels/bot-pool summary, then to the raw account id, so a missing
+	// account NEVER white-screens (apps/web/src has no ErrorBoundary).
+	const account = link.account ?? fallbackAccount ?? null;
+	const provider = account?.provider ?? "";
+	const name = account?.name ?? `Channel ${link.account_id.slice(0, 8)}`;
+	return (
+		<div className="rounded-lg border p-3">
+			<div className="flex items-center gap-3">
+				<ProviderChip provider={provider} />
+				<div className="min-w-0 flex-1">
+					<div className="truncate text-sm font-medium">{name}</div>
+					<div className="text-xs capitalize text-muted-foreground">
+						{provider ? `${providerMeta(provider).label} · ${link.status}` : link.status}
+					</div>
+				</div>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={pair.isPending}
+					onClick={() =>
+						pair.mutate(
+							{ agent_link_id: link.id },
+							{ onSuccess: (d) => setCode({ code: d.code, expires_at: d.expires_at }) },
+						)
+					}
+				>
+					<QrCode className="size-3.5" />
+					Pair code
+				</Button>
+				<ConfirmAction
+					title="Unlink this channel?"
+					description={<p>The agent stops sending and receiving on this channel.</p>}
+					confirmLabel="Unlink"
+					destructive
+					onConfirm={onUnlink}
+				>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						className="text-muted-foreground hover:text-destructive"
+						disabled={unlinking}
+						aria-label="Unlink channel"
+					>
+						<Link2Off className="size-4" />
+					</Button>
+				</ConfirmAction>
+			</div>
+			{code ? (
+				<div className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
+					Send <span className="font-mono font-semibold tracking-wider">{code.code}</span> from the
+					chat to pair it.
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+// ── Tools & MCP ──────────────────────────────────────────────────────────────
+
+function ToolsTab() {
+	return (
+		<div className="space-y-4">
+			<InfoCard icon={Wrench} title="Managed tools & MCP">
+				This agent runs Clawdi-managed MCP and tool configuration. Connectors you approve in{" "}
+				<Link href="/connectors" className="underline">
+					Connectors
+				</Link>{" "}
+				are available to the agent.
+			</InfoCard>
+			<NotExposedNote>
+				Per-agent MCP/tool editing isn’t exposed by the runtime API yet. The manifest reconciles
+				tool changes live once the backend surfaces them.
+			</NotExposedNote>
+		</div>
+	);
+}
+
+// ── Compute (shared across the runtimes on this pod) ──────────────────────────
+
+function ComputeTab({
+	deployment,
+	isPerformance,
+	runtime,
+}: {
+	deployment: HostedDeployment;
+	isPerformance: boolean;
+	runtime: Runtime;
+}) {
+	const router = useRouter();
+	const lifecycle = useDeploymentLifecycle();
+	const del = useDeleteDeployment();
+	const rename = useRenameDeployment();
+	const setEnabled = useSetAgentEnabled();
+	const onboard = useOnboardAgent();
+	const ci = deployment.config_info;
+	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const [name, setName] = useState(deployment.name);
+	const configured = new Set(ci?.configured_agents ?? []);
+	const envs = ci?.clawdi_cloud_environments ?? {};
+	const enabledCount = RUNTIMES.filter((r) =>
+		r.id === "openclaw" ? ci?.enable_openclaw : ci?.enable_hermes,
+	).length;
+	const runtimePending = setEnabled.isPending || onboard.isPending;
+	useEffect(() => {
+		setName(deployment.name);
+	}, [deployment.name]);
+
+	return (
+		<div className="max-w-2xl space-y-4">
+			<p className="text-xs text-muted-foreground">
+				Compute is shared by every runtime on this pod — changes here affect them all.
+			</p>
+
+			{/* Name (the compute / pod name) */}
+			<Card data-hosted="true">
+				<CardContent className="space-y-2 pt-6">
+					<Label htmlFor="agent-name">Name</Label>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<Input
+							id="agent-name"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							placeholder="Agent name"
+							className="flex-1"
+							maxLength={120}
+						/>
+						<Button
+							onClick={() => rename.mutate({ id: deployment.id, name: name.trim() })}
+							disabled={!name.trim() || name.trim() === deployment.name || rename.isPending}
+						>
+							{rename.isPending ? <Spinner className="size-3.5" /> : null}
+							Save
+						</Button>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Runtimes on this compute — toggle + jump to the sibling runtime agent. */}
+			<Card data-hosted="true">
+				<CardContent className="space-y-3 pt-6">
+					<div className="text-sm font-medium">Runtimes on this compute</div>
+					<LiveNote>Toggling a runtime adds/removes its program live — no restart.</LiveNote>
+					{RUNTIMES.map((r) => {
+						const enabled = r.id === "openclaw" ? !!ci?.enable_openclaw : !!ci?.enable_hermes;
+						const isConfigured = configured.has(r.id);
+						const isCurrent = r.id === runtime;
+						const siblingEnv = envs[r.id];
+						const blockedByPlan = !isPerformance && !enabled && enabledCount >= 1;
+						return (
+							<div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
+								<AgentIcon agent={r.id} size="md" />
+								<div className="min-w-0 flex-1">
+									<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+										{r.label}
+										{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
+									</div>
+									<div className="text-xs text-muted-foreground">{r.blurb}</div>
+								</div>
+								{!isCurrent && enabled && siblingEnv ? (
+									<Button asChild variant="ghost" size="sm">
+										<Link href={`/agents/${siblingEnv}`}>
+											Open
+											<ArrowUpRight className="size-3.5" />
+										</Link>
+									</Button>
+								) : null}
+								{isConfigured ? (
+									<Switch
+										checked={enabled}
+										disabled={runtimePending || (enabled && enabledCount <= 1) || blockedByPlan}
+										onCheckedChange={(next) =>
+											setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
+										}
+										aria-label={`Toggle ${r.label}`}
+									/>
+								) : (
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={runtimePending || blockedByPlan}
+										title={
+											blockedByPlan ? "Upgrade to Performance to run both runtimes" : undefined
+										}
+										onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
+									>
+										{onboard.isPending && onboard.variables?.agentType === r.id ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<Plus className="size-3.5" />
+										)}
+										Add
+									</Button>
+								)}
+							</div>
+						);
+					})}
+					<p className="text-xs text-muted-foreground">
+						At least one runtime stays enabled. Running both at once needs Performance compute.
+					</p>
+				</CardContent>
+			</Card>
+
+			{/* Compute tier (read-only — follows the plan) */}
+			<Card data-hosted="true">
+				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<div className="flex items-center gap-1.5 text-sm font-medium">
+							{isPerformance ? <Zap className="size-4" /> : <Cpu className="size-4" />}
+							{isPerformance ? "Performance compute" : "Free compute"}
+							<Badge variant="outline" className="ml-1 font-normal text-muted-foreground">
+								Read-only
+							</Badge>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Compute tier follows your plan. Change it from Billing.
+						</p>
+					</div>
+					<Button asChild variant="outline" size="sm">
+						<Link href="/settings/billing/plan">
+							Change in Plan
+							<ArrowUpRight className="size-3.5" />
+						</Link>
+					</Button>
+				</CardContent>
+			</Card>
+
+			{/* Lifecycle (whole pod) */}
+			<Card data-hosted="true">
+				<CardContent className="flex flex-wrap gap-2 pt-6">
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={lifecycle.isPending}
+						onClick={() => lifecycle.mutate({ id: deployment.id, action: "restart" })}
+					>
+						{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+						Restart
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={lifecycle.isPending}
+						onClick={() =>
+							lifecycle.mutate({ id: deployment.id, action: isRunning ? "stop" : "start" })
+						}
+					>
+						{lifecycle.isPending &&
+						lifecycle.variables?.action === (isRunning ? "stop" : "start") ? (
+							<Spinner className="size-3.5" />
+						) : null}
+						{isRunning ? "Stop" : "Start"}
+					</Button>
+				</CardContent>
+			</Card>
+
+			<Separator />
+
+			{/* Danger zone — deletes the whole compute (all its runtime agents). */}
+			<Card data-hosted="true" className="border-destructive/30">
+				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<div className="text-sm font-medium">Delete this compute</div>
+						<p className="text-xs text-muted-foreground">
+							Tears down the pod and every runtime agent on it. This can’t be undone.
+						</p>
+					</div>
+					<ConfirmAction
+						title={`Delete ${deploymentDisplayName(deployment.name)}?`}
+						description={
+							<p>The hosted runtime and all its agents are torn down. This can’t be undone.</p>
+						}
+						confirmLabel="Delete compute"
+						destructive
+						onConfirm={() => del.mutate(deployment.id, { onSuccess: () => router.push("/") })}
+					>
+						<Button
+							variant="outline"
+							size="sm"
+							className="text-destructive"
+							disabled={del.isPending}
+						>
+							<Trash2 className="size-3.5" />
+							Delete
+						</Button>
+					</ConfirmAction>
+				</CardContent>
+			</Card>
+		</div>
+	);
+}

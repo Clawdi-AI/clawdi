@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,14 +27,27 @@ _MANAGED_PROVIDER_ID = "clawdi-managed"
 @router.get("/manifest")
 async def get_runtime_manifest(
     request: Request,
+    requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
     auth: AuthContext = Depends(require_cli_auth),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
-    environment_id = auth.api_key.environment_id if auth.api_key is not None else None
+    bound_environment_id = auth.api_key.environment_id if auth.api_key is not None else None
+    if bound_environment_id is not None:
+        if (
+            requested_environment_id is not None
+            and requested_environment_id != bound_environment_id
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "api key bound to a different environment",
+            )
+        environment_id = bound_environment_id
+    else:
+        environment_id = requested_environment_id
     if environment_id is None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "runtime manifest requires an environment-bound API key",
+            "runtime manifest requires an environment id",
         )
 
     env = (
@@ -181,6 +195,10 @@ async def _provider_projection(
     }
     if provider.default_model:
         projection["model"] = provider.default_model
+    if provider.api_mode:
+        projection["apiMode"] = provider.api_mode
+    if provider.runtime_env_name:
+        projection["runtimeEnvName"] = provider.runtime_env_name
     if secret:
         projection["apiKeySecretRef"] = _DEFAULT_PROVIDER_SECRET_REF
 

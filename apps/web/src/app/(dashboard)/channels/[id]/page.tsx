@@ -2,12 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { V2Gate } from "@/components/v2-gate";
 import { IS_HOSTED } from "@/lib/hosted";
 
 const ChannelDetailPage = IS_HOSTED
 	? dynamic(
 			() =>
-				import("@/hosted/channels/channel-detail-page").then((m) => ({
+				import("@/v2/channels/channel-detail-page").then((m) => ({
 					default: m.ChannelDetailPage,
 				})),
 			{ loading: HostedRouteSkeleton },
@@ -15,5 +16,5 @@ const ChannelDetailPage = IS_HOSTED
 	: null;
 
 export default function Page() {
-	return ChannelDetailPage ? <ChannelDetailPage /> : null;
+	return <V2Gate fallbackHref="/">{ChannelDetailPage ? <ChannelDetailPage /> : null}</V2Gate>;
 }

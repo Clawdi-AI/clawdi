@@ -490,65 +490,7 @@ describe("runtime manifest datasource", () => {
 			);
 			expect(loaded.manifest.runtimes.openclaw.install?.home).toBe(home);
 			expect(loaded.manifest.runtimes.openclaw.install?.args).toEqual(["--json", "--no-onboard"]);
-			expect(loaded.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
-				"native-telegram-bot-api-passthrough",
-				"native-discord-rest-passthrough",
-				"native-discord-gateway-passthrough",
-				"native-whatsapp-graph-passthrough",
-				"codex-openai-responses",
-				"codex-openai-responses-passthrough",
-				"codex-chatgpt-backend-responses",
-				"codex-chatgpt-backend-responses-passthrough",
-			]);
-			const profiles = Object.fromEntries(
-				loaded.manifest.mitmProfiles?.profiles.map((profile) => [profile.id, profile]) ?? [],
-			);
-			expect(profiles["native-telegram-bot-api-passthrough"]?.kind).toBe("passthrough");
-			expect(profiles["native-discord-rest-passthrough"]?.kind).toBe("passthrough");
-			expect(profiles["native-discord-gateway-passthrough"]?.kind).toBe("passthrough");
-			expect(profiles["native-whatsapp-graph-passthrough"]?.kind).toBe("passthrough");
-			expect(profiles["codex-openai-responses"]?.match.headers.authorization).toEqual({
-				type: "equals",
-				value: "clawdi-mitm-placeholder",
-				prefix: "Bearer ",
-			});
-			expect(profiles["codex-openai-responses"]?.rewrite).toEqual({
-				upstreamBaseUrl: "https://sub2api.test/v1/responses",
-				preservePath: false,
-				setHeaders: {
-					authorization: {
-						type: "secretRef",
-						secretRef: "secret://provider.default.apiKey",
-						prefix: "Bearer ",
-					},
-				},
-			});
-			expect(profiles["codex-chatgpt-backend-responses"]?.match).toEqual({
-				scheme: "https",
-				host: "chatgpt.com",
-				path: { type: "equals", value: "/backend-api/codex/responses" },
-				headers: {
-					authorization: {
-						type: "equals",
-						value: "clawdi-mitm-placeholder",
-						prefix: "Bearer ",
-					},
-				},
-				query: {},
-			});
-			expect(profiles["codex-chatgpt-backend-responses"]?.rewrite).toEqual({
-				upstreamBaseUrl: "https://sub2api.test/v1/responses",
-				preservePath: false,
-				setHeaders: {
-					authorization: {
-						type: "secretRef",
-						secretRef: "secret://provider.default.apiKey",
-						prefix: "Bearer ",
-					},
-				},
-			});
-			expect(profiles["codex-openai-responses-passthrough"]?.kind).toBe("passthrough");
-			expect(profiles["codex-chatgpt-backend-responses-passthrough"]?.kind).toBe("passthrough");
+			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
 			expect(loaded.secretValues).toEqual({
 				"provider.default.apiKey": "sk-runtime",
 				"secret://provider.default.apiKey": "sk-runtime",
@@ -556,6 +498,174 @@ describe("runtime manifest datasource", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("keeps explicit OpenAI chat providers on direct provider projection", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/desired-state",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							deploymentId: "dep_chat_provider",
+							environmentId: "env_chat_provider",
+							appId: "app_chat_provider",
+							instanceId: "iid_chat_provider",
+							generation: 1,
+							issuedAt: "2026-06-22T00:00:00Z",
+							system: { home, workspace: join(home, "clawdi") },
+							controlPlane: {
+								manifestUrl: "https://runtime-source.test/desired-state",
+								cloudApiUrl: "https://cloud-api.test",
+							},
+							runtimes: {
+								openclaw: { enabled: false },
+								hermes: { enabled: false },
+							},
+							providers: {
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://ai-gateway.faraday.cloud/v1",
+									model: "openai-codex/gpt-5.4-mini",
+									apiMode: "openai_chat",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.default.apiKey",
+								},
+							},
+						},
+						secretValues: {
+							"provider.default.apiKey": "sk-runtime",
+						},
+					}),
+			},
+		]);
+
+		try {
+			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			expect("manifest" in loaded).toBe(true);
+			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			expect(loaded.manifest.projection?.providers.default).toMatchObject({
+				baseUrl: "https://ai-gateway.faraday.cloud/v1",
+				model: "openai-codex/gpt-5.4-mini",
+				apiMode: "openai_chat",
+				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+			});
+			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("projects hosted OpenAI chat providers directly into OpenClaw config", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-provider-patch.json");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  cat > '${openclawPatch}'`,
+				"  exit 0",
+				"fi",
+				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
+				"exit 2",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const loaded: RuntimeManifestLoad = {
+			source: "remote-datasource",
+			sourcePath: "https://runtime-source.test/desired-state",
+			offline: false,
+			secretValues: {
+				"provider.default.apiKey": "sk-runtime-provider",
+				"secret://provider.default.apiKey": "sk-runtime-provider",
+			},
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_direct_provider",
+				environmentId: "env_direct_provider",
+				instanceId: "iid_direct_provider",
+				generation: 1,
+				issuedAt: "2026-06-22T00:00:00Z",
+				workspaceRoot: join(home, "clawdi"),
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: ["--json", "--no-onboard"],
+						},
+					},
+					hermes: { enabled: false },
+				},
+				projection: {
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					system: { home },
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://ai-gateway.faraday.cloud/v1",
+							model: "openai-codex/gpt-5.4-mini",
+							apiMode: "openai_chat",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				mitmProfiles: { profiles: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		expect(patch.agents.defaults.model.primary).toBe("default/openai-codex/gpt-5.4-mini");
+		expect(patch.models.providers.default).toMatchObject({
+			baseUrl: "https://ai-gateway.faraday.cloud/v1",
+			api: "openai-completions",
+			apiKey: {
+				source: "env",
+				provider: "default",
+				id: "CLAWDI_MANAGED_OPENAI_API_KEY",
+			},
+		});
+		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
+		const runConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
+		);
+		expect(runConfig.secretEnv).toEqual({
+			CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
+		});
+		expect(runConfig.secretFilePath).toBe(join(run, "mitm", "secrets.json"));
+		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
 	it("adds Hermes to legacy hosted-runtime manifests when the UI bridge token is present", async () => {
@@ -852,6 +962,162 @@ describe("runtime manifest datasource", () => {
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
+	});
+
+	it("removes stale channel-driven MITM profiles when runtime channels are disabled", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				deploymentId: "dep_stale_channels",
+				environmentId: "env_stale_channels",
+				instanceId: "iid_stale_channels",
+				generation: 4,
+				issuedAt: "2026-06-14T00:00:00Z",
+				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: false },
+				},
+				mitmProfiles: {
+					profiles: [
+						{
+							id: "native-discord-clawdi_acct1-gateway-passthrough",
+							enabled: true,
+							kind: "passthrough",
+							match: {
+								scheme: "wss",
+								host: "gateway.discord.gg",
+								pathPrefix: "/",
+								headers: {},
+								query: {},
+							},
+							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+							priority: 201,
+							owner: "clawdi-native-channels",
+						},
+						{
+							id: "direct-provider-passthrough",
+							enabled: true,
+							kind: "passthrough",
+							match: {
+								scheme: "https",
+								host: "ai-gateway.faraday.cloud",
+								pathPrefix: "/v1/",
+								headers: {},
+								query: {},
+							},
+							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+							priority: 240,
+							owner: "provider-projection",
+						},
+						{
+							id: "explicit-provider-profile",
+							enabled: true,
+							kind: "passthrough",
+							match: {
+								scheme: "https",
+								host: "api.openai.com",
+								pathPrefix: "/",
+								headers: {},
+								query: {},
+							},
+							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+							priority: 250,
+							owner: "provider-projection",
+						},
+					],
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			secretValues: { "provider.default.apiKey": "sk-provider" },
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/api/channels",
+			etag: '"empty-channels"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		expect(projected.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
+			"explicit-provider-profile",
+		]);
+	});
+
+	it("adds direct provider passthrough only when managed channels enable the broker", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_channel_provider",
+				environmentId: "env_channel_provider",
+				instanceId: "iid_channel_provider",
+				generation: 3,
+				issuedAt: "2026-06-14T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: false },
+				},
+				projection: {
+					providers: {
+						default: {
+							baseUrl: "https://ai-gateway.faraday.cloud/v1",
+							apiMode: "openai_chat",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				recovery: {},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			secretValues: { "provider.default.apiKey": "sk-provider" },
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [
+				{
+					id: "acct-telegram-1",
+					provider: "telegram",
+					name: "Runtime Telegram",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-telegram-1",
+							account_id: "acct-telegram-1",
+							agent_id: "env_channel_provider",
+							status: "active",
+							agent_token: "agent-token-runtime",
+						},
+					],
+				},
+			],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/api/channels",
+			etag: '"channels"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		expect(projected.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
+			"native-telegram-clawdi_accttelegram-managed",
+			"direct-provider-passthrough",
+		]);
+		expect(
+			projected.manifest.mitmProfiles?.profiles.find(
+				(profile) => profile.id === "direct-provider-passthrough",
+			),
+		).toMatchObject({
+			kind: "passthrough",
+			match: {
+				scheme: "https",
+				host: "ai-gateway.faraday.cloud",
+				pathPrefix: "/v1/",
+			},
+		});
 	});
 
 	it("runtime watch applies remote changes, reloads supervisor, and saves the new ETag", async () => {
@@ -3495,9 +3761,7 @@ exit 64
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 			expect(convergence.mode).toBe("normal");
-			expect(convergence.outputs.mitmProfileBundle).toBe(
-				join(state, "config", "mitm", "profiles.json"),
-			);
+			expect(convergence.outputs.mitmProfileBundle).toBe(null);
 			expect(convergence.outputs.mitmSecretFile).toBe(join(run, "mitm", "secrets.json"));
 			expect(convergence.outputs.supervisorConfig).toBe(
 				join(state, "supervisor", "supervisord.conf"),
@@ -3813,12 +4077,7 @@ exit 64
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
-			"native-telegram-bot-api-passthrough",
-			"native-discord-rest-passthrough",
-			"native-discord-gateway-passthrough",
-			"native-whatsapp-graph-passthrough",
-		]);
+		expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
 	});
 
 	it("rejects invalid explicit hosted MITM profiles instead of falling back", async () => {

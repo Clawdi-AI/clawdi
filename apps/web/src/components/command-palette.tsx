@@ -8,7 +8,9 @@ import {
 	LayoutDashboard,
 	type LucideIcon,
 	MessageSquare,
+	MessagesSquare,
 	Plug,
+	Settings,
 	Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -25,6 +27,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
+import { IS_HOSTED } from "@/lib/hosted";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	type ProjectResourceId,
@@ -33,6 +36,7 @@ import {
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
+import { useV2Access } from "@/lib/v2-access";
 
 const RESOURCE_ICONS = {
 	projects: FolderKanban,
@@ -43,13 +47,15 @@ const RESOURCE_ICONS = {
 	connectors: Plug,
 } satisfies Record<ProjectResourceId, LucideIcon>;
 
-const NAV_SHORTCUTS: {
+interface NavShortcut {
 	label: string;
 	href: string;
 	icon: LucideIcon;
 	subtitle: string;
 	searchText: string;
-}[] = [
+}
+
+const BASE_NAV_SHORTCUTS: NavShortcut[] = [
 	{
 		label: "Overview",
 		href: "/",
@@ -68,6 +74,30 @@ const NAV_SHORTCUTS: {
 			)} ${projectResourcePathLabel(definition)}`,
 		})),
 	),
+	{
+		label: "Settings",
+		href: "/settings",
+		icon: Settings,
+		subtitle: "General, Profile, API Keys",
+		searchText: "settings general profile api keys ai providers billing preferences account",
+	},
+];
+
+const V2_NAV_SHORTCUTS: NavShortcut[] = [
+	{
+		label: "Channels",
+		href: "/channels",
+		icon: MessagesSquare,
+		subtitle: "Account resources",
+		searchText: "channels telegram discord whatsapp imessage bots messaging",
+	},
+	{
+		label: "AI Providers",
+		href: "/ai-providers",
+		icon: Sparkles,
+		subtitle: "Account resources",
+		searchText: "ai providers models openai anthropic openrouter gemini mistral byok api key",
+	},
 ];
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
@@ -137,8 +167,16 @@ function CommandPalette({
 }) {
 	const api = useApi();
 	const router = useRouter();
+	const v2Access = useV2Access();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
+	const navShortcuts = useMemo(
+		() =>
+			IS_HOSTED && v2Access.canUseV2
+				? [...BASE_NAV_SHORTCUTS, ...V2_NAV_SHORTCUTS]
+				: BASE_NAV_SHORTCUTS,
+		[v2Access.canUseV2],
+	);
 
 	// Reset the input when the palette closes so reopening is a fresh state
 	// — otherwise stale results from the previous query briefly flash before
@@ -183,9 +221,9 @@ function CommandPalette({
 	const navMatches = useMemo(
 		() =>
 			normalizedQuery
-				? NAV_SHORTCUTS.filter((s) => s.searchText.toLowerCase().includes(normalizedQuery))
-				: NAV_SHORTCUTS,
-		[normalizedQuery],
+				? navShortcuts.filter((s) => s.searchText.toLowerCase().includes(normalizedQuery))
+				: navShortcuts,
+		[navShortcuts, normalizedQuery],
 	);
 
 	// Whether we have a stale results payload we can keep showing while a

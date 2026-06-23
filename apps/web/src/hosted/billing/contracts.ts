@@ -1,0 +1,32 @@
+import type { DeployComponents } from "@clawdi/shared/api";
+
+type Schemas = DeployComponents["schemas"];
+
+export type ActivationFeeStatus = Schemas["ActivationFeeStatusResponse"];
+export type AiProviderAuthKind = NonNullable<Schemas["DeployRequest"]["ai_provider_auth_kind"]>;
+export type BillingOffer = Schemas["BillingOfferResponse"];
+export type CheckoutRequest = Schemas["CheckoutRequest"];
+export type CheckoutResult = Schemas["CheckoutResponse"];
+export type DeployRequest = Schemas["DeployRequest"];
+export type DeploymentDetailsInfo = Schemas["DeploymentDetailsInfo"];
+export type HostedDeployment = Schemas["DeploymentResponse"];
+export type HostedUser = Schemas["UserResponse"];
+export type OpenClawConfigRequest = Schemas["OpenClawConfigRequest"];
+export type Plan = Schemas["PlanResponse"];
+export type PortalRequest = Schemas["PortalRequest"];
+export type PortalResult = Schemas["PortalResponse"];
+export type RebindAgentAiProviderRequest = Schemas["RebindAgentAiProviderRequest"];
+export type RuntimeAgentType = Schemas["OnboardAgentRequest"]["agent_type"];
+export type Subscription = Schemas["SubscriptionResponse"];
+export type UsageDay = Schemas["HostedUsageDay"];
+export type UsageModelBreakdown = Schemas["HostedUsageModelBreakdown"];
+export type UsageSummary = Schemas["HostedUsageSummaryResponse"];
+export type WalletAutoReloadAction = Schemas["WalletAutoReloadActionResponse"];
+export type WalletAutoReloadRequest = Schemas["WalletAutoReloadRequest"];
+export type WalletLedgerEntry = Schemas["WalletLedgerItemResponse"];
+export type WalletLedgerPage = Schemas["WalletLedgerResponse"];
+export type WalletLedgerStatus = WalletLedgerEntry["status"];
+export type WalletPaymentMode = WalletState["payment_mode"];
+export type WalletState = Schemas["WalletResponse"];
+export type WalletTopupRequest = Schemas["WalletTopupRequest"];
+export type WalletTopupResult = Schemas["WalletTopupResponse"];

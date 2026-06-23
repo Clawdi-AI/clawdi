@@ -227,6 +227,59 @@ describe("run command project folder selection", () => {
 		);
 	});
 
+	it("injects hosted runtime provider secrets from the private runtime secret file", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		const secretFile = join(runRoot, "mitm", "secrets.json");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(runRoot, "mitm"), { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
+		writeFileSync(
+			secretFile,
+			JSON.stringify({
+				"provider.default.apiKey": "sk-runtime-provider",
+			}),
+		);
+		writeFileSync(
+			join(runConfigRoot, "openclaw.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "openclaw",
+				enabled: true,
+				generatedAt: "2026-06-22T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "openclaw",
+				defaultArgs: ["gateway", "run"],
+				env: {},
+				secretEnv: {
+					CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
+				},
+				secretFilePath: secretFile,
+				prependPath: [join(tmpRoot, "home", "clawdi", ".openclaw", "bin")],
+				cwd: projectRoot,
+				commandPath: openclawPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
+			}),
+		);
+		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
+
+		await run(["openclaw"], {}, spawnImpl);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
+		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+	});
+
 	it("keeps hosted runtime wrapper alive until the child exits", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");

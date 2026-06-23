@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { hostedManifestMitmProfiles } from "../src/runtime/hosted-mitm-profiles";
+import {
+	directProviderPassthroughProfile,
+	hostedManifestMitmProfiles,
+} from "../src/runtime/hosted-mitm-profiles";
 import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
 
 describe("runtime MITM profile schema", () => {
@@ -105,7 +108,49 @@ describe("runtime MITM profile schema", () => {
 		).toBe(false);
 	});
 
-	it("routes ChatGPT Codex backend requests to provider responses endpoint", () => {
+	it("does not enable the hosted broker for directly projected providers", () => {
+		const bundle = hostedManifestMitmProfiles({
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			providers: {
+				default: {
+					baseUrl: "https://ai-gateway.faraday.cloud/v1",
+					apiMode: "openai_chat",
+					apiKeySecretRef: "provider.default.apiKey",
+				},
+			},
+		});
+
+		expect(bundle.profiles).toEqual([]);
+	});
+
+	it("builds a direct provider allowlist only when another manifest feature enables the broker", () => {
+		const direct = directProviderPassthroughProfile({
+			providers: {
+				default: {
+					baseUrl: "https://ai-gateway.faraday.cloud/v1",
+					apiMode: "openai_chat",
+					apiKeySecretRef: "provider.default.apiKey",
+				},
+			},
+		});
+
+		expect(direct).toMatchObject({
+			enabled: true,
+			kind: "passthrough",
+			match: {
+				scheme: "https",
+				host: "ai-gateway.faraday.cloud",
+				pathPrefix: "/v1/",
+				headers: {},
+				query: {},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 240,
+			owner: "provider-projection",
+		});
+	});
+
+	it("does not derive provider MITM profiles from provider projection", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
@@ -116,39 +161,6 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		const openai = bundle.profiles.find((profile) => profile.id === "codex-openai-responses");
-		const chatgpt = bundle.profiles.find(
-			(profile) => profile.id === "codex-chatgpt-backend-responses",
-		);
-
-		expect(openai?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
-		expect(openai?.rewrite.preservePath).toBe(false);
-		expect(openai?.match.headers.authorization).toEqual({
-			type: "equals",
-			value: "clawdi-mitm-placeholder",
-			prefix: "Bearer ",
-		});
-		expect(openai?.rewrite.setHeaders).toEqual({
-			authorization: {
-				type: "secretRef",
-				secretRef: "secret://provider.default.apiKey",
-				prefix: "Bearer ",
-			},
-		});
-		expect(chatgpt?.rewrite.upstreamBaseUrl).toBe("https://sub2api.test/v1/responses");
-		expect(chatgpt?.rewrite.preservePath).toBe(false);
-		expect(chatgpt?.match.headers.authorization).toEqual({
-			type: "equals",
-			value: "clawdi-mitm-placeholder",
-			prefix: "Bearer ",
-		});
-		expect(
-			bundle.profiles.find((profile) => profile.id === "codex-openai-responses-passthrough")?.kind,
-		).toBe("passthrough");
-		expect(
-			bundle.profiles.find(
-				(profile) => profile.id === "codex-chatgpt-backend-responses-passthrough",
-			)?.kind,
-		).toBe("passthrough");
+		expect(bundle.profiles).toEqual([]);
 	});
 });

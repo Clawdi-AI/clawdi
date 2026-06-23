@@ -1,25 +1,9 @@
-export interface ProjectInvitationNotification {
-	id: string;
-	project_id: string;
-	project_name: string;
-	project_kind: string;
-	owner_display: string;
-	owner_handle: string;
-	invitee_email: string;
-	invited_by_user_id: string;
-	invited_by_display: string | null;
-	created_at: string;
-}
+import type { components } from "@/lib/api-schemas";
 
-export interface AcceptInvitationResponse {
-	id: string;
-	project_id: string;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-	resolved_owner_handle: string;
-	bound_agent_ids?: string[];
-}
+type Schemas = components["schemas"];
+
+export type ProjectInvitationNotification = Schemas["InvitationResponse"];
+export type AcceptInvitationResponse = Schemas["InvitationAcceptResponse"];
 
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access

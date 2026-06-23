@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Filter clawdi.ai's OpenAPI spec down to just the endpoints + schema
-closure consumed by the OSS dashboard.
+"""Filter the hosted deploy API OpenAPI spec down to just the endpoint and
+schema closure consumed by the OSS dashboard.
 
-The full SaaS deploy-api spec carries ~30 endpoints and ~80 component
-schemas. The OSS dashboard at the time of writing only calls
-`GET /deployments`. Without this filter, `openapi-typescript` emits a
+The full deploy API spec carries private control-plane endpoints that the
+OSS dashboard must not accidentally grow into. The dashboard only calls the
+hosted user profile, v2 billing, v2 usage, and v2 deployment-management
+paths listed in `KEEP_PATHS`. Without this filter, `openapi-typescript` emits a
 ~7000-line TypeScript dump on every regen; this script trims it to
 only the surface we actually consume so:
 
@@ -36,7 +37,25 @@ from typing import Any
 # Endpoints the OSS dashboard actually calls. Adding a new
 # entry here is the SINGLE knob for widening the schema surface.
 KEEP_PATHS: list[str] = [
-    "/deployments",
+    "/me",
+    "/v2/deployments",
+    "/v2/deployments/{deployment_id}",
+    "/v2/deployments/{deployment_id}/agents/{agent_type}",
+    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider",
+    "/v2/deployments/{deployment_id}/onboard-agent",
+    "/v2/deployments/{deployment_id}/restart",
+    "/v2/deployments/{deployment_id}/start",
+    "/v2/deployments/{deployment_id}/stop",
+    "/v2/subscription/activation-fee",
+    "/v2/subscription/checkout",
+    "/v2/subscription/current",
+    "/v2/subscription/plans",
+    "/v2/subscription/portal",
+    "/v2/usage",
+    "/v2/wallet",
+    "/v2/wallet/auto-reload",
+    "/v2/wallet/ledger",
+    "/v2/wallet/topup",
 ]
 
 
@@ -69,7 +88,7 @@ def filter_spec(spec: dict[str, Any]) -> dict[str, Any]:
     kept_paths = {p: paths[p] for p in KEEP_PATHS if p in paths}
     missing = [p for p in KEEP_PATHS if p not in paths]
     if missing:
-        # Loud failure so a SaaS-side rename of a kept endpoint shows
+        # Loud failure so a deploy API rename of a kept endpoint shows
         # up in CI / dev right away, rather than producing a silently
         # smaller schema.
         msg = f"filter-deploy-openapi: KEEP_PATHS entries not in spec: {missing}"
@@ -90,7 +109,7 @@ def filter_spec(spec: dict[str, Any]) -> dict[str, Any]:
         seen.add(name)
         schema = all_schemas.get(name)
         if schema is None:
-            # SaaS spec references a schema name that doesn't exist —
+            # Deploy API spec references a schema name that doesn't exist —
             # treat as a generator bug rather than silently ignoring;
             # the resulting deploy.generated.ts would type-check OK
             # but lie about its shape at runtime.

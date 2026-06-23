@@ -53,14 +53,14 @@ export const DEFAULT_UI_BRIDGE_TARGETS: RuntimeUiBridgeTarget[] = [
 	{
 		name: "openclaw",
 		listenHost: "0.0.0.0",
-		listenPort: 18789,
+		listenPort: 28789,
 		targetHost: "127.0.0.1",
 		targetPort: 18789,
 	},
 	{
 		name: "hermes",
 		listenHost: "0.0.0.0",
-		listenPort: 9119,
+		listenPort: 28793,
 		targetHost: "127.0.0.1",
 		targetPort: 9119,
 	},

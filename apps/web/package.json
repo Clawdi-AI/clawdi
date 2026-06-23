@@ -16,6 +16,8 @@
 		"@clawdi/shared": "workspace:*",
 		"@clerk/nextjs": "^7.2.7",
 		"@clerk/themes": "^2.4.57",
+		"@stripe/react-stripe-js": "^6.6.0",
+		"@stripe/stripe-js": "^9.8.0",
 		"@t3-oss/env-nextjs": "^0.13.11",
 		"@tanstack/react-query": "catalog:",
 		"@tanstack/react-table": "^8.21.3",

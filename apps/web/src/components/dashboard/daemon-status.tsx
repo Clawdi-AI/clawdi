@@ -70,9 +70,9 @@ function isPermanentError(raw: string | null | undefined): boolean {
  * retries have failed for a transient condition (network outage,
  * 5xx, 408/429). Distinct from `permanent:` because the periodic
  * rescan auto-re-enqueues the same content once the underlying
- * condition clears — no user action required. UI shows "the
- * daemon gave up retrying for now; next sync cycle will pick
- * this up automatically when connectivity is back." */
+ * condition clears — no user action required. UI shows that the
+ * daemon stopped this retry cycle and will pick the item up again
+ * automatically when connectivity is back. */
 function isRetryExhaustedError(raw: string | null | undefined): boolean {
 	return typeof raw === "string" && raw.startsWith("retry_exhausted: ");
 }
@@ -149,18 +149,17 @@ export function DaemonStatusBadge({
 	 * live state: hosted users don't have a CLI to run
 	 * `clawdi daemon install` / `clawdi daemon status` / `clawdi auth login`
 	 * against — the supervised daemon ships in the pod image. All
-	 * remediation copy points back at the Clawdi dashboard
+	 * remediation copy points back at hosted agent settings
 	 * (`manageHref`) instead. Self-managed installs see the
 	 * existing CLI instructions across every state. */
 	source?: "self-managed" | "on-clawdi";
 	/** When provided on a hosted (`source="on-clawdi"`) tile, errored /
-	 * paused dialog branches render a link to this URL (the SaaS
-	 * dashboard's Restart / Stop / Delete affordance) so the dead-end
+	 * paused dialog branches render a link to this URL (the hosted
+	 * agent Compute tab) so the dead-end
 	 * "the daemon is broken and you can't fix it from here" UX
 	 * becomes "click here to restart the pod." Self-managed callers
-	 * omit it; hosted callers that lack a registered SaaS deployment
-	 * (pre-Phase-4a fallback path) may also omit it and get a plain
-	 * "contact support / check the Clawdi dashboard" message. */
+	 * omit it; hosted callers without a deployment link get a plain
+	 * "contact support / check agent settings" message. */
 	manageHref?: string;
 }) {
 	const status = classify(env);
@@ -188,12 +187,12 @@ export function DaemonStatusBadge({
 	// Hosted users see a tooltip that doesn't promise a CLI fix.
 	// "Run setup" is meaningless when there's nothing to install;
 	// "Daemon isn't checking in" is true but the actionable next
-	// step lives on the Clawdi dashboard, not the user's terminal.
+	// step lives in agent settings, not the user's terminal.
 	const tooltip = isHosted
 		? status === "set-up"
 			? "Sync activates on the next image rollout."
 			: status === "paused"
-				? "Pod isn't checking in. Manage from the Clawdi dashboard."
+				? "Pod isn't checking in. Manage it from agent settings."
 				: STATUS_TOOLTIP[status]
 		: STATUS_TOOLTIP[status];
 	return (
@@ -313,7 +312,7 @@ function SyncHelpDialog({
 							// Hosted pods get sync wired up automatically when
 							// the agent image rolls out — there's nothing for the
 							// user to configure. Explain the flow + point at the
-							// SaaS dashboard's lifecycle UI for the rare manual
+							// hosted agent lifecycle UI for the rare manual
 							// kick (Restart) so this dialog is informational, not
 							// a dead-end.
 							<div className="space-y-3">
@@ -355,7 +354,7 @@ function SyncHelpDialog({
 											<>
 												<p className="text-xs text-muted-foreground">
 													Daemon stopped after this error. The pod runs on Clawdi&apos;s
-													infrastructure — restart it from the Clawdi dashboard to recover.
+													infrastructure — restart it from agent settings to recover.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
@@ -402,7 +401,7 @@ function SyncHelpDialog({
 										<>
 											<p className="text-xs text-muted-foreground">
 												The daemon will keep retrying. If the error persists, restart the pod from
-												the Clawdi dashboard.
+												agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
@@ -423,7 +422,7 @@ function SyncHelpDialog({
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
 											The pod isn&apos;t checking in. It may be restarting, suspended, or out of
-											memory — manage it from the Clawdi dashboard.
+											memory — manage it from agent settings.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
 									</div>
@@ -575,8 +574,8 @@ function PromptBlock({ text }: { text: string }) {
 }
 
 /** Two of the self-managed errored-state branches ("daemon stopped"
- * and the generic "keep retrying" fallback) end with the same nudge
- * to `clawdi auth login`. Inline both was 8 lines of identical JSX. */
+ * and the generic "keep retrying" branch) end with the same nudge to
+ * `clawdi auth login`. Inline both was 8 lines of identical JSX. */
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
@@ -587,27 +586,26 @@ function AuthLoginHint() {
 }
 
 /** Affordance for hosted-pod remediation. Renders a button-styled link
- * to the Clawdi dashboard's lifecycle UI (Restart / Stop / Delete) when
- * `manageHref` is provided. Falls back to a static muted-text breadcrumb
- * when it isn't — pre-Phase-4a hosted tiles can land here without a SaaS
- * deployment URL on hand, and showing "no link" is still better than
- * advertising a CLI fix that doesn't apply. */
+ * to the hosted agent Compute tab (Restart / Stop / Delete) when
+ * `manageHref` is provided. Without that link, render neutral support
+ * guidance instead of self-managed CLI remediation. */
 function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (
 			<p className="text-xs text-muted-foreground">
-				Use the Clawdi dashboard to restart or check the pod.
+				Open agent settings to restart or check the pod.
 			</p>
 		);
 	}
+	const external = /^https?:\/\//i.test(manageHref);
 	return (
 		<a
 			href={manageHref}
-			target="_blank"
-			rel="noopener noreferrer"
+			target={external ? "_blank" : undefined}
+			rel={external ? "noopener noreferrer" : undefined}
 			className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/80 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
 		>
-			Open in Clawdi dashboard
+			Open agent settings
 		</a>
 	);
 }

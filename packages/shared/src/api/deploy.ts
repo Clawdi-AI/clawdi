@@ -4,10 +4,10 @@
  *
  *     bun --cwd apps/web run generate-deploy-api
  *
- * (requires clawdi.ai running on :50021).
+ * (requires the hosted deploy API running on :50021).
  *
- * The generated file is intentionally a FILTERED subset of clawdi.ai's
- * OpenAPI surface — `scripts/filter-deploy-openapi.py` keeps only the
+ * The generated file is intentionally a FILTERED subset of the hosted
+ * deploy API OpenAPI surface — `scripts/filter-deploy-openapi.py` keeps only the
  * endpoints listed in its `KEEP_PATHS` allowlist plus their transitive
  * schema closure. Adding a new endpoint = adding it to that allowlist
  * + running the regen command. See the filter script for details.

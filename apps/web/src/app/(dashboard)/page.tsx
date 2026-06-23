@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { AgentsCard, type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
+import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
@@ -21,6 +21,7 @@ import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
 import { relativeTime } from "@/lib/utils";
+import { useV2Access } from "@/lib/v2-access";
 
 const RECENT_SESSIONS_LIMIT = 15;
 
@@ -44,8 +45,7 @@ function countProjectTypes(
 // the flag is false (OSS), the conditional collapses, the
 // `dynamic(…)` calls are unreachable, the bundler eliminates the
 // `import()` sites, and the entire `@/hosted/hosted-agents-section`
-// chunk — along with its `clawdi-api.ts` and `use-hosted-agent-tiles`
-// dependencies — never ships in the OSS bundle.
+// chunk never ships in the OSS bundle.
 //
 // Two exports from the same module: `HostedAgentsSection` for the
 // left-column agent panel, and `HostedSecondaryCTA` for the
@@ -66,9 +66,17 @@ const HostedSecondaryCTA = IS_HOSTED
 			})),
 		)
 	: null;
+const HostedAgentControls = IS_HOSTED
+	? dynamic(() =>
+			import("@/hosted/billing/agents/hosted-agent-controls").then((m) => ({
+				default: m.HostedAgentControls,
+			})),
+		)
+	: null;
 
 export default function DashboardPage() {
 	const api = useApi();
+	const v2Access = useV2Access();
 
 	const { data: stats } = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -114,31 +122,20 @@ export default function DashboardPage() {
 			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
 			: null;
 
-	const selfManagedTiles: AgentTile[] = useMemo(() => {
-		return (environments ?? []).map((env) => ({
-			id: env.id,
-			source: "self-managed" as const,
-			name: env.machine_name,
-			agentType: env.agent_type,
-			runtimeLabel: formatRuntime(env.agent_type),
-			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
-			lastSeenAt: env.last_seen_at,
-			href: `/agents/${env.id}`,
-			active: isAgentActive(env.last_seen_at),
-			env,
-		}));
-	}, [environments]);
+	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
 	// hosted code path may still render an AgentsCard if the user has
-	// deployed agents on clawdi.ai — that decision lives inside
+	// hosted deployments — that decision lives inside
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
-	const selfManagedCount = environments?.length ?? 0;
+	const selfManagedCount = selfManagedTiles.length;
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
 	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
+	const hostedAccessLoading = Boolean(HostedAgentsSection && v2Access.isLoading);
+	const hostedAgentsEnabled = Boolean(HostedAgentsSection && v2Access.canUseV2);
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -161,7 +158,9 @@ export default function DashboardPage() {
 				    `lg` breakpoint that means single-column overflow → cards
 				    spill past the viewport. */}
 				<div className="min-w-0 space-y-4 lg:col-span-2">
-					{HostedAgentsSection ? (
+					{hostedAccessLoading ? (
+						<AgentsCard agents={selfManagedTiles} isLoading />
+					) : hostedAgentsEnabled && HostedAgentsSection ? (
 						<HostedAgentsSection
 							selfManagedTiles={selfManagedTiles}
 							envsLoading={envsLoading}
@@ -224,7 +223,7 @@ export default function DashboardPage() {
 				    to a sibling component so it can include hosted tiles in
 				    the count. */}
 				<div className="min-w-0 space-y-4">
-					{HostedSecondaryCTA ? (
+					{hostedAccessLoading ? null : hostedAgentsEnabled && HostedSecondaryCTA ? (
 						<HostedSecondaryCTA
 							selfManagedCount={selfManagedCount}
 							envsLoading={envsLoading}
@@ -233,12 +232,15 @@ export default function DashboardPage() {
 					) : hasAgents ? (
 						<ConnectAnotherCard />
 					) : null}
+					{hostedAgentsEnabled && HostedAgentControls ? <HostedAgentControls /> : null}
 					<ResourcesCard
 						stats={stats}
 						projectCount={projects?.length}
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
-						hasConnectedAgent={HostedAgentsSection || envsLoading ? undefined : hasAgents}
+						hasConnectedAgent={
+							hostedAccessLoading || hostedAgentsEnabled || envsLoading ? undefined : hasAgents
+						}
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
@@ -268,6 +270,11 @@ function ConnectAnotherCard() {
 }
 
 /** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
+function currentDaypart(): "morning" | "afternoon" | "evening" {
+	const hour = new Date().getHours();
+	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+}
+
 function Greeting({
 	activeCount,
 	total,
@@ -280,9 +287,10 @@ function Greeting({
 	lastActive?: string | null;
 }) {
 	const { user } = useCurrentUser();
-	const hour = new Date().getHours();
-	const daypart =
-		hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
+	useEffect(() => {
+		setDaypart(currentDaypart());
+	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
 	const summary =
 		total === 0
@@ -293,26 +301,10 @@ function Greeting({
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">
-				Good {daypart}
+				{daypart ? `Good ${daypart}` : "Welcome"}
 				{firstName ? `, ${firstName}` : ""}
 			</h1>
 			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>
 		</div>
 	);
-}
-
-function formatRuntime(agentType: string): string {
-	switch (agentType) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-		case "claude_code":
-		case "claude-code":
-			return "Claude Code";
-		case "codex":
-			return "Codex";
-		default:
-			return agentType;
-	}
 }
