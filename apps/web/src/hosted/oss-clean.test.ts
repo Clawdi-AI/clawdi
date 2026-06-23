@@ -360,6 +360,9 @@ describe("v2 route exposure", () => {
 			if (!src.includes('from "@/components/v2-gate"') || !/<V2Gate(?:\s|>)/.test(src)) {
 				offenders.push(routeFile);
 			}
+			if (/return\s+[A-Z][A-Za-z0-9]*\s*\?\s*\(\s*<V2Gate/.test(src)) {
+				offenders.push(`${routeFile} (short-circuits before V2Gate)`);
+			}
 		}
 
 		if (offenders.length > 0) {

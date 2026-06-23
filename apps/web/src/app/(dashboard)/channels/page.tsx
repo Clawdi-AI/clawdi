@@ -15,9 +15,5 @@ const ChannelsPage = IS_HOSTED
 	: null;
 
 export default function Page() {
-	return ChannelsPage ? (
-		<V2Gate fallbackHref="/">
-			<ChannelsPage />
-		</V2Gate>
-	) : null;
+	return <V2Gate fallbackHref="/">{ChannelsPage ? <ChannelsPage /> : null}</V2Gate>;
 }

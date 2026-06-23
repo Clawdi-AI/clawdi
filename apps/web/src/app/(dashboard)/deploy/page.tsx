@@ -14,9 +14,5 @@ const DeployWizard = IS_HOSTED
 	: null;
 
 export default function Page() {
-	return DeployWizard ? (
-		<V2Gate fallbackHref="/">
-			<DeployWizard />
-		</V2Gate>
-	) : null;
+	return <V2Gate fallbackHref="/">{DeployWizard ? <DeployWizard /> : null}</V2Gate>;
 }

@@ -15,10 +15,5 @@ const CodexOAuthCallback = IS_HOSTED
 	: null;
 
 export default function CodexOAuthCallbackPage() {
-	if (!CodexOAuthCallback) return null;
-	return (
-		<V2Gate fallbackHref="/">
-			<CodexOAuthCallback />
-		</V2Gate>
-	);
+	return <V2Gate fallbackHref="/">{CodexOAuthCallback ? <CodexOAuthCallback /> : null}</V2Gate>;
 }

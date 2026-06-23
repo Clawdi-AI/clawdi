@@ -18,9 +18,5 @@ const AiProvidersPage = IS_HOSTED
 	: null;
 
 export default function Page() {
-	return AiProvidersPage ? (
-		<V2Gate fallbackHref="/">
-			<AiProvidersPage />
-		</V2Gate>
-	) : null;
+	return <V2Gate fallbackHref="/">{AiProvidersPage ? <AiProvidersPage /> : null}</V2Gate>;
 }
