@@ -8,7 +8,7 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.discord_gateway_worker import DiscordGatewayWorker
-from app.workers.channels import build_channel_workers
+from app.workers.channels import ChannelWorkerHealth, _handle_health_request, build_channel_workers
 
 
 def test_channel_worker_stack_runs_delivery_webhook_gateway_and_retention_workers():
@@ -39,3 +39,39 @@ async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
     await asyncio.wait_for(task, timeout=1)
 
     assert calls == []
+
+
+async def _read_health_response(port: int) -> str:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    await writer.drain()
+    response = await reader.read()
+    writer.close()
+    await writer.wait_closed()
+    return response.decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_channel_worker_health_endpoint_reports_readiness():
+    health = ChannelWorkerHealth()
+    server = await asyncio.start_server(
+        lambda reader, writer: _handle_health_request(reader, writer, health),
+        "127.0.0.1",
+        0,
+    )
+    assert server.sockets
+    port = server.sockets[0].getsockname()[1]
+
+    async with server:
+        starting = await _read_health_response(port)
+        health.ready = True
+        ready = await _read_health_response(port)
+        health.stopping = True
+        stopping = await _read_health_response(port)
+
+    assert "503 Service Unavailable" in starting
+    assert '"status":"starting"' in starting
+    assert "200 OK" in ready
+    assert '"status":"ok"' in ready
+    assert "503 Service Unavailable" in stopping
+    assert '"status":"stopping"' in stopping

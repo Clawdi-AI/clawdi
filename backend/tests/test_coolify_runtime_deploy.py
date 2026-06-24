@@ -29,6 +29,12 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
                 "build_pack": "dockerimage",
                 "fqdn": "CONFIGURE_IN_COOLIFY",
                 "ports_exposes": None,
+                "health_check_enabled": True,
+                "health_check_path": "/health",
+                "health_check_port": "8000",
+                "health_check_interval": 5,
+                "health_check_retries": 12,
+                "health_check_start_period": 20,
                 "start_command": "cd /app/backend && exec python -m app.workers.channels",
                 "custom_docker_run_options": (
                     "--init --add-host=host.docker.internal:host-gateway"
@@ -42,6 +48,12 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
     assert payload == {
         "name": "clawdi-channels-worker",
         "git_commit_sha": "1370164c7b837280be9918ca3eb65b084cb32376",
+        "health_check_enabled": True,
+        "health_check_path": "/health",
+        "health_check_port": "8000",
+        "health_check_interval": 5,
+        "health_check_retries": 12,
+        "health_check_start_period": 20,
         "start_command": "cd /app/backend && exec python -m app.workers.channels",
         "custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway",
         "docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",

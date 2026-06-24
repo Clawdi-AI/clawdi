@@ -7,8 +7,9 @@ only backend runtime processes.
 The intended Coolify shape is deliberately small:
 
 - `clawdi-backend`: FastAPI API, one Uvicorn process, port `8000`.
-- `clawdi-channels-worker`: headless native channels worker, no FQDN, no
-  exposed port, and no HTTP health check.
+- `clawdi-channels-worker`: headless native channels worker, no FQDN and no
+  host port mapping. It exposes an in-container `/health` endpoint for Coolify
+  Application health checks only.
 
 Both Applications pull the same immutable open-source backend image used by the
 self-hosted Docker Compose stack:
@@ -73,6 +74,12 @@ read-only control-plane query.
 Keep `clawdi-channels-worker` at one replica. The combined worker should be
 operated as a singleton until every loop in `app.workers.channels` has an
 explicit multi-replica lease or claim contract.
+
+Do not add a Dockerfile-level `HEALTHCHECK` to the shared backend image. The
+same image runs both the API and worker entrypoints, so health checks belong on
+the Coolify Application. The worker process itself listens on container port
+`8000` for `/health`; keep `fqdn` and host port mappings empty so that endpoint
+remains an internal liveness probe rather than a public route.
 
 ## Runtime State
 
