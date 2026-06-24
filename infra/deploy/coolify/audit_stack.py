@@ -101,6 +101,15 @@ def value_digest(value: object) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def normalize_literal_env_value(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value)
+    if len(normalized) >= 2 and normalized[0] == "'" and normalized[-1] == "'":
+        return normalized[1:-1]
+    return normalized
+
+
 def looks_like_placeholder(value: str) -> bool:
     normalized = value.strip()
     lower = normalized.lower()
@@ -441,9 +450,9 @@ def audit_env(
         if row.get("is_buildtime") is not False:
             errors.append(f"{app_name}: {key} must not be exposed at build time")
 
-        actual_value = row.get("real_value")
+        actual_value = normalize_literal_env_value(row.get("real_value"))
         if actual_value is None:
-            actual_value = row.get("value")
+            actual_value = normalize_literal_env_value(row.get("value"))
         if actual_value != expected_value:
             errors.append(f"{app_name}: {key} has an unexpected value")
 

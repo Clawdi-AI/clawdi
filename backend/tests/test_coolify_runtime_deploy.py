@@ -159,6 +159,7 @@ def test_audit_env_accepts_shared_manifest_and_application_env(monkeypatch):
                 {
                     "key": "CLAWDI_PROCESS_ROLE",
                     "value": "channels-worker",
+                    "real_value": "'channels-worker'",
                     "is_preview": False,
                     "is_shared": False,
                     "is_literal": True,
