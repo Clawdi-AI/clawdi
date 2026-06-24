@@ -24,6 +24,7 @@ TERMINAL_FAILURE = {
     "failed:healthcheck",
     "failed:rollback",
 }
+SYNCED_APPLICATION_FIELDS = ("custom_docker_run_options",)
 
 
 def log(message: str) -> None:
@@ -229,6 +230,25 @@ def deploy_application(
     return deployment_uuid
 
 
+def runtime_update_payload(
+    *,
+    expected: dict[str, Any],
+    image: str,
+    tag: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "docker_registry_image_name": image,
+        "docker_registry_image_tag": tag,
+        "git_commit_sha": tag,
+    }
+    fields = expected.get("fields", {})
+    if isinstance(fields, dict):
+        for field in SYNCED_APPLICATION_FIELDS:
+            if field in fields:
+                payload[field] = fields[field]
+    return payload
+
+
 def deploy_applications(
     *,
     api_url: str,
@@ -369,11 +389,11 @@ def main() -> int:
             token=args.token,
             method="PATCH",
             path=f"/api/v1/applications/{app_uuid}",
-            payload={
-                "docker_registry_image_name": args.image,
-                "docker_registry_image_tag": args.tag,
-                "git_commit_sha": args.tag,
-            },
+            payload=runtime_update_payload(
+                expected=expected,
+                image=args.image,
+                tag=args.tag,
+            ),
         )
         log(f"{app_name}: image_tag=updated uuid={app_uuid}")
 

@@ -105,6 +105,12 @@ Application keeps the `--add-host=host.docker.internal:host-gateway` run option
 from the stack manifest. If your database is a Coolify resource or an external
 managed database, set `DATABASE_URL` to that hostname instead.
 
+Runtime Applications should keep Docker `--init` in
+`custom_docker_run_options`. Docker health checks and short-lived child
+processes can otherwise accumulate as zombies under Python PID 1 processes.
+Keep the high `nofile` ulimit for descriptor-heavy channel/runtime traffic, but
+do not add low per-user `nproc` limits.
+
 ## Audit
 
 Validate the template locally:
@@ -170,11 +176,12 @@ dispatches audit with `--phase live --expect-commit <full-git-sha>`.
 
 Automatic releases can be enabled after the Coolify stack is the live runtime.
 When `Backend CI` succeeds on `main`, `.github/workflows/clawdi-image-release.yml`
-checks whether backend image inputs changed. If they did, and the repository
-variable `CLAWDI_COOLIFY_AUTO_DEPLOY` is set to `true`, the workflow builds the
-backend image, deploys the `all` scope through Coolify, waits for completion,
-and runs the live audit. If backend image inputs did not change, the automatic
-path runs a live audit without publishing or deploying a new image.
+checks whether backend image inputs or the checked-in Coolify runtime contract
+changed. If they did, and the repository variable `CLAWDI_COOLIFY_AUTO_DEPLOY`
+is set to `true`, the workflow builds the backend image, deploys the `all`
+scope through Coolify, waits for completion, and runs the live audit. If
+backend image/runtime deploy inputs did not change, the automatic path runs a
+live audit without publishing or deploying a new image.
 
 The workflow uses the public `production-stack.json` template by default, which
 is safe because deploy only needs the app names, roles, and deployment tag to

@@ -129,7 +129,7 @@ jobs:
           readarray -t files <<< "$changed_files"
           for file in "${files[@]}"; do
             case "$file" in
-              backend/*|.dockerignore)
+              backend/*|.dockerignore|infra/deploy/coolify/production-stack.json|infra/deploy/coolify/deploy_ghcr_runtime.py|.github/workflows/clawdi-image-release.yml)
                 build=true
                 ;;
             esac
