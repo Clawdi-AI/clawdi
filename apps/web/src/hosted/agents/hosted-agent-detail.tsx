@@ -163,7 +163,7 @@ export function HostedAgentDetail({
 	const runtimeLabel = RUNTIME_LABEL[runtime];
 	useSetBreadcrumbTitle(`${name} · ${runtimeLabel}`);
 
-	const isPerformance = (ci?.vcpu ?? 0) >= 4;
+	const isPerformance = ci?.compute_plan_slug === "compute_performance";
 	const consoleUrl = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
 	const router = useRouter();
 	const searchParams = useSearchParams();

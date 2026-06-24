@@ -4,6 +4,7 @@ import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request
 describe("buildHostedDeployRequest", () => {
 	test("serializes v2 hosted deploys without legacy deploy profile", () => {
 		const request = buildHostedDeployRequest({
+			computePlanSlug: "compute_performance",
 			engines: { openclaw: true, hermes: false },
 			persona: {
 				assistantName: "  Test Agent  ",
@@ -16,6 +17,7 @@ describe("buildHostedDeployRequest", () => {
 
 		expect("profile" in request).toBe(false);
 		expect(request).toMatchObject({
+			compute_plan_slug: "compute_performance",
 			channel: null,
 			enable_openclaw: true,
 			enable_hermes: false,

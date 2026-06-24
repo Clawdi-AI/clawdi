@@ -3,7 +3,6 @@
 import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,18 +14,11 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
-import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
-import { useCheckout, usePlans, usePortal, useSubscription } from "@/hosted/billing/hooks";
-import {
-	handlePortalResult,
-	planOffers,
-	selectOfferForTerm,
-} from "@/hosted/billing/subscription/subscription-utils";
+import { usePlans } from "@/hosted/billing/hooks";
+import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 
 function partitionPlans(plans: Plan[]): { free?: Plan; performance?: Plan } {
@@ -61,9 +53,6 @@ export function PlanComparison({
 } = {}) {
 	const router = useRouter();
 	const plansQuery = usePlans();
-	const subscription = useSubscription();
-	const checkout = useCheckout();
-	const portal = usePortal();
 	const runAction = useActionLock();
 	const [internalTerm, setInternalTerm] = useState(1);
 	const term = termProp ?? internalTerm;
@@ -74,42 +63,14 @@ export function PlanComparison({
 		[plansQuery.data],
 	);
 
-	const currentSlug = subscription.data?.plan_slug ?? null;
-	const onFree = !!free && currentSlug === free.slug;
-	const onPerformance = !!performance && currentSlug === performance.slug;
-	const upgradePending = checkout.isPending || portal.isPending;
-
 	const performanceOffer = useMemo(
 		() => (performance ? selectOfferForTerm(performance, term) : null),
 		[performance, term],
 	);
 
 	async function startPerformanceCheckout() {
-		if (!performance || subscription.isLoading) return;
-		try {
-			if (subscription.data) {
-				handlePortalResult(
-					await portal.mutateAsync({
-						target_plan_slug: performance.slug,
-						target_billing_term_months: term,
-						confirm_upgrade: true,
-					}),
-					() => subscription.refetch(),
-				);
-				return;
-			}
-			const result = await checkout.mutateAsync({
-				plan_slug: performance.slug,
-				billing_term_months: term,
-				collection_method: "charge_automatically",
-				ui_mode: "hosted",
-			});
-			const url = result.action_url || result.checkout_url || result.invoice_url;
-			if (url) window.location.href = url;
-			else toast.error("Couldn’t start checkout", { description: "Please try again." });
-		} catch (e) {
-			toast.error("Couldn’t start upgrade", { description: normalizeBillingError(e) });
-		}
+		if (!performance) return;
+		router.push("/deploy");
 	}
 
 	if (!plansQuery.data) return null;
@@ -122,9 +83,9 @@ export function PlanComparison({
 	return (
 		<div data-hosted="true" className="space-y-3">
 			<div>
-				<h3 className="text-base font-semibold">Compare plans</h3>
+				<h3 className="text-base font-semibold">Compare compute options</h3>
 				<p className="text-sm text-muted-foreground">
-					Two tiers of always-on compute, plus pay-as-you-go AI Credits.
+					Free is one user-level slot. Performance is billed per hosted agent.
 				</p>
 			</div>
 			<div className="grid items-start gap-4 lg:grid-cols-3">
@@ -135,7 +96,6 @@ export function PlanComparison({
 							<CardTitle className="flex items-center gap-2">
 								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Free
 							</CardTitle>
-							{onFree ? <StatusBadge status="success">Current plan</StatusBadge> : null}
 						</div>
 						<div className="mt-2 flex items-baseline gap-1">
 							<span className="text-3xl font-semibold tracking-tight tabular-nums">$0</span>
@@ -151,42 +111,27 @@ export function PlanComparison({
 							<FeatureRow>
 								Burstable compute{free ? ` (${free.vcpu} vCPU / ${free.ram_gb} GB burst)` : ""}
 							</FeatureRow>
+							<FeatureRow>One active Free agent per user</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>$0 with BYOK — bring your own provider key</FeatureRow>
 							<FeatureRow>$5 in AI Credits on signup</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
-						<Button
-							className="w-full"
-							variant="outline"
-							onClick={() => router.push("/deploy")}
-							disabled={onFree}
-						>
-							{onFree ? (
-								"Your current plan"
-							) : (
-								<>
-									<Rocket /> Deploy free
-								</>
-							)}
+						<Button className="w-full" variant="outline" onClick={() => router.push("/deploy")}>
+							<Rocket /> Deploy Free agent
 						</Button>
 					</CardFooter>
 				</Card>
 
 				{/* Performance */}
 				<Card className="relative flex flex-col border-primary/50 shadow-sm ring-1 ring-primary/20">
-					{!onPerformance ? (
-						<Badge className="-top-2.5 absolute left-1/2 -translate-x-1/2 shadow-sm">
-							Recommended
-						</Badge>
-					) : null}
+					<Badge className="-top-2.5 absolute left-1/2 -translate-x-1/2 shadow-sm">Per agent</Badge>
 					<CardHeader>
 						<div className="flex items-center justify-between">
 							<CardTitle className="flex items-center gap-2">
 								<Zap className="size-5 text-primary" aria-hidden /> Performance
 							</CardTitle>
-							{onPerformance ? <StatusBadge status="success">Current plan</StatusBadge> : null}
 						</div>
 						<div className="mt-2 flex items-baseline gap-1">
 							<span className="text-3xl font-semibold tracking-tight tabular-nums">
@@ -223,6 +168,7 @@ export function PlanComparison({
 								Higher burst
 								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
 							</FeatureRow>
+							<FeatureRow>One subscription per Performance agent</FeatureRow>
 							<FeatureRow>Run two engines at once (OpenClaw + Hermes)</FeatureRow>
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
@@ -234,17 +180,9 @@ export function PlanComparison({
 						<Button
 							className="w-full"
 							onClick={() => runAction(startPerformanceCheckout)}
-							disabled={!performance || onPerformance || subscription.isLoading || upgradePending}
+							disabled={!performance}
 						>
-							{upgradePending ? (
-								<>
-									<Spinner /> Updating…
-								</>
-							) : onPerformance ? (
-								"Your current plan"
-							) : (
-								"Upgrade to Performance"
-							)}
+							Deploy Performance agent
 						</Button>
 					</CardFooter>
 				</Card>

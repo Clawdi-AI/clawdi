@@ -65,7 +65,7 @@ export function UsagePage() {
 				<BillingError
 					error={subscription.error}
 					onRetry={() => subscription.refetch()}
-					title="Couldn’t load plan allowance"
+					title="Couldn’t load Performance allowance"
 				/>
 			) : null}
 
@@ -97,7 +97,7 @@ export function UsagePage() {
 					</CardHeader>
 					<CardContent className="space-y-1.5">
 						<div className="flex items-center justify-between text-sm">
-							<span className="text-muted-foreground">Plan allowance</span>
+							<span className="text-muted-foreground">Performance allowance</span>
 							<span className="tabular-nums">
 								{formatCredits(sub.budget_credits_used ?? 0)} of{" "}
 								{formatCredits(sub.budget_credits_total)} used

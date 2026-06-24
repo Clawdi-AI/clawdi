@@ -480,15 +480,6 @@ export interface components {
         };
         /** V2ComputePortalRequest */
         V2ComputePortalRequest: {
-            /** Target Plan Slug */
-            target_plan_slug?: string | null;
-            /** Target Billing Term Months */
-            target_billing_term_months?: number | null;
-            /**
-             * Confirm Upgrade
-             * @default false
-             */
-            confirm_upgrade: boolean;
             /** Locale */
             locale?: string | null;
         };
@@ -549,6 +540,11 @@ export interface components {
         };
         /** V2HostedDeployRequest */
         V2HostedDeployRequest: {
+            /**
+             * Compute Plan Slug
+             * @enum {string}
+             */
+            compute_plan_slug: "compute_free" | "compute_performance";
             /** Primary Model */
             primary_model?: string | null;
             /** Channel */
@@ -598,6 +594,11 @@ export interface components {
         };
         /** V2HostedDeploymentDetailsInfo */
         V2HostedDeploymentDetailsInfo: {
+            /**
+             * Compute Plan Slug
+             * @enum {string}
+             */
+            compute_plan_slug: "compute_free" | "compute_performance";
             /**
              * Mux Enabled
              * @default false
@@ -1145,9 +1146,9 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["V2HostedDeployRequest"] | null;
+                "application/json": components["schemas"]["V2HostedDeployRequest"];
             };
         };
         responses: {

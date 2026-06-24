@@ -12,11 +12,15 @@ type DeployPersona = {
 	timezone: string;
 };
 
+type ComputePlanSlug = DeployRequest["compute_plan_slug"];
+
 export function buildHostedDeployRequest({
+	computePlanSlug,
 	engines,
 	persona,
 	aiFields,
 }: {
+	computePlanSlug: ComputePlanSlug;
 	engines: EngineSelection;
 	persona: DeployPersona;
 	aiFields: Partial<DeployRequest>;
@@ -34,6 +38,7 @@ export function buildHostedDeployRequest({
 		...personaFields,
 	};
 	return {
+		compute_plan_slug: computePlanSlug,
 		channel: null,
 		enable_openclaw: engines.openclaw,
 		enable_hermes: engines.hermes,
