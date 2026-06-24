@@ -23,10 +23,16 @@ import { Spinner } from "@/components/ui/spinner";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { DeployRequest, Plan } from "@/hosted/billing/contracts";
+import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
-import { useCheckout, useCreateDeployment, usePlans } from "@/hosted/billing/hooks";
+import {
+	useCheckout,
+	useCreateDeployment,
+	useHostedDeployments,
+	usePlans,
+} from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { cn } from "@/lib/utils";
@@ -142,6 +148,7 @@ function IconChip({ tint, children }: { tint: string; children: React.ReactNode 
 export function DeployWizard() {
 	const router = useRouter();
 	const plans = usePlans();
+	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
@@ -174,11 +181,15 @@ export function DeployWizard() {
 
 	const freePlan = activePlan(plans.data, false);
 	const perfPlan = activePlan(plans.data, true);
+	const freeSlotUsed = usesActiveFreeComputeSlot(deployments.data);
+	const freeSlotPending = deployments.isLoading;
+	const freeSlotUnavailable = freeSlotUsed || freeSlotPending || !!deployments.error;
 
 	const dualAllowed = compute === "performance";
 	const enginesSelected = (Object.keys(engines) as Engine[]).filter((e) => engines[e]);
 	const providerList = aiProviders.data?.providers ?? [];
-	const computePlanReady = compute === "performance" ? !!perfPlan : !!freePlan;
+	const computePlanReady =
+		compute === "performance" ? !!perfPlan : !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit = enginesSelected.length >= 1 && planReady && !submitting;
 
@@ -200,6 +211,11 @@ export function DeployWizard() {
 			setAiChoice("managed");
 		}
 	}, [aiChoice, aiProviders.isSuccess, providerList]);
+
+	useEffect(() => {
+		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
+		setCompute("performance");
+	}, [compute, freeSlotUsed, perfPlan]);
 
 	const perfOffer = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
@@ -357,7 +373,7 @@ export function DeployWizard() {
 		<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Deploy an agent"
-				description="Pick a runtime and an AI provider — a managed, free agent is ready in minutes."
+				description="Pick a runtime and AI provider. Free uses one user slot; Performance creates a paid agent subscription."
 			/>
 
 			{/* 1. Runtime */}
@@ -482,14 +498,15 @@ export function DeployWizard() {
 				<CardHeader>
 					<CardTitle className="text-base">4. Compute</CardTitle>
 					<CardDescription>
-						Free is always-on and $0. Performance adds burst, dual engines, and a bigger disk.
+						Free gives one active hosted agent. Performance is billed per hosted agent and can run
+						dual engines.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-3">
 					<div className="grid gap-2 sm:grid-cols-2">
 						<Tile
 							selected={compute === "free"}
-							onClick={() => setComputeTier("free")}
+							onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
 							leading={
 								<IconChip tint="bg-identity-3-bg text-identity-3-fg">
 									<Cpu />
@@ -497,11 +514,18 @@ export function DeployWizard() {
 							}
 							title="Free"
 							subtitle={
-								freePlan
-									? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · single engine`
-									: "$0 · single engine"
+								freeSlotUsed
+									? "Free slot already in use"
+									: freeSlotPending
+										? "Checking Free slot…"
+										: deployments.error
+											? "Free slot check unavailable"
+											: freePlan
+												? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active agent`
+												: "$0 · single engine"
 							}
 							badge={<Badge variant="secondary">$0</Badge>}
+							disabled={freeSlotUnavailable}
 						/>
 						<Tile
 							selected={compute === "performance"}
@@ -514,7 +538,7 @@ export function DeployWizard() {
 							title="Performance"
 							subtitle={
 								perfPlan
-									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · dual engines`
+									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
 									: "Performance plan unavailable"
 							}
 							badge={
@@ -529,6 +553,22 @@ export function DeployWizard() {
 							disabled={!perfPlan}
 						/>
 					</div>
+					{compute === "free" && freeSlotPending ? (
+						<p className="text-xs text-muted-foreground">
+							Checking whether your Free slot is available before deployment.
+						</p>
+					) : null}
+					{compute === "free" && freeSlotUsed ? (
+						<p className="text-xs text-muted-foreground">
+							You already have an active Free agent. Stop or delete it to reuse Free, or deploy a
+							Performance agent.
+						</p>
+					) : null}
+					{compute === "free" && deployments.error ? (
+						<p className="text-xs text-destructive">
+							Couldn’t verify your Free slot. Retry this page before deploying Free.
+						</p>
+					) : null}
 					{compute === "free" && !freePlan ? (
 						<p className="text-xs text-destructive">
 							Free compute isn’t available from the billing service. Retry plans before deploying.

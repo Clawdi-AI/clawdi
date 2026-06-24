@@ -1013,7 +1013,7 @@ function ComputeTab({
 				</CardContent>
 			</Card>
 
-			{/* Compute tier (read-only — follows the plan) */}
+			{/* Compute tier (read-only — fixed at deployment creation) */}
 			<Card data-hosted="true">
 				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
 					<div>
@@ -1025,15 +1025,18 @@ function ComputeTab({
 							</Badge>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Compute tier follows your plan. Change it from Billing.
+							Compute tier is fixed for this deployment. Performance uses one subscription per
+							hosted agent.
 						</p>
 					</div>
-					<Button asChild variant="outline" size="sm">
-						<Link href="/settings/billing/plan">
-							Change in Plan
-							<ArrowUpRight className="size-3.5" />
-						</Link>
-					</Button>
+					<div className="flex flex-wrap gap-2">
+						<Button asChild variant="outline" size="sm">
+							<Link href={isPerformance ? "/settings/billing/plan" : "/deploy"}>
+								{isPerformance ? "Manage billing" : "Deploy Performance"}
+								<ArrowUpRight className="size-3.5" />
+							</Link>
+						</Button>
+					</div>
 				</CardContent>
 			</Card>
 
