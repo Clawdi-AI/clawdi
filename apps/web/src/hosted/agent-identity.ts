@@ -19,7 +19,7 @@ export function isCloudEnvId(value: string): boolean {
 
 /**
  * Strip the hosted service's auto-generated `openclaw-` / `hermes-` app-slug
- * prefix from a deployment name. Every pod gets the prefix regardless of which
+ * prefix from a deployment name. Every deployment gets the prefix regardless of which
  * runtimes are active, so it reads as misleading runtime metadata on a tile for
  * the other runtime. A user-given name (no prefix match) is kept intact.
  */

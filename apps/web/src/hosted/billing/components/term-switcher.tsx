@@ -7,7 +7,7 @@ import { billingTermLabel } from "@/hosted/billing/format";
 /**
  * Billing-term selector for a plan's Stripe-priced offers (monthly /
  * quarterly / annual). Reused by the pricing page and the deploy wizard's
- * Performance upgrade card. Disabled when the plan has a single term.
+ * Performance deploy card. Disabled when the plan has a single term.
  */
 export function TermSwitcher({
 	offers,

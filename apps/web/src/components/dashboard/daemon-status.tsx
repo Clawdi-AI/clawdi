@@ -148,7 +148,7 @@ export function DaemonStatusBadge({
 	/** "on-clawdi" tiles change the dialog copy across every non-
 	 * live state: hosted users don't have a CLI to run
 	 * `clawdi daemon install` / `clawdi daemon status` / `clawdi auth login`
-	 * against — the supervised daemon ships in the pod image. All
+	 * against — the supervised daemon ships in the hosted runtime image. All
 	 * remediation copy points back at hosted agent settings
 	 * (`manageHref`) instead. Self-managed installs see the
 	 * existing CLI instructions across every state. */
@@ -157,7 +157,7 @@ export function DaemonStatusBadge({
 	 * paused dialog branches render a link to this URL (the hosted
 	 * agent Compute tab) so the dead-end
 	 * "the daemon is broken and you can't fix it from here" UX
-	 * becomes "click here to restart the pod." Self-managed callers
+	 * becomes "click here to restart the hosted runtime." Self-managed callers
 	 * omit it; hosted callers without a deployment link get a plain
 	 * "contact support / check agent settings" message. */
 	manageHref?: string;
@@ -179,7 +179,7 @@ export function DaemonStatusBadge({
 				    is in flight, not waiting on the user. Other states
 				    use the same label as self-managed because they have
 				    the same product meaning regardless of who provisioned
-				    the pod. */}
+				    the hosted runtime. */}
 				{isHosted && status === "set-up" ? "Sync pending" : SHORT_LABEL[status]}
 			</span>
 		</span>
@@ -297,7 +297,7 @@ function SyncHelpDialog({
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
-						? "Sync paused — pod isn't checking in"
+						? "Sync paused — hosted runtime isn't checking in"
 						: "Sync paused — daemon isn't checking in";
 
 	return (
@@ -309,7 +309,7 @@ function SyncHelpDialog({
 				<div className="space-y-4">
 					{status === "set-up" ? (
 						isHosted ? (
-							// Hosted pods get sync wired up automatically when
+							// Hosted runtimes get sync wired up automatically when
 							// the agent image rolls out — there's nothing for the
 							// user to configure. Explain the flow + point at the
 							// hosted agent lifecycle UI for the rare manual
@@ -318,13 +318,13 @@ function SyncHelpDialog({
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
 									This agent runs on Clawdi&apos;s infrastructure. Live sync activates automatically
-									once the pod is on the latest agent image. New deploys are already on the latest
-									image; older pods activate on their next upgrade.
+									once the hosted runtime is on the latest agent image. New deploys are already on
+									the latest image; older runtimes activate after their next restart.
 								</p>
 								<p className="text-xs text-muted-foreground">
 									Nothing to install or configure on your side. The first heartbeat will flip this
 									badge to <span className="font-medium">Live sync</span> within a minute or two of
-									pod boot.
+									runtime start.
 								</p>
 							</div>
 						) : (
@@ -353,7 +353,7 @@ function SyncHelpDialog({
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Daemon stopped after this error. The pod runs on Clawdi&apos;s
+													Daemon stopped after this error. The runtime runs on Clawdi&apos;s
 													infrastructure — restart it from agent settings to recover.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
@@ -400,8 +400,8 @@ function SyncHelpDialog({
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												The daemon will keep retrying. If the error persists, restart the pod from
-												agent settings.
+												The daemon will keep retrying. If the error persists, restart the hosted
+												runtime from agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
@@ -421,8 +421,8 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											The pod isn&apos;t checking in. It may be restarting, suspended, or out of
-											memory — manage it from agent settings.
+											The hosted runtime isn&apos;t checking in. It may be restarting, suspended, or
+											out of memory — manage it from agent settings.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
 									</div>
@@ -585,7 +585,7 @@ function AuthLoginHint() {
 	);
 }
 
-/** Affordance for hosted-pod remediation. Renders a button-styled link
+/** Affordance for hosted runtime remediation. Renders a button-styled link
  * to the hosted agent Compute tab (Restart / Stop / Delete) when
  * `manageHref` is provided. Without that link, render neutral support
  * guidance instead of self-managed CLI remediation. */
@@ -593,7 +593,7 @@ function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (
 			<p className="text-xs text-muted-foreground">
-				Open agent settings to restart or check the pod.
+				Open agent settings to restart or check the hosted runtime.
 			</p>
 		);
 	}

@@ -57,7 +57,7 @@ export function HostedAgentsSection({
 }) {
 	const hosted = useHostedAgentTiles({ cloudEnvs });
 	// Drop self-managed tiles whose env is already represented by a
-	// hosted tile. Without this, a hosted pod's cloud-api env (created
+	// hosted tile. Without this, a hosted deployment's cloud-api env (created
 	// by the admin endpoint) would render twice — once with the
 	// "Clawdi" pill and external manage URL, once as a generic
 	// self-managed tile.
@@ -124,7 +124,7 @@ export function HostedSecondaryCTA({
 
 /**
  * The /agents index list: each runtime is a SEPARATE agent, grouped under its
- * shared compute (pod). Hosted runtime-agents are bucketed by `computeId`;
+ * shared compute deployment. Hosted runtime-agents are bucketed by `computeId`;
  * self-managed (connected) agents get their own section. Mirrors the per-runtime
  * model the agent-detail page enforces.
  */

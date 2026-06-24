@@ -108,7 +108,7 @@ export interface AgentTile {
 	env?: Env | null;
 	/** Hosted only: the compute (deployment) this runtime-agent belongs to.
 	 * Lets the /agents index group sibling runtime-agents under their shared
-	 * pod. Self-managed tiles leave these undefined. */
+	 * deployment. Self-managed tiles leave these undefined. */
 	computeId?: string;
 	computeName?: string;
 }
@@ -249,7 +249,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// badge was floated to the trailing edge.
 	const meta: ReactNode[] = [];
 	// Hosted (on-clawdi) tiles use `runtimeLabel` to carry the
-	// deployment slug — without it two OpenClaw / Hermes pods
+	// deployment slug — without it two OpenClaw / Hermes deployments
 	// linking to different deploy URLs would render
 	// indistinguishably ('OpenClaw · Running' on both). Self-
 	// managed tiles already convey the runtime via the
@@ -301,7 +301,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 			<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
 		) : null;
 
-	// Strip mDNS suffixes (`.local`/`.lan`) and middle-truncate generated pod
+	// Strip mDNS suffixes (`.local`/`.lan`) and middle-truncate generated deployment
 	// names so the distinguishing tail survives; the full name stays on hover.
 	const cleanedName = cleanMachineName(tile.name) || tile.name;
 	const card = (

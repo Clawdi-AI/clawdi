@@ -39,7 +39,7 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 
 /**
  * The Free / Performance / AI Credits comparison, folded into the Plan tab's
- * upgrade flow (its own Pricing tab was redundant in Settings — Linear/Vercel
+ * deploy flow (its own Pricing tab was redundant in Settings — Linear/Vercel
  * keep Plan + Usage). Self-contained; safe to drop below the current-plan card.
  */
 export function PlanComparison({

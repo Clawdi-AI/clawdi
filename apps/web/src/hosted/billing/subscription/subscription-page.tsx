@@ -45,7 +45,7 @@ export function SubscriptionPage() {
 	}, [sub?.billing_term_months]);
 	const isPerformance = !!sub && !!perfPlan && sub.plan_slug === perfPlan.slug;
 
-	async function upgrade() {
+	async function deployPerformanceAgent() {
 		router.push("/deploy");
 	}
 
@@ -228,7 +228,11 @@ export function SubscriptionPage() {
 								<Button onClick={() => runAction(manageBilling)} disabled={pending}>
 									{pending ? <Spinner /> : <CreditCard />} Open billing
 								</Button>
-								<Button variant="outline" onClick={() => runAction(upgrade)} disabled={!perfPlan}>
+								<Button
+									variant="outline"
+									onClick={() => runAction(deployPerformanceAgent)}
+									disabled={!perfPlan}
+								>
 									<Zap /> Deploy Performance agent
 								</Button>
 							</div>
@@ -239,7 +243,10 @@ export function SubscriptionPage() {
 								<Button variant="outline" onClick={() => router.push("/deploy")}>
 									Deploy Free agent
 								</Button>
-								<Button onClick={() => runAction(upgrade)} disabled={pending || !perfPlan}>
+								<Button
+									onClick={() => runAction(deployPerformanceAgent)}
+									disabled={pending || !perfPlan}
+								>
 									{pending ? <Spinner /> : <Zap />} Deploy Performance agent
 								</Button>
 							</div>
@@ -248,7 +255,7 @@ export function SubscriptionPage() {
 				</CardContent>
 			</Card>
 
-			{/* Compare plans — the former Pricing tab, folded into the upgrade flow. */}
+			{/* Compare plans — the former Pricing tab, folded into the deploy flow. */}
 			<PlanComparison term={term} onTermChange={setTerm} />
 		</div>
 	);

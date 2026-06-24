@@ -145,7 +145,7 @@ const RUNTIME_LABEL: Record<Runtime, string> = { openclaw: "OpenClaw", hermes: "
  * provider binding, channel links, sessions, and console. This view is scoped
  * to a single `runtime` — its provider/channels/sessions/console — plus a
  * shared "Compute" tab (plan, lifecycle, runtime toggles, sibling-runtime link)
- * that operates on the whole pod.
+ * that operates on the whole deployment.
  */
 export function HostedAgentDetail({
 	environmentId,
@@ -350,7 +350,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const label = RUNTIME_LABEL[runtime];
 	const url = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
 
-	// Not running yet — the pod UI (and its bridge) only exist once the agent boots.
+	// Not running yet — the runtime UI and bridge only exist once the agent boots.
 	if (!isRunning) {
 		return (
 			<EmptyState
@@ -399,8 +399,8 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 				</Button>
 			</div>
 
-			{/* Desktop: embed the live UI. Mobile: an iframe is too cramped for the
-			    pod console, so offer the full-screen link instead. */}
+			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
+			    full-screen link instead. */}
 			<iframe
 				key={runtime}
 				src={url}
@@ -518,14 +518,14 @@ function AiProviderTab({
 			{ id: deployment.id, agentTypes: [runtime], body },
 			{
 				onSuccess: () =>
-					toast.success("Provider updated", { description: "Reconciling to the running pod…" }),
+					toast.success("Provider updated", { description: "Reconciling to the runtime…" }),
 			},
 		);
 	}
 
 	return (
 		<div className="space-y-4">
-			<LiveNote>Provider changes reconcile to the running pod — no restart.</LiveNote>
+			<LiveNote>Provider changes reconcile to the running runtime — no restart.</LiveNote>
 
 			<div className="space-y-2">
 				<button
@@ -616,7 +616,7 @@ function AiProviderTab({
 					{setProvider.isPending ? "Applying live…" : "Apply changes"}
 				</Button>
 				{setProvider.isPending ? (
-					<span className="text-xs text-muted-foreground">Reconciling to the pod…</span>
+					<span className="text-xs text-muted-foreground">Reconciling to the runtime…</span>
 				) : null}
 			</div>
 
@@ -707,7 +707,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 
 	return (
 		<div className="space-y-4">
-			<LiveNote>Linking a channel projects its token to the pod live — no restart.</LiveNote>
+			<LiveNote>Linking a channel applies its token live — no restart.</LiveNote>
 
 			{/* Linked channels */}
 			<div className="space-y-2">
@@ -888,7 +888,7 @@ function ToolsTab() {
 	);
 }
 
-// ── Compute (shared across the runtimes on this pod) ──────────────────────────
+// ── Compute (shared across the runtimes on this deployment) ───────────────────
 
 function ComputeTab({
 	deployment,
@@ -921,10 +921,10 @@ function ComputeTab({
 	return (
 		<div className="max-w-2xl space-y-4">
 			<p className="text-xs text-muted-foreground">
-				Compute is shared by every runtime on this pod — changes here affect them all.
+				Compute is shared by every runtime in this deployment — changes here affect them all.
 			</p>
 
-			{/* Name (the compute / pod name) */}
+			{/* Name (the compute / deployment name) */}
 			<Card data-hosted="true">
 				<CardContent className="space-y-2 pt-6">
 					<Label htmlFor="agent-name">Name</Label>
@@ -991,9 +991,7 @@ function ComputeTab({
 										size="sm"
 										variant="outline"
 										disabled={runtimePending || blockedByPlan}
-										title={
-											blockedByPlan ? "Upgrade to Performance to run both runtimes" : undefined
-										}
+										title={blockedByPlan ? "Deploy Performance to run both runtimes" : undefined}
 										onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
 									>
 										{onboard.isPending && onboard.variables?.agentType === r.id ? (
@@ -1040,7 +1038,7 @@ function ComputeTab({
 				</CardContent>
 			</Card>
 
-			{/* Lifecycle (whole pod) */}
+			{/* Lifecycle (whole deployment) */}
 			<Card data-hosted="true">
 				<CardContent className="flex flex-wrap gap-2 pt-6">
 					<Button
@@ -1081,7 +1079,7 @@ function ComputeTab({
 					<div>
 						<div className="text-sm font-medium">Delete this compute</div>
 						<p className="text-xs text-muted-foreground">
-							Tears down the pod and every runtime agent on it. This can’t be undone.
+							Tears down this deployment and every runtime agent on it. This can’t be undone.
 						</p>
 					</div>
 					<ConfirmAction
