@@ -373,7 +373,7 @@ export function DeployWizard() {
 		<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Deploy an agent"
-				description="Pick a runtime and AI provider. Free uses one active slot per user; Performance creates one paid subscription per agent."
+				description="Pick a runtime and AI provider. Free uses one active slot per user; Performance uses one paid subscription per deployment."
 			/>
 
 			{/* 1. Runtime */}

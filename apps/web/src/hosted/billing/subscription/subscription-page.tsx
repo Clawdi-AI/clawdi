@@ -154,7 +154,7 @@ export function SubscriptionPage() {
 					<CardDescription>
 						{isPerformance
 							? "Each Performance subscription belongs to one hosted agent."
-							: "Free compute is available for one active hosted agent. Deploy Performance when you need another paid agent."}
+							: "Free compute is available for one active hosted agent. Performance uses one subscription per hosted agent."}
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">

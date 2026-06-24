@@ -991,7 +991,11 @@ function ComputeTab({
 										size="sm"
 										variant="outline"
 										disabled={runtimePending || blockedByPlan}
-										title={blockedByPlan ? "Deploy Performance to run both runtimes" : undefined}
+										title={
+											blockedByPlan
+												? "Performance compute is required to run both runtimes"
+												: undefined
+										}
 										onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
 									>
 										{onboard.isPending && onboard.variables?.agentType === r.id ? (
@@ -1011,7 +1015,7 @@ function ComputeTab({
 				</CardContent>
 			</Card>
 
-			{/* Compute tier (read-only — fixed at deployment creation) */}
+			{/* Compute plan summary */}
 			<Card data-hosted="true">
 				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
 					<div>
@@ -1019,18 +1023,17 @@ function ComputeTab({
 							{isPerformance ? <Zap className="size-4" /> : <Cpu className="size-4" />}
 							{isPerformance ? "Performance compute" : "Free compute"}
 							<Badge variant="outline" className="ml-1 font-normal text-muted-foreground">
-								Read-only
+								Current
 							</Badge>
 						</div>
 						<p className="text-xs text-muted-foreground">
-							Compute tier is fixed for this deployment. Performance uses one subscription per
-							hosted agent.
+							Free uses one active slot per user. Performance uses one subscription per deployment.
 						</p>
 					</div>
 					<div className="flex flex-wrap gap-2">
 						<Button asChild variant="outline" size="sm">
-							<Link href={isPerformance ? "/settings/billing/plan" : "/deploy"}>
-								{isPerformance ? "Manage billing" : "Deploy Performance"}
+							<Link href="/settings/billing/plan">
+								{isPerformance ? "Manage billing" : "Performance options"}
 								<ArrowUpRight className="size-3.5" />
 							</Link>
 						</Button>
