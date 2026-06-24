@@ -373,7 +373,14 @@ export function buildRuntimeChildSpawn(
 	if (hasCommand("runuser")) {
 		return {
 			command: "runuser",
-			args: ["-u", runtimeUser, "--", invocation.command, ...invocation.args],
+			args: [
+				"--preserve-environment",
+				"-u",
+				runtimeUser,
+				"--",
+				invocation.command,
+				...invocation.args,
+			],
 			env: childEnv,
 			cwd: invocation.cwd,
 		};

@@ -164,6 +164,45 @@ describe("run command project folder selection", () => {
 		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
 
+	it("preserves runtime env when falling back to runuser", () => {
+		const child = buildRuntimeChildSpawn(
+			{
+				runtime: "hermes",
+				command: "/home/clawdi/.local/bin/hermes",
+				args: ["dashboard"],
+				cwd: "/home/clawdi/clawdi",
+				env: {
+					HOME: "/home/clawdi",
+					PATH: "/home/clawdi/.local/bin:/usr/bin",
+					CLAWDI_RUNTIME_USER: "clawdi",
+					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/mitm/secrets.json",
+					HTTPS_PROXY: "http://127.0.0.1:19090",
+					SSL_CERT_FILE: "/run/clawdi/mitm/brokers/test/ca.pem",
+				},
+				configPath: "/var/lib/clawdi/config/run/hermes.json",
+			},
+			{ isRoot: true, commandExists: (command) => command === "runuser" },
+		);
+
+		expect(child.command).toBe("runuser");
+		expect(child.args).toEqual([
+			"--preserve-environment",
+			"-u",
+			"clawdi",
+			"--",
+			"/home/clawdi/.local/bin/hermes",
+			"dashboard",
+		]);
+		expect(child.env.USER).toBe("clawdi");
+		expect(child.env.LOGNAME).toBe("clawdi");
+		expect(child.env.PATH).toBe("/home/clawdi/.local/bin:/usr/bin");
+		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
+		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm/brokers/test/ca.pem");
+		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
+		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+	});
+
 	it("fails closed when root-hosted runtime cannot drop privileges", () => {
 		expect(() =>
 			buildRuntimeChildSpawn(
