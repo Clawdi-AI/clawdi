@@ -57,7 +57,17 @@ import {
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
 import { BillingError } from "@/hosted/billing/components/state-views";
-import type { HostedDeployment, RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
+import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
+import type {
+	HostedDeployment,
+	Plan,
+	RebindAgentAiProviderRequest,
+} from "@/hosted/billing/contracts";
+import { normalizeBillingError } from "@/hosted/billing/errors";
+import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import { useCheckout, usePlans } from "@/hosted/billing/hooks";
+import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
@@ -138,6 +148,18 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 }
 
 const RUNTIME_LABEL: Record<Runtime, string> = { openclaw: "OpenClaw", hermes: "Hermes" };
+
+function performancePlan(plans: Plan[] | undefined): Plan | undefined {
+	return (
+		plans?.find((p) => p.slug === "compute_performance") ?? plans?.find((p) => p.price_cents > 0)
+	);
+}
+
+function redirectToCheckout(url: string | null | undefined): boolean {
+	if (!url) return false;
+	window.location.href = url;
+	return true;
+}
 
 /**
  * PER-RUNTIME agent detail. A compute (deployment) hosts 1–2 runtime agents
@@ -905,18 +927,60 @@ function ComputeTab({
 	const rename = useRenameDeployment();
 	const setEnabled = useSetAgentEnabled();
 	const onboard = useOnboardAgent();
+	const plans = usePlans();
+	const checkout = useCheckout();
+	const runAction = useActionLock();
 	const ci = deployment.config_info;
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
 	const [name, setName] = useState(deployment.name);
+	const [term, setTerm] = useState(1);
 	const configured = new Set(ci?.configured_agents ?? []);
 	const envs = ci?.clawdi_cloud_environments ?? {};
 	const enabledCount = RUNTIMES.filter((r) =>
 		r.id === "openclaw" ? ci?.enable_openclaw : ci?.enable_hermes,
 	).length;
 	const runtimePending = setEnabled.isPending || onboard.isPending;
+	const perfPlan = useMemo(() => performancePlan(plans.data), [plans.data]);
+	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
+	const perfOffer = useMemo(
+		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
+		[perfPlan, term],
+	);
 	useEffect(() => {
 		setName(deployment.name);
 	}, [deployment.name]);
+	useEffect(() => {
+		if (!perfOffers.length || perfOffers.some((offer) => offer.billing_term_months === term)) {
+			return;
+		}
+		setTerm(perfOffers[0]?.billing_term_months ?? 1);
+	}, [perfOffers, term]);
+
+	async function startPerformanceUpgrade() {
+		if (!perfPlan) {
+			toast.error("Performance unavailable", {
+				description: "No Performance compute plan is available right now.",
+			});
+			return;
+		}
+		try {
+			const result = await checkout.mutateAsync({
+				plan_slug: perfPlan.slug,
+				billing_term_months: term,
+				collection_method: "charge_automatically",
+				ui_mode: "hosted",
+				upgrade_deployment_id: deployment.id,
+			});
+			if (redirectToCheckout(result.action_url || result.checkout_url || result.invoice_url)) {
+				return;
+			}
+			toast.error("Couldn’t start upgrade", {
+				description: "No checkout URL was returned. Please try again.",
+			});
+		} catch (error) {
+			toast.error("Couldn’t start upgrade", { description: normalizeBillingError(error) });
+		}
+	}
 
 	return (
 		<div className="max-w-2xl space-y-4">
@@ -1030,13 +1094,48 @@ function ComputeTab({
 							Free uses one active slot per user. Performance uses one subscription per deployment.
 						</p>
 					</div>
-					<div className="flex flex-wrap gap-2">
-						<Button asChild variant="outline" size="sm">
-							<Link href="/settings/billing/plan">
-								{isPerformance ? "Manage billing" : "Performance options"}
-								<ArrowUpRight className="size-3.5" />
-							</Link>
-						</Button>
+					<div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+						{!isPerformance && perfPlan ? (
+							<div className="text-xs text-muted-foreground sm:text-right">
+								<span className="font-medium text-foreground">
+									{perfOffer
+										? formatCentsCompact(perfOffer.effective_monthly_price_cents)
+										: formatCentsCompact(perfPlan.price_cents)}
+									/mo
+								</span>
+								{perfOffer && perfOffer.billing_term_months !== 1 ? (
+									<span>
+										{" "}
+										· billed {formatCentsCompact(perfOffer.price_cents)}
+										{billingTermSuffix(perfOffer.billing_term_months)}
+									</span>
+								) : null}
+							</div>
+						) : null}
+						{!isPerformance ? (
+							<div className="flex w-full flex-col gap-2 sm:w-64">
+								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
+								<Button
+									size="sm"
+									disabled={plans.isLoading || checkout.isPending || !perfPlan}
+									onClick={() => runAction(startPerformanceUpgrade)}
+								>
+									{checkout.isPending ? (
+										<Spinner className="size-3.5" />
+									) : (
+										<Zap className="size-3.5" />
+									)}
+									Upgrade to Performance
+								</Button>
+							</div>
+						) : (
+							<Button asChild variant="outline" size="sm">
+								<Link href="/settings/billing/plan">
+									Manage billing
+									<ArrowUpRight className="size-3.5" />
+								</Link>
+							</Button>
+						)}
 					</div>
 				</CardContent>
 			</Card>

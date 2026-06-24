@@ -470,6 +470,8 @@ export interface components {
             /** Invoice Days Until Due */
             invoice_days_until_due?: number | null;
             deploy_config?: components["schemas"]["V2HostedDeployRequest"] | null;
+            /** Upgrade Deployment Id */
+            upgrade_deployment_id?: string | null;
             /**
              * Ui Mode
              * @default hosted
