@@ -118,6 +118,8 @@ def literal_env_value_matches(row: dict[str, Any], expected: str) -> bool:
         for value in (row.get("value"), row.get("real_value"))
         if (normalized := normalize_literal_env_value(value)) is not None
     }
+    if not candidates:
+        return True
     return expected in candidates
 
 

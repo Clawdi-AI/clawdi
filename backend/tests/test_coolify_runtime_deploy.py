@@ -219,6 +219,7 @@ def test_audit_env_rejects_wrong_application_env_value(monkeypatch):
 def test_literal_env_value_matches_value_or_quoted_real_value():
     module = _load_audit_module()
 
+    assert module.literal_env_value_matches({}, "api")
     assert module.literal_env_value_matches(
         {"value": "api", "real_value": "'api'"},
         "api",
