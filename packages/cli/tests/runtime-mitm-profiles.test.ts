@@ -113,7 +113,7 @@ describe("runtime MITM profile schema", () => {
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
 				default: {
-					baseUrl: "https://ai-gateway.faraday.cloud/v1",
+					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
@@ -127,7 +127,7 @@ describe("runtime MITM profile schema", () => {
 		const direct = directProviderPassthroughProfile({
 			providers: {
 				default: {
-					baseUrl: "https://ai-gateway.faraday.cloud/v1",
+					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
@@ -139,7 +139,7 @@ describe("runtime MITM profile schema", () => {
 			kind: "passthrough",
 			match: {
 				scheme: "https",
-				host: "ai-gateway.faraday.cloud",
+				host: "ai-gateway.example.test",
 				pathPrefix: "/v1/",
 				headers: {},
 				query: {},

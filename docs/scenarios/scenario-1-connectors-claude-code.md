@@ -57,7 +57,7 @@ One-time setup at `clawdi.ai`:
 Vault:
   ├── OPENAI_API_KEY=sk-xxx
   ├── ANTHROPIC_API_KEY=sk-ant-xxx
-  └── STRIPE_SECRET_KEY=sk_live_xxx
+  └── STRIPE_SECRET_KEY=stripe-secret-placeholder
 
 Connectors:
   ├── GitHub ✓ (OAuth authorized)

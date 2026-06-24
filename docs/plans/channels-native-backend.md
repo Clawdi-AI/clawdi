@@ -1,9 +1,9 @@
 # Channels Native Backend Migration
 
-This branch replaces the `msg-router` wrapper plan with a Clawdi-native backend
+This branch replaces the legacy channel bridge wrapper plan with a Clawdi-native backend
 module. The backend owns channel data directly in Postgres and exposes new
 Clawdi routes plus Python-native channel-emulation surfaces for agent SDKs. It
-does not run or proxy the old TypeScript `msg-router` service.
+does not run or proxy the legacy TypeScript channel bridge service.
 
 ## Implemented Slice
 
@@ -69,7 +69,7 @@ does not run or proxy the old TypeScript `msg-router` service.
   existing WhatsApp delivery outbox without persisting plaintext media.
 - `whatsapp_native_transport.py` provides a tested native-runtime seam plus a
   Baileys sidecar HTTP client contract, preserving Baileys additional attrs for
-  native-only relay paths without reintroducing the old TypeScript `msg-router`
+  native-only relay paths without reintroducing the legacy TypeScript channel bridge
   process.
 - `whatsapp_sidecar_registry.py` wires configured sidecars into the public-bot
   transport registry at FastAPI lifespan startup and closes/unregisters them on
@@ -88,7 +88,7 @@ does not run or proxy the old TypeScript `msg-router` service.
 
 ## Source Parity
 
-The old `msg-router` repository contains more than HTTP routing. It owns
+The legacy channel bridge contains more than HTTP routing. It owns
 provider runtimes and SDK emulation for Telegram, Discord, WhatsApp, and
 BlueBubbles/iMessage. This migration ports those behaviours into backend
 routes, service modules, database outboxes, and Clawdi-owned workers instead of
@@ -183,7 +183,7 @@ owned by the current link.
 
 ## Migration Rule
 
-Do not add a subprocess/proxy seam for the old `msg-router`. Port product
+Do not add a subprocess/proxy seam for the legacy channel bridge. Port product
 behaviour into backend modules and Clawdi-owned workers. A minimal
 Clawdi-owned Baileys sidecar is allowed only as the WhatsApp Web protocol
 adapter: it must not own routing, database state, product APIs, retry policy, or
@@ -191,7 +191,7 @@ tenant authorization.
 
 `pdm run channels-worker` is the single Clawdi backend worker process for
 delivery outbox retries, agent webhook redelivery, and Discord Gateway capture.
-It is not the old Node msg-router worker. Cloud-api deployments must run this
+It is not the legacy Node channel worker. Cloud deployments must run this
 worker alongside the API process; otherwise outbound delivery, Telegram agent
 webhook redelivery, Discord Gateway capture/replay, and channel message
 retention pruning do not run.

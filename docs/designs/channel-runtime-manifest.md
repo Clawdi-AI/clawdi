@@ -44,7 +44,7 @@ protocol state, or worker queues. Those remain in Clawdi-native Channels. The
 manifest only reconciles user intent into channel accounts, bot-agent links,
 pair codes, and local runtime outputs.
 
-The old `msg-router` process and env shape are compatibility inputs only. The
+The legacy channel bridge process and env shape are compatibility inputs only. The
 source of truth is Clawdi-native channel state:
 
 - `channel_accounts`
@@ -389,11 +389,11 @@ No admin endpoint is needed for user runtime setup.
 Hosted deployment code should follow the same boundary. It may invoke the CLI
 inside the runtime or call these user APIs directly before launch, but it should
 not store its own pair-code state, implement provider webhooks, or recreate the
-old `msg-router` tenant router.
+legacy channel bridge tenant router.
 
 ## Compatibility Mapping
 
-| Old `msg-router` concept | Manifest / Clawdi-native equivalent |
+| Legacy channel bridge concept | Manifest / Clawdi-native equivalent |
 | --- | --- |
 | Tenant API key | Clawdi user auth token. |
 | Tenant channel enrollment | `links[].agent_id` on an accessible channel account. |

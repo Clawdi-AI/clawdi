@@ -1016,10 +1016,10 @@ Deep Module responsible for delivering secrets to processes and agents:
 7. **TEE-backed mode**
    - Decryption or proxy runs inside an attested confidential VM.
    - Useful for stronger "operator cannot inspect runtime memory" claims.
-   - Requires separate Phala/dstack or confidential compute evaluation.
-   - Second-pass search found strong Phala/dstack material for confidential
-     agent runtimes, but no public evidence that OpenBao or Agent Vault has
-     already been productized inside dstack as a reusable reference stack.
+   - Requires separate confidential compute evaluation.
+   - Second-pass search found strong TEE material for confidential agent
+     runtimes, but no public evidence that OpenBao or Agent Vault has already
+     been productized inside a reusable attested-runtime reference stack.
 
 ### Module 5: Key Operations Adapter
 
@@ -1619,7 +1619,7 @@ Deliver:
 - Tool/capability gateway for one OAuth-backed integration, so Clawdi can test
   whether "authorize an agent action" is a better UX than "give an agent a
   token" for SaaS tools.
-- TEE/dstack proof-of-concept only if product wants verifiable runtime privacy.
+- TEE proof-of-concept only if product wants verifiable runtime privacy.
 
 Security statement:
 
@@ -1641,8 +1641,8 @@ Recommended decision:
    egress and CA/proxy bootstrapping.
 5. Treat OAuth connected accounts, delegated tool grants, and workload identity
    as typed future credential modes, not as generic secret fields.
-6. Treat Phala/dstack or other TEE deployment as a separate high-trust hosted
-   agent feasibility project.
+6. Treat TEE deployment as a separate high-trust hosted agent feasibility
+   project.
 
 Rejected alternatives:
 
@@ -1709,7 +1709,7 @@ semantics, without turning every workflow into plaintext env sprawl."
 7. What audit data is safe to show to Project members without leaking secret
    names or sensitive metadata?
 8. Which runtime does the first proxy PoC target?
-   - Clawdi-hosted containers.
+   - Hosted agent service containers.
    - E2B/Daytona/Firecracker-style sandboxes.
    - A single supported local agent with clear "not a sandbox" warnings.
 9. Which services are worth supporting first for proxy mode?
@@ -1813,8 +1813,5 @@ semantics, without turning every workflow into plaintext env sprawl."
   <https://openbao.org/docs/secrets/transit/>
   <https://openbao.org/docs/audit/>
   <https://openbao.org/docs/concepts/policies/>
-- dstack/Phala is relevant for future attested hosted-agent runtimes, not as
-  the immediate Vault replacement:
-  <https://github.com/Dstack-TEE/dstack>
-  <https://phala.com/solutions/ai-agents>
-  <https://phala.com/learn/Open-Source-Confidential-Computing-Tools>
+- TEE-based confidential compute is relevant for future attested hosted-agent
+  runtimes, not as the immediate Vault replacement.

@@ -368,7 +368,7 @@ clawdi channel serve my-telegram --agent claude --projects '{
 
 | | OpenClaw + Telegram | clawdi channel serve |
 |---|---|---|
-| Runs where | Cloud (Phala CVM / k3s) | Your local dev machine |
+| Runs where | Managed cloud runtime | Your local dev machine |
 | Code access | None (cloud agent) | Full local codebase |
 | Tools | OpenClaw browser, MCP tools | Claude Code full toolset (bash, file edit, git, MCP) |
 | State | Always on, persistent | On-demand, you start/stop it |

@@ -23,7 +23,7 @@ def build_channel_workers() -> tuple[
     """Build the Clawdi-owned channel worker stack.
 
     These are backend outbox/webhook/gateway workers. They do not recreate the
-    old msg-router process or own provider routing state.
+    legacy channel bridge process or own provider routing state.
     """
     return (
         ChannelDeliveryWorker(async_session_factory),

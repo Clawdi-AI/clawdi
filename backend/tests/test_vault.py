@@ -94,7 +94,7 @@ async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.Asyn
     await cli_client.post("/api/vault", json={"slug": "prod", "name": "Production"})
     r = await cli_client.put(
         "/api/vault/prod/items",
-        json={"section": "openai", "fields": {"api_key": "sk-live-xyz"}},
+        json={"section": "openai", "fields": {"api_key": "test-secret-value"}},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "ok", "fields": 1}
@@ -104,7 +104,7 @@ async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.Asyn
     assert sections == {"openai": ["api_key"]}
 
     resolved = (await cli_client.post("/api/vault/resolve")).json()
-    assert resolved.get("OPENAI_API_KEY") == "sk-live-xyz"
+    assert resolved.get("OPENAI_API_KEY") == "test-secret-value"
 
 
 @pytest.mark.asyncio
@@ -116,21 +116,21 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
     names are skipped (count reflects it); self-copy is rejected.
     """
     await cli_client.post("/api/vault", json={"slug": "grab-bag", "name": "Grab bag"})
-    await cli_client.post("/api/vault", json={"slug": "phala", "name": "Phala"})
+    await cli_client.post("/api/vault", json={"slug": "archive", "name": "Archive"})
     await cli_client.put(
         "/api/vault/grab-bag/items",
-        json={"section": "", "fields": {"OPENAI_API_KEY": "sk-live-xyz", "OTHER": "keep"}},
+        json={"section": "", "fields": {"OPENAI_API_KEY": "test-secret-value", "OTHER": "keep"}},
     )
 
     r = await cli_client.post(
         "/api/vault/grab-bag/items/copy",
-        json={"target_slug": "phala", "fields": ["OPENAI_API_KEY", "NOT_THERE"]},
+        json={"target_slug": "archive", "fields": ["OPENAI_API_KEY", "NOT_THERE"]},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "ok", "copied": 1}
 
     # Target has the name; source is untouched (copy, not move).
-    assert (await cli_client.get("/api/vault/phala/items")).json() == {
+    assert (await cli_client.get("/api/vault/archive/items")).json() == {
         "(default)": ["OPENAI_API_KEY"]
     }
     source_names = (await cli_client.get("/api/vault/grab-bag/items")).json()
@@ -141,7 +141,7 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
     listing = (await cli_client.get("/api/vault")).json()
     counts = {v["slug"]: v["item_count"] for v in listing["items"]}
     assert counts["grab-bag"] == 2
-    assert counts["phala"] == 1
+    assert counts["archive"] == 1
 
     # The re-encrypted copy decrypts to the original plaintext. Delete
     # the source item first so resolve can only be served by the copy.
@@ -152,7 +152,7 @@ async def test_vault_items_copy_between_owned_vaults(cli_client: httpx.AsyncClie
     )
     assert deleted.status_code == 200, deleted.text
     resolved = (await cli_client.post("/api/vault/resolve")).json()
-    assert resolved.get("OPENAI_API_KEY") == "sk-live-xyz"
+    assert resolved.get("OPENAI_API_KEY") == "test-secret-value"
 
     self_copy = await cli_client.post(
         "/api/vault/grab-bag/items/copy",
@@ -333,7 +333,7 @@ async def test_vault_resolve_bulk_exact_clawdi_references(cli_client: httpx.Asyn
         "/api/vault/prod/items",
         json={
             "section": "openai",
-            "fields": {"api_key": "sk-live-xyz", "org_id": "org-secret"},
+            "fields": {"api_key": "test-secret-value", "org_id": "org-secret"},
         },
     )
     assert r.status_code == 200, r.text
@@ -360,7 +360,7 @@ async def test_vault_resolve_bulk_exact_clawdi_references(cli_client: httpx.Asyn
     )
     assert resolved.status_code == 200, resolved.text
     results = resolved.json()["results"]
-    assert results["clawdi://prod/openai/api_key"]["value"] == "sk-live-xyz"
+    assert results["clawdi://prod/openai/api_key"]["value"] == "test-secret-value"
     assert results["clawdi://prod/openai/org_id"]["value"] == "org-secret"
     assert results["clawdi://prod/openai/api_key"]["precedence"][0]["reason"] == "match"
 

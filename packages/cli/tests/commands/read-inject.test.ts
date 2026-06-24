@@ -63,7 +63,7 @@ describe("readCommand", () => {
 				response: () =>
 					jsonResponse({
 						reference: "clawdi://prod/stripe/secret_key",
-						value: "sk-live",
+						value: "test-secret-value",
 						source_project_id: "project-prod",
 						source_alias: "prod",
 					}),
@@ -81,7 +81,7 @@ describe("readCommand", () => {
 			restore();
 		}
 
-		expect(out.trim()).toBe("sk-live");
+		expect(out.trim()).toBe("test-secret-value");
 		expect(captured[0].path).toContain("vault_slug=prod");
 		expect(captured[0].path).toContain("section=stripe");
 		expect(captured[0].path).toContain("field=secret_key");
@@ -204,7 +204,7 @@ describe("readCommand", () => {
 				response: () =>
 					jsonResponse({
 						reference: exact,
-						value: "sk-live",
+						value: "test-secret-value",
 						source_project_id: "00000000-0000-0000-0000-000000000123",
 						source_alias: "prod",
 						vault_slug: "prod",
@@ -228,7 +228,7 @@ describe("readCommand", () => {
 		const body = JSON.parse(out) as { source_alias: string; value?: string };
 		expect(body.source_alias).toBe("prod");
 		expect(body.value).toBeUndefined();
-		expect(out).not.toContain("sk-live");
+		expect(out).not.toContain("test-secret-value");
 		expect(captured[0].path).toContain("preview=true");
 		expect(captured[0].path).toContain("vault_slug=prod");
 		expect(captured[0].path).toContain("section=stripe");
@@ -253,13 +253,13 @@ describe("injectCommand", () => {
 						results: {
 							"clawdi://prod/stripe/secret_key": {
 								reference: "clawdi://prod/stripe/secret_key",
-								value: "sk-live",
+								value: "test-secret-value",
 								source_project_id: "project-prod",
 								source_alias: "prod",
 							},
 							"clawdi://prod/openai/org_id": {
 								reference: "clawdi://prod/openai/org_id",
-								value: "org-live",
+								value: "org-placeholder",
 								source_project_id: "project-prod",
 								source_alias: "prod",
 							},
@@ -279,7 +279,7 @@ describe("injectCommand", () => {
 			restore();
 		}
 
-		expect(readFileSync(output, "utf8")).toBe("token=sk-live\norg=org-live\n");
+		expect(readFileSync(output, "utf8")).toBe("token=test-secret-value\norg=org-placeholder\n");
 		expect(captured).toHaveLength(1);
 		expect(captured[0].body).toMatchObject({
 			references: [
@@ -290,8 +290,8 @@ describe("injectCommand", () => {
 		expect(err).toContain("Resolved 2 clawdi references");
 		expect(err).toContain("token line 1");
 		expect(err).toContain("redacted");
-		expect(err).not.toContain("sk-live");
-		expect(err).not.toContain("org-live");
+		expect(err).not.toContain("test-secret-value");
+		expect(err).not.toContain("org-placeholder");
 	});
 
 	it("uses the linked Project folder when resolving template references", async () => {
@@ -410,7 +410,7 @@ describe("injectCommand", () => {
 						results: {
 							"clawdi://prod/stripe/secret_key": {
 								reference: "clawdi://prod/stripe/secret_key",
-								value: "sk-live",
+								value: "test-secret-value",
 								source_project_id: "project-prod",
 								source_alias: "prod",
 								vault_slug: "prod",
@@ -440,7 +440,7 @@ describe("injectCommand", () => {
 		expect(err).toContain("token line 1");
 		expect(err).toContain("prod");
 		expect(err).toContain("redacted");
-		expect(err).not.toContain("sk-live");
+		expect(err).not.toContain("test-secret-value");
 	});
 
 	it("keeps generated secret files owner-only when forcing an overwrite", async () => {
@@ -458,7 +458,7 @@ describe("injectCommand", () => {
 						results: {
 							"clawdi://prod/stripe/secret_key": {
 								reference: "clawdi://prod/stripe/secret_key",
-								value: "sk-live",
+								value: "test-secret-value",
 								source_project_id: "project-prod",
 								source_alias: "prod",
 							},
@@ -475,7 +475,7 @@ describe("injectCommand", () => {
 			restore();
 		}
 
-		expect(readFileSync(output, "utf8")).toBe("token=sk-live\n");
+		expect(readFileSync(output, "utf8")).toBe("token=test-secret-value\n");
 		if (process.platform !== "win32") {
 			expect(statSync(output).mode & 0o777).toBe(0o600);
 		}
