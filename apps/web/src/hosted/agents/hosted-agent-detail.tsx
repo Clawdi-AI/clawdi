@@ -99,6 +99,9 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"tools",
 	"compute",
 ]);
+const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
+const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
+const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
 
 /** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
 function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
@@ -931,7 +934,11 @@ function ComputeTab({
 	const checkout = useCheckout();
 	const runAction = useActionLock();
 	const ci = deployment.config_info;
-	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const canStop = STOPPABLE_STATUSES.has(deployment.status);
+	const canStart = STARTABLE_STATUSES.has(deployment.status);
+	const canRestart = RESTARTABLE_STATUSES.has(deployment.status);
+	const primaryLifecycleAction = canStop ? "stop" : "start";
+	const canRunPrimaryLifecycleAction = canStop || canStart;
 	const currentDisplayName = deploymentDisplayName(deployment.name);
 	const [name, setName] = useState(currentDisplayName);
 	const [term, setTerm] = useState(1);
@@ -1163,7 +1170,7 @@ function ComputeTab({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={lifecycle.isPending}
+						disabled={lifecycle.isPending || !canRestart}
 						onClick={() => lifecycle.mutate({ id: deployment.id, action: "restart" })}
 					>
 						{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
@@ -1176,16 +1183,13 @@ function ComputeTab({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={lifecycle.isPending}
-						onClick={() =>
-							lifecycle.mutate({ id: deployment.id, action: isRunning ? "stop" : "start" })
-						}
+						disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
+						onClick={() => lifecycle.mutate({ id: deployment.id, action: primaryLifecycleAction })}
 					>
-						{lifecycle.isPending &&
-						lifecycle.variables?.action === (isRunning ? "stop" : "start") ? (
+						{lifecycle.isPending && lifecycle.variables?.action === primaryLifecycleAction ? (
 							<Spinner className="size-3.5" />
 						) : null}
-						{isRunning ? "Stop" : "Start"}
+						{canStop ? "Stop" : "Start"}
 					</Button>
 				</CardContent>
 			</Card>
