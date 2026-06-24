@@ -47,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 async def test_whatsapp_baileys_websocket_reaches_open_with_real_baileys() -> None:
-    baileys_cwd = os.getenv("CLAWDI_BAILEYS_SMOKE_CWD", "/home/kingsley/msg-router")
+    baileys_cwd = _baileys_smoke_cwd()
     _assert_baileys_available(baileys_cwd)
     seeded = await _seed_whatsapp_smoke_account()
     async with _running_smoke_backend(seeded):
@@ -65,7 +65,7 @@ async def test_whatsapp_baileys_websocket_reaches_open_with_real_baileys() -> No
 
 @pytest.mark.asyncio
 async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> None:
-    baileys_cwd = os.getenv("CLAWDI_BAILEYS_SMOKE_CWD", "/home/kingsley/msg-router")
+    baileys_cwd = _baileys_smoke_cwd()
     _assert_baileys_available(baileys_cwd)
     seeded = await _seed_whatsapp_smoke_account(include_inbox=True)
     async with _running_smoke_backend(seeded):
@@ -193,7 +193,7 @@ async def test_whatsapp_baileys_websocket_delivers_fixture_shapes_to_real_bailey
     expected_conversation: str | None,
     expected_message_hex: str,
 ) -> None:
-    baileys_cwd = os.getenv("CLAWDI_BAILEYS_SMOKE_CWD", "/home/kingsley/msg-router")
+    baileys_cwd = _baileys_smoke_cwd()
     _assert_baileys_available(baileys_cwd)
     seeded = await _seed_whatsapp_smoke_account(
         include_inbox=True,
@@ -306,6 +306,13 @@ def _assert_baileys_available(cwd: str) -> None:
     )
     if result.returncode != 0:
         pytest.skip(f"baileys package is not importable from {cwd}")
+
+
+def _baileys_smoke_cwd() -> str:
+    cwd = os.getenv("CLAWDI_BAILEYS_SMOKE_CWD")
+    if not cwd:
+        pytest.skip("set CLAWDI_BAILEYS_SMOKE_CWD to a Baileys package checkout")
+    return cwd
 
 
 def _assert_sidecar_available(cwd: Path) -> None:

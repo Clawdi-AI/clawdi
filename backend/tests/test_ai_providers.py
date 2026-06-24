@@ -581,21 +581,21 @@ async def test_ai_provider_oauth_start_allows_dev_web_origin_http_redirect(
     previous_web_origin = settings.web_origin
     previous_cors_origins = settings.cors_origins
     settings.environment = "development"
-    settings.web_origin = "http://phala-dev:33221"
+    settings.web_origin = "http://dev.clawdi.test:33221"
     settings.cors_origins = ["http://localhost:33221"]
     try:
         started = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "codex",
-                "redirect_uri": "http://phala-dev:33221/onboarding?step=provider&provider_oauth=codex",
+                "redirect_uri": "http://dev.clawdi.test:33221/onboarding?step=provider&provider_oauth=codex",
             },
         )
         wrong_port = await client.post(
             "/api/ai-providers/openai-codex/auth/oauth/start",
             json={
                 "provider": "codex",
-                "redirect_uri": "http://phala-dev:33222/onboarding?step=provider&provider_oauth=codex",
+                "redirect_uri": "http://dev.clawdi.test:33222/onboarding?step=provider&provider_oauth=codex",
             },
         )
     finally:
@@ -607,7 +607,7 @@ async def test_ai_provider_oauth_start_allows_dev_web_origin_http_redirect(
     assert wrong_port.status_code == 422, wrong_port.text
     params = parse_qs(urlparse(started.json()["auth_url"]).query)
     assert params["redirect_uri"] == [
-        "http://phala-dev:33221/onboarding?step=provider&provider_oauth=codex"
+        "http://dev.clawdi.test:33221/onboarding?step=provider&provider_oauth=codex"
     ]
 
 
