@@ -981,7 +981,6 @@ function ComputeTab({
 			const result = await checkout.mutateAsync({
 				plan_slug: perfPlan.slug,
 				billing_term_months: term,
-				collection_method: "charge_automatically",
 				ui_mode: "hosted",
 				upgrade_deployment_id: deployment.id,
 			});

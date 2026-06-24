@@ -461,12 +461,6 @@ export interface components {
              * @default 1
              */
             billing_term_months: number;
-            /**
-             * Collection Method
-             * @default charge_automatically
-             * @enum {string}
-             */
-            collection_method: "charge_automatically" | "send_invoice";
             /** Invoice Days Until Due */
             invoice_days_until_due?: number | null;
             deploy_config?: components["schemas"]["V2HostedDeployRequest"] | null;

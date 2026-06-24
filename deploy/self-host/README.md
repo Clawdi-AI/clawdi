@@ -9,7 +9,8 @@ The stack runs:
   required `vector` and `pg_trgm` extensions.
 - `migrate`: one-shot Alembic upgrade.
 - `api`: FastAPI backend on `:8000`.
-- `channels-worker`: the native channels worker process.
+- `channels-worker`: the native channels worker process, with an internal
+  `/health` endpoint for the container health check.
 - `web`: optional dashboard, enabled with the `web` profile.
 
 API and `channels-worker` intentionally share the same backend image and the
