@@ -57,7 +57,10 @@
 				"health_check_start_period": 60,
 				"limits_memory": "2g",
 				"limits_cpus": "2",
-				"custom_docker_run_options": "--init --env CLAWDI_PROCESS_ROLE=api --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+				"custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+			},
+			"application_env": {
+				"CLAWDI_PROCESS_ROLE": "api"
 			},
 			"storages": [
 				{
@@ -94,7 +97,10 @@
 				"health_check_start_period": 20,
 				"limits_memory": "1g",
 				"limits_cpus": "1",
-				"custom_docker_run_options": "--init --env CLAWDI_PROCESS_ROLE=channels-worker --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+				"custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+			},
+			"application_env": {
+				"CLAWDI_PROCESS_ROLE": "channels-worker"
 			},
 			"storages": [
 				{
