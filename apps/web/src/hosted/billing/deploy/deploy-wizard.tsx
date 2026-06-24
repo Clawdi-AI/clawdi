@@ -22,12 +22,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type {
-	DeployRequest,
-	OpenClawConfigRequest,
-	Plan,
-	Subscription,
-} from "@/hosted/billing/contracts";
+import type { DeployRequest, Plan, Subscription } from "@/hosted/billing/contracts";
+import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
@@ -37,7 +33,7 @@ import {
 	usePortal,
 	useSubscription,
 } from "@/hosted/billing/hooks";
-import { selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
@@ -230,6 +226,7 @@ export function DeployWizard() {
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
+	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 
 	function toggleEngine(engine: Engine) {
 		setEngines((prev) => {
@@ -275,27 +272,16 @@ export function DeployWizard() {
 	}
 
 	function buildDeployRequest(aiFields: Partial<DeployRequest>): DeployRequest {
-		const persona = {
-			assistant_name: agentName.trim() || null,
-			personality: personality || null,
-			language: language || null,
-			timezone: timezone || null,
-		};
-		const config: OpenClawConfigRequest = {
-			channel: null,
-			enable_openclaw: engines.openclaw,
-			enable_hermes: engines.hermes,
-			...persona,
-		};
-		return {
-			profile: compute,
-			channel: null,
-			enable_openclaw: engines.openclaw,
-			enable_hermes: engines.hermes,
-			config,
-			...persona,
-			...aiFields,
-		};
+		return buildHostedDeployRequest({
+			engines,
+			persona: {
+				assistantName: agentName,
+				personality,
+				language,
+				timezone,
+			},
+			aiFields,
+		});
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
@@ -359,7 +345,7 @@ export function DeployWizard() {
 				}
 			}
 
-			// No subscription yet → ensure the Free compute entitlement.
+			// No subscription yet: ensure the Free compute entitlement in-place.
 			if (!sub && freePlan) {
 				const result = await checkout.mutateAsync({
 					plan_slug: freePlan.slug,
@@ -367,13 +353,10 @@ export function DeployWizard() {
 					collection_method: "charge_automatically",
 					ui_mode: "hosted",
 				});
-				// A pending checkout action means the entitlement needs confirmation
-				// before the deploy can succeed. Redirect if we have a URL; otherwise
-				// STOP with a message — never fall through to createDeployment (it
-				// would 402 without the entitlement).
-				const actionUrl = result.action_url || result.checkout_url || result.invoice_url;
-				if (actionUrl || result.client_secret) {
-					if (redirectTo(actionUrl)) return;
+				// Free compute is activated directly by the v2 backend. A client
+				// secret means confirmation is still needed, so do not fall through
+				// to createDeployment.
+				if (result.client_secret) {
 					toast.message("Payment confirmation needed", {
 						description: "Finish the pending payment, then deploy your agent.",
 					});
@@ -635,9 +618,9 @@ export function DeployWizard() {
 							Free compute isn’t available from the billing service. Retry plans before deploying.
 						</p>
 					) : null}
-					{compute === "performance" && perfPlan && perfPlan.offers.length > 1 ? (
+					{compute === "performance" && perfOffers.length > 1 ? (
 						<div className="space-y-2">
-							<TermSwitcher offers={perfPlan.offers} value={term} onChange={setTerm} />
+							<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 							{perfOffer && perfOffer.billing_term_months !== 1 ? (
 								<p className="text-xs text-muted-foreground">
 									Billed {formatCentsCompact(perfOffer.price_cents)}

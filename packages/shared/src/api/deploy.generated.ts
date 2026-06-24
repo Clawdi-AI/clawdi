@@ -15,12 +15,10 @@ export interface paths {
         get: operations["me_me_get"];
         put?: never;
         post?: never;
-        /** Delete Account */
-        delete: operations["delete_account_me_delete"];
+        delete?: never;
         options?: never;
         head?: never;
-        /** Update Me */
-        patch: operations["update_me_me_patch"];
+        patch?: never;
         trace?: never;
     };
     "/v2/deployments": {
@@ -336,8 +334,69 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** ActivationFeeStatusResponse */
-        ActivationFeeStatusResponse: {
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** V1UserFeatureResolution */
+        V1UserFeatureResolution: {
+            /** Enabled */
+            enabled: boolean;
+            source: components["schemas"]["V1UserFeatureResolutionSource"];
+        };
+        /**
+         * V1UserFeatureResolutionSource
+         * @enum {string}
+         */
+        V1UserFeatureResolutionSource: "default" | "rule_user_id" | "rule_clerk_id" | "rule_email" | "rule_email_domain" | "rule_referral_l1";
+        /** V1UserProductCapabilities */
+        V1UserProductCapabilities: {
+            /**
+             * Can Use V1
+             * @default true
+             */
+            can_use_v1: boolean;
+            /**
+             * Can Use V2
+             * @default false
+             */
+            can_use_v2: boolean;
+        };
+        /** V1UserResponse */
+        V1UserResponse: {
+            /**
+             * Id
+             * Format: sqid
+             * @example usr_K8fJ3pQm
+             */
+            id: string;
+            /** Clerk Id */
+            clerk_id: string;
+            /** Email */
+            email: string | null;
+            /** Name */
+            name: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Settings */
+            settings: {
+                [key: string]: components["schemas"]["V1UserFeatureResolution"];
+            };
+            /** Evm Wallet Address */
+            evm_wallet_address?: string | null;
+            capabilities: components["schemas"]["V1UserProductCapabilities"];
+        };
+        /** V2ActivationFeeStatusResponse */
+        V2ActivationFeeStatusResponse: {
             /**
              * Amount Cents
              * @default 0
@@ -349,8 +408,8 @@ export interface components {
              */
             satisfied: boolean;
         };
-        /** AiProviderBindingInfo */
-        AiProviderBindingInfo: {
+        /** V2AiProviderBindingInfo */
+        V2AiProviderBindingInfo: {
             /** Provider Id */
             provider_id: string;
             /**
@@ -361,8 +420,8 @@ export interface components {
             /** Primary Model */
             primary_model?: string | null;
         };
-        /** BillingOfferResponse */
-        BillingOfferResponse: {
+        /** V2BillingOfferResponse */
+        V2BillingOfferResponse: {
             /** Billing Term Months */
             billing_term_months: number;
             /** Price Cents */
@@ -372,34 +431,8 @@ export interface components {
             /** Discount Percent */
             discount_percent: number;
         };
-        /** CheckoutRequest */
-        CheckoutRequest: {
-            /** Plan Slug */
-            plan_slug: string;
-            /**
-             * Billing Term Months
-             * @default 1
-             */
-            billing_term_months: number;
-            /**
-             * Collection Method
-             * @default charge_automatically
-             * @enum {string}
-             */
-            collection_method: "charge_automatically" | "send_invoice";
-            /** Invoice Days Until Due */
-            invoice_days_until_due?: number | null;
-            deploy_config?: components["schemas"]["DeployRequest"] | null;
-            /**
-             * Ui Mode
-             * @default hosted
-             */
-            ui_mode: string;
-            /** Locale */
-            locale?: string | null;
-        };
-        /** CheckoutResponse */
-        CheckoutResponse: {
+        /** V2CheckoutResponse */
+        V2CheckoutResponse: {
             /**
              * Flow Type
              * @default checkout_session
@@ -419,13 +452,103 @@ export interface components {
             /** Invoice Id */
             invoice_id?: string | null;
         };
-        /**
-         * DeployRequest
-         * @description Deploy request — accepts flat fields (mobile) or nested config (web).
-         */
-        DeployRequest: {
-            /** Profile */
-            profile?: string | null;
+        /** V2ComputeCheckoutRequest */
+        V2ComputeCheckoutRequest: {
+            /** Plan Slug */
+            plan_slug: string;
+            /**
+             * Billing Term Months
+             * @default 1
+             */
+            billing_term_months: number;
+            /**
+             * Collection Method
+             * @default charge_automatically
+             * @enum {string}
+             */
+            collection_method: "charge_automatically" | "send_invoice";
+            /** Invoice Days Until Due */
+            invoice_days_until_due?: number | null;
+            deploy_config?: components["schemas"]["V2HostedDeployRequest"] | null;
+            /**
+             * Ui Mode
+             * @default hosted
+             */
+            ui_mode: string;
+            /** Locale */
+            locale?: string | null;
+        };
+        /** V2ComputePortalRequest */
+        V2ComputePortalRequest: {
+            /** Target Plan Slug */
+            target_plan_slug?: string | null;
+            /** Target Billing Term Months */
+            target_billing_term_months?: number | null;
+            /**
+             * Confirm Upgrade
+             * @default false
+             */
+            confirm_upgrade: boolean;
+            /** Locale */
+            locale?: string | null;
+        };
+        /** V2DeploymentDeleteResponse */
+        V2DeploymentDeleteResponse: {
+            /** Status */
+            status: string;
+            /** Cvm Deleted */
+            cvm_deleted: boolean;
+        };
+        /** V2DeploymentLifecycleResponse */
+        V2DeploymentLifecycleResponse: {
+            /** Status */
+            status: string;
+            /** Upgrade Task Id */
+            upgrade_task_id?: string | null;
+            /** Upgrade Status */
+            upgrade_status?: string | null;
+        };
+        /** V2HostedConfigRequest */
+        V2HostedConfigRequest: {
+            /** Primary Model */
+            primary_model?: string | null;
+            /** Channel */
+            channel?: string | null;
+            /** Telegram Bot Token */
+            telegram_bot_token?: string | null;
+            /** Telegram Allowed Usernames */
+            telegram_allowed_usernames?: string[] | null;
+            /** Discord Bot Token */
+            discord_bot_token?: string | null;
+            /** Discord Guild Id */
+            discord_guild_id?: string | null;
+            /** Slack Bot Token */
+            slack_bot_token?: string | null;
+            /** Slack App Token */
+            slack_app_token?: string | null;
+            /** Assistant Name */
+            assistant_name?: string | null;
+            /** Personality */
+            personality?: string | null;
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Public Ports */
+            public_ports?: number[] | null;
+            /**
+             * Enable Openclaw
+             * @default true
+             */
+            enable_openclaw: boolean;
+            /**
+             * Enable Hermes
+             * @default false
+             */
+            enable_hermes: boolean;
+        };
+        /** V2HostedDeployRequest */
+        V2HostedDeployRequest: {
             /** Primary Model */
             primary_model?: string | null;
             /** Channel */
@@ -471,17 +594,10 @@ export interface components {
             ai_provider_bootstrap?: {
                 [key: string]: unknown;
             } | null;
-            config?: components["schemas"]["OpenClawConfigRequest"] | null;
+            config?: components["schemas"]["V2HostedConfigRequest"] | null;
         };
-        /** DeploymentDeleteResponse */
-        DeploymentDeleteResponse: {
-            /** Status */
-            status: string;
-            /** Cvm Deleted */
-            cvm_deleted: boolean;
-        };
-        /** DeploymentDetailsInfo */
-        DeploymentDetailsInfo: {
+        /** V2HostedDeploymentDetailsInfo */
+        V2HostedDeploymentDetailsInfo: {
             /**
              * Mux Enabled
              * @default false
@@ -526,7 +642,7 @@ export interface components {
             ai_provider_auth_kind: "managed" | "api_key" | "codex_oauth";
             /** Ai Provider Bindings */
             ai_provider_bindings?: {
-                [key: string]: components["schemas"]["AiProviderBindingInfo"];
+                [key: string]: components["schemas"]["V2AiProviderBindingInfo"];
             };
             /** Telegram Allowed Usernames */
             telegram_allowed_usernames?: string[] | null;
@@ -565,18 +681,13 @@ export interface components {
             /** Disk Gb */
             disk_gb?: number | null;
         };
-        /** DeploymentLifecycleResponse */
-        DeploymentLifecycleResponse: {
-            /** Status */
-            status: string;
-            /** Upgrade Task Id */
-            upgrade_task_id?: string | null;
-            /** Upgrade Status */
-            upgrade_status?: string | null;
-        };
-        /** DeploymentResponse */
-        DeploymentResponse: {
-            /** Id */
+        /** V2HostedDeploymentResponse */
+        V2HostedDeploymentResponse: {
+            /**
+             * Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
             id: string;
             /**
              * User Id
@@ -590,20 +701,13 @@ export interface components {
             app_id: string;
             /** Backend */
             backend?: string | null;
-            /** Phala Cvm Id */
-            phala_cvm_id?: number | null;
             /**
              * Status
              * @default unknown
              */
             status: string;
-            /** Vm Uuid */
-            vm_uuid?: string | null;
-            /**
-             * Endpoints
-             * @default []
-             */
-            endpoints: string[];
+            /** Endpoints */
+            endpoints?: string[];
             /** Gateway Token */
             gateway_token?: string | null;
             /** Ui Access Token */
@@ -612,14 +716,12 @@ export interface components {
             openclaw_ui_url?: string | null;
             /** Hermes Ui Url */
             hermes_ui_url?: string | null;
-            config_info?: components["schemas"]["DeploymentDetailsInfo"] | null;
+            config_info?: components["schemas"]["V2HostedDeploymentDetailsInfo"] | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /** Migration Seq */
-            migration_seq?: number | null;
             /**
              * Upgrade Available
              * @default false
@@ -629,23 +731,16 @@ export interface components {
             agent_version?: string | null;
             /** App Image */
             app_image?: string | null;
-            /** Profile */
-            profile?: string | null;
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
-        /** HostedUsageDay */
-        HostedUsageDay: {
+        /** V2HostedUsageDay */
+        V2HostedUsageDay: {
             /** Date */
             date: string;
             /** Credits */
             credits: number;
         };
-        /** HostedUsageModelBreakdown */
-        HostedUsageModelBreakdown: {
+        /** V2HostedUsageModelBreakdown */
+        V2HostedUsageModelBreakdown: {
             /** Model */
             model: string;
             /** Provider */
@@ -655,8 +750,8 @@ export interface components {
             /** Requests */
             requests: number;
         };
-        /** HostedUsageSummaryResponse */
-        HostedUsageSummaryResponse: {
+        /** V2HostedUsageSummaryResponse */
+        V2HostedUsageSummaryResponse: {
             /** Period Start */
             period_start: string;
             /** Period End */
@@ -666,12 +761,12 @@ export interface components {
             /** Total Requests */
             total_requests: number;
             /** By Model */
-            by_model: components["schemas"]["HostedUsageModelBreakdown"][];
+            by_model: components["schemas"]["V2HostedUsageModelBreakdown"][];
             /** By Day */
-            by_day: components["schemas"]["HostedUsageDay"][];
+            by_day: components["schemas"]["V2HostedUsageDay"][];
         };
-        /** OnboardAgentRequest */
-        OnboardAgentRequest: {
+        /** V2OnboardAgentRequest */
+        V2OnboardAgentRequest: {
             /**
              * Agent Type
              * @enum {string}
@@ -696,47 +791,8 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /** OpenClawConfigRequest */
-        OpenClawConfigRequest: {
-            /** Primary Model */
-            primary_model?: string | null;
-            /** Channel */
-            channel?: string | null;
-            /** Telegram Bot Token */
-            telegram_bot_token?: string | null;
-            /** Telegram Allowed Usernames */
-            telegram_allowed_usernames?: string[] | null;
-            /** Discord Bot Token */
-            discord_bot_token?: string | null;
-            /** Discord Guild Id */
-            discord_guild_id?: string | null;
-            /** Slack Bot Token */
-            slack_bot_token?: string | null;
-            /** Slack App Token */
-            slack_app_token?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
-            /** Personality */
-            personality?: string | null;
-            /** Language */
-            language?: string | null;
-            /** Timezone */
-            timezone?: string | null;
-            /** Public Ports */
-            public_ports?: number[] | null;
-            /**
-             * Enable Openclaw
-             * @default true
-             */
-            enable_openclaw: boolean;
-            /**
-             * Enable Hermes
-             * @default false
-             */
-            enable_hermes: boolean;
-        };
-        /** PlanResponse */
-        PlanResponse: {
+        /** V2PlanResponse */
+        V2PlanResponse: {
             /** Slug */
             slug: string;
             /** Name */
@@ -755,28 +811,11 @@ export interface components {
             disk_size: number;
             /** Instance Type */
             instance_type?: string | null;
-            /**
-             * Offers
-             * @default []
-             */
-            offers: components["schemas"]["BillingOfferResponse"][];
+            /** Offers */
+            offers?: components["schemas"]["V2BillingOfferResponse"][];
         };
-        /** PortalRequest */
-        PortalRequest: {
-            /** Target Plan Slug */
-            target_plan_slug?: string | null;
-            /** Target Billing Term Months */
-            target_billing_term_months?: number | null;
-            /**
-             * Confirm Upgrade
-             * @default false
-             */
-            confirm_upgrade: boolean;
-            /** Locale */
-            locale?: string | null;
-        };
-        /** PortalResponse */
-        PortalResponse: {
+        /** V2PortalResponse */
+        V2PortalResponse: {
             /** Url */
             url: string;
             /** Portal Url */
@@ -794,8 +833,8 @@ export interface components {
             /** Amount Due Usd */
             amount_due_usd?: number | null;
         };
-        /** RebindAgentAiProviderRequest */
-        RebindAgentAiProviderRequest: {
+        /** V2RebindAgentAiProviderRequest */
+        V2RebindAgentAiProviderRequest: {
             /** Primary Model */
             primary_model?: string | null;
             /** Ai Provider Id */
@@ -810,8 +849,8 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /** SetAgentEnabledRequest */
-        SetAgentEnabledRequest: {
+        /** V2SetAgentEnabledRequest */
+        V2SetAgentEnabledRequest: {
             /** Enabled */
             enabled: boolean;
             /** Personality */
@@ -821,8 +860,8 @@ export interface components {
             /** Timezone */
             timezone?: string | null;
         };
-        /** SubscriptionResponse */
-        SubscriptionResponse: {
+        /** V2SubscriptionResponse */
+        V2SubscriptionResponse: {
             /**
              * Id
              * Format: sqid
@@ -933,92 +972,15 @@ export interface components {
             /** Next Allowance Reset At */
             next_allowance_reset_at?: string | null;
         };
-        /** UpdateDeploymentRequest */
-        UpdateDeploymentRequest: {
+        /** V2UpdateDeploymentRequest */
+        V2UpdateDeploymentRequest: {
             /** Assistant Name */
             assistant_name?: string | null;
             /** Name */
             name?: string | null;
         };
-        /** UserFeatureResolution */
-        UserFeatureResolution: {
-            /** Enabled */
-            enabled: boolean;
-            source: components["schemas"]["UserFeatureResolutionSource"];
-        };
-        /**
-         * UserFeatureResolutionSource
-         * @enum {string}
-         */
-        UserFeatureResolutionSource: "default" | "rule_user_id" | "rule_clerk_id" | "rule_email" | "rule_email_domain" | "rule_referral_l1";
-        /** UserProductCapabilities */
-        UserProductCapabilities: {
-            /**
-             * Can Use V1
-             * @default true
-             */
-            can_use_v1: boolean;
-            /**
-             * Can Use V2
-             * @default false
-             */
-            can_use_v2: boolean;
-        };
-        /**
-         * UserProfileUpdateRequest
-         * @description Partial profile update. ``None`` = leave unchanged, ``""`` = unbind.
-         */
-        UserProfileUpdateRequest: {
-            /** Evm Wallet Address */
-            evm_wallet_address?: string | null;
-        };
-        /** UserResponse */
-        UserResponse: {
-            /**
-             * Id
-             * Format: sqid
-             * @example usr_K8fJ3pQm
-             */
-            id: string;
-            /** Clerk Id */
-            clerk_id: string;
-            /** Email */
-            email: string | null;
-            /** Name */
-            name: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Settings */
-            settings: {
-                [key: string]: components["schemas"]["UserFeatureResolution"];
-            };
-            /** Evm Wallet Address */
-            evm_wallet_address?: string | null;
-            capabilities: components["schemas"]["UserProductCapabilities"];
-        };
-        /** ValidationError */
-        ValidationError: {
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
-        };
-        /** WalletAutoReloadActionResponse */
-        WalletAutoReloadActionResponse: {
+        /** V2WalletAutoReloadActionResponse */
+        V2WalletAutoReloadActionResponse: {
             /** Attempt Id */
             attempt_id: number;
             /** Payment Intent Id */
@@ -1028,8 +990,8 @@ export interface components {
             /** Error Code */
             error_code?: string | null;
         };
-        /** WalletAutoReloadRequest */
-        WalletAutoReloadRequest: {
+        /** V2WalletAutoReloadRequest */
+        V2WalletAutoReloadRequest: {
             /** Payment Mode */
             payment_mode?: ("card" | "invoice") | null;
             /** Auto Reload Enabled */
@@ -1041,8 +1003,8 @@ export interface components {
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents?: number | null;
         };
-        /** WalletLedgerItemResponse */
-        WalletLedgerItemResponse: {
+        /** V2WalletLedgerItemResponse */
+        V2WalletLedgerItemResponse: {
             /** Id */
             id: string;
             /** Operation */
@@ -1060,13 +1022,13 @@ export interface components {
             /** Applied At */
             applied_at?: string | null;
         };
-        /** WalletLedgerResponse */
-        WalletLedgerResponse: {
+        /** V2WalletLedgerResponse */
+        V2WalletLedgerResponse: {
             /** Items */
-            items: components["schemas"]["WalletLedgerItemResponse"][];
+            items: components["schemas"]["V2WalletLedgerItemResponse"][];
         };
-        /** WalletResponse */
-        WalletResponse: {
+        /** V2WalletResponse */
+        V2WalletResponse: {
             /** Balance Credits */
             balance_credits: number;
             /** Balance Snapshot At */
@@ -1084,19 +1046,19 @@ export interface components {
             auto_reload_amount_cents: number;
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents: number;
-            auto_reload_action?: components["schemas"]["WalletAutoReloadActionResponse"] | null;
+            auto_reload_action?: components["schemas"]["V2WalletAutoReloadActionResponse"] | null;
             /** Points Per Usd */
             points_per_usd: number;
         };
-        /** WalletTopupRequest */
-        WalletTopupRequest: {
+        /** V2WalletTopupRequest */
+        V2WalletTopupRequest: {
             /** Amount Cents */
             amount_cents: number;
             /** Locale */
             locale?: string | null;
         };
-        /** WalletTopupResponse */
-        WalletTopupResponse: {
+        /** V2WalletTopupResponse */
+        V2WalletTopupResponse: {
             /** Status */
             status: string;
             /** Flow Type */
@@ -1113,6 +1075,19 @@ export interface components {
             invoice_id?: string | null;
             /** Credits Added */
             credits_added?: number | null;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;
@@ -1138,58 +1113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-        };
-    };
-    delete_account_me_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    update_me_me_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserProfileUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["V1UserResponse"];
                 };
             };
         };
@@ -1209,7 +1133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"][];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"][];
                 };
             };
         };
@@ -1223,7 +1147,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["DeployRequest"] | null;
+                "application/json": components["schemas"]["V2HostedDeployRequest"] | null;
             };
         };
         responses: {
@@ -1233,7 +1157,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1264,7 +1188,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1295,7 +1219,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentDeleteResponse"];
+                    "application/json": components["schemas"]["V2DeploymentDeleteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1320,7 +1244,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateDeploymentRequest"];
+                "application/json": components["schemas"]["V2UpdateDeploymentRequest"];
             };
         };
         responses: {
@@ -1330,7 +1254,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1356,7 +1280,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SetAgentEnabledRequest"];
+                "application/json": components["schemas"]["V2SetAgentEnabledRequest"];
             };
         };
         responses: {
@@ -1366,7 +1290,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1392,7 +1316,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RebindAgentAiProviderRequest"];
+                "application/json": components["schemas"]["V2RebindAgentAiProviderRequest"];
             };
         };
         responses: {
@@ -1402,7 +1326,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1427,7 +1351,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OnboardAgentRequest"];
+                "application/json": components["schemas"]["V2OnboardAgentRequest"];
             };
         };
         responses: {
@@ -1437,7 +1361,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentResponse"];
+                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1468,7 +1392,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1499,7 +1423,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1530,7 +1454,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeploymentLifecycleResponse"];
+                    "application/json": components["schemas"]["V2DeploymentLifecycleResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1559,7 +1483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ActivationFeeStatusResponse"];
+                    "application/json": components["schemas"]["V2ActivationFeeStatusResponse"];
                 };
             };
         };
@@ -1573,7 +1497,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CheckoutRequest"];
+                "application/json": components["schemas"]["V2ComputeCheckoutRequest"];
             };
         };
         responses: {
@@ -1583,7 +1507,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CheckoutResponse"];
+                    "application/json": components["schemas"]["V2CheckoutResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1612,7 +1536,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubscriptionResponse"] | null;
+                    "application/json": components["schemas"]["V2SubscriptionResponse"] | null;
                 };
             };
         };
@@ -1632,7 +1556,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PlanResponse"][];
+                    "application/json": components["schemas"]["V2PlanResponse"][];
                 };
             };
         };
@@ -1646,7 +1570,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["PortalRequest"] | null;
+                "application/json": components["schemas"]["V2ComputePortalRequest"] | null;
             };
         };
         responses: {
@@ -1656,7 +1580,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PortalResponse"];
+                    "application/json": components["schemas"]["V2PortalResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1685,7 +1609,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostedUsageSummaryResponse"];
+                    "application/json": components["schemas"]["V2HostedUsageSummaryResponse"];
                 };
             };
         };
@@ -1705,7 +1629,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletResponse"];
+                    "application/json": components["schemas"]["V2WalletResponse"];
                 };
             };
         };
@@ -1719,7 +1643,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WalletAutoReloadRequest"];
+                "application/json": components["schemas"]["V2WalletAutoReloadRequest"];
             };
         };
         responses: {
@@ -1729,7 +1653,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletResponse"];
+                    "application/json": components["schemas"]["V2WalletResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1760,7 +1684,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletLedgerResponse"];
+                    "application/json": components["schemas"]["V2WalletLedgerResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1785,7 +1709,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WalletTopupRequest"];
+                "application/json": components["schemas"]["V2WalletTopupRequest"];
             };
         };
         responses: {
@@ -1795,7 +1719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletTopupResponse"];
+                    "application/json": components["schemas"]["V2WalletTopupResponse"];
                 };
             };
             /** @description Validation Error */
