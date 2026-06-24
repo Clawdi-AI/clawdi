@@ -8,8 +8,8 @@
  *
  * The generated file is intentionally a FILTERED subset of the hosted
  * deploy API OpenAPI surface — `scripts/filter-deploy-openapi.py` keeps only the
- * endpoints listed in its `KEEP_PATHS` allowlist plus their transitive
- * schema closure. Adding a new endpoint = adding it to that allowlist
+ * endpoints listed in its `KEEP_OPERATIONS_BY_PATH` allowlist plus their transitive
+ * schema closure. Adding a new operation = adding it to that allowlist
  * + running the regen command. See the filter script for details.
  */
 import type { components as DeployComponents } from "./deploy.generated";

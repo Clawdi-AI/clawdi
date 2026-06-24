@@ -946,6 +946,14 @@ function ComputeTab({
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
+	const canUpgrade = !isPerformance && deployment.upgrade_available;
+	const upgradeUnavailableMessage = plans.isLoading
+		? "Checking Performance availability..."
+		: !perfPlan
+			? "Performance compute is unavailable right now."
+			: deployment.status === "running" || deployment.status === "stopped"
+				? "An upgrade may already be pending for this Free agent."
+				: "Upgrade is available once this Free agent is running or stopped.";
 	useEffect(() => {
 		setName(deployment.name);
 	}, [deployment.name]);
@@ -960,6 +968,12 @@ function ComputeTab({
 		if (!perfPlan) {
 			toast.error("Performance unavailable", {
 				description: "No Performance compute plan is available right now.",
+			});
+			return;
+		}
+		if (!deployment.upgrade_available) {
+			toast.error("Upgrade unavailable", {
+				description: upgradeUnavailableMessage,
 			});
 			return;
 		}
@@ -1117,7 +1131,7 @@ function ComputeTab({
 								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 								<Button
 									size="sm"
-									disabled={plans.isLoading || checkout.isPending || !perfPlan}
+									disabled={plans.isLoading || checkout.isPending || !canUpgrade || !perfPlan}
 									onClick={() => runAction(startPerformanceUpgrade)}
 								>
 									{checkout.isPending ? (
@@ -1127,6 +1141,9 @@ function ComputeTab({
 									)}
 									Upgrade to Performance
 								</Button>
+								{canUpgrade ? null : (
+									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
+								)}
 							</div>
 						) : (
 							<Button asChild variant="outline" size="sm">
