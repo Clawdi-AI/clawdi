@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 FULL_GIT_SHA_RE = re.compile(r"[0-9a-f]{40}", re.IGNORECASE)
+EXPECT_COMMIT_PLACEHOLDER = "EXPECT_COMMIT"
+CONFIGURE_IN_COOLIFY_PLACEHOLDER = "CONFIGURE_IN_COOLIFY"
 TERMINAL_SUCCESS = {"finished"}
 TERMINAL_FAILURE = {
     "cancelled-by-user",
@@ -24,7 +26,6 @@ TERMINAL_FAILURE = {
     "failed:healthcheck",
     "failed:rollback",
 }
-SYNCED_APPLICATION_FIELDS = ("custom_docker_run_options",)
 
 
 def log(message: str) -> None:
@@ -230,25 +231,6 @@ def deploy_application(
     return deployment_uuid
 
 
-def runtime_update_payload(
-    *,
-    expected: dict[str, Any],
-    image: str,
-    tag: str,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "docker_registry_image_name": image,
-        "docker_registry_image_tag": tag,
-        "git_commit_sha": tag,
-    }
-    fields = expected.get("fields", {})
-    if isinstance(fields, dict):
-        for field in SYNCED_APPLICATION_FIELDS:
-            if field in fields:
-                payload[field] = fields[field]
-    return payload
-
-
 def deploy_applications(
     *,
     api_url: str,
@@ -293,6 +275,29 @@ def applications_by_role(
         (app_name, app_uuids[app_name]) for app_name in applications if app_name != api_app[0]
     ]
     return api_app, worker_apps
+
+
+def application_patch_payload(
+    *,
+    expected: dict[str, Any],
+    image: str,
+    tag: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for field, value in expected.get("fields", {}).items():
+        if field == "build_pack":
+            continue
+        if value == CONFIGURE_IN_COOLIFY_PLACEHOLDER:
+            continue
+        if value == EXPECT_COMMIT_PLACEHOLDER:
+            payload[field] = tag
+        else:
+            payload[field] = value
+
+    payload["docker_registry_image_name"] = image
+    payload["docker_registry_image_tag"] = tag
+    payload["git_commit_sha"] = tag
+    return payload
 
 
 def apps_for_deploy_scope(
@@ -389,13 +394,13 @@ def main() -> int:
             token=args.token,
             method="PATCH",
             path=f"/api/v1/applications/{app_uuid}",
-            payload=runtime_update_payload(
+            payload=application_patch_payload(
                 expected=expected,
                 image=args.image,
                 tag=args.tag,
             ),
         )
-        log(f"{app_name}: image_tag=updated uuid={app_uuid}")
+        log(f"{app_name}: application=updated uuid={app_uuid}")
 
     if args.no_deploy:
         return 0

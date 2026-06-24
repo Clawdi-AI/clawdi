@@ -537,7 +537,7 @@ describe("runtime manifest datasource", () => {
 							providers: {
 								default: {
 									kind: "openai-compatible",
-									baseUrl: "https://ai-gateway.faraday.cloud/v1",
+									baseUrl: "https://ai-gateway.example.test/v1",
 									model: "openai-codex/gpt-5.4-mini",
 									apiMode: "openai_chat",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -557,7 +557,7 @@ describe("runtime manifest datasource", () => {
 			expect("manifest" in loaded).toBe(true);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			expect(loaded.manifest.projection?.providers.default).toMatchObject({
-				baseUrl: "https://ai-gateway.faraday.cloud/v1",
+				baseUrl: "https://ai-gateway.example.test/v1",
 				model: "openai-codex/gpt-5.4-mini",
 				apiMode: "openai_chat",
 				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -630,7 +630,7 @@ describe("runtime manifest datasource", () => {
 					providers: {
 						default: {
 							kind: "openai-compatible",
-							baseUrl: "https://ai-gateway.faraday.cloud/v1",
+							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "openai-codex/gpt-5.4-mini",
 							apiMode: "openai_chat",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -649,7 +649,7 @@ describe("runtime manifest datasource", () => {
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/openai-codex/gpt-5.4-mini");
 		expect(patch.models.providers.default).toMatchObject({
-			baseUrl: "https://ai-gateway.faraday.cloud/v1",
+			baseUrl: "https://ai-gateway.example.test/v1",
 			api: "openai-completions",
 			apiKey: {
 				source: "env",
@@ -1002,7 +1002,7 @@ describe("runtime manifest datasource", () => {
 							kind: "passthrough",
 							match: {
 								scheme: "https",
-								host: "ai-gateway.faraday.cloud",
+								host: "ai-gateway.example.test",
 								pathPrefix: "/v1/",
 								headers: {},
 								query: {},
@@ -1064,7 +1064,7 @@ describe("runtime manifest datasource", () => {
 				projection: {
 					providers: {
 						default: {
-							baseUrl: "https://ai-gateway.faraday.cloud/v1",
+							baseUrl: "https://ai-gateway.example.test/v1",
 							apiMode: "openai_chat",
 							apiKeySecretRef: "provider.default.apiKey",
 						},
@@ -1114,7 +1114,7 @@ describe("runtime manifest datasource", () => {
 			kind: "passthrough",
 			match: {
 				scheme: "https",
-				host: "ai-gateway.faraday.cloud",
+				host: "ai-gateway.example.test",
 				pathPrefix: "/v1/",
 			},
 		});

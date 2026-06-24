@@ -34,7 +34,7 @@ export function ActivationRequirementCard() {
 
 	async function openPortal() {
 		try {
-			const res = await portal.mutateAsync({ confirm_upgrade: false });
+			const res = await portal.mutateAsync({});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;
@@ -47,10 +47,10 @@ export function ActivationRequirementCard() {
 		}
 	}
 
-	const title = feeDue ? "Activate your plan" : "Add a payment method to activate";
+	const title = feeDue ? "Activate compute billing" : "Add a payment method to activate";
 	const body = feeDue
-		? `A one-time activation fee of ${formatCentsCompact(feeAmountCents)} is due to start your plan. Add a card to pay it — your agent keeps running on Free until then.`
-		: "Your plan needs a payment method on file to activate. Add a card to finish setup — your agent keeps running on Free until then.";
+		? `A one-time activation fee of ${formatCentsCompact(feeAmountCents)} is due to activate compute billing. Add a card to pay it — Free agents keep running until then.`
+		: "Compute billing needs a payment method on file to activate. Add a card to finish setup — Free agents keep running until then.";
 
 	return (
 		<Card data-hosted="true" className="border-warning/40 bg-warning-muted/30">

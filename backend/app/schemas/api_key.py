@@ -7,8 +7,8 @@ from pydantic import BaseModel
 class ApiKeyCreate(BaseModel):
     label: str
     # Optional binding for "deploy key" minting via the same
-    # endpoint. When the dashboard hosts an agent on Clawdi-cloud
-    # (or any external control plane the user trusts), it mints
+    # endpoint. When the dashboard hosts an agent through a hosted
+    # agent service (or any external control plane the user trusts), it mints
     # a key here pinned to that env. `environment_id` must be
     # owned by the calling user — enforced at the service layer
     # in `mint_api_key`.

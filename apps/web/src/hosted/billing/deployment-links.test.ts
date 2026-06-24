@@ -16,6 +16,7 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 		hermes_ui_url: null,
 		config_info: envs
 			? {
+					compute_plan_slug: "compute_free",
 					mux_enabled: true,
 					telegram_mux_enabled: false,
 					discord_mux_enabled: false,
@@ -39,7 +40,6 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 			: null,
 		created_at: "2026-06-22T00:00:00Z",
 		upgrade_available: false,
-		profile: "free",
 	};
 }
 

@@ -5,7 +5,8 @@ schema closure consumed by the OSS dashboard.
 The full deploy API spec carries private control-plane endpoints that the
 OSS dashboard must not accidentally grow into. The dashboard only calls the
 hosted user profile, v2 billing, v2 usage, and v2 deployment-management
-paths listed in `KEEP_PATHS`. Without this filter, `openapi-typescript` emits a
+operations listed in `KEEP_OPERATIONS_BY_PATH`. Without this filter,
+`openapi-typescript` emits a
 ~7000-line TypeScript dump on every regen; this script trims it to
 only the surface we actually consume so:
 
@@ -21,10 +22,9 @@ Usage (wired up via `apps/web/package.json`):
       | bun x openapi-typescript /dev/stdin \
           -o packages/shared/src/api/deploy.generated.ts
 
-To consume a new endpoint, add its path string to `KEEP_PATHS` (or
-its operationId to `KEEP_OPERATIONS` if you'd rather match that way)
-and rerun the generate command. Schema closure is auto-discovered
-via `$ref` walks, so referenced types come along for free.
+To consume a new endpoint, add its path + HTTP method to
+`KEEP_OPERATIONS_BY_PATH` and rerun the generate command. Schema closure is
+auto-discovered via `$ref` walks, so referenced types come along for free.
 """
 
 from __future__ import annotations
@@ -34,29 +34,36 @@ import sys
 from collections.abc import Iterable
 from typing import Any
 
-# Endpoints the OSS dashboard actually calls. Adding a new
-# entry here is the SINGLE knob for widening the schema surface.
-KEEP_PATHS: list[str] = [
-    "/me",
-    "/v2/deployments",
-    "/v2/deployments/{deployment_id}",
-    "/v2/deployments/{deployment_id}/agents/{agent_type}",
-    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider",
-    "/v2/deployments/{deployment_id}/onboard-agent",
-    "/v2/deployments/{deployment_id}/restart",
-    "/v2/deployments/{deployment_id}/start",
-    "/v2/deployments/{deployment_id}/stop",
-    "/v2/subscription/activation-fee",
-    "/v2/subscription/checkout",
-    "/v2/subscription/current",
-    "/v2/subscription/plans",
-    "/v2/subscription/portal",
-    "/v2/usage",
-    "/v2/wallet",
-    "/v2/wallet/auto-reload",
-    "/v2/wallet/ledger",
-    "/v2/wallet/topup",
-]
+# Endpoints the OSS dashboard actually calls. Adding a new operation here is the
+# SINGLE knob for widening the schema surface.
+KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
+    "/me": {"get"},
+    "/v2/deployments": {"get", "post"},
+    "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},
+    "/v2/deployments/{deployment_id}/agents/{agent_type}": {"patch"},
+    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {"patch"},
+    "/v2/deployments/{deployment_id}/onboard-agent": {"post"},
+    "/v2/deployments/{deployment_id}/restart": {"post"},
+    "/v2/deployments/{deployment_id}/start": {"post"},
+    "/v2/deployments/{deployment_id}/stop": {"post"},
+    "/v2/subscription/activation-fee": {"get"},
+    "/v2/subscription/checkout": {"post"},
+    "/v2/subscription/current": {"get"},
+    "/v2/subscription/plans": {"get"},
+    "/v2/subscription/portal": {"post"},
+    "/v2/usage": {"get"},
+    "/v2/wallet": {"get"},
+    "/v2/wallet/auto-reload": {"put"},
+    "/v2/wallet/ledger": {"get"},
+    "/v2/wallet/topup": {"post"},
+}
+
+_PATH_ITEM_NON_OPERATION_KEYS = {
+    "summary",
+    "description",
+    "servers",
+    "parameters",
+}
 
 
 def _walk_refs(node: Any, sink: set[str]) -> None:
@@ -85,13 +92,28 @@ def filter_spec(spec: dict[str, Any]) -> dict[str, Any]:
     paths = spec.get("paths", {}) or {}
     all_schemas = (spec.get("components", {}) or {}).get("schemas", {}) or {}
 
-    kept_paths = {p: paths[p] for p in KEEP_PATHS if p in paths}
-    missing = [p for p in KEEP_PATHS if p not in paths]
+    kept_paths: dict[str, Any] = {}
+    missing: list[str] = []
+    for path, methods in KEEP_OPERATIONS_BY_PATH.items():
+        path_item = paths.get(path)
+        if path_item is None:
+            missing.append(path)
+            continue
+        kept_item = {
+            key: value
+            for key, value in path_item.items()
+            if key in _PATH_ITEM_NON_OPERATION_KEYS or key.lower() in methods
+        }
+        missing_methods = sorted(methods - {key.lower() for key in kept_item})
+        if missing_methods:
+            missing.append(f"{path} methods={missing_methods}")
+            continue
+        kept_paths[path] = kept_item
     if missing:
         # Loud failure so a deploy API rename of a kept endpoint shows
         # up in CI / dev right away, rather than producing a silently
         # smaller schema.
-        msg = f"filter-deploy-openapi: KEEP_PATHS entries not in spec: {missing}"
+        msg = f"filter-deploy-openapi: kept operations not in spec: {missing}"
         raise SystemExit(msg)
 
     # BFS the $ref graph starting from the kept paths.

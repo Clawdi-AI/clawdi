@@ -1589,7 +1589,7 @@ def parse_agent_bundle(req: BinaryNode) -> AgentBundle:
 class SignalSender:
     """Persistent synthetic WhatsApp Signal sender state.
 
-    Implements the libsignal subset msg-router used: X3DH pre-key session
+    Implements the libsignal subset used by the legacy channel bridge: X3DH pre-key session
     setup, Double Ratchet message chains, WhisperMessage/PreKeyWhisperMessage
     framing, and serializable state. The implementation intentionally follows
     the old Node `libsignal` package so real Baileys clients can decrypt

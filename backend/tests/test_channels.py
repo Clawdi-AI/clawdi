@@ -5932,7 +5932,7 @@ async def test_create_discord_channel_returns_provider_webhook(client: httpx.Asy
 
 
 @pytest.mark.asyncio
-async def test_legacy_msg_router_root_routes_are_absent(client: httpx.AsyncClient):
+async def test_legacy_channel_router_root_routes_are_absent(client: httpx.AsyncClient):
     checks = [
         ("POST", "/bot123456:token/getMe"),
         ("GET", "/api/v10/gateway/bot"),
@@ -5940,7 +5940,7 @@ async def test_legacy_msg_router_root_routes_are_absent(client: httpx.AsyncClien
         ("GET", "/channels/telegram"),
         ("GET", "/socket.io/"),
         ("GET", "/media/file.jpg"),
-        ("POST", "/api/channels/migrations/msg-router/import-tenant"),
+        ("POST", "/api/channels/migrations/legacy-router/import-tenant"),
     ]
 
     for method, path in checks:

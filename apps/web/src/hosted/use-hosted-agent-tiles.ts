@@ -74,7 +74,7 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
-	// excludes these from its self-managed grid so a hosted pod's env
+	// excludes these from its self-managed grid so a hosted deployment's env
 	// — which cloud-api also returns from /api/environments because
 	// the admin endpoint registered it — doesn't double-count as both
 	// a hosted tile and a self-managed tile. Lower-cased for the same
@@ -127,7 +127,7 @@ function isKnownRuntime(s: string): s is Runtime {
  *   3. `enable_hermes`, for deployments that expose only that field.
  *
  * We never synthesize a runtime that isn't surfaced by one of these
- * sources (the pod doesn't have that process running).
+ * sources (the deployment doesn't have that process running).
  */
 function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = resolveRuntimes(d);
@@ -163,7 +163,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			name: runtimeDisplayName(runtime),
 			agentType: runtime,
 			// Deployment slug as the secondary line lets users disambiguate
-			// when they have more than one pod. Mode info ("Daemon") is
+			// when they have more than one hosted deployment. Mode info ("Daemon") is
 			// implied by the "Clawdi" badge — every hosted runtime is daemon.
 			runtimeLabel: slug,
 			statusLabel,
@@ -189,7 +189,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 function resolveRuntimes(d: HostedDeployment): Runtime[] {
 	// `clawdi_cloud_environments` is the authoritative source: every
 	// agent with a live-sync env on cloud-api is by definition a daemon
-	// running in the pod. If it's there, it's real.
+	// running in the hosted deployment. If it's there, it's real.
 	const set = new Set<Runtime>();
 	for (const r of Object.keys(d.config_info?.clawdi_cloud_environments ?? {})) {
 		if (isKnownRuntime(r)) set.add(r);

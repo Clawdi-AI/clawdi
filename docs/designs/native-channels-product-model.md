@@ -4,7 +4,7 @@ This document is the product model for Clawdi-native channels. It describes
 what a "bot", "agent", "pairing", and "session" mean in the product, then maps
 those concepts to backend tables and API boundaries.
 
-The model intentionally does not mirror the old `msg-router` service shape. The
+The model intentionally does not mirror the legacy channel bridge shape. The
 backend owns the control plane, routing state, durable outboxes, and
 agent-facing SDK emulation. Provider protocol adapters may exist only where a
 provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
@@ -108,7 +108,7 @@ These rules define the product, not just the current implementation:
   insecure endpoint targets.
 - Pair and unpair control is external-actor-scoped in non-DM chats.
 - Pair/unpair commands are system commands and must not be delivered to agents.
-- The old `msg-router` process does not own routing, queueing, or product
+- The legacy channel bridge process does not own routing, queueing, or product
   state.
 - A WhatsApp Baileys sidecar may own protocol connectivity, but FastAPI and
   Postgres own authorization, routing, and persistence.
@@ -496,7 +496,7 @@ the shared channel service.
 - A single external chat session cannot fan out to multiple agents.
 - User-created bots cannot be promoted to public by ordinary user APIs.
 - Public bots are not seeded by migrations; manage them through admin APIs.
-- The old TypeScript `msg-router` process is not run, embedded, or proxied.
+- The legacy TypeScript channel bridge process is not run, embedded, or proxied.
 - Redis is not required for this product model. Durable queueing is in
   Postgres via `channel_deliveries` and worker processes.
 

@@ -83,7 +83,7 @@ export function cleanMachineName(raw: string | null | undefined): string {
 	return raw.replace(/\.(local|lan)$/i, "");
 }
 
-/** Middle-truncate generated pod names for display. A fleet of
+/** Middle-truncate generated deployment names for display. A fleet of
  * `openclaw-164ec696-744994f657-mgc9m` tiles is unreadable, and
  * END-truncation (`truncate`) cuts the final group — the only part
  * that distinguishes two clones. Keep runtime prefix + last group:

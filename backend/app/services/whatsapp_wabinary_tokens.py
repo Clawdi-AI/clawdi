@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# Generated from Baileys lib/WABinary/constants.js in the source msg-router migration.
+# Generated from Baileys lib/WABinary/constants.js during the channel migration.
 # Keep this module data-only so whatsapp_noise.py can stay focused on codec logic.
 
 SINGLE_BYTE_TOKENS: list[str] = [

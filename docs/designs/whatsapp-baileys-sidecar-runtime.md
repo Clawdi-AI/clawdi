@@ -6,7 +6,7 @@ Date: 2026-06-07
 ## Context
 
 The WhatsApp shared-bot product surface is not equivalent to WhatsApp Cloud API.
-The old `msg-router` used Baileys for WhatsApp Web protocol behavior: linked
+The legacy channel bridge used Baileys for WhatsApp Web protocol behavior: linked
 device sessions, Signal-encrypted messages, group sender keys, raw stanzas,
 IQs, media download/decrypt, and relay attributes such as edits. The Clawdi
 backend has already ported the product control plane, provider-prefixed APIs,
@@ -26,7 +26,7 @@ Clawdi should stop treating W5 as a pure-Python WhatsApp Web rewrite. W5 is now
 the Baileys sidecar runtime.
 
 The sidecar is allowed only as a Clawdi-owned protocol adapter. It is not the
-old TypeScript `msg-router`, not a public API, and not a place for product
+legacy TypeScript channel bridge, not a public API, and not a place for product
 routing. FastAPI remains the only product backend.
 
 ## Ownership
@@ -100,7 +100,7 @@ still registered so `/api/channels/debug/health` can report `mode=sidecar` and
 
 ## Non-Goals
 
-- Do not run or proxy the old `msg-router` process.
+- Do not run or proxy the legacy channel bridge process.
 - Do not put tenant routing, pair-code consumption, delivery retries, provider
   token storage, or debug-event persistence into JavaScript.
 - Do not emulate Telegram, Discord, iMessage, or WhatsApp Cloud API inside the

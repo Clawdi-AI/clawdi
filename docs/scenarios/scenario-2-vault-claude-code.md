@@ -99,13 +99,13 @@ clawdi run -- claude
   ├── 1. Fetch vault keys from Clawdi API (HTTPS)
   ├── 2. Set as child process env vars:
   │       OPENAI_API_KEY=sk-xxx
-  │       STRIPE_SECRET_KEY=sk_live_xxx
+  │       STRIPE_SECRET_KEY=stripe-secret-placeholder
   │       ...
   └── 3. exec(claude)
 
 Claude Code process:
   process.env.OPENAI_API_KEY = "sk-xxx"       ✓ SDK uses directly
-  process.env.STRIPE_SECRET_KEY = "sk_live_xxx" ✓ project code uses directly
+  process.env.STRIPE_SECRET_KEY = "stripe-secret-placeholder" ✓ project code uses directly
 
 LLM context:
   Cannot see any secret values  ✓ Secure
@@ -195,7 +195,7 @@ clawdi run:
 ### Encryption at Rest (Server Side)
 
 ```
-Cloud KMS (AWS KMS / GCP KMS / Phala TEE)
+Cloud KMS (AWS KMS / GCP KMS / confidential compute KMS)
   └── Master Key (never leaves KMS)
        └── User KEK (per user, encrypted by master)
              └── DEK (per secret, encrypted by KEK)

@@ -22,22 +22,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type {
-	DeployRequest,
-	OpenClawConfigRequest,
-	Plan,
-	Subscription,
-} from "@/hosted/billing/contracts";
+import type { DeployRequest, Plan } from "@/hosted/billing/contracts";
+import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
+import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
 	useCheckout,
 	useCreateDeployment,
+	useHostedDeployments,
 	usePlans,
-	usePortal,
-	useSubscription,
 } from "@/hosted/billing/hooks";
-import { selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
@@ -53,6 +49,7 @@ import { ConnectBotDialog } from "@/v2/channels/connect-bot-dialog";
 
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
+type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 
 /** Personality presets accepted by hosted deployment onboarding. */
 const PERSONALITY_PRESETS = [
@@ -99,18 +96,6 @@ function aiAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
 	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
 		? "codex_oauth"
 		: "api_key";
-}
-
-function hasActivePerformanceSubscription(
-	subscription: Subscription | null | undefined,
-	performancePlan: Plan | undefined,
-): boolean {
-	return (
-		!!subscription &&
-		!!performancePlan &&
-		subscription.plan_slug === performancePlan.slug &&
-		(subscription.status === "active" || subscription.status === "trialing")
-	);
 }
 
 /** Deploy-wizard option — the family's selectable-choice card. */
@@ -163,11 +148,10 @@ function IconChip({ tint, children }: { tint: string; children: React.ReactNode 
 export function DeployWizard() {
 	const router = useRouter();
 	const plans = usePlans();
-	const subscription = useSubscription();
+	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
-	const portal = usePortal();
 	const runAction = useActionLock();
 
 	const [engines, setEngines] = useState<Record<Engine, boolean>>({
@@ -197,15 +181,17 @@ export function DeployWizard() {
 
 	const freePlan = activePlan(plans.data, false);
 	const perfPlan = activePlan(plans.data, true);
-	const sub = subscription.data ?? null;
-	const hasPerformance = hasActivePerformanceSubscription(sub, perfPlan);
+	const freeSlotUsed = usesActiveFreeComputeSlot(deployments.data);
+	const freeSlotPending = deployments.isLoading;
+	const freeSlotUnavailable = freeSlotUsed || freeSlotPending || !!deployments.error;
 
 	const dualAllowed = compute === "performance";
 	const enginesSelected = (Object.keys(engines) as Engine[]).filter((e) => engines[e]);
 	const providerList = aiProviders.data?.providers ?? [];
-	const computePlanReady = compute === "performance" ? !!perfPlan : !!sub || !!freePlan;
-	const entitlementReady = !plans.isLoading && !subscription.isLoading && computePlanReady;
-	const canSubmit = enginesSelected.length >= 1 && entitlementReady && !submitting;
+	const computePlanReady =
+		compute === "performance" ? !!perfPlan : !!freePlan && !freeSlotUnavailable;
+	const planReady = !plans.isLoading && computePlanReady;
+	const canSubmit = enginesSelected.length >= 1 && planReady && !submitting;
 
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
@@ -226,10 +212,16 @@ export function DeployWizard() {
 		}
 	}, [aiChoice, aiProviders.isSuccess, providerList]);
 
+	useEffect(() => {
+		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
+		setCompute("performance");
+	}, [compute, freeSlotUsed, perfPlan]);
+
 	const perfOffer = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
+	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 
 	function toggleEngine(engine: Engine) {
 		setEngines((prev) => {
@@ -275,27 +267,19 @@ export function DeployWizard() {
 	}
 
 	function buildDeployRequest(aiFields: Partial<DeployRequest>): DeployRequest {
-		const persona = {
-			assistant_name: agentName.trim() || null,
-			personality: personality || null,
-			language: language || null,
-			timezone: timezone || null,
-		};
-		const config: OpenClawConfigRequest = {
-			channel: null,
-			enable_openclaw: engines.openclaw,
-			enable_hermes: engines.hermes,
-			...persona,
-		};
-		return {
-			profile: compute,
-			channel: null,
-			enable_openclaw: engines.openclaw,
-			enable_hermes: engines.hermes,
-			config,
-			...persona,
-			...aiFields,
-		};
+		const computePlanSlug: ComputePlanSlug =
+			compute === "performance" ? "compute_performance" : "compute_free";
+		return buildHostedDeployRequest({
+			computePlanSlug,
+			engines,
+			persona: {
+				assistantName: agentName,
+				personality,
+				language,
+				timezone,
+			},
+			aiFields,
+		});
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
@@ -314,78 +298,19 @@ export function DeployWizard() {
 			if (!aiFields) return;
 			const deployConfig = buildDeployRequest(aiFields);
 
-			// Performance deploys require an active Performance plan. Existing
-			// subscribers change plan via portal; new subscribers carry the
-			// deploy config through checkout.
-			if (compute === "performance" && !hasPerformance && perfPlan) {
-				if (sub) {
-					const res = await portal.mutateAsync({
-						target_plan_slug: perfPlan.slug,
-						target_billing_term_months: term,
-						confirm_upgrade: true,
-					});
-					if (redirectTo(res.redirect_url)) return;
-					if (res.payment_intent_client_secret) {
-						if (redirectTo(res.url || res.portal_url)) return;
-						toast.message("Payment confirmation needed", {
-							description: "Finish the pending payment, then deploy your agent.",
-						});
-						return;
-					}
-					if (res.status === "blocked") {
-						toast.error(res.message ?? "Upgrade isn’t available right now.");
-						return;
-					}
-					const refreshed = await subscription.refetch();
-					if (!hasActivePerformanceSubscription(refreshed.data ?? null, perfPlan)) {
-						toast.message("Performance update is pending", {
-							description: "Deploy after the plan change finishes.",
-						});
-						return;
-					}
-				} else {
-					const result = await checkout.mutateAsync({
-						plan_slug: perfPlan.slug,
-						billing_term_months: term,
-						collection_method: "charge_automatically",
-						ui_mode: "hosted",
-						deploy_config: deployConfig,
-					});
-					if (redirectTo(result.action_url || result.checkout_url || result.invoice_url)) return;
-					toast.error("Couldn't start checkout", {
-						description: "No checkout URL was returned. Please try again.",
-					});
-					return;
-				}
-			}
-
-			// No subscription yet → ensure the Free compute entitlement.
-			if (!sub && freePlan) {
+			if (compute === "performance" && perfPlan) {
 				const result = await checkout.mutateAsync({
-					plan_slug: freePlan.slug,
-					billing_term_months: 1,
+					plan_slug: perfPlan.slug,
+					billing_term_months: term,
 					collection_method: "charge_automatically",
 					ui_mode: "hosted",
+					deploy_config: deployConfig,
 				});
-				// A pending checkout action means the entitlement needs confirmation
-				// before the deploy can succeed. Redirect if we have a URL; otherwise
-				// STOP with a message — never fall through to createDeployment (it
-				// would 402 without the entitlement).
-				const actionUrl = result.action_url || result.checkout_url || result.invoice_url;
-				if (actionUrl || result.client_secret) {
-					if (redirectTo(actionUrl)) return;
-					toast.message("Payment confirmation needed", {
-						description: "Finish the pending payment, then deploy your agent.",
-					});
-					return;
-				}
-				const refreshed = await subscription.refetch();
-				if (!refreshed.data) {
-					toast.message("Free compute is activating", {
-						description: "Try deploying again once your free entitlement is ready.",
-					});
-					return;
-				}
+				if (redirectTo(result.action_url || result.checkout_url || result.invoice_url)) return;
+				toast.error("Couldn't start checkout", {
+					description: "No checkout URL was returned. Please try again.",
+				});
+				return;
 			}
 
 			const deployment = await createDeployment.mutateAsync(deployConfig);
@@ -400,8 +325,7 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel =
-		compute === "performance" && !hasPerformance ? "Continue to checkout" : "Deploy agent";
+	const deployLabel = compute === "performance" ? "Continue to checkout" : "Deploy agent";
 	const aiSummary =
 		aiChoice === "managed"
 			? "Managed AI"
@@ -434,16 +358,7 @@ export function DeployWizard() {
 		);
 	}
 
-	if (subscription.error) {
-		return (
-			<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
-				<PageHeader title="Deploy an agent" />
-				<BillingError error={subscription.error} onRetry={() => subscription.refetch()} />
-			</div>
-		);
-	}
-
-	if (plans.isLoading || subscription.isLoading) {
+	if (plans.isLoading) {
 		return (
 			<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
 				<PageHeader title="Deploy an agent" description="Preparing your compute options…" />
@@ -458,7 +373,7 @@ export function DeployWizard() {
 		<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Deploy an agent"
-				description="Pick a runtime and an AI provider — a managed, free agent is ready in minutes."
+				description="Pick a runtime and AI provider. Free uses one active slot per user; Performance uses one paid subscription per deployment."
 			/>
 
 			{/* 1. Runtime */}
@@ -468,7 +383,7 @@ export function DeployWizard() {
 					<CardDescription>
 						{dualAllowed
 							? "Performance can run both runtimes at once."
-							: "Free runs a single runtime. Upgrade to Performance to run both."}
+							: "Free runs a single runtime. Choose Performance to run both."}
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="grid gap-2 sm:grid-cols-2">
@@ -551,7 +466,7 @@ export function DeployWizard() {
 						3. Channels <span className="font-normal text-muted-foreground">· optional</span>
 					</CardTitle>
 					<CardDescription>
-						Prepare a bot now, then link it from the agent page after deploy.
+						Prepare a bot now, then link it from the agent page once deployment finishes.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="grid gap-2 sm:grid-cols-2">
@@ -563,7 +478,7 @@ export function DeployWizard() {
 							</IconChip>
 						}
 						title="Link after deploy"
-						subtitle="Channel links need the cloud agent id minted during provisioning."
+						subtitle="Channel links need the agent identity created during provisioning."
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
 					<Button
@@ -583,14 +498,15 @@ export function DeployWizard() {
 				<CardHeader>
 					<CardTitle className="text-base">4. Compute</CardTitle>
 					<CardDescription>
-						Free is always-on and $0. Performance adds burst, dual engines, and a bigger disk.
+						Free gives one active hosted agent. Performance is billed per hosted agent and can run
+						dual engines.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-3">
 					<div className="grid gap-2 sm:grid-cols-2">
 						<Tile
 							selected={compute === "free"}
-							onClick={() => setComputeTier("free")}
+							onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
 							leading={
 								<IconChip tint="bg-identity-3-bg text-identity-3-fg">
 									<Cpu />
@@ -598,11 +514,18 @@ export function DeployWizard() {
 							}
 							title="Free"
 							subtitle={
-								freePlan
-									? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · single engine`
-									: "$0 · single engine"
+								freeSlotUsed
+									? "Free slot already in use"
+									: freeSlotPending
+										? "Checking Free slot…"
+										: deployments.error
+											? "Free slot check unavailable"
+											: freePlan
+												? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active agent`
+												: "$0 · single engine"
 							}
 							badge={<Badge variant="secondary">$0</Badge>}
+							disabled={freeSlotUnavailable}
 						/>
 						<Tile
 							selected={compute === "performance"}
@@ -615,7 +538,7 @@ export function DeployWizard() {
 							title="Performance"
 							subtitle={
 								perfPlan
-									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · dual engines`
+									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
 									: "Performance plan unavailable"
 							}
 							badge={
@@ -630,14 +553,30 @@ export function DeployWizard() {
 							disabled={!perfPlan}
 						/>
 					</div>
-					{compute === "free" && !sub && !freePlan ? (
+					{compute === "free" && freeSlotPending ? (
+						<p className="text-xs text-muted-foreground">
+							Checking whether your Free slot is available before deployment.
+						</p>
+					) : null}
+					{compute === "free" && freeSlotUsed ? (
+						<p className="text-xs text-muted-foreground">
+							You already have an active Free agent. Stop or delete it to reuse Free, or deploy a
+							Performance agent.
+						</p>
+					) : null}
+					{compute === "free" && deployments.error ? (
+						<p className="text-xs text-destructive">
+							Couldn’t verify your Free slot. Retry this page before deploying Free.
+						</p>
+					) : null}
+					{compute === "free" && !freePlan ? (
 						<p className="text-xs text-destructive">
 							Free compute isn’t available from the billing service. Retry plans before deploying.
 						</p>
 					) : null}
-					{compute === "performance" && perfPlan && perfPlan.offers.length > 1 ? (
+					{compute === "performance" && perfOffers.length > 1 ? (
 						<div className="space-y-2">
-							<TermSwitcher offers={perfPlan.offers} value={term} onChange={setTerm} />
+							<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 							{perfOffer && perfOffer.billing_term_months !== 1 ? (
 								<p className="text-xs text-muted-foreground">
 									Billed {formatCentsCompact(perfOffer.price_cents)}
@@ -646,9 +585,9 @@ export function DeployWizard() {
 							) : null}
 						</div>
 					) : null}
-					{compute === "performance" && !hasPerformance ? (
+					{compute === "performance" ? (
 						<p className="text-xs text-muted-foreground">
-							You’ll be sent to checkout to start Performance before your agent deploys.
+							You’ll be sent to checkout. Each Performance agent uses its own subscription.
 						</p>
 					) : null}
 				</CardContent>
