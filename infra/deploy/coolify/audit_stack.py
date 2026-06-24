@@ -25,6 +25,9 @@ REQUIRED_NON_EMPTY_KEYS = {
     "CLERK_PEM_PUBLIC_KEY",
     "CORS_ORIGINS",
     "DATABASE_URL",
+    "DB_MAX_OVERFLOW",
+    "DB_POOL_SIZE",
+    "DB_POOL_TIMEOUT",
     "ENCRYPTION_KEY",
     "ENVIRONMENT",
     "FILE_STORE_LOCAL_PATH",
@@ -308,8 +311,6 @@ def audit_application_shape(
     if phase == "api-only":
         if role == "api" and not status.startswith("running:"):
             errors.append(f"{app_name}: expected api-only API running status, got {status!r}")
-        if role != "api" and status.startswith("running:"):
-            errors.append(f"{app_name}: must not run in api-only phase, got {status!r}")
     elif phase == "live" and not status.startswith("running:"):
         errors.append(f"{app_name}: expected live running status, got {status!r}")
 

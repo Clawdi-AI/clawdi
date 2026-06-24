@@ -127,7 +127,9 @@ python3 infra/deploy/coolify/audit_stack.py \
 Audit phases:
 
 - `none`: check shape/env/storage/tag without asserting running state.
-- `api-only`: require `clawdi-backend` running and worker Applications stopped.
+- `api-only`: require `clawdi-backend` running, while allowing worker
+  Applications to keep their current state. This checks an API-only deploy
+  without pretending it changed worker runtime state.
 - `live`: require all Applications running and, when `--expect-commit` is set,
   latest successful deployment history matching that full git SHA.
 
@@ -156,8 +158,8 @@ Set `deploy=false` to build and publish an image without touching Coolify.
 Set `deploy=true` with one of these deployment scopes. The script updates image
 tags only for the Applications selected by the deployment scope:
 
-- `api-only`: update and deploy only the API. Use this for pre-cutover
-  validation while worker Applications remain stopped.
+- `api-only`: update and deploy only the API. Use this for isolated API fixes;
+  workers keep running their previously configured image.
 - `all`: update all Applications, then deploy API first and workers second.
   Use this for normal live releases so the API and worker run the same image
   commit.
