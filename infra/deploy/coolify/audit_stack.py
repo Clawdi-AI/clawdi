@@ -104,10 +104,21 @@ def value_digest(value: object) -> str:
 def normalize_literal_env_value(value: object) -> str | None:
     if value is None:
         return None
-    normalized = str(value)
+    normalized = str(value).strip()
     if len(normalized) >= 2 and normalized[0] == "'" and normalized[-1] == "'":
         return normalized[1:-1]
+    if len(normalized) >= 2 and normalized[0] == '"' and normalized[-1] == '"':
+        return normalized[1:-1]
     return normalized
+
+
+def literal_env_value_matches(row: dict[str, Any], expected: str) -> bool:
+    candidates = {
+        normalized
+        for value in (row.get("value"), row.get("real_value"))
+        if (normalized := normalize_literal_env_value(value)) is not None
+    }
+    return expected in candidates
 
 
 def looks_like_placeholder(value: str) -> bool:
@@ -450,10 +461,7 @@ def audit_env(
         if row.get("is_buildtime") is not False:
             errors.append(f"{app_name}: {key} must not be exposed at build time")
 
-        actual_value = normalize_literal_env_value(row.get("real_value"))
-        if actual_value is None:
-            actual_value = normalize_literal_env_value(row.get("value"))
-        if actual_value != expected_value:
+        if not literal_env_value_matches(row, expected_value):
             errors.append(f"{app_name}: {key} has an unexpected value")
 
     digests = {

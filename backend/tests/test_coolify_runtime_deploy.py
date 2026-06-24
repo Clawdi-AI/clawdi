@@ -214,3 +214,20 @@ def test_audit_env_rejects_wrong_application_env_value(monkeypatch):
     )
 
     assert errors == ["clawdi-channels-worker: CLAWDI_PROCESS_ROLE has an unexpected value"]
+
+
+def test_literal_env_value_matches_value_or_quoted_real_value():
+    module = _load_audit_module()
+
+    assert module.literal_env_value_matches(
+        {"value": "api", "real_value": "'api'"},
+        "api",
+    )
+    assert module.literal_env_value_matches(
+        {"value": "masked", "real_value": '"channels-worker"'},
+        "channels-worker",
+    )
+    assert not module.literal_env_value_matches(
+        {"value": "api", "real_value": "'api'"},
+        "channels-worker",
+    )
