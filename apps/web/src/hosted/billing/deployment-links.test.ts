@@ -39,7 +39,6 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 			: null,
 		created_at: "2026-06-22T00:00:00Z",
 		upgrade_available: false,
-		profile: "free",
 	};
 }
 

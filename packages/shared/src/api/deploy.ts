@@ -18,4 +18,4 @@ export type { components as DeployComponents, paths as DeployPaths } from "./dep
 
 type S = DeployComponents["schemas"];
 
-export type Deployment = S["DeploymentResponse"];
+export type Deployment = S["V2HostedDeploymentResponse"];

@@ -24,6 +24,7 @@ import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import { useCheckout, usePlans, usePortal, useSubscription } from "@/hosted/billing/hooks";
 import {
 	handlePortalResult,
+	planOffers,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -115,7 +116,8 @@ export function PlanComparison({
 
 	const pointsPerUsd = performance?.points_per_usd ?? free?.points_per_usd ?? 1000;
 	const creditsPerDollar = pointsPerUsd.toLocaleString();
-	const annualOffer = performance?.offers.find((o) => o.billing_term_months === 12);
+	const performanceOffers = performance ? planOffers(performance) : [];
+	const annualOffer = performanceOffers.find((o) => o.billing_term_months === 12);
 
 	return (
 		<div data-hosted="true" className="space-y-3">
@@ -208,9 +210,9 @@ export function PlanComparison({
 								? ` Save ${annualOffer.discount_percent}% on annual.`
 								: ""}
 						</CardDescription>
-						{performance && performance.offers.length > 1 ? (
+						{performanceOffers.length > 1 ? (
 							<div className="mt-3">
-								<TermSwitcher offers={performance.offers} value={term} onChange={setTerm} />
+								<TermSwitcher offers={performanceOffers} value={term} onChange={setTerm} />
 							</div>
 						) : null}
 					</CardHeader>

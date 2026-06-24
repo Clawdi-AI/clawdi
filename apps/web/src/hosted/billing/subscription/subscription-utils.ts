@@ -49,8 +49,8 @@ export function shortDate(iso: string | null): string {
  * The plan's offer for a billing term, with a synthetic monthly offer when the
  * backend returns no offers — so callers always have a price to show.
  */
-export function selectOfferForTerm(plan: Plan, term: number): BillingOffer {
-	const offers = plan.offers.length
+export function planOffers(plan: Plan): BillingOffer[] {
+	return plan.offers?.length
 		? plan.offers
 		: [
 				{
@@ -60,6 +60,10 @@ export function selectOfferForTerm(plan: Plan, term: number): BillingOffer {
 					discount_percent: 0,
 				},
 			];
+}
+
+export function selectOfferForTerm(plan: Plan, term: number): BillingOffer {
+	const offers = planOffers(plan);
 	return offers.find((o) => o.billing_term_months === term) ?? offers[0];
 }
 

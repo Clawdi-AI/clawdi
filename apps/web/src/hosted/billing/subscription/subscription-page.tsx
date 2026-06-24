@@ -23,6 +23,7 @@ import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import {
 	handlePortalResult,
 	isInDunning,
+	planOffers,
 	shortDate,
 	subscriptionStatusLabel,
 	subscriptionStatusTone,
@@ -43,6 +44,7 @@ export function SubscriptionPage() {
 	const perfPlan = useMemo(() => plans.data?.find((p) => p.price_cents > 0), [plans.data]);
 
 	const sub = subscription.data ?? null;
+	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 	useEffect(() => {
 		if (sub?.billing_term_months) setTerm(sub.billing_term_months);
 	}, [sub?.billing_term_months]);
@@ -280,11 +282,11 @@ export function SubscriptionPage() {
 								</Button>
 							) : (
 								<div className="space-y-4">
-									{perfPlan && perfPlan.offers.length > 1 ? (
+									{perfOffers.length > 1 ? (
 										<div className="space-y-2">
 											<p className="text-sm font-medium">Change billing term</p>
 											<div className="flex flex-wrap items-center gap-2">
-												<TermSwitcher offers={perfPlan.offers} value={term} onChange={setTerm} />
+												<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 												<Button
 													size="sm"
 													variant="outline"
@@ -318,8 +320,8 @@ export function SubscriptionPage() {
 						</div>
 					) : (
 						<div className="space-y-3">
-							{perfPlan && perfPlan.offers.length > 1 ? (
-								<TermSwitcher offers={perfPlan.offers} value={term} onChange={setTerm} />
+							{perfOffers.length > 1 ? (
+								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 							) : null}
 							<Button onClick={() => runAction(upgrade)} disabled={pending || !perfPlan}>
 								{pending ? <Spinner /> : <Zap />} Upgrade to Performance
