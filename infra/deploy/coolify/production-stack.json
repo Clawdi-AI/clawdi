@@ -57,8 +57,7 @@
 				"health_check_start_period": 60,
 				"limits_memory": "2g",
 				"limits_cpus": "2",
-				"start_command": "cd /app/backend && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
-				"custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+				"custom_docker_run_options": "--init --env CLAWDI_PROCESS_ROLE=api --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
 			},
 			"storages": [
 				{
@@ -95,8 +94,7 @@
 				"health_check_start_period": 20,
 				"limits_memory": "1g",
 				"limits_cpus": "1",
-				"start_command": "cd /app/backend && exec python -m app.workers.channels",
-				"custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
+				"custom_docker_run_options": "--init --env CLAWDI_PROCESS_ROLE=channels-worker --add-host=host.docker.internal:host-gateway --ulimit nofile=65535:65535"
 			},
 			"storages": [
 				{

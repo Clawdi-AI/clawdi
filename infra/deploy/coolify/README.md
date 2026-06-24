@@ -27,8 +27,8 @@ deployment-specific backend image.
   environment shared variables and wire each Application env row as
   `KEY={{environment.KEY}}`.
 - `production-stack.json`: expected non-secret Application shape, image source,
-  command, storage mounts, deployment tag, and operational constraints. It is a
-  public template, not a live production value dump.
+  runtime role, storage mounts, deployment tag, and operational constraints. It
+  is a public template, not a live production value dump.
 - `audit_stack.py`: read-only live configuration audit. It checks Application
   shape, storage, env wiring, and optional deployment commit parity without
   printing secret values.
@@ -75,11 +75,19 @@ Keep `clawdi-channels-worker` at one replica. The combined worker should be
 operated as a singleton until every loop in `app.workers.channels` has an
 explicit multi-replica lease or claim contract.
 
+The Docker Image Application build pack does not use `start_command`. The
+shared backend image starts `python -m app.runtime_entrypoint`, and each
+Application selects its role through `CLAWDI_PROCESS_ROLE` in
+`custom_docker_run_options`:
+
+- `api`: runs `alembic upgrade head`, then Uvicorn on port `8000`.
+- `channels-worker`: runs `python -m app.workers.channels`.
+
 Do not add a Dockerfile-level `HEALTHCHECK` to the shared backend image. The
-same image runs both the API and worker entrypoints, so health checks belong on
-the Coolify Application. The worker process itself listens on container port
-`8000` for `/health`; keep `fqdn` and host port mappings empty so that endpoint
-remains an internal liveness probe rather than a public route.
+same image runs both the API and worker roles, so health checks belong on the
+Coolify Application. The worker process itself listens on container port `8000`
+for `/health`; keep `fqdn` and host port mappings empty so that endpoint remains
+an internal liveness probe rather than a public route.
 
 ## Runtime State
 
@@ -195,6 +203,6 @@ is safe because deploy only needs the app names, roles, and deployment tag to
 resolve live Coolify resources. Environment-specific audits should use an
 ignored local overlay with the real destination and storage values.
 
-The API start command runs `alembic upgrade head` before Uvicorn starts. Keep
-migrations backward-compatible and short enough for the API health-check startup
-budget, or run long data migrations manually before deploying the image.
+The API role runs `alembic upgrade head` before Uvicorn starts. Keep migrations
+backward-compatible and short enough for the API health-check startup budget, or
+run long data migrations manually before deploying the image.

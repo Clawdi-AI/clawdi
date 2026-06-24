@@ -35,9 +35,9 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
                 "health_check_interval": 5,
                 "health_check_retries": 12,
                 "health_check_start_period": 20,
-                "start_command": "cd /app/backend && exec python -m app.workers.channels",
                 "custom_docker_run_options": (
-                    "--init --add-host=host.docker.internal:host-gateway"
+                    "--init --env CLAWDI_PROCESS_ROLE=channels-worker "
+                    "--add-host=host.docker.internal:host-gateway"
                 ),
             }
         },
@@ -54,8 +54,10 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
         "health_check_interval": 5,
         "health_check_retries": 12,
         "health_check_start_period": 20,
-        "start_command": "cd /app/backend && exec python -m app.workers.channels",
-        "custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway",
+        "custom_docker_run_options": (
+            "--init --env CLAWDI_PROCESS_ROLE=channels-worker "
+            "--add-host=host.docker.internal:host-gateway"
+        ),
         "docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
         "docker_registry_image_tag": "1370164c7b837280be9918ca3eb65b084cb32376",
     }
@@ -68,3 +70,16 @@ def test_production_stack_uses_init_without_nproc_ulimits():
         options = app["fields"]["custom_docker_run_options"]
         assert options.startswith("--init "), app_name
         assert "--ulimit nproc=" not in options, app_name
+        assert "start_command" not in app["fields"], app_name
+
+
+def test_production_stack_assigns_runtime_roles():
+    payload = json.loads((COOLIFY_DIR / "production-stack.json").read_text())
+
+    expected_roles = {
+        "clawdi-backend": "CLAWDI_PROCESS_ROLE=api",
+        "clawdi-channels-worker": "CLAWDI_PROCESS_ROLE=channels-worker",
+    }
+    for app_name, role_option in expected_roles.items():
+        options = payload["applications"][app_name]["fields"]["custom_docker_run_options"]
+        assert f"--env {role_option}" in options, app_name
