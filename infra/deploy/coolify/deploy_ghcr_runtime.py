@@ -287,6 +287,8 @@ def application_patch_payload(
     for field, value in expected.get("fields", {}).items():
         if field == "build_pack":
             continue
+        if value is None:
+            continue
         if value == CONFIGURE_IN_COOLIFY_PLACEHOLDER:
             continue
         if value == EXPECT_COMMIT_PLACEHOLDER:

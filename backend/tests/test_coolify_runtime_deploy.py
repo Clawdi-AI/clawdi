@@ -28,6 +28,7 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
                 "git_commit_sha": "EXPECT_COMMIT",
                 "build_pack": "dockerimage",
                 "fqdn": "CONFIGURE_IN_COOLIFY",
+                "ports_exposes": None,
                 "start_command": "cd /app/backend && exec python -m app.workers.channels",
                 "custom_docker_run_options": (
                     "--init --add-host=host.docker.internal:host-gateway"
