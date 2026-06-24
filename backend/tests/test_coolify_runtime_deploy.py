@@ -18,27 +18,33 @@ def _load_deploy_module():
     return module
 
 
-def test_runtime_update_payload_syncs_custom_docker_run_options():
+def test_application_patch_payload_reconciles_manifest_fields_without_placeholders():
     module = _load_deploy_module()
 
-    payload = module.runtime_update_payload(
+    payload = module.application_patch_payload(
         expected={
             "fields": {
+                "name": "clawdi-channels-worker",
+                "git_commit_sha": "EXPECT_COMMIT",
+                "build_pack": "dockerimage",
+                "fqdn": "CONFIGURE_IN_COOLIFY",
+                "start_command": "cd /app/backend && exec python -m app.workers.channels",
                 "custom_docker_run_options": (
                     "--init --add-host=host.docker.internal:host-gateway"
                 ),
-                "limits_memory": "2g",
             }
         },
         image="ghcr.io/clawdi-ai/clawdi-backend",
-        tag="a" * 40,
+        tag="1370164c7b837280be9918ca3eb65b084cb32376",
     )
 
     assert payload == {
-        "docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
-        "docker_registry_image_tag": "a" * 40,
-        "git_commit_sha": "a" * 40,
+        "name": "clawdi-channels-worker",
+        "git_commit_sha": "1370164c7b837280be9918ca3eb65b084cb32376",
+        "start_command": "cd /app/backend && exec python -m app.workers.channels",
         "custom_docker_run_options": "--init --add-host=host.docker.internal:host-gateway",
+        "docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
+        "docker_registry_image_tag": "1370164c7b837280be9918ca3eb65b084cb32376",
     }
 
 
