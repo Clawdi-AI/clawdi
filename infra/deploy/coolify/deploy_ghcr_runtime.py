@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,12 @@ TERMINAL_FAILURE = {
     "failed:healthcheck",
     "failed:rollback",
 }
+
+
+@dataclass(frozen=True)
+class ApplicationEnvAction:
+    action: str
+    key: str
 
 
 def log(message: str) -> None:
@@ -277,6 +284,131 @@ def applications_by_role(
     return api_app, worker_apps
 
 
+def application_env(expected: dict[str, Any]) -> dict[str, str]:
+    raw = expected.get("application_env", {})
+    if not isinstance(raw, dict):
+        raise SystemExit("Application application_env must be an object.")
+
+    normalized: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit("Application application_env keys must be non-empty strings.")
+        if not isinstance(value, str):
+            raise SystemExit(f"{key}: application_env values must be strings.")
+        normalized[key] = value
+    return normalized
+
+
+def application_env_payload(key: str, value: str) -> dict[str, Any]:
+    return {
+        "key": key,
+        "value": value,
+        "is_preview": False,
+        "is_literal": True,
+        "is_multiline": False,
+        "is_shown_once": False,
+        "is_runtime": True,
+        "is_buildtime": False,
+    }
+
+
+def application_env_row_matches(row: dict[str, Any], key: str, value: str) -> bool:
+    desired = application_env_payload(key, value)
+    for field, expected_value in desired.items():
+        if row.get(field) != expected_value:
+            return False
+    return row.get("is_shared") is not True
+
+
+def plan_application_env_actions(
+    *,
+    rows: list[dict[str, Any]],
+    expected_env: dict[str, str],
+) -> list[ApplicationEnvAction]:
+    production_rows = [row for row in rows if row.get("is_preview") is not True]
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for row in production_rows:
+        key = str(row.get("key", ""))
+        if key in expected_env:
+            by_key.setdefault(key, []).append(row)
+
+    actions: list[ApplicationEnvAction] = []
+    for key, value in sorted(expected_env.items()):
+        candidates = by_key.get(key, [])
+        if not candidates:
+            actions.append(ApplicationEnvAction("create", key))
+            continue
+        if len(candidates) > 1:
+            raise SystemExit(f"{key}: duplicate application env rows require manual cleanup.")
+        if not application_env_row_matches(candidates[0], key, value):
+            actions.append(ApplicationEnvAction("update", key))
+    return actions
+
+
+def apply_application_env_action(
+    *,
+    api_url: str,
+    token: str,
+    app_uuid: str,
+    action: ApplicationEnvAction,
+    expected_env: dict[str, str],
+) -> None:
+    payload = application_env_payload(action.key, expected_env[action.key])
+    if action.action == "create":
+        request_json(
+            api_url=api_url,
+            token=token,
+            method="POST",
+            path=f"/api/v1/applications/{app_uuid}/envs",
+            payload=payload,
+        )
+        return
+    if action.action == "update":
+        request_json(
+            api_url=api_url,
+            token=token,
+            method="PATCH",
+            path=f"/api/v1/applications/{app_uuid}/envs",
+            payload=payload,
+        )
+        return
+    raise SystemExit(f"Unknown application env action {action.action!r}")
+
+
+def sync_application_env(
+    *,
+    api_url: str,
+    token: str,
+    app_name: str,
+    app_uuid: str,
+    expected_env: dict[str, str],
+) -> None:
+    if not expected_env:
+        return
+
+    payload = request_json(
+        api_url=api_url,
+        token=token,
+        method="GET",
+        path=f"/api/v1/applications/{app_uuid}/envs",
+    )
+    rows = get_payload_list(payload, "data")
+    actions = plan_application_env_actions(rows=rows, expected_env=expected_env)
+    if not actions:
+        log(f"{app_name}: application_env=ok keys={len(expected_env)}")
+        return
+
+    for action in actions:
+        apply_application_env_action(
+            api_url=api_url,
+            token=token,
+            app_uuid=app_uuid,
+            action=action,
+            expected_env=expected_env,
+        )
+        log(f"{app_name}: application_env={action.action} key={action.key}")
+
+
 def application_patch_payload(
     *,
     expected: dict[str, Any],
@@ -388,6 +520,13 @@ def main() -> int:
                 f"{app_name}: expected Coolify Docker Image Application "
                 f"(build_pack=dockerimage), found {current_build_pack!r}."
             )
+        sync_application_env(
+            api_url=args.api_url,
+            token=args.token,
+            app_name=app_name,
+            app_uuid=app_uuid,
+            expected_env=application_env(expected),
+        )
         if app_name not in apps_to_update_names:
             log(f"{app_name}: image_tag=unchanged uuid={app_uuid}")
             continue

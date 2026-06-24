@@ -152,6 +152,21 @@ def load_stack_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def application_env(expected: dict[str, Any]) -> dict[str, str]:
+    raw = expected.get("application_env", {})
+    if not isinstance(raw, dict):
+        raise SystemExit("Application application_env must be an object.")
+
+    normalized: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit("Application application_env keys must be non-empty strings.")
+        if not isinstance(value, str):
+            raise SystemExit(f"{key}: application_env values must be strings.")
+        normalized[key] = value
+    return normalized
+
+
 def explicit_uuid(expected: dict[str, Any]) -> str | None:
     value = expected.get("uuid")
     if isinstance(value, str) and value and not value.startswith("REPLACE_"):
@@ -365,7 +380,8 @@ def audit_env(
     token: str,
     app_name: str,
     app_uuid: str,
-    expected_keys: set[str],
+    expected_shared_keys: set[str],
+    expected_application_env: dict[str, str],
 ) -> tuple[list[str], dict[str, str]]:
     payload = request_json(
         api_url=api_url,
@@ -384,12 +400,14 @@ def audit_env(
         by_key[key] = row
 
     keys = set(by_key)
+    expected_application_keys = set(expected_application_env)
+    expected_keys = expected_shared_keys | expected_application_keys
     for key in sorted(expected_keys - keys):
         errors.append(f"{app_name}: missing env key {key}")
     for key in sorted(keys - expected_keys):
         errors.append(f"{app_name}: extra env key {key}")
 
-    for key in sorted(expected_keys & keys):
+    for key in sorted(expected_shared_keys & keys):
         row = by_key[key]
         expected_ref = f"{{{{environment.{key}}}}}"
         if row.get("is_shared") is not True:
@@ -410,13 +428,32 @@ def audit_env(
             if isinstance(real_value, str) and looks_like_placeholder(real_value):
                 errors.append(f"{app_name}: {key} still looks like a placeholder")
 
+    for key, expected_value in sorted(expected_application_env.items()):
+        row = by_key.get(key)
+        if not row:
+            continue
+        if row.get("is_shared") is True:
+            errors.append(f"{app_name}: {key} must be Application-specific, not shared")
+        if row.get("is_literal") is not True:
+            errors.append(f"{app_name}: {key} must be stored as a literal value")
+        if row.get("is_runtime") is not True:
+            errors.append(f"{app_name}: {key} is not marked as runtime")
+        if row.get("is_buildtime") is not False:
+            errors.append(f"{app_name}: {key} must not be exposed at build time")
+
+        actual_value = row.get("real_value")
+        if actual_value is None:
+            actual_value = row.get("value")
+        if actual_value != expected_value:
+            errors.append(f"{app_name}: {key} has an unexpected value")
+
     digests = {
         key: value_digest(
             by_key[key].get("real_value")
             if by_key[key].get("real_value") is not None
             else by_key[key].get("value")
         )
-        for key in sorted(expected_keys & keys)
+        for key in sorted(expected_shared_keys & keys)
     }
     shared_refs = sum(1 for row in rows if row.get("is_shared") is True)
     runtime_only = sum(
@@ -424,7 +461,8 @@ def audit_env(
     )
     print(
         f"{app_name}: env_rows={len(rows)} keys={len(keys)} "
-        f"shared_refs={shared_refs} runtime_only={runtime_only}"
+        f"shared_refs={shared_refs} app_env={len(expected_application_env)} "
+        f"runtime_only={runtime_only}"
     )
     return errors, digests
 
@@ -583,7 +621,8 @@ def main() -> int:
             token=args.token,
             app_name=app_name,
             app_uuid=app_uuid,
-            expected_keys=expected_keys,
+            expected_shared_keys=expected_keys,
+            expected_application_env=application_env(expected),
         )
         all_errors.extend(env_errors)
         app_digests[app_name] = digests

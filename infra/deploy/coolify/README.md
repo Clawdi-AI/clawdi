@@ -27,8 +27,9 @@ deployment-specific backend image.
   environment shared variables and wire each Application env row as
   `KEY={{environment.KEY}}`.
 - `production-stack.json`: expected non-secret Application shape, image source,
-  runtime role, storage mounts, deployment tag, and operational constraints. It
-  is a public template, not a live production value dump.
+  Application-specific runtime env, storage mounts, deployment tag, and
+  operational constraints. It is a public template, not a live production value
+  dump.
 - `audit_stack.py`: read-only live configuration audit. It checks Application
   shape, storage, env wiring, and optional deployment commit parity without
   printing secret values.
@@ -52,12 +53,13 @@ Configure both Applications with the fields recorded in `production-stack.json`.
 Use placeholders in committed files and put environment-specific destination,
 route, and host storage values in an ignored local overlay.
 
-The API and worker intentionally receive the same env key set even when a key is
-mostly used by HTTP handlers. This keeps deploy drift obvious and avoids a
-second worker-specific env contract. The audit is exact about key parity:
-every key in `.env.example`, including optional empty keys, must exist on each
-Application as a runtime-only shared environment variable, and extra Application
-env rows are treated as drift.
+The API and worker intentionally receive the same shared env key set even when a
+key is mostly used by HTTP handlers. This keeps deploy drift obvious and avoids
+a second worker-specific shared env contract. The audit is exact about shared
+key parity: every key in `.env.example`, including optional empty keys, must
+exist on each Application as a runtime-only shared environment variable. Extra
+Application env rows are treated as drift unless they are declared in that
+Application's `application_env` block in `production-stack.json`.
 
 Coolify may return resolved values for shared env rows instead of the literal
 `{{environment.KEY}}` reference. The audit verifies shared/runtime flags, key
@@ -77,11 +79,16 @@ explicit multi-replica lease or claim contract.
 
 The Docker Image Application build pack does not use `start_command`. The
 shared backend image starts `python -m app.runtime_entrypoint`, and each
-Application selects its role through `CLAWDI_PROCESS_ROLE` in
-`custom_docker_run_options`:
+Application selects its role through a runtime-only Application env row declared
+in `production-stack.json`:
 
 - `api`: runs `alembic upgrade head`, then Uvicorn on port `8000`.
 - `channels-worker`: runs `python -m app.workers.channels`.
+
+Do not pass `CLAWDI_PROCESS_ROLE` through `custom_docker_run_options`; Coolify
+Docker Image Applications do not reliably inject those `--env` values into the
+container. The deploy script applies declared `application_env` rows through the
+Coolify Application env API before queuing a deployment.
 
 Do not add a Dockerfile-level `HEALTHCHECK` to the shared backend image. The
 same image runs both the API and worker roles, so health checks belong on the
