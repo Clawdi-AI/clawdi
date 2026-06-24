@@ -31,3 +31,13 @@ def test_settings_normalizes_coolify_line_continuation_clerk_pem_newlines():
 
     assert settings.clerk_pem_public_key == pem
     load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))
+
+
+def test_settings_normalizes_coolify_line_continuation_clerk_pem_from_env(monkeypatch):
+    pem = _public_pem()
+    monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", pem.replace("\n", "\\" + "\n"))
+
+    settings = Settings(_env_file=None)
+
+    assert settings.clerk_pem_public_key == pem
+    load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))

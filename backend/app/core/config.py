@@ -1,4 +1,6 @@
-from pydantic import field_validator
+from typing import Self
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -7,11 +9,7 @@ def _normalize_pem_env_value(value: str) -> str:
     # a line-continuation backslash followed by a real newline. Build the latter
     # pattern explicitly so Python source line-continuation rules cannot change
     # the string we are matching.
-    return (
-        value.replace("\\" + "\r\n", "\n")
-        .replace("\\" + "\n", "\n")
-        .replace("\\n", "\n")
-    )
+    return value.replace("\\" + "\r\n", "\n").replace("\\" + "\n", "\n").replace("\\n", "\n")
 
 
 class Settings(BaseSettings):
@@ -45,6 +43,12 @@ class Settings(BaseSettings):
         if isinstance(v, str) and "BEGIN PUBLIC KEY" in v:
             return _normalize_pem_env_value(v)
         return v
+
+    @model_validator(mode="after")
+    def _normalize_loaded_env_values(self) -> Self:
+        if "BEGIN PUBLIC KEY" in self.clerk_pem_public_key:
+            self.clerk_pem_public_key = _normalize_pem_env_value(self.clerk_pem_public_key)
+        return self
 
     app_name: str = "clawdi"
     environment: str = "development"  # development | staging | production
