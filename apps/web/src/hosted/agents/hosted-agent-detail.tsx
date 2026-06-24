@@ -932,7 +932,8 @@ function ComputeTab({
 	const runAction = useActionLock();
 	const ci = deployment.config_info;
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
-	const [name, setName] = useState(deployment.name);
+	const currentDisplayName = deploymentDisplayName(deployment.name);
+	const [name, setName] = useState(currentDisplayName);
 	const [term, setTerm] = useState(1);
 	const configured = new Set(ci?.configured_agents ?? []);
 	const envs = ci?.clawdi_cloud_environments ?? {};
@@ -955,8 +956,8 @@ function ComputeTab({
 				? "An upgrade may already be pending for this Free agent."
 				: "Upgrade is available once this Free agent is running or stopped.";
 	useEffect(() => {
-		setName(deployment.name);
-	}, [deployment.name]);
+		setName(currentDisplayName);
+	}, [currentDisplayName]);
 	useEffect(() => {
 		if (!perfOffers.length || perfOffers.some((offer) => offer.billing_term_months === term)) {
 			return;
@@ -1012,11 +1013,11 @@ function ComputeTab({
 							onChange={(e) => setName(e.target.value)}
 							placeholder="Agent name"
 							className="flex-1"
-							maxLength={120}
+							maxLength={64}
 						/>
 						<Button
 							onClick={() => rename.mutate({ id: deployment.id, name: name.trim() })}
-							disabled={!name.trim() || name.trim() === deployment.name || rename.isPending}
+							disabled={!name.trim() || name.trim() === currentDisplayName || rename.isPending}
 						>
 							{rename.isPending ? <Spinner className="size-3.5" /> : null}
 							Save

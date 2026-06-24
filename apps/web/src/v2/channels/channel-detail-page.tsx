@@ -17,7 +17,7 @@ import {
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { InfoCard } from "@/components/info-card";
 import { PageHeader } from "@/components/page-header";
@@ -85,7 +85,9 @@ type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
 /** "machine · agent-type" label for an agent id, falling back to the raw id. */
 function envName(envs: EnvironmentList, agentId: string): string {
 	const env = envs?.find((e) => e.id === agentId);
-	return env ? `${env.machine_name} · ${agentTypeLabel(env.agent_type)}` : agentId;
+	return env
+		? `${cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} · ${agentTypeLabel(env.agent_type)}`
+		: agentId;
 }
 
 export function ChannelDetailPage() {
@@ -522,7 +524,8 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							<SelectContent>
 								{(envs.data ?? []).map((env) => (
 									<SelectItem key={env.id} value={env.id}>
-										{env.machine_name} · {agentTypeLabel(env.agent_type)}
+										{cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} ·{" "}
+										{agentTypeLabel(env.agent_type)}
 									</SelectItem>
 								))}
 							</SelectContent>

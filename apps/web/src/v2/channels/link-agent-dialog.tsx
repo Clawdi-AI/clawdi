@@ -2,7 +2,7 @@
 
 import { CircleCheck } from "lucide-react";
 import { useEffect, useState } from "react";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -113,7 +113,8 @@ export function LinkAgentDialog({
 							<SelectContent>
 								{agents.map((env) => (
 									<SelectItem key={env.id} value={env.id}>
-										{env.machine_name} · {agentTypeLabel(env.agent_type)}
+										{cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} ·{" "}
+										{agentTypeLabel(env.agent_type)}
 									</SelectItem>
 								))}
 							</SelectContent>
