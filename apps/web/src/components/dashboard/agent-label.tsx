@@ -80,7 +80,8 @@ export function agentTypeLabel(type: string | null | undefined): string {
  * eats column width without conveying any information. */
 export function cleanMachineName(raw: string | null | undefined): string {
 	if (!raw) return "";
-	return raw.replace(/\.(local|lan)$/i, "");
+	const cleaned = raw.replace(/\.(local|lan)$/i, "").trim();
+	return cleaned;
 }
 
 /** Middle-truncate generated deployment names for display. A fleet of

@@ -18,11 +18,11 @@ export function isCloudEnvId(value: string): boolean {
 }
 
 /**
- * Strip the hosted service's auto-generated `openclaw-` / `hermes-` app-slug
- * prefix from a deployment name. Every deployment gets the prefix regardless of which
- * runtimes are active, so it reads as misleading runtime metadata on a tile for
- * the other runtime. A user-given name (no prefix match) is kept intact.
+ * Keep user-given deployment names intact while preserving the existing
+ * runtime-prefix cleanup for generated runtime labels.
  */
 export function deploymentDisplayName(name: string): string {
-	return name.replace(/^(openclaw|hermes)-/i, "") || name;
+	const trimmed = name.trim();
+	if (!trimmed) return "Hosted Agent";
+	return trimmed.replace(/^(openclaw|hermes)-/i, "") || trimmed;
 }
