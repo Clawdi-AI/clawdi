@@ -104,7 +104,7 @@ function InnerForm({
  * Elements against the `client_secret` from `POST /wallet/topup`.
  *
  * Three degrade paths so the dialog never silently breaks:
- *  - no publishable key (OSS / preview) → invoice-billing guidance.
+ *  - no publishable key (OSS / preview) → explicit configuration error.
  *  - Stripe.js fails to load (network / blocked script) → explicit error +
  *    Retry that re-injects the script (rather than mounting `Elements` against
  *    a rejected promise, which renders nothing).
@@ -147,8 +147,8 @@ export function StripePaymentForm({
 			<Alert data-hosted="true">
 				<AlertCircle />
 				<AlertDescription>
-					Card payments aren’t configured in this environment. Switch your wallet to invoice billing
-					to top up, or set a Stripe publishable key.
+					Card payments aren’t configured in this environment. Set a Stripe publishable key to top
+					up.
 				</AlertDescription>
 			</Alert>
 		);

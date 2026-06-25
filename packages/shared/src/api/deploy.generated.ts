@@ -447,10 +447,6 @@ export interface components {
             checkout_url: string;
             /** Client Secret */
             client_secret?: string | null;
-            /** Invoice Url */
-            invoice_url?: string | null;
-            /** Invoice Id */
-            invoice_id?: string | null;
         };
         /** V2ComputeCheckoutRequest */
         V2ComputeCheckoutRequest: {
@@ -461,8 +457,6 @@ export interface components {
              * @default 1
              */
             billing_term_months: number;
-            /** Invoice Days Until Due */
-            invoice_days_until_due?: number | null;
             deploy_config?: components["schemas"]["V2HostedDeployRequest"] | null;
             /** Upgrade Deployment Id */
             upgrade_deployment_id?: string | null;
@@ -954,10 +948,6 @@ export interface components {
             pending_collection_method_effective_at?: string | null;
             /** Entitled Until */
             entitled_until?: string | null;
-            /** Invoice Days Until Due */
-            invoice_days_until_due?: number | null;
-            /** Invoice Due At */
-            invoice_due_at?: string | null;
             /** Contract Source */
             contract_source?: string | null;
             /** Prepaid Ends At */
@@ -990,7 +980,7 @@ export interface components {
         /** V2WalletAutoReloadRequest */
         V2WalletAutoReloadRequest: {
             /** Payment Mode */
-            payment_mode?: ("card" | "invoice") | null;
+            payment_mode?: "card" | null;
             /** Auto Reload Enabled */
             auto_reload_enabled?: boolean | null;
             /** Auto Reload Threshold Credits */
@@ -1032,9 +1022,9 @@ export interface components {
             balance_snapshot_at?: string | null;
             /**
              * Payment Mode
-             * @enum {string}
+             * @constant
              */
-            payment_mode: "card" | "invoice";
+            payment_mode: "card";
             /** Auto Reload Enabled */
             auto_reload_enabled: boolean;
             /** Auto Reload Threshold Credits */
@@ -1064,12 +1054,6 @@ export interface components {
             payment_intent_id?: string | null;
             /** Client Secret */
             client_secret?: string | null;
-            /** Url */
-            url?: string | null;
-            /** Invoice Url */
-            invoice_url?: string | null;
-            /** Invoice Id */
-            invoice_id?: string | null;
             /** Credits Added */
             credits_added?: number | null;
         };

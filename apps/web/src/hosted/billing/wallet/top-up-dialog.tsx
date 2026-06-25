@@ -92,12 +92,6 @@ export function TopUpDialog({
 				setStep("pay");
 				return;
 			}
-			// Invoice mode → hand off to the hosted invoice page.
-			const url = "url" in result ? result.url || result.invoice_url : null;
-			if (url) {
-				window.location.href = url;
-				return;
-			}
 			toast.error("Couldn’t start top-up", {
 				description: "No payment was returned. Please try again.",
 			});

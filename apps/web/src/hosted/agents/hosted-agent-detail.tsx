@@ -951,7 +951,7 @@ function ComputeTab({
 				ui_mode: "hosted",
 				upgrade_deployment_id: deployment.id,
 			});
-			if (redirectToCheckout(result.action_url || result.checkout_url || result.invoice_url)) {
+			if (redirectToCheckout(result.action_url || result.checkout_url)) {
 				return;
 			}
 			toast.error("Couldn’t start upgrade", {
