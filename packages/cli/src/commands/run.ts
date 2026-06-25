@@ -187,7 +187,8 @@ export async function run(
 		process.exit(1);
 	}
 
-	const managedAiProviderEnv = await resolveManagedAiProviderEnv(spawnEnv);
+	const managedAiProviderEnv =
+		detectRuntimeMode() === "hosted" ? {} : await resolveManagedAiProviderEnv(spawnEnv);
 	const childEnv = { ...spawnEnv, ...managedAiProviderEnv };
 	if (hostedRuntimeRun.status === "ok") {
 		await spawnRuntimeInvocation(
@@ -282,6 +283,7 @@ function hostedGenericRunInvocation(
 		env: buildMitmBrokerEnv({
 			env: baseEnv,
 			profileBundlePath: paths.mitmProfileBundle,
+			secretFile: paths.managedSecretFile,
 		}),
 		configPath: paths.mitmProfileBundle,
 	};

@@ -1160,7 +1160,7 @@ function hasRuntimeCredential(input: {
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
 	try {
-		if (readFileSync(join(paths.runRoot, "sync", "auth-token"), "utf-8").trim()) return true;
+		if (readFileSync(paths.daemonAuthToken, "utf-8").trim()) return true;
 	} catch {
 		// Fall through to the configured auth environment variable.
 	}
@@ -2066,9 +2066,9 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 		},
 		{
 			name: "Ephemeral runtime state",
-			ok: existsSync(paths.runRoot) && writable(paths.runRoot),
+			ok: existsSync(paths.runRoot),
 			detail: paths.runRoot,
-			hint: "The runtime tmpfs path should be recreated on each boot.",
+			hint: "The runtime tmpfs path should be recreated on each boot and owned by the system boundary.",
 		},
 		{
 			name: "Sensitive instance data",

@@ -25,6 +25,7 @@ interface BrokerCall {
 	profileBundlePath: string;
 	proxyUrl?: string;
 	caFile?: string;
+	secretFile?: string;
 	authToken?: string;
 }
 
@@ -108,6 +109,7 @@ function recordBroker(output?: { proxyUrl?: string; caFile?: string }): {
 			profileBundlePath: input.profileBundlePath,
 			proxyUrl: input.env.CLAWDI_MITM_PROXY_URL,
 			caFile: input.env.CLAWDI_MITM_CA_FILE,
+			secretFile: input.env.CLAWDI_MITM_SECRET_FILE,
 			authToken: input.env.CLAWDI_AUTH_TOKEN,
 		});
 		return {
@@ -144,7 +146,7 @@ describe("run command project folder selection", () => {
 					HOME: "/home/clawdi",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/mitm/secrets.json",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/runtime-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-mitm-placeholder",
 				},
@@ -176,7 +178,7 @@ describe("run command project folder selection", () => {
 					PATH: "/home/clawdi/.local/bin:/usr/bin",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/mitm/secrets.json",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/runtime-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					SSL_CERT_FILE: "/run/clawdi/mitm/brokers/test/ca.pem",
 				},
@@ -266,16 +268,19 @@ describe("run command project folder selection", () => {
 		);
 	});
 
-	it("injects hosted runtime provider secrets from the private runtime secret file", async () => {
+	it("passes hosted runtime provider secrets only to the managed MITM broker", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const secretFile = join(runRoot, "mitm", "secrets.json");
+		const secretFile = join(runRoot, "secrets", "runtime-secrets.json");
+		const mitmBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(runRoot, "mitm"), { recursive: true });
+		mkdirSync(join(runRoot, "secrets"), { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
+		writeFileSync(mitmBundle, JSON.stringify({ profiles: [] }));
 		writeFileSync(
 			secretFile,
 			JSON.stringify({
@@ -294,27 +299,28 @@ describe("run command project folder selection", () => {
 				command: "openclaw",
 				defaultArgs: ["gateway", "run"],
 				env: {},
-				secretEnv: {
-					CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
-				},
 				secretFilePath: secretFile,
 				prependPath: [join(tmpRoot, "home", "clawdi", ".openclaw", "bin")],
 				cwd: projectRoot,
 				commandPath: openclawPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
+				mitmProfileBundlePath: mitmBundle,
 			}),
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
+		const broker = recordBroker();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
 
-		await run(["openclaw"], {}, spawnImpl);
+		await run(["openclaw"], {}, spawnImpl, broker.brokerFactory);
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
+		expect(broker.calls).toHaveLength(1);
+		expect(broker.calls[0].secretFile).toBe(secretFile);
+		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
@@ -645,6 +651,7 @@ describe("run command project folder selection", () => {
 			runtime: "generic",
 			profileBundlePath: mitmProfileBundle,
 			proxyUrl: "http://127.0.0.1:0",
+			secretFile: join(runRoot, "secrets", "runtime-secrets.json"),
 		});
 		expect(broker.calls[0].caFile?.startsWith(join(runRoot, "mitm", "brokers"))).toBe(true);
 		expect(broker.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
@@ -662,6 +669,78 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(
 			join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
 		);
+	});
+
+	it("does not inject cloud-managed AI provider keys into hosted runtime commands", async () => {
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		const catalogDir = join(fakeClawdiHome, "ai-providers");
+		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(catalogDir, { recursive: true });
+		writeFileSync(
+			mitmProfileBundle,
+			JSON.stringify({
+				schemaVersion: "clawdi.mitmProfiles.v1",
+				generatedAt: "2026-06-05T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				profiles: [],
+			}),
+		);
+		writeFileSync(
+			join(catalogDir, "catalog.json"),
+			JSON.stringify({
+				schema_version: 1,
+				providers: [
+					{
+						id: "managed-openai",
+						type: "openai",
+						label: "Managed OpenAI",
+						base_url: "https://provider.test/v1",
+						default_model: "gpt-5.5",
+						api_mode: "openai_responses",
+						auth: { type: "api_key", source: "managed" },
+						managed_by: "user",
+						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+					},
+				],
+				defaults: { chat_provider_id: "managed-openai" },
+			}),
+		);
+		const { calls, spawnImpl } = recordSpawn();
+		const broker = recordBroker({
+			proxyUrl: "http://127.0.0.1:19191",
+			caFile: join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+		});
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/api/vault/resolve",
+				response: () => jsonResponse({ RUNTIME_VALUE: "from-vault" }),
+			},
+		]);
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		try {
+			await run(
+				["codex", "exec", "hello"],
+				{ allVaultEnv: true, projectFolder: false },
+				spawnImpl,
+				broker.brokerFactory,
+			);
+		} finally {
+			restore();
+		}
+
+		expect(captured.map((request) => request.path)).toEqual(["/api/vault/resolve"]);
+		expect(broker.calls).toHaveLength(1);
+		expect(broker.calls[0].secretFile).toBe(join(runRoot, "secrets", "runtime-secrets.json"));
+		expect(calls).toHaveLength(1);
+		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
+		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
 
 	it("uses the linked Project folder when resolving vault env", async () => {

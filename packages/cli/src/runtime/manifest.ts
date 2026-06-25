@@ -49,7 +49,7 @@ import {
 	type SupportedRuntimeName,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { UI_BRIDGE_LISTEN_HOST_ENV } from "./ui-bridge";
+import { UI_ACCESS_TOKEN_ENV, UI_BRIDGE_LISTEN_HOST_ENV } from "./ui-bridge";
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -115,17 +115,20 @@ function writeSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
 ): string | null {
-	const path = join(paths.runRoot, "mitm", "secrets.json");
+	const path = paths.managedSecretFile;
+	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
 	if (!secretValues || Object.keys(secretValues).length === 0) {
 		rmSync(path, { force: true });
+		rmSync(legacyPath, { force: true });
 		return null;
 	}
+	rmSync(legacyPath, { force: true });
 	writePrivateFileAtomic(path, `${JSON.stringify(secretValues, null, 2)}\n`, {
 		mode: 0o600,
 		dirMode: 0o700,
 	});
-	makeRuntimeUserPrivateDir(dirname(path));
-	makeRuntimeUserOwned(path);
+	makeRootOwned(dirname(path));
+	makeRootOwned(path);
 	try {
 		chmodSync(path, 0o600);
 	} catch {
@@ -237,6 +240,15 @@ function makeRuntimeUserOwned(path: string): void {
 	} catch {
 		// Best effort: hosted demos without a system user still exercise the
 		// manifest path, but production images provide CLAWDI_RUNTIME_USER.
+	}
+}
+
+function makeRootOwned(path: string): void {
+	if (!runningAsRoot()) return;
+	try {
+		chownSync(path, 0, 0);
+	} catch {
+		// Best effort for local tests and non-root development environments.
 	}
 }
 
@@ -643,21 +655,6 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
-function hostedProviderSecretEnv(manifest: RuntimeManifest): Record<string, string> {
-	const providers = manifest.projection?.providers;
-	if (!providers || Object.keys(providers).length === 0) return {};
-	const secretEnv: Record<string, string> = {};
-	for (const [providerId, raw] of Object.entries(providers)) {
-		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
-		const input = raw as Record<string, unknown>;
-		const apiKeySecretRef =
-			typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
-		if (!apiKeySecretRef) continue;
-		secretEnv[hostedProviderRuntimeEnvName(providerId, input)] = apiKeySecretRef;
-	}
-	return secretEnv;
-}
-
 function isEnvKey(value: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
@@ -1020,16 +1017,19 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 }
 
 function writeDaemonAuthToken(paths: RuntimePaths): string | null {
-	const path = join(paths.runRoot, "sync", "auth-token");
+	const path = paths.daemonAuthToken;
+	const legacyPath = join(paths.runRoot, "sync", "auth-token");
 	const token = process.env.CLAWDI_AUTH_TOKEN?.trim();
 	if (!token) {
 		if (existsSync(path)) return path;
 		rmSync(path, { force: true });
+		rmSync(legacyPath, { force: true });
 		return null;
 	}
+	rmSync(legacyPath, { force: true });
 	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
-	makeRuntimeUserOwned(dirname(path));
-	makeRuntimeUserOwned(path);
+	makeRootOwned(dirname(path));
+	makeRootOwned(path);
 	return path;
 }
 
@@ -1234,6 +1234,7 @@ function writeSupervisorConfig(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
+		[UI_ACCESS_TOKEN_ENV]: "",
 		[UI_BRIDGE_LISTEN_HOST_ENV]: process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		PATH: supervisorPath(paths),
 	};
@@ -1273,8 +1274,8 @@ function writeSupervisorConfig(
 		"",
 		"[unix_http_server]",
 		`file=${paths.runRoot}/supervisor.sock`,
-		"chmod=0770",
-		`chown=${runtimeUser}:${runtimeUser}`,
+		"chmod=0700",
+		"chown=root:root",
 		"",
 		"[supervisorctl]",
 		`serverurl=unix://${paths.runRoot}/supervisor.sock`,
@@ -1316,7 +1317,6 @@ function writeSupervisorConfig(
 			"[program:clawdi-daemon]",
 			`command=/bin/sh -lc ${shellQuote(script)}`,
 			`directory=${workspaceRoot}`,
-			`user=${runtimeUser}`,
 			"autostart=true",
 			"autorestart=true",
 			"startsecs=2",
@@ -1336,6 +1336,7 @@ function writeSupervisorConfig(
 		const uiBridgeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
+			[UI_ACCESS_TOKEN_ENV]: process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "",
 			CLAWDI_RUNTIME_REV: uiBridgeProgramRevision(manifest),
 		});
 		lines.push(
@@ -1434,7 +1435,6 @@ export function convergeRuntimeManifest(
 	makeRuntimeUserOwned(paths.userHome);
 	makeRuntimeUserPrivateDir(paths.clawdiHome);
 	makeRuntimeUserOwned(workspaceRoot);
-	makeRuntimeUserOwned(paths.runRoot);
 	mkdirSync(paths.installInventory, { recursive: true });
 	mkdirSync(paths.projectionRoot, { recursive: true });
 	mkdirSync(semRoot, { recursive: true });
@@ -1499,7 +1499,6 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
-	const providerSecretEnv = hostedProviderSecretEnv(manifest);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
@@ -1588,7 +1587,6 @@ export function convergeRuntimeManifest(
 					workspaceRoot,
 					mitmProfileBundlePath,
 					settings: runtime.run,
-					secretEnv: providerSecretEnv,
 					secretFilePath: mitmSecretFile,
 				}),
 				paths,

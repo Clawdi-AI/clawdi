@@ -74,6 +74,9 @@ export interface RuntimeBootStatus {
 		cloudStatus: string;
 		cloudResult: string;
 		runRoot: string;
+		managedSecretRoot: string;
+		managedSecretFile: string;
+		daemonAuthToken: string;
 		instanceData: string;
 		sensitiveInstanceData: string;
 		projectionRoot: string;
@@ -112,6 +115,9 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cloudStatus: paths.cloudStatus,
 		cloudResult: paths.cloudResult,
 		runRoot: paths.runRoot,
+		managedSecretRoot: paths.managedSecretRoot,
+		managedSecretFile: paths.managedSecretFile,
+		daemonAuthToken: paths.daemonAuthToken,
 		instanceData: paths.instanceData,
 		sensitiveInstanceData: paths.sensitiveInstanceData,
 		projectionRoot: paths.projectionRoot,

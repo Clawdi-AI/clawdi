@@ -45,6 +45,9 @@ export interface RuntimePaths {
 	installInventory: string;
 	projectionRoot: string;
 	runRoot: string;
+	managedSecretRoot: string;
+	managedSecretFile: string;
+	daemonAuthToken: string;
 	instanceData: string;
 	sensitiveInstanceData: string;
 	workspaceRoot: string;
@@ -132,6 +135,9 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		installInventory: join(serviceStateRoot, "install-inventory"),
 		projectionRoot: join(serviceStateRoot, "config", "projections"),
 		runRoot,
+		managedSecretRoot: join(runRoot, "secrets"),
+		managedSecretFile: join(runRoot, "secrets", "runtime-secrets.json"),
+		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),
 		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),
 		workspaceRoot: join(userHome, "clawdi"),
