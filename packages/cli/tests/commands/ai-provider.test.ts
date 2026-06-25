@@ -745,7 +745,7 @@ describe("ai-provider commands", () => {
 						type: "custom_openai_compatible",
 						base_url: "https://sub2api.example.test/v1",
 						default_model: "openai-codex/gpt-5.5",
-						api_mode: "codex_responses",
+						api_mode: "openai_responses",
 						auth: {
 							type: "api_key",
 							source: "managed",
@@ -1680,18 +1680,18 @@ describe("ai-provider commands", () => {
 				schema_version: 1,
 				providers: [
 					{
-						id: "clawdi-managed",
+						id: "custom-openai",
 						type: "custom_openai_compatible",
-						label: "Clawdi AI",
+						label: "Custom OpenAI",
 						base_url: "https://sub2api.example.test/v1",
 						default_model: "openai-codex/gpt-5.5",
 						api_mode: "codex_responses",
 						auth: { type: "api_key", source: "managed" },
-						managed_by: "clawdi",
-						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+						managed_by: "user",
+						runtime_env_name: "CUSTOM_OPENAI_API_KEY",
 					},
 				],
-				defaults: { chat_provider_id: "clawdi-managed" },
+				defaults: { chat_provider_id: "custom-openai" },
 			}),
 		);
 
@@ -1721,7 +1721,7 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("projects Clawdi-managed OpenAI chat providers directly to OpenClaw", async () => {
+	it("projects Clawdi-managed OpenAI Responses providers directly to OpenClaw", async () => {
 		const catalog = {
 			schema_version: 1,
 			providers: [
@@ -1731,10 +1731,10 @@ describe("ai-provider commands", () => {
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
 					default_model: "openai-codex/gpt-5.5",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed" },
@@ -1747,21 +1747,21 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers["clawdi-managed"].baseUrl).toBe(
 			"https://sub2api.example.test/v1",
 		);
-		expect(patch.models.providers["clawdi-managed"].api).toBe("openai-completions");
+		expect(patch.models.providers["clawdi-managed"].api).toBe("openai-responses");
 		expect(patch.models.providers["clawdi-managed"].agentRuntime).toBeUndefined();
 		expect(patch.models.providers["clawdi-managed"].models[0]).toMatchObject({
 			id: "openai-codex/gpt-5.5",
 			name: "openai-codex/gpt-5.5",
-			api: "openai-completions",
+			api: "openai-responses",
 		});
 		expect(patch.models.providers["clawdi-managed"].apiKey).toEqual({
 			source: "env",
 			provider: "default",
-			id: "CLAWDI_OPENAI_API_KEY",
+			id: "CLAWDI_MANAGED_OPENAI_API_KEY",
 		});
 	});
 
-	it("projects Clawdi-managed OpenAI chat providers directly to Hermes", () => {
+	it("projects Clawdi-managed OpenAI Responses providers directly to Hermes", () => {
 		const projection = buildAgentTargetProjection("hermes", {
 			schema_version: 1,
 			providers: [
@@ -1771,10 +1771,10 @@ describe("ai-provider commands", () => {
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
 					default_model: "openai-codex/gpt-5.5",
-					api_mode: "openai_chat",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
-					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
+					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed" },
@@ -1783,9 +1783,9 @@ describe("ai-provider commands", () => {
 		const patch = projection.files[0]?.content ?? "";
 		expect(patch).toContain('provider: "custom:clawdi-managed"');
 		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
-		expect(patch).toContain('transport: "chat_completions"');
+		expect(patch).toContain('transport: "codex_responses"');
 		expect(patch).toContain('default_model: "openai-codex/gpt-5.5"');
-		expect(patch).toContain('key_env: "CLAWDI_OPENAI_API_KEY"');
+		expect(patch).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
 		expect(patch).not.toContain("chatgpt.com");
 		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
 	});
@@ -1986,20 +1986,20 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("imports Clawdi-managed Hermes providers as Codex Responses", async () => {
-		const hermesConfig = join(tmpHome, "managed-hermes-config.yaml");
+	it("imports user Hermes providers using Responses transport", async () => {
+		const hermesConfig = join(tmpHome, "responses-hermes-config.yaml");
 		writeFileSync(
 			hermesConfig,
 			[
 				"model:",
-				'  provider: "custom:clawdi-managed"',
+				'  provider: "custom:custom-openai"',
 				"providers:",
-				"  clawdi-managed:",
-				'    name: "Clawdi AI"',
+				"  custom-openai:",
+				'    name: "Custom OpenAI"',
 				'    api: "https://sub2api.example.test/v1"',
 				'    transport: "codex_responses"',
-				'    default_model: "openai-codex/gpt-5.5"',
-				'    key_env: "CLAWDI_OPENAI_API_KEY"',
+				'    default_model: "gpt-5.5"',
+				'    key_env: "CUSTOM_OPENAI_API_KEY"',
 				"",
 			].join("\n"),
 		);
@@ -2012,11 +2012,11 @@ describe("ai-provider commands", () => {
 
 		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
 		expect(catalog.providers[0]).toMatchObject({
-			id: "clawdi-managed",
-			type: "custom_openai_compatible",
-			default_model: "openai-codex/gpt-5.5",
-			api_mode: "codex_responses",
-			auth: { type: "secret_ref", ref: "env:CLAWDI_OPENAI_API_KEY" },
+			id: "custom-openai",
+			type: "openai",
+			default_model: "gpt-5.5",
+			api_mode: "openai_responses",
+			auth: { type: "secret_ref", ref: "env:CUSTOM_OPENAI_API_KEY" },
 		});
 	});
 

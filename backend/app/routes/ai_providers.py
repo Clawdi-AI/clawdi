@@ -70,6 +70,9 @@ CODEX_OAUTH_CONFIG = {
     },
 }
 BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
+MANAGED_AI_PROVIDER_ID = "clawdi-managed"
+MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
+MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 RESERVED_OAUTH_AUTHORIZE_PARAMS = {
     "audience",
     "client_id",
@@ -881,7 +884,31 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")
     if body.type == "custom_openai_compatible" and body.api_mode is None:
         errors.append("custom_openai_compatible requires api_mode")
+    errors.extend(_validate_managed_provider_contract(body))
     errors.extend(_validate_auth(body.provider_id, body.auth))
+    return errors
+
+
+def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
+    is_managed_contract = body.provider_id == MANAGED_AI_PROVIDER_ID or body.managed_by == "clawdi"
+    if not is_managed_contract:
+        return []
+
+    errors: list[str] = []
+    if body.provider_id != MANAGED_AI_PROVIDER_ID:
+        errors.append(f"managed Clawdi provider must use provider_id {MANAGED_AI_PROVIDER_ID}")
+    if body.managed_by != "clawdi":
+        errors.append("clawdi-managed provider must be managed_by clawdi")
+    if body.type != "custom_openai_compatible":
+        errors.append("managed Clawdi provider must use custom_openai_compatible")
+    if body.api_mode != MANAGED_AI_PROVIDER_API_MODE:
+        errors.append(f"managed Clawdi provider must use api_mode {MANAGED_AI_PROVIDER_API_MODE}")
+    if body.auth.type != "api_key" or body.auth.source != "managed":
+        errors.append("managed Clawdi provider must use managed api_key auth")
+    if body.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV:
+        errors.append(
+            f"managed Clawdi provider must use runtime_env_name {MANAGED_AI_PROVIDER_RUNTIME_ENV}"
+        )
     return errors
 
 

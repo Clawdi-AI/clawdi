@@ -121,6 +121,10 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderType, string>> = {
 	mistral: "https://api.mistral.ai/v1",
 };
 
+const CLAWDI_MANAGED_PROVIDER_ID = "clawdi-managed";
+const CLAWDI_MANAGED_API_MODE = "openai_responses";
+const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
+
 export function isAiProviderId(input: string): boolean {
 	return PROVIDER_ID_RE.test(input);
 }
@@ -238,6 +242,7 @@ function validateProvider(
 	if (provider.runtime_env_name && !isRuntimeEnvName(provider.runtime_env_name)) {
 		errors.push(`Provider ${prefix} has invalid runtime_env_name.`);
 	}
+	validateManagedProviderContract(prefix, provider, errors);
 	const auth = (provider as { auth?: unknown }).auth;
 	if (!isRecord(auth)) {
 		errors.push(`Provider ${prefix} auth must be an object.`);
@@ -245,6 +250,42 @@ function validateProvider(
 		validateAuth(prefix, provider, auth as AiProviderAuth, errors, warnings, options);
 	}
 	validateModels(prefix, (provider as { models?: unknown }).models, errors);
+}
+
+function validateManagedProviderContract(
+	prefix: string,
+	provider: AiProvider,
+	errors: string[],
+): void {
+	const isManagedContract =
+		provider.id === CLAWDI_MANAGED_PROVIDER_ID || provider.managed_by === "clawdi";
+	if (!isManagedContract) return;
+
+	if (provider.id !== CLAWDI_MANAGED_PROVIDER_ID) {
+		errors.push(`Provider ${prefix} managed_by clawdi must use id ${CLAWDI_MANAGED_PROVIDER_ID}.`);
+	}
+	if (provider.managed_by !== "clawdi") {
+		errors.push(
+			`Provider ${prefix} with id ${CLAWDI_MANAGED_PROVIDER_ID} must be managed_by clawdi.`,
+		);
+	}
+	if (provider.type !== "custom_openai_compatible") {
+		errors.push(`Provider ${prefix} managed_by clawdi must use custom_openai_compatible.`);
+	}
+	if (provider.api_mode !== CLAWDI_MANAGED_API_MODE) {
+		errors.push(
+			`Provider ${prefix} managed_by clawdi must use api_mode ${CLAWDI_MANAGED_API_MODE}.`,
+		);
+	}
+	if (provider.runtime_env_name !== CLAWDI_MANAGED_RUNTIME_ENV) {
+		errors.push(
+			`Provider ${prefix} managed_by clawdi must use runtime_env_name ${CLAWDI_MANAGED_RUNTIME_ENV}.`,
+		);
+	}
+	const auth = (provider as { auth?: unknown }).auth;
+	if (!isRecord(auth) || auth.type !== "api_key" || auth.source !== "managed") {
+		errors.push(`Provider ${prefix} managed_by clawdi must use managed api_key auth.`);
+	}
 }
 
 function validateAuth(

@@ -635,7 +635,6 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 				auth: apiKeySecretRef
 					? { type: "api_key" as const, source: "managed" as const }
 					: { type: "none" as const },
-				managed_by: "clawdi" as const,
 				runtime_env_name: apiKeySecretRef ? runtimeEnvName : undefined,
 				models: [{ id: model, api_mode: apiMode }],
 			};

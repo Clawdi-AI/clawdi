@@ -22,6 +22,8 @@ router = APIRouter(prefix="/api/runtime", tags=["runtime"])
 
 _DEFAULT_PROVIDER_SECRET_REF = "provider.default.apiKey"
 _MANAGED_PROVIDER_ID = "clawdi-managed"
+_MANAGED_PROVIDER_API_MODE = "openai_responses"
+_MANAGED_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_MANAGED_OPENAI_API_KEY"
 
 
 @router.get("/manifest")
@@ -195,10 +197,15 @@ async def _provider_projection(
     }
     if provider.default_model:
         projection["model"] = provider.default_model
-    if provider.api_mode:
-        projection["apiMode"] = provider.api_mode
-    if provider.runtime_env_name:
-        projection["runtimeEnvName"] = provider.runtime_env_name
+    api_mode = provider.api_mode
+    runtime_env_name = provider.runtime_env_name
+    if _is_clawdi_managed_provider(provider):
+        api_mode = _MANAGED_PROVIDER_API_MODE
+        runtime_env_name = _MANAGED_PROVIDER_RUNTIME_ENV_NAME
+    if api_mode:
+        projection["apiMode"] = api_mode
+    if runtime_env_name:
+        projection["runtimeEnvName"] = runtime_env_name
     if secret:
         projection["apiKeySecretRef"] = _DEFAULT_PROVIDER_SECRET_REF
 
@@ -207,6 +214,17 @@ async def _provider_projection(
     if payload is not None:
         version_sources.append(payload)
     return {"default": projection}, secret_values, version_sources
+
+
+def _is_clawdi_managed_provider(provider: AiProvider) -> bool:
+    return (
+        provider.provider_id == _MANAGED_PROVIDER_ID
+        or (
+            provider.managed_by == "clawdi"
+            and provider.auth_type == "api_key"
+            and (provider.auth_metadata or {}).get("source") == "managed"
+        )
+    )
 
 
 def _runtime_provider_id(state: HostedRuntimeState) -> str | None:
