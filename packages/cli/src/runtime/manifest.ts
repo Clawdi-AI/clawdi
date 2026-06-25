@@ -1258,7 +1258,7 @@ function writeSupervisorConfig(
 	secretValues: Record<string, string> | undefined,
 ): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const uiAccessToken = process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "";
+	const uiAccessToken = hostedUiAccessToken();
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
@@ -1455,6 +1455,28 @@ function runtimeCommandShimScript(command: RuntimeCommandShimName, paths: Runtim
 		`exec ${shellQuote(paths.cliManagedBin)} run -- ${command} "$@"`,
 		"",
 	].join("\n");
+}
+
+function hostedUiAccessToken(): string {
+	const direct = process.env[UI_ACCESS_TOKEN_ENV]?.trim();
+	if (direct) return direct;
+	return readProcEnvironmentValue(
+		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH?.trim() || "/proc/1/environ",
+		UI_ACCESS_TOKEN_ENV,
+	);
+}
+
+function readProcEnvironmentValue(path: string, key: string): string {
+	try {
+		const raw = readFileSync(path);
+		const prefix = `${key}=`;
+		for (const part of raw.toString("utf8").split("\0")) {
+			if (part.startsWith(prefix)) return part.slice(prefix.length).trim();
+		}
+	} catch {
+		// Best effort: runtime managers can still run without hosted UI access.
+	}
+	return "";
 }
 
 function supervisorPath(paths: RuntimePaths): string {

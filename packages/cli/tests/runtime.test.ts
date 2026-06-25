@@ -61,6 +61,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
+	"CLAWDI_RUNTIME_PID1_ENVIRON_PATH",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
 	"CLAWDI_API_URL",
@@ -500,13 +501,15 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("preserves hosted UI access token for runtime-watch and ui bridge supervisor programs", async () => {
+	it("recovers hosted UI access token from pid1 env for runtime-watch and ui bridge supervisor programs", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
+		const pid1EnvPath = join(root, "pid1-environ");
 		const openclawInstaller = join(root, "install-openclaw.sh");
 		mkdirSync(home, { recursive: true });
+		writeFileSync(pid1EnvPath, `PATH=/usr/bin\0${UI_ACCESS_TOKEN_ENV}=ui-runtime-token\0`);
 		writeFileSync(
 			openclawInstaller,
 			`#!/usr/bin/env bash
@@ -535,7 +538,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
-		process.env[UI_ACCESS_TOKEN_ENV] = "ui-runtime-token";
+		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH = pid1EnvPath;
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
