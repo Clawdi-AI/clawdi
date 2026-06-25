@@ -1258,6 +1258,7 @@ function writeSupervisorConfig(
 	secretValues: Record<string, string> | undefined,
 ): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const uiAccessToken = process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "";
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
@@ -1272,6 +1273,7 @@ function writeSupervisorConfig(
 	const watcherEnvironment = supervisorEnvironment({
 		...commonEnvironment,
 		CLAWDI_AUTH_TOKEN: "",
+		[UI_ACCESS_TOKEN_ENV]: uiAccessToken,
 	});
 	const daemonEnvironment = supervisorEnvironment({
 		...commonEnvironment,
@@ -1367,7 +1369,7 @@ function writeSupervisorConfig(
 		const uiBridgeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
-			[UI_ACCESS_TOKEN_ENV]: process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "",
+			[UI_ACCESS_TOKEN_ENV]: uiAccessToken,
 			CLAWDI_RUNTIME_REV: uiBridgeProgramRevision(manifest),
 		});
 		lines.push(

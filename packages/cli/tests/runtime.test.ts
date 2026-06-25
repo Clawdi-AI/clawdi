@@ -500,6 +500,117 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	it("preserves hosted UI access token for runtime-watch and ui bridge supervisor programs", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const openclawInstaller = join(root, "install-openclaw.sh");
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			openclawInstaller,
+			`#!/usr/bin/env bash
+set -euo pipefail
+install -d "$HOME/.openclaw/bin"
+cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
+  cat >/dev/null
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  exit 0
+fi
+exit 0
+SH
+chmod +x "$HOME/.openclaw/bin/openclaw"
+`,
+		);
+		chmodSync(openclawInstaller, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
+		process.env[UI_ACCESS_TOKEN_ENV] = "ui-runtime-token";
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/v1/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/manifest",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							deploymentId: "dep_ui_bridge",
+							environmentId: "env_ui_bridge",
+							appId: "app_ui_bridge",
+							instanceId: "iid_ui_bridge",
+							generation: 4,
+							issuedAt: "2026-06-06T00:00:00Z",
+							system: { home, workspace: join(home, "managed-workspace") },
+							controlPlane: {
+								manifestUrl: "https://runtime-source.test/desired-state",
+								cloudApiUrl: "https://cloud-api.test",
+							},
+							runtimes: {
+								openclaw: {
+									enabled: true,
+									install: { source: "official", channel: "stable" },
+									paths: { home },
+								},
+								hermes: {
+									enabled: false,
+									install: { source: "official", channel: "stable" },
+									paths: { home },
+								},
+							},
+							providers: {
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://ai-gateway.test/v1",
+									model: "gpt-5.5",
+									apiMode: "openai_chat",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.default.apiKey",
+								},
+							},
+						},
+						secretValues: {
+							"provider.default.apiKey": "sk-runtime",
+						},
+					}),
+			},
+		]);
+
+		try {
+			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			convergeRuntimeManifest(loaded, getRuntimePaths());
+			const supervisorConfig = readFileSync(join(state, "supervisor", "supervisord.conf"), "utf-8");
+			const section = (name: string) =>
+				supervisorConfig.split(`[program:${name}]`)[1]?.split("\n[")[0] ?? "";
+
+			expect(section("clawdi-runtime-watch")).toContain('UI_ACCESS_TOKEN="ui-runtime-token"');
+			expect(section("clawdi-ui-bridge")).toContain('UI_ACCESS_TOKEN="ui-runtime-token"');
+			expect(section("clawdi-openclaw")).toContain('UI_ACCESS_TOKEN=""');
+			expect(supervisorConfig).not.toContain("sk-runtime");
+		} finally {
+			restore();
+		}
+	});
+
 	it("keeps explicit OpenAI chat providers on direct provider projection", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
