@@ -1269,6 +1269,11 @@ function supervisorctl(
 	);
 }
 
+function readFileIfExists(path: string): string | null {
+	if (!existsSync(path)) return null;
+	return readFileSync(path, "utf-8");
+}
+
 function applySupervisorRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): void {
 	const targets = supervisorRuntimeUpdateTargets(paths);
 	supervisorctl(paths, ["reread"]);
@@ -1694,6 +1699,7 @@ async function runtimeWatchTick(
 	}
 
 	try {
+		const previousSupervisorConfig = readFileIfExists(paths.supervisorConfig);
 		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
 		const { convergence, cliUpdate } = withRuntimeConvergeLock(paths, () =>
 			applyRuntimeDesiredState(loaded, paths, {
@@ -1706,7 +1712,9 @@ async function runtimeWatchTick(
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
 		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
 		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
-		if (convergence.installErrors.length === 0) {
+		const supervisorConfigChanged =
+			readFileIfExists(paths.supervisorConfig) !== previousSupervisorConfig;
+		if (convergence.installErrors.length === 0 && supervisorConfigChanged) {
 			applySupervisorRuntimeUpdate(paths);
 		}
 		if (errors.length > 0) {
@@ -1725,6 +1733,7 @@ async function runtimeWatchTick(
 				activeGeneration: convergence.manifest.generation,
 				cliUpdate,
 				selfReexec,
+				supervisorConfigChanged,
 				convergence: convergence.outputs,
 			};
 		}
@@ -1752,6 +1761,7 @@ async function runtimeWatchTick(
 			enabledRuntimes: convergence.enabledRuntimes,
 			cliUpdate,
 			selfReexec,
+			supervisorConfigChanged,
 			convergence: convergence.outputs,
 		};
 	} catch (error) {
