@@ -238,10 +238,10 @@ function installedFloatingSpecVersionIsCurrent(
 }
 
 function isFloatingNpmPackageSpec(packageSpec: string): boolean {
-	if (packageSpec === "clawdi") return true;
 	const match = /^clawdi@(.+)$/.exec(packageSpec);
 	if (!match) return false;
 	const specifier = match[1] ?? "";
+	if (!/^(alpha|beta|canary|next|rc)$/.test(specifier)) return false;
 	return !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(specifier);
 }
 
