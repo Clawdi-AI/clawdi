@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { type DetailNavItem, DetailNavLayout, DetailSectionNav } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { SessionFeed } from "@/components/sessions/session-feed";
@@ -43,7 +44,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
 	useDeleteDeployment,
@@ -95,6 +95,38 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"compute",
 ]);
+const HOSTED_AGENT_NAV: DetailNavItem<HostedAgentTab>[] = [
+	{
+		id: "overview",
+		label: "Overview",
+		description: "Status, model, resources, and recent sessions.",
+		icon: Info,
+	},
+	{
+		id: "console",
+		label: "Console",
+		description: "Open the live runtime UI.",
+		icon: MonitorPlay,
+	},
+	{
+		id: "ai",
+		label: "AI Provider",
+		description: "Runtime-scoped provider and model binding.",
+		icon: Zap,
+	},
+	{
+		id: "channels",
+		label: "Channels",
+		description: "Messaging links for this hosted agent.",
+		icon: Link2,
+	},
+	{
+		id: "compute",
+		label: "Compute",
+		description: "Plan, lifecycle, and runtime availability.",
+		icon: Cpu,
+	},
+];
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
 const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
 const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
@@ -198,6 +230,16 @@ export function HostedAgentDetail({
 		const query = next.toString();
 		router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
 	};
+	const tabHref = (tab: HostedAgentTab) => {
+		const next = new URLSearchParams(searchParams.toString());
+		if (tab === "overview") next.delete("tab");
+		else next.set("tab", tab);
+		const query = next.toString();
+		return query ? `${pathname}?${query}` : pathname;
+	};
+	const navItems = HOSTED_AGENT_NAV.map((item) => ({ ...item, href: tabHref(item.id) }));
+	const activeNavItem =
+		HOSTED_AGENT_NAV.find((item) => item.id === activeTab) ?? HOSTED_AGENT_NAV[0];
 
 	return (
 		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
@@ -232,46 +274,44 @@ export function HostedAgentDetail({
 				}
 			/>
 
-			<Tabs
-				value={activeTab}
-				onValueChange={(value) => {
-					const tab = parseHostedAgentTab(value);
-					if (tab) setTab(tab);
-				}}
-			>
-				{/* Per-runtime facets first, then the shared Compute tab. */}
-				<TabsList className="flex-wrap">
-					<TabsTrigger value="overview">Overview</TabsTrigger>
-					<TabsTrigger value="console">Console</TabsTrigger>
-					<TabsTrigger value="ai">AI Provider</TabsTrigger>
-					<TabsTrigger value="channels">Channels</TabsTrigger>
-					<TabsTrigger value="compute">Compute</TabsTrigger>
-				</TabsList>
-
-				<TabsContent value="overview" className="mt-4">
-					<OverviewTab
-						deployment={deployment}
-						runtime={runtime}
-						isPerformance={isPerformance}
-						sessions={sessions.data?.items ?? []}
-						sessionsLoading={sessions.isLoading}
-						sessionsError={sessions.error}
-						onRetrySessions={() => sessions.refetch()}
+			<DetailNavLayout
+				nav={
+					<DetailSectionNav
+						items={navItems}
+						activeId={activeTab}
+						onSelect={setTab}
+						label="Hosted agent sections"
 					/>
-				</TabsContent>
-				<TabsContent value="console" className="mt-4">
-					<ConsoleTab deployment={deployment} runtime={runtime} />
-				</TabsContent>
-				<TabsContent value="ai" className="mt-4">
-					<AiProviderTab deployment={deployment} runtime={runtime} />
-				</TabsContent>
-				<TabsContent value="channels" className="mt-4">
-					<ChannelsTab environmentId={environmentId} />
-				</TabsContent>
-				<TabsContent value="compute" className="mt-4">
-					<ComputeTab deployment={deployment} isPerformance={isPerformance} runtime={runtime} />
-				</TabsContent>
-			</Tabs>
+				}
+			>
+				<section className="space-y-4">
+					<div>
+						<h2 className="text-sm font-semibold">{activeNavItem.label}</h2>
+						{activeNavItem.description ? (
+							<p className="mt-1 text-xs text-muted-foreground">{activeNavItem.description}</p>
+						) : null}
+					</div>
+					{activeTab === "overview" ? (
+						<OverviewTab
+							deployment={deployment}
+							runtime={runtime}
+							isPerformance={isPerformance}
+							sessions={sessions.data?.items ?? []}
+							sessionsLoading={sessions.isLoading}
+							sessionsError={sessions.error}
+							onRetrySessions={() => sessions.refetch()}
+						/>
+					) : null}
+					{activeTab === "console" ? (
+						<ConsoleTab deployment={deployment} runtime={runtime} />
+					) : null}
+					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
+					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
+					{activeTab === "compute" ? (
+						<ComputeTab deployment={deployment} isPerformance={isPerformance} runtime={runtime} />
+					) : null}
+				</section>
+			</DetailNavLayout>
 		</div>
 	);
 }

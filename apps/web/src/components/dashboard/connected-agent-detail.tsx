@@ -25,7 +25,13 @@ import {
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
-import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import {
+	type DetailNavItem,
+	DetailNavLayout,
+	DetailNotFound,
+	DetailPanel,
+	DetailSectionNav,
+} from "@/components/detail/layout";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -39,7 +45,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -51,6 +56,24 @@ type AgentTab = "sessions" | "skills" | "projects";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
+
+const AGENT_DETAIL_NAV_META: Record<AgentTab, Omit<DetailNavItem<AgentTab>, "id" | "count">> = {
+	sessions: {
+		icon: MessageSquare,
+		label: "Sessions",
+		description: "History synced by this agent.",
+	},
+	skills: {
+		icon: Sparkles,
+		label: "Skills",
+		description: "Installed in this agent's Agent Project.",
+	},
+	projects: {
+		icon: Layers,
+		label: "Projects",
+		description: "Project access and read order.",
+	},
+};
 
 export function ConnectedAgentDetail({ environmentId }: { environmentId: string }) {
 	const id = environmentId;
@@ -190,32 +213,41 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 			: badgeSource === "on-clawdi"
 				? "hosted"
 				: "connected";
+	const tabHref = (tab: AgentTab) => {
+		const next = new URLSearchParams(searchParams.toString());
+		if (tab === "sessions") next.delete("tab");
+		else next.set("tab", tab);
+		const query = next.toString();
+		return query ? `/agents/${id}?${query}` : `/agents/${id}`;
+	};
+	const navItems: DetailNavItem<AgentTab>[] = [
+		{
+			id: "sessions",
+			...AGENT_DETAIL_NAV_META.sessions,
+			count: sessionTotal,
+			href: tabHref("sessions"),
+		},
+		{
+			id: "skills",
+			...AGENT_DETAIL_NAV_META.skills,
+			count: skillsForThisEnv?.length,
+			href: tabHref("skills"),
+		},
+		{
+			id: "projects",
+			...AGENT_DETAIL_NAV_META.projects,
+			count: projectBindings?.length,
+			href: tabHref("projects"),
+		},
+	];
 
 	// Controlled tab state so the row-level "Install skills" button can
 	// render only on the Skills tab — keeping the action contextual to
 	// what the user is looking at, instead of floating an Install CTA
 	// over a Sessions list it has nothing to do with.
 	const [activeTab, setActiveTab] = useState<AgentTab>(requestedTab);
-	const activeTabMeta =
-		activeTab === "skills"
-			? {
-					icon: Sparkles,
-					title: "Installed skills",
-					description:
-						"Skills installed in this agent's Agent Project. They apply whenever this agent runs.",
-				}
-			: activeTab === "projects"
-				? {
-						icon: Layers,
-						title: "Project access",
-						description:
-							"The Agent Project is fixed. Added Custom or shared Projects add read-only context.",
-					}
-				: {
-						icon: MessageSquare,
-						title: "Session history",
-						description: "Review sessions synced by this agent.",
-					};
+	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
+	const ActiveTabIcon = activeTabMeta.icon;
 
 	useEffect(() => {
 		setActiveTab(requestedTab);
@@ -332,48 +364,44 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 						</ConfirmAction>
 					</div>
 
-					<Tabs value={activeTab} onValueChange={(v) => setTab(parseAgentTab(v) ?? "sessions")}>
-						{/* Flat tab chrome — no boxed section wrappers (taste audit #1). */}
-						<div className="flex flex-wrap items-end justify-between gap-2">
-							<TabsList className="grid w-full grid-cols-3 sm:w-fit">
-								<TabsTrigger value="sessions" className="min-w-0 px-2">
-									Sessions
-									<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
-										{sessionTotal}
-									</span>
-								</TabsTrigger>
-								<TabsTrigger value="skills" className="min-w-0 px-2">
-									Skills
-									{skillsForThisEnv ? (
-										<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
-											{skillsForThisEnv.length}
-										</span>
+					<DetailNavLayout
+						nav={
+							<DetailSectionNav
+								items={navItems}
+								activeId={activeTab}
+								onSelect={setTab}
+								label="Agent detail sections"
+							/>
+						}
+					>
+						<section className="space-y-4">
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<div className="flex items-center gap-2">
+										{ActiveTabIcon ? (
+											<ActiveTabIcon className="size-4 text-muted-foreground" />
+										) : null}
+										<h2 className="text-sm font-semibold">{activeTabMeta.label}</h2>
+									</div>
+									{activeTabMeta.description ? (
+										<p className="mt-1 text-xs text-muted-foreground">
+											{activeTabMeta.description}
+										</p>
 									) : null}
-								</TabsTrigger>
-								<TabsTrigger value="projects" className="min-w-0 px-2">
-									Projects
-									{projectBindings ? (
-										<span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
-											{projectBindings.length}
-										</span>
-									) : null}
-								</TabsTrigger>
-							</TabsList>
-							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm">
-									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
-										<Plus />
-										Install skills
-									</Link>
-								</Button>
-							) : null}
-						</div>
-						<p className="mt-2 text-xs text-muted-foreground">{activeTabMeta.description}</p>
+								</div>
+								{activeTab === "skills" ? (
+									<Button asChild variant="outline" size="sm">
+										<Link
+											href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
+										>
+											<Plus />
+											Install skills
+										</Link>
+									</Button>
+								) : null}
+							</div>
 
-						<div className="mt-4">
-							<TabsContent value="sessions" className="m-0">
-								{/* This page IS the agent — the feed drops the redundant
-								    per-row agent column the old table repeated 25 times. */}
+							{activeTab === "sessions" ? (
 								<div className="max-w-4xl">
 									<SessionFeed
 										sessions={sessionsPage?.items ?? []}
@@ -382,9 +410,9 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 										showAgent={false}
 									/>
 								</div>
-							</TabsContent>
+							) : null}
 
-							<TabsContent value="skills" className="m-0">
+							{activeTab === "skills" ? (
 								<SkillCardGrid
 									skills={skillsForThisEnv ?? []}
 									isLoading={skillsLoading}
@@ -397,9 +425,9 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 									}
 									uninstallPending={uninstallSkill.isPending}
 								/>
-							</TabsContent>
+							) : null}
 
-							<TabsContent value="projects" className="m-0">
+							{activeTab === "projects" ? (
 								<AgentProjectsPanel
 									agentId={id}
 									bindings={projectBindings ?? []}
@@ -412,9 +440,9 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 										queryClient.invalidateQueries({ queryKey: ["projects"] });
 									}}
 								/>
-							</TabsContent>
-						</div>
-					</Tabs>
+							) : null}
+						</section>
+					</DetailNavLayout>
 				</>
 			) : null}
 		</div>
