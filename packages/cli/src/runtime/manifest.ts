@@ -1632,9 +1632,7 @@ export function convergeRuntimeManifest(
 			);
 			runConfigs.push(runConfigPath);
 			writtenRunConfigRuntimes.add(name);
-			if (runtime.enabled && observation.commandPath && observation.status !== "install_failed") {
-				commandShims.push(name);
-			}
+			commandShims.push(name);
 		}
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
