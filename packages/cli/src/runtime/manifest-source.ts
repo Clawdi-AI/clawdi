@@ -207,7 +207,7 @@ function runtimeCredential(source: RuntimeSource, paths: RuntimePaths): string |
 	const token = process.env[source.auth.env]?.trim();
 	if (token) return token;
 	try {
-		const fileToken = readFileSync(join(paths.runRoot, "sync", "auth-token"), "utf-8").trim();
+		const fileToken = readFileSync(paths.daemonAuthToken, "utf-8").trim();
 		return fileToken || null;
 	} catch {
 		return null;

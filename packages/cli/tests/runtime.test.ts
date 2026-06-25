@@ -661,10 +661,8 @@ describe("runtime manifest datasource", () => {
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.secretEnv).toEqual({
-			CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
-		});
-		expect(runConfig.secretFilePath).toBe(join(run, "mitm", "secrets.json"));
+		expect(runConfig).not.toHaveProperty("secretEnv");
+		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
@@ -810,14 +808,14 @@ describe("runtime manifest datasource", () => {
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -860,14 +858,14 @@ describe("runtime manifest datasource", () => {
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1130,7 +1128,7 @@ describe("runtime manifest datasource", () => {
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -1158,7 +1156,7 @@ fi
 			logs.push(String(value));
 		};
 		seedCurrentCliInstall(state);
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1354,7 +1352,7 @@ fi
 			return match?.[1] ?? "";
 		};
 
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
@@ -1394,7 +1392,7 @@ exit 64
 			logs.push(String(value));
 		};
 		seedCurrentCliInstall(state);
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1433,7 +1431,9 @@ exit 64
 		}
 		const baselineConfig = readFileSync(paths.supervisorConfig, "utf-8");
 		const baselineRevision = openclawRevision(baselineConfig);
-		const baselineSecrets = JSON.parse(readFileSync(join(run, "mitm", "secrets.json"), "utf-8"));
+		const baselineSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
+		);
 		expect(baselineSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 		expect(baselineSecrets[channelSecretRef]).toBe("agent-token-watch");
 
@@ -1470,7 +1470,9 @@ exit 64
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(22);
 			expect(event.supervisorConfigChanged).toBe(false);
-			const secrets = JSON.parse(readFileSync(join(run, "mitm", "secrets.json"), "utf-8"));
+			const secrets = JSON.parse(
+				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
+			);
 			expect(secrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
 			const supervisorConfig = readFileSync(paths.supervisorConfig, "utf-8");
@@ -1493,7 +1495,7 @@ exit 64
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -1515,7 +1517,7 @@ fi
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
 		process.env.CLAWDI_SUPERVISORCTL_PATH = join(bin, "supervisorctl");
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1601,14 +1603,14 @@ fi
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
-		writeFileSync(join(run, "sync", "auth-token"), "revoked-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "revoked-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1975,7 +1977,7 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -2034,7 +2036,7 @@ fi
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2154,7 +2156,7 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -2216,7 +2218,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2312,7 +2314,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(join(bin, "npm"), "#!/usr/bin/env bash\necho npm down >&2\nexit 42\n");
@@ -2341,7 +2343,7 @@ fi
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2699,7 +2701,7 @@ chmod +x "$prefix/bin/clawdi"
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
-		mkdirSync(join(run, "sync"), { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
 		mkdirSync(join(root, "etc", "clawdi"), { recursive: true });
 		writeFileSync(
@@ -2729,7 +2731,7 @@ exit 64
 				deniedCommands: ["setup", "teardown", "update"],
 			}),
 		);
-		writeFileSync(join(run, "sync", "auth-token"), "file-runtime-token\n");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2855,7 +2857,7 @@ exit 64
 			expect(patchText).toContain('"token": "discord-agent-token-init"');
 			expect(patchText).toContain('"plugins"');
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
-			const secretsText = readFileSync(join(run, "mitm", "secrets.json"), "utf-8");
+			const secretsText = readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8");
 			expect(secretsText).toContain("secret://channels/telegram/");
 			expect(secretsText).toContain("agent-token-init");
 			expect(secretsText).toContain("secret://channels/discord/");
@@ -3345,7 +3347,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const authTokenFile = join(run, "sync", "auth-token");
+		const authTokenFile = join(run, "secrets", "auth-token");
 		const openclawConfig = JSON.parse(readFileSync(openclawMcp, "utf-8"));
 		expect(openclawConfig.command).toBe("/bin/sh");
 		expect(openclawConfig.args[0]).toBe("-lc");
@@ -3458,7 +3460,11 @@ exit 64
 		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime ui-bridge");
 		expect(supervisorConfig).toContain('CLAWDI_UI_BRIDGE_LISTEN_HOST="10.42.0.20"');
 		expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
-		expect(supervisorConfig).not.toContain("ui-secret");
+		const uiBridgeSection = supervisorConfig.split("[program:clawdi-openclaw]")[0];
+		const openclawSection = supervisorConfig.split("[program:clawdi-openclaw]")[1] ?? "";
+		expect(uiBridgeSection).toContain('UI_ACCESS_TOKEN="ui-secret"');
+		expect(openclawSection).toContain('UI_ACCESS_TOKEN=""');
+		expect(openclawSection).not.toContain("ui-secret");
 	});
 
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {
@@ -3764,7 +3770,7 @@ exit 64
 
 			expect(convergence.mode).toBe("normal");
 			expect(convergence.outputs.mitmProfileBundle).toBe(null);
-			expect(convergence.outputs.mitmSecretFile).toBe(join(run, "mitm", "secrets.json"));
+			expect(convergence.outputs.mitmSecretFile).toBe(join(run, "secrets", "runtime-secrets.json"));
 			expect(convergence.outputs.supervisorConfig).toBe(
 				join(state, "supervisor", "supervisord.conf"),
 			);
@@ -3780,7 +3786,9 @@ exit 64
 			expect(readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8")).not.toContain(
 				"sk-runtime",
 			);
-			expect(readFileSync(join(run, "mitm", "secrets.json"), "utf-8")).toContain("sk-runtime");
+			expect(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8")).toContain(
+				"sk-runtime",
+			);
 			const providerHealth = JSON.parse(
 				readFileSync(join(state, "status", "provider-health.json"), "utf-8"),
 			);
@@ -4026,14 +4034,16 @@ exit 64
 				join(home, ".clawdi", "environments", "codex.json"),
 				join(home, ".clawdi", "environments", "openclaw.json"),
 			]);
-			expect(convergence.outputs.daemonAuthTokenFile).toBe(join(run, "sync", "auth-token"));
-			expect(readFileSync(join(run, "sync", "auth-token"), "utf-8")).toBe("runtime-auth-token\n");
+			expect(convergence.outputs.daemonAuthTokenFile).toBe(join(run, "secrets", "auth-token"));
+			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
+				"runtime-auth-token\n",
+			);
 			expect(openclawEnv.id).toBe("env-openclaw");
 			expect(codexEnv.id).toBe("env-codex");
 			expect(supervisorConfig).toContain("[program:clawdi-runtime-watch]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime watch");
-			expect(supervisorConfig).toContain("chmod=0770");
-			expect(supervisorConfig).toContain("chown=clawdi:clawdi");
+			expect(supervisorConfig).toContain("chmod=0700");
+			expect(supervisorConfig).toContain("chown=root:root");
 			expect(supervisorConfig).toContain("[program:clawdi-daemon]");
 			expect(supervisorConfig).toContain("clawdi daemon run");
 			expect(supervisorConfig).toContain('CLAWDI_SERVE_MODE="container"');
