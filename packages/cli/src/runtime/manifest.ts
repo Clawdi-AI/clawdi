@@ -1466,7 +1466,7 @@ export function convergeRuntimeManifest(
 	const installInventory: string[] = [];
 	const projections: string[] = [];
 	const runConfigs: string[] = [];
-	const commandShims: RuntimeCommandShimName[] = [];
+	const commandShims: RuntimeCommandShimName[] = ["codex", ...SUPPORTED_RUNTIME_NAMES];
 	const installErrors: string[] = [];
 
 	mkdirSync(workspaceRoot, { recursive: true });
@@ -1536,7 +1536,6 @@ export function convergeRuntimeManifest(
 	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
-	if (mitmProfileBundlePath) commandShims.push("codex");
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
@@ -1632,7 +1631,6 @@ export function convergeRuntimeManifest(
 			);
 			runConfigs.push(runConfigPath);
 			writtenRunConfigRuntimes.add(name);
-			commandShims.push(name);
 		}
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
