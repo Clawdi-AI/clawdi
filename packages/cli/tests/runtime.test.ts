@@ -1469,11 +1469,13 @@ exit 64
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(22);
+			expect(event.supervisorConfigChanged).toBe(false);
 			const secrets = JSON.parse(readFileSync(join(run, "mitm", "secrets.json"), "utf-8"));
 			expect(secrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
 			const supervisorConfig = readFileSync(paths.supervisorConfig, "utf-8");
 			expect(openclawRevision(supervisorConfig)).toBe(baselineRevision);
+			expect(existsSync(supervisorCalls)).toBe(false);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
