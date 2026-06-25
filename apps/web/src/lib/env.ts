@@ -77,8 +77,7 @@ export const env = createEnv({
 
 		// Stripe publishable key for hosted wallet top-up PaymentIntent
 		// confirmation. Optional: OSS and hosted-without-card builds validate
-		// cleanly; the top-up dialog degrades to an invoice-redirect path when
-		// this is absent.
+		// cleanly; the top-up dialog disables card confirmation when this is absent.
 		NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1).optional(),
 	},
 	runtimeEnv: {
