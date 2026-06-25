@@ -198,7 +198,7 @@ describe("runtime MITM profile schema", () => {
 		});
 	});
 
-	it("does not derive provider MITM profiles from provider projection", () => {
+	it("does not derive provider MITM profiles without a managed Codex projection", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {

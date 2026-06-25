@@ -290,6 +290,8 @@ const SUPPORTED_RUNTIME_NAMES = [
 	"openclaw",
 ] as const satisfies readonly SupportedRuntimeName[];
 
+type RuntimeCommandShimName = SupportedRuntimeName | "codex";
+
 function isSupportedRuntimeName(name: string): name is SupportedRuntimeName {
 	return (SUPPORTED_RUNTIME_NAMES as readonly string[]).includes(name);
 }
@@ -1389,6 +1391,41 @@ function writeSupervisorConfig(
 	return paths.supervisorConfig;
 }
 
+function writeRuntimeCommandShims(commands: RuntimeCommandShimName[], paths: RuntimePaths): void {
+	const active = new Set(commands);
+	for (const command of ["codex", ...SUPPORTED_RUNTIME_NAMES] satisfies RuntimeCommandShimName[]) {
+		const shimPath = join(paths.serviceStateRoot, "bin", command);
+		if (!active.has(command)) {
+			rmSync(shimPath, { force: true });
+			continue;
+		}
+		writePrivateFileAtomic(shimPath, runtimeCommandShimScript(command, paths), {
+			mode: 0o755,
+			dirMode: 0o755,
+		});
+		makeRuntimeUserOwned(shimPath);
+	}
+}
+
+function runtimeCommandShimScript(command: RuntimeCommandShimName, paths: RuntimePaths): string {
+	return [
+		"#!/usr/bin/env sh",
+		"set -eu",
+		'shim_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+		"old_ifs=$" + "{IFS-}",
+		"IFS=:",
+		"clean_path=",
+		"for dir in $" + "{PATH-}; do",
+		'  [ "$dir" = "$shim_dir" ] && continue',
+		'  if [ -z "$clean_path" ]; then clean_path=$dir; else clean_path=$clean_path:$dir; fi',
+		"done",
+		"IFS=$old_ifs",
+		"export PATH=$clean_path",
+		`exec ${shellQuote(paths.cliManagedBin)} run -- ${command} "$@"`,
+		"",
+	].join("\n");
+}
+
 function supervisorPath(paths: RuntimePaths): string {
 	return [
 		join(paths.serviceStateRoot, "bin"),
@@ -1429,6 +1466,7 @@ export function convergeRuntimeManifest(
 	const installInventory: string[] = [];
 	const projections: string[] = [];
 	const runConfigs: string[] = [];
+	const commandShims: RuntimeCommandShimName[] = [];
 	const installErrors: string[] = [];
 
 	mkdirSync(workspaceRoot, { recursive: true });
@@ -1498,6 +1536,7 @@ export function convergeRuntimeManifest(
 	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
+	if (mitmProfileBundlePath) commandShims.push("codex");
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
@@ -1593,6 +1632,9 @@ export function convergeRuntimeManifest(
 			);
 			runConfigs.push(runConfigPath);
 			writtenRunConfigRuntimes.add(name);
+			if (runtime.enabled && observation.commandPath && observation.status !== "install_failed") {
+				commandShims.push(name);
+			}
 		}
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
@@ -1605,6 +1647,7 @@ export function convergeRuntimeManifest(
 	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
 	writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
 	projections.push(mcpProjection);
+	writeRuntimeCommandShims(commandShims, paths);
 
 	const bootFinished = join(instanceRoot, "boot-finished");
 	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);

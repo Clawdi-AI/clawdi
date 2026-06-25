@@ -398,11 +398,21 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "supervisor", "supervisord.conf"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
+				join(serviceStateRoot, "bin", "openclaw"),
+				join(serviceStateRoot, "bin", "hermes"),
+				join(serviceStateRoot, "bin", "codex"),
 				join(home, "clawdi"),
 				join(home, ".openclaw", "bin", "openclaw"),
 				join(home, ".local", "bin", "hermes"),
 			]) {
 				expect(existsSync(outputPath)).toBe(true);
+			}
+			for (const command of ["openclaw", "hermes", "codex"]) {
+				const shim = readFileSync(join(serviceStateRoot, "bin", command), "utf-8");
+				expect(shim).toContain("clean_path=");
+				expect(shim).toContain(
+					`exec '${join(serviceStateRoot, "bin", "clawdi")}' run -- ${command} "$@"`,
+				);
 			}
 			expect(statSync(join(serviceStateRoot, "cache", "boot-status.json")).mode & 0o777).toBe(
 				0o644,
@@ -700,6 +710,9 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(parsed.enabledRuntimes).toEqual(["openclaw"]);
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
 			expect(existsSync(join(home, ".local", "bin", "hermes"))).toBe(false);
+			expect(existsSync(join(serviceStateRoot, "bin", "openclaw"))).toBe(true);
+			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(false);
+			expect(existsSync(join(serviceStateRoot, "bin", "codex"))).toBe(false);
 
 			const openclawInventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
