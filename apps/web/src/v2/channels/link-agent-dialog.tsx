@@ -2,7 +2,12 @@
 
 import { CircleCheck } from "lucide-react";
 import { useEffect, useState } from "react";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	agentSourceFromEnvironment,
+	agentSourceLabel,
+	agentTypeLabel,
+	cleanMachineName,
+} from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,6 +73,9 @@ export function LinkAgentDialog({
 	}
 
 	const agents = envs.data ?? [];
+	const hasHosted = agents.some((env) => agentSourceFromEnvironment(env) === "hosted");
+	const hasConnected = agents.some((env) => agentSourceFromEnvironment(env) === "connected");
+	const showSource = hasHosted && hasConnected;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -113,8 +121,7 @@ export function LinkAgentDialog({
 							<SelectContent>
 								{agents.map((env) => (
 									<SelectItem key={env.id} value={env.id}>
-										{cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} ·{" "}
-										{agentTypeLabel(env.agent_type)}
+										{agentOptionLabel(env, showSource)}
 									</SelectItem>
 								))}
 							</SelectContent>
@@ -139,4 +146,19 @@ export function LinkAgentDialog({
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+function agentOptionLabel(
+	env: {
+		machine_name?: string | null;
+		agent_type?: string | null;
+		hosted_managed?: boolean | null;
+		hosted_deployment_id?: string | null;
+	},
+	includeSource: boolean,
+): string {
+	const identity = cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+	const runtime = agentTypeLabel(env.agent_type);
+	const source = agentSourceLabel(agentSourceFromEnvironment(env));
+	return includeSource ? `${source} · ${identity} · ${runtime}` : `${identity} · ${runtime}`;
 }

@@ -4,7 +4,13 @@ import type { components } from "@clawdi/shared/api";
 import { AlertCircle, ArrowUpRight, Cloud } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
-import { cleanMachineName, displayMachineName } from "@/components/dashboard/agent-label";
+import {
+	agentSourceKindLabel,
+	agentSourceLabel,
+	cleanMachineName,
+	displayMachineName,
+	isHostedAgentEnvironment,
+} from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityMeta } from "@/components/entity-card";
@@ -24,7 +30,7 @@ export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 }
 
 export function isHostedManagedEnv(env: Env): boolean {
-	return env.hosted_managed === true || Boolean(env.hosted_deployment_id);
+	return isHostedAgentEnvironment(env);
 }
 
 /** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
@@ -137,6 +143,8 @@ export function AgentsCard({
 	});
 	const visible = showAll ? ordered : ordered.slice(0, 6);
 	const hiddenCount = ordered.length - visible.length;
+	const hasHosted = agents.some((agent) => agent.source === "on-clawdi");
+	const hasSelfManaged = agents.some((agent) => agent.source === "self-managed");
 
 	// No section header: the greeting directly above already carries the
 	// fleet summary ("N agents connected · last active …"), and a bare
@@ -156,7 +164,12 @@ export function AgentsCard({
 					<>
 						<div className="grid gap-2 sm:grid-cols-2">
 							{visible.map((tile) => (
-								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
+								<AgentTileView
+									key={`${tile.source}:${tile.id}`}
+									tile={tile}
+									showSourceBadge
+									showConnectedBadge={hasHosted && hasSelfManaged}
+								/>
 							))}
 							{hostedStatus?.isLoading ? <TileSkeleton /> : null}
 						</div>
@@ -213,23 +226,38 @@ export function AgentTileGrid({ tiles }: { tiles: AgentTile[] }) {
 	);
 }
 
-function AgentTileView({ tile }: { tile: AgentTile }) {
+function AgentTileView({
+	tile,
+	showSourceBadge = false,
+	showConnectedBadge = false,
+}: {
+	tile: AgentTile;
+	showSourceBadge?: boolean;
+	showConnectedBadge?: boolean;
+}) {
 	const onClawdi = tile.source === "on-clawdi";
-	// "Clawdi" pill is an identity adornment, not metadata — it sits
+	// Source pill is an identity adornment, not metadata — it sits
 	// next to the title so it stays glued to the agent name no matter
 	// how the meta wraps. Hosted agents get the same live-sync badge
 	// as self-managed ones; the platform will wire up sync automatically
 	// in a future release, so the surface stays consistent today and
 	// the data reflects reality once that lands.
-	const clawdiPill = onClawdi ? (
-		<span
-			title="Hosted on Clawdi"
-			className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-		>
-			<Cloud className="size-2.5" />
-			Clawdi
-		</span>
-	) : null;
+	const source = onClawdi ? "hosted" : "connected";
+	const sourcePill =
+		showSourceBadge && (onClawdi || showConnectedBadge) ? (
+			<span
+				title={agentSourceKindLabel(source)}
+				className={cn(
+					"inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold",
+					onClawdi
+						? "border-primary/30 bg-primary/10 text-primary"
+						: "border-border bg-secondary text-secondary-foreground",
+				)}
+			>
+				{onClawdi ? <Cloud className="size-2.5" /> : null}
+				{agentSourceLabel(source)}
+			</span>
+		) : null;
 	// `tile.env` adds a sync badge that renders a `<button>`
 	// (clicks open a status dialog). It MUST live in the meta
 	// line under the agent name — same row as `statusLabel` so
@@ -317,7 +345,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					<span className="truncate text-sm font-medium" title={cleanedName}>
 						{displayMachineName(cleanedName)}
 					</span>
-					{clawdiPill}
+					{sourcePill}
 				</div>
 				<EntityMeta items={meta} />
 			</div>

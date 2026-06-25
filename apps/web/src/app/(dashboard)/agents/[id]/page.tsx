@@ -7,9 +7,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useV2Access } from "@/lib/v2-access";
 
-// Hosted builds route through `AgentHome`, which renders the manifest editor
+// Hosted builds route through `AgentHome`, which renders hosted agent detail
 // for agents backed by a hosted deployment and falls back to the connected
-// (CLI) detail otherwise. OSS builds render the connected detail directly —
+// detail otherwise. OSS builds render the connected detail directly —
 // the hosted chunk (and the deploy-API client it carries) never ships.
 const AgentHome = IS_HOSTED
 	? dynamic(() => import("@/hosted/agents/agent-home").then((m) => ({ default: m.AgentHome })))

@@ -74,6 +74,30 @@ export function agentTypeLabel(type: string | null | undefined): string {
 	return TYPE_LABEL[type] ?? type;
 }
 
+export type AgentSourceKind = "hosted" | "connected";
+
+export function isHostedAgentEnvironment(env: {
+	hosted_managed?: boolean | null;
+	hosted_deployment_id?: string | null;
+}): boolean {
+	return env.hosted_managed === true || Boolean(env.hosted_deployment_id);
+}
+
+export function agentSourceFromEnvironment(env: {
+	hosted_managed?: boolean | null;
+	hosted_deployment_id?: string | null;
+}): AgentSourceKind {
+	return isHostedAgentEnvironment(env) ? "hosted" : "connected";
+}
+
+export function agentSourceLabel(source: AgentSourceKind): string {
+	return source === "hosted" ? "Hosted" : "Connected";
+}
+
+export function agentSourceKindLabel(source: AgentSourceKind): string {
+	return source === "hosted" ? "Hosted agent" : "Connected agent";
+}
+
 /** Strip mDNS-style suffixes (`.local`, `.lan`) from a hostname.
  * Bonjour appends `.local` automatically on macOS — the user
  * never typed it, never thinks about it, and showing it just
@@ -139,7 +163,7 @@ export function AgentLabel({
 	meta?: ReactNode[];
 	/** Tag rendered immediately to the right of the title — for
 	 * identity-level adornments that aren't meta-data (e.g. a
-	 * "hosted-on-Clawdi" pill). Goes here, not in meta, so it stays
+	 * source badge). Goes here, not in meta, so it stays
 	 * with the name as a single visual unit no matter how the
 	 * subtitle wraps. */
 	titleAdornment?: ReactNode;
@@ -150,7 +174,7 @@ export function AgentLabel({
 	const titleText = primary === "type" ? typeLabel : cleanedMachine || typeLabel;
 	// The disambiguator is the OTHER field — when title is the type
 	// we surface the machine name (and vice versa). Suppressed if
-	// it'd duplicate the title (e.g. hosted-on-Clawdi tiles whose
+	// it'd duplicate the title (e.g. hosted tiles whose
 	// `machineName` is just the runtime label "Hermes" — disambig
 	// would print "Hermes" again under the title).
 	const rawDisambig =
