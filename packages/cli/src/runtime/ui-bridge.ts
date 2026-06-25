@@ -68,6 +68,7 @@ export const DEFAULT_UI_BRIDGE_TARGETS: RuntimeUiBridgeTarget[] = [
 
 const HEADER_TIMEOUT_MS = 60_000;
 const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
+const HEALTH_CONNECT_TIMEOUT_MS = 1_000;
 const MAX_HEADER_BYTES = 64 * 1024;
 const HOP_BY_HOP_HEADERS = new Set([
 	"connection",
@@ -193,6 +194,10 @@ function handleParsedRequest(
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
 ): void {
+	if (isHealthCheckRequest(parsed)) {
+		void respondToHealthCheck(target, clientSocket);
+		return;
+	}
 	const auth = authenticate(parsed.requestTarget, parsed.headers, token);
 	if (auth.status === "query-token") {
 		writeRedirectResponse(clientSocket, auth.redirectLocation, token);
@@ -205,6 +210,46 @@ function handleParsedRequest(
 		return;
 	}
 	proxyRawRequest(target, frameAncestors, clientSocket, parsed, remaining);
+}
+
+async function respondToHealthCheck(
+	target: RuntimeUiBridgeTarget,
+	clientSocket: Socket,
+): Promise<void> {
+	const healthy = await canConnectToTarget(target);
+	if (healthy) {
+		writeRawHttpResponse(clientSocket, 200, "OK", "OK", [["Cache-Control", "no-store"]]);
+		return;
+	}
+	writeRawHttpResponse(clientSocket, 503, "Service Unavailable", "Service Unavailable", [
+		["Cache-Control", "no-store"],
+	]);
+}
+
+function isHealthCheckRequest(parsed: ParsedHttpRequest): boolean {
+	if (parsed.method !== "GET" && parsed.method !== "HEAD") return false;
+	const url = requestUrl(parsed.requestTarget);
+	return url?.pathname === "/health";
+}
+
+function canConnectToTarget(target: RuntimeUiBridgeTarget): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket = createConnection({
+			host: target.targetHost,
+			port: target.targetPort,
+		});
+		let done = false;
+		const finish = (healthy: boolean) => {
+			if (done) return;
+			done = true;
+			clearTimeout(timer);
+			socket.destroy();
+			resolve(healthy);
+		};
+		const timer = setTimeout(() => finish(false), HEALTH_CONNECT_TIMEOUT_MS);
+		socket.once("connect", () => finish(true));
+		socket.once("error", () => finish(false));
+	});
 }
 
 function proxyRawRequest(

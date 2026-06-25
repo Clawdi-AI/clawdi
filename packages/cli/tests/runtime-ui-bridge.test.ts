@@ -42,6 +42,43 @@ describe("runtime UI bridge defaults", () => {
 });
 
 describe("runtime UI bridge", () => {
+	it("reports health only after the target runtime is reachable", async () => {
+		const upstream = createServer((_req, res) => {
+			res.writeHead(200);
+			res.end("upstream");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeUiBridge({
+			token: "secret-token",
+			targets: [
+				{
+					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					targetPort: upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.targets[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		let upstreamClosed = false;
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/health`);
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe("OK");
+
+			await close(upstream);
+			upstreamClosed = true;
+			const unavailable = await fetch(`http://127.0.0.1:${bridgePort}/health`);
+			expect(unavailable.status).toBe(503);
+			expect(await unavailable.text()).toBe("Service Unavailable");
+		} finally {
+			await bridge.close();
+			if (!upstreamClosed) await close(upstream);
+		}
+	});
+
 	it("authenticates with query token, sets a cookie, and proxies cookie-authorized HTTP", async () => {
 		const seen: Array<{ url: string; host: string | undefined }> = [];
 		const upstream = createServer((req, res) => {
