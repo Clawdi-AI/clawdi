@@ -736,6 +736,73 @@ describe("runtime manifest datasource", () => {
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
+	it("injects provider secrets from hosted runtime manifest responses into runtime run config", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "hosted-runtime-response.json");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		mkdirSync(home, { recursive: true });
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_hosted_provider_secret",
+					environmentId: "env_hosted_provider_secret",
+					instanceId: "iid_hosted_provider_secret",
+					generation: 5,
+					issuedAt: "2026-06-15T00:00:00Z",
+					system: { home, workspace: join(home, "clawdi") },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+						hermes: { enabled: false },
+					},
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://ai-gateway.example.test/v1",
+							model: "openai-codex/gpt-5.5",
+							apiMode: "openai_responses",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				},
+				secretValues: {
+					"provider.default.apiKey": "sk-runtime-provider",
+				},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected hosted manifest load success");
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const runConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
+		);
+		expect(runConfig.secretEnv).toEqual({
+			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
+		});
+		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
+		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
+		const secrets = JSON.parse(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"));
+		expect(secrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
+	});
+
 	it("adds Hermes to legacy hosted-runtime manifests when the UI bridge token is present", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
