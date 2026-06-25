@@ -657,6 +657,24 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
+function hostedProviderSecretEnv(manifest: RuntimeManifest): Record<string, string> {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return {};
+	const env: Record<string, string> = {};
+	for (const [providerId, raw] of Object.entries(providers).sort(([a], [b]) =>
+		a.localeCompare(b),
+	)) {
+		const provider = recordValue(raw);
+		if (!provider) continue;
+		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
+		if (!apiKeySecretRef) continue;
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		if (!isEnvKey(runtimeEnvName)) continue;
+		env[runtimeEnvName] = normalizeSecretRef(apiKeySecretRef) ?? apiKeySecretRef;
+	}
+	return env;
+}
+
 function isEnvKey(value: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
@@ -1626,6 +1644,7 @@ export function convergeRuntimeManifest(
 					mitmProfileBundlePath,
 					settings: runtime.run,
 					secretFilePath: mitmSecretFile,
+					secretEnv: hostedProviderSecretEnv(manifest),
 				}),
 				paths,
 			);

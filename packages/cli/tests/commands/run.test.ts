@@ -320,19 +320,16 @@ describe("run command project folder selection", () => {
 		expect(logs.join("\n")).toContain("Runtime hermes is disabled");
 	});
 
-	it("passes hosted runtime provider secrets only to the managed MITM broker", async () => {
+	it("injects hosted runtime provider secrets into the managed runtime process", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
 		const secretFile = join(runRoot, "secrets", "runtime-secrets.json");
-		const mitmBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
 		mkdirSync(join(runRoot, "secrets"), { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
-		writeFileSync(mitmBundle, JSON.stringify({ profiles: [] }));
 		writeFileSync(
 			secretFile,
 			JSON.stringify({
@@ -351,12 +348,15 @@ describe("run command project folder selection", () => {
 				command: "openclaw",
 				defaultArgs: ["gateway", "run"],
 				env: {},
+				secretEnv: {
+					CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
+				},
 				secretFilePath: secretFile,
 				prependPath: [join(tmpRoot, "home", "clawdi", ".openclaw", "bin")],
 				cwd: projectRoot,
 				commandPath: openclawPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
-				mitmProfileBundlePath: mitmBundle,
+				mitmProfileBundlePath: null,
 			}),
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
@@ -370,9 +370,8 @@ describe("run command project folder selection", () => {
 		await run(["openclaw"], {}, spawnImpl, broker.brokerFactory);
 
 		expect(calls).toHaveLength(1);
-		expect(broker.calls).toHaveLength(1);
-		expect(broker.calls[0].secretFile).toBe(secretFile);
-		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(broker.calls).toHaveLength(0);
+		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
