@@ -568,6 +568,84 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	it("generates managed Codex MITM profiles from hosted-runtime manifests", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/desired-state",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							deploymentId: "dep_codex_provider",
+							environmentId: "env_codex_provider",
+							appId: "app_codex_provider",
+							instanceId: "iid_codex_provider",
+							generation: 1,
+							issuedAt: "2026-06-22T00:00:00Z",
+							system: { home, workspace: join(home, "clawdi") },
+							controlPlane: {
+								manifestUrl: "https://runtime-source.test/desired-state",
+								cloudApiUrl: "https://cloud-api.test",
+							},
+							runtimes: {
+								openclaw: { enabled: false },
+								hermes: { enabled: false },
+							},
+							providers: {
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://ai-gateway.example.test/v1",
+									model: "openai-codex/gpt-5.4-mini",
+									apiMode: "codex_responses",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.default.apiKey",
+								},
+							},
+						},
+						secretValues: {
+							"provider.default.apiKey": "sk-runtime",
+						},
+					}),
+			},
+		]);
+
+		try {
+			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			expect("manifest" in loaded).toBe(true);
+			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([
+				expect.objectContaining({
+					id: "codex-chatgpt-backend-responses",
+					kind: "provider",
+					match: expect.objectContaining({
+						scheme: "https",
+						host: "chatgpt.com",
+						path: { type: "equals", value: "/backend-api/codex/responses" },
+					}),
+					rewrite: expect.objectContaining({
+						upstreamBaseUrl: "https://ai-gateway.example.test/backend-api/codex/responses",
+						preservePath: false,
+					}),
+					owner: "provider-projection",
+				}),
+			]);
+			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
+		} finally {
+			restore();
+		}
+	});
+
 	it("projects hosted OpenAI chat providers directly into OpenClaw config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
