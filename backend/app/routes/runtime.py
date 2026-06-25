@@ -217,13 +217,10 @@ async def _provider_projection(
 
 
 def _is_clawdi_managed_provider(provider: AiProvider) -> bool:
-    return (
-        provider.provider_id == _MANAGED_PROVIDER_ID
-        or (
-            provider.managed_by == "clawdi"
-            and provider.auth_type == "api_key"
-            and (provider.auth_metadata or {}).get("source") == "managed"
-        )
+    return provider.provider_id == _MANAGED_PROVIDER_ID or (
+        provider.managed_by == "clawdi"
+        and provider.auth_type == "api_key"
+        and (provider.auth_metadata or {}).get("source") == "managed"
     )
 
 
