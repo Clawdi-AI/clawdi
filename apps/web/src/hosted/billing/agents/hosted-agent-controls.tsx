@@ -33,18 +33,14 @@ function deploymentLabel(d: HostedDeployment): string {
 	return d.name.replace(/^(openclaw|hermes)-/i, "") || d.name;
 }
 
-/** "Telegram · OpenClaw + Hermes" — channel + engine summary for a deployment. */
+/** "OpenClaw + Hermes" — enabled runtime summary for a deployment. */
 function metaLine(d: HostedDeployment): string | null {
 	const info = d.config_info;
 	if (!info) return null;
 	const engines = [info.enable_openclaw && "OpenClaw", info.enable_hermes && "Hermes"]
 		.filter(Boolean)
 		.join(" + ");
-	const channel = info.channel
-		? info.channel.charAt(0).toUpperCase() + info.channel.slice(1)
-		: null;
-	const parts = [channel, engines].filter(Boolean);
-	return parts.length ? parts.join(" · ") : null;
+	return engines || null;
 }
 
 /**
@@ -54,7 +50,7 @@ function metaLine(d: HostedDeployment): string | null {
  * missing (e.g. while the agent is still provisioning).
  *
  * Renders null when the user has no hosted deployments, so it can sit on the
- * overview without adding noise for self-managed-only users.
+ * overview without adding noise for connected-agent-only users.
  */
 export function HostedAgentControls() {
 	const deployments = useHostedDeployments();

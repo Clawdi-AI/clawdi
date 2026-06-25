@@ -8,14 +8,12 @@ import {
 	Info,
 	Link2,
 	Link2Off,
-	Lock,
 	Maximize2,
 	MonitorPlay,
 	Plus,
 	QrCode,
 	RefreshCw,
 	Trash2,
-	Wrench,
 	Zap,
 } from "lucide-react";
 import Link from "next/link";
@@ -25,7 +23,6 @@ import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EmptyState } from "@/components/empty-state";
-import { InfoCard } from "@/components/info-card";
 import { PageHeader } from "@/components/page-header";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +83,7 @@ import {
 } from "@/v2/channels/channels-hooks";
 
 type Runtime = "openclaw" | "hermes";
-type HostedAgentTab = "overview" | "console" | "ai" | "channels" | "tools" | "compute";
+type HostedAgentTab = "overview" | "console" | "ai" | "channels" | "compute";
 const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
 	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
 	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
@@ -96,7 +93,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"console",
 	"ai",
 	"channels",
-	"tools",
 	"compute",
 ]);
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
@@ -129,16 +125,6 @@ function statusLabel(status: string): string {
 
 function parseHostedAgentTab(value: string | null): HostedAgentTab | null {
 	return value && HOSTED_AGENT_TABS.has(value as HostedAgentTab) ? (value as HostedAgentTab) : null;
-}
-
-/** A flag banner for facets the backend doesn't yet expose for live edit. */
-function NotExposedNote({ children }: { children: React.ReactNode }) {
-	return (
-		<div className="flex items-start gap-2 rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-			<Lock className="mt-0.5 size-3.5 shrink-0" />
-			<span>{children}</span>
-		</div>
-	);
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -224,6 +210,8 @@ export function HostedAgentDetail({
 						<StatusBadge status={statusTone(deployment.status)} withDot>
 							{statusLabel(deployment.status)}
 						</StatusBadge>
+						<span>Hosted agent</span>
+						<span>·</span>
 						<span>{runtimeLabel} runtime</span>
 						<span>·</span>
 						<span className="inline-flex items-center gap-1">
@@ -257,12 +245,6 @@ export function HostedAgentDetail({
 					<TabsTrigger value="console">Console</TabsTrigger>
 					<TabsTrigger value="ai">AI Provider</TabsTrigger>
 					<TabsTrigger value="channels">Channels</TabsTrigger>
-					<TabsTrigger value="tools">
-						Tools &amp; MCP
-						<Badge variant="secondary" className="ml-1.5">
-							Managed
-						</Badge>
-					</TabsTrigger>
 					<TabsTrigger value="compute">Compute</TabsTrigger>
 				</TabsList>
 
@@ -285,9 +267,6 @@ export function HostedAgentDetail({
 				</TabsContent>
 				<TabsContent value="channels" className="mt-4">
 					<ChannelsTab environmentId={environmentId} />
-				</TabsContent>
-				<TabsContent value="tools" className="mt-4">
-					<ToolsTab />
 				</TabsContent>
 				<TabsContent value="compute" className="mt-4">
 					<ComputeTab deployment={deployment} isPerformance={isPerformance} runtime={runtime} />
@@ -492,7 +471,7 @@ function AiProviderTab({
 	const [primaryModel, setPrimaryModel] = useState<string>(currentModel);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
-	// user's own apply reconciling, or an out-of-band change) — never on a plain
+	// user's own apply completing, or an out-of-band change) — never on a plain
 	// background poll. Keyed on the binding identity: identical server truth →
 	// same identity → in-progress edits stay untouched; a real change → reset to
 	// the new truth. This is React's "adjust state during render" idiom, which
@@ -543,14 +522,14 @@ function AiProviderTab({
 			{ id: deployment.id, agentTypes: [runtime], body },
 			{
 				onSuccess: () =>
-					toast.success("Provider updated", { description: "Reconciling to the runtime…" }),
+					toast.success("Provider updated", { description: "Updating the runtime…" }),
 			},
 		);
 	}
 
 	return (
 		<div className="space-y-4">
-			<LiveNote>Provider changes reconcile to the running runtime — no restart.</LiveNote>
+			<LiveNote>Provider changes apply to the running runtime — no restart.</LiveNote>
 
 			<div className="space-y-2">
 				<button
@@ -641,7 +620,7 @@ function AiProviderTab({
 					{setProvider.isPending ? "Applying live…" : "Apply changes"}
 				</Button>
 				{setProvider.isPending ? (
-					<span className="text-xs text-muted-foreground">Reconciling to the runtime…</span>
+					<span className="text-xs text-muted-foreground">Updating the runtime…</span>
 				) : null}
 			</div>
 
@@ -889,26 +868,6 @@ function LinkedChannelRow({
 					chat to pair it.
 				</div>
 			) : null}
-		</div>
-	);
-}
-
-// ── Tools & MCP ──────────────────────────────────────────────────────────────
-
-function ToolsTab() {
-	return (
-		<div className="space-y-4">
-			<InfoCard icon={Wrench} title="Managed tools & MCP">
-				This agent runs Clawdi-managed MCP and tool configuration. Connectors you approve in{" "}
-				<Link href="/connectors" className="underline">
-					Connectors
-				</Link>{" "}
-				are available to the agent.
-			</InfoCard>
-			<NotExposedNote>
-				Per-agent MCP/tool editing isn’t exposed by the runtime API yet. The manifest reconciles
-				tool changes live once the backend surfaces them.
-			</NotExposedNote>
 		</div>
 	);
 }

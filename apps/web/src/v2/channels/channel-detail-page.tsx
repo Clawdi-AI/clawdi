@@ -17,7 +17,12 @@ import {
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	agentSourceFromEnvironment,
+	agentSourceLabel,
+	agentTypeLabel,
+	cleanMachineName,
+} from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { InfoCard } from "@/components/info-card";
 import { PageHeader } from "@/components/page-header";
@@ -82,12 +87,19 @@ function formatWhen(iso: string | null | undefined): string {
 
 type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
 
+function hasMixedAgentSources(envs: EnvironmentList): boolean {
+	const sources = new Set((envs ?? []).map((env) => agentSourceFromEnvironment(env)));
+	return sources.size > 1;
+}
+
 /** "machine · agent-type" label for an agent id, falling back to the raw id. */
-function envName(envs: EnvironmentList, agentId: string): string {
+function envName(envs: EnvironmentList, agentId: string, includeSource = false): string {
 	const env = envs?.find((e) => e.id === agentId);
-	return env
+	const source = env ? agentSourceLabel(agentSourceFromEnvironment(env)) : null;
+	const label = env
 		? `${cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} · ${agentTypeLabel(env.agent_type)}`
 		: agentId;
+	return env ? [includeSource ? source : null, label].filter(Boolean).join(" · ") : agentId;
 }
 
 export function ChannelDetailPage() {
@@ -229,6 +241,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 	const unlink = useUnlinkChannelAgent(accountId);
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [rotated, setRotated] = useState<Record<string, string>>({});
+	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (links.error) {
@@ -272,7 +285,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 							<div className="flex items-center justify-between gap-3">
 								<div className="min-w-0">
 									<div className="truncate text-sm font-medium">
-										{envName(envs.data, link.agent_id)}
+										{envName(envs.data, link.agent_id, showAgentSource)}
 									</div>
 									<div className="text-xs capitalize text-muted-foreground">
 										{link.status} · linked {formatWhen(link.created_at)}
@@ -356,6 +369,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const create = useCreateWhatsappTenantCred(accountId);
 	const revoke = useRevokeWhatsappTenantCred(accountId);
 	const [linkId, setLinkId] = useState("");
+	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	const linkItems = links.data ?? [];
 	const devices = creds.data ?? [];
@@ -404,7 +418,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 								<SelectContent>
 									{linkItems.map((l) => (
 										<SelectItem key={l.id} value={l.id}>
-											{envName(envs.data, l.agent_id)}
+											{envName(envs.data, l.agent_id, showAgentSource)}
 										</SelectItem>
 									))}
 								</SelectContent>
@@ -451,7 +465,8 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 									</div>
 								)}
 								<div className="text-xs text-muted-foreground">
-									{envName(envs.data, d.agent_id)} · added {formatWhen(d.created_at)}
+									{envName(envs.data, d.agent_id, showAgentSource)} · added{" "}
+									{formatWhen(d.created_at)}
 								</div>
 							</div>
 							<ConfirmAction
@@ -496,6 +511,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const [ttl, setTtl] = useState("900");
 	const [result, setResult] = useState<{ code: string; expires_at: string } | null>(null);
 	const meta = providerMeta(provider);
+	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	function generate() {
 		create.mutate(
@@ -524,8 +540,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							<SelectContent>
 								{(envs.data ?? []).map((env) => (
 									<SelectItem key={env.id} value={env.id}>
-										{cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} ·{" "}
-										{agentTypeLabel(env.agent_type)}
+										{envName(envs.data, env.id, showAgentSource)}
 									</SelectItem>
 								))}
 							</SelectContent>

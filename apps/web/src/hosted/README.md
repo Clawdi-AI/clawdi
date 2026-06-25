@@ -53,11 +53,11 @@ OSS users running their own Clawdi instance see none of this UI.
 - `use-hosted-agent-tiles.ts` — Lists the user's deployed agents on
   the v2 hosted runtime API, polled while any tile is in a transient
   state.
-- `agents/` — Hosted agent detail, runtime controls, and manifest editing.
+- `agents/` — Hosted agent detail, runtime controls, and AI-provider configuration.
 - `billing/` — Wallet, subscription, usage, and managed agent deployment.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).
 
-Connector UI does not live here. Hosted and self-managed sessions both
+Connector UI does not live here. Hosted and connected sessions both
 read connectors from the shared `/api/connectors` route.

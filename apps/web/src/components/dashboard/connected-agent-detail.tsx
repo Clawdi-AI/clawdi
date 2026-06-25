@@ -17,7 +17,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	AgentLabel,
+	agentSourceKindLabel,
+	agentTypeLabel,
+	cleanMachineName,
+	isHostedAgentEnvironment,
+} from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import {
@@ -178,6 +184,12 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 	});
 
 	const sessionTotal = sessionsPage?.total ?? 0;
+	const detailSource =
+		agent && isHostedAgentEnvironment(agent)
+			? "hosted"
+			: badgeSource === "on-clawdi"
+				? "hosted"
+				: "connected";
 
 	// Controlled tab state so the row-level "Install skills" button can
 	// render only on the Skills tab — keeping the action contextual to
@@ -283,6 +295,9 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 							type={agent.agent_type}
 							size="xl"
 							primary="machine"
+							titleAdornment={
+								<Badge variant="secondary">{agentSourceKindLabel(detailSource)}</Badge>
+							}
 							meta={[
 								agent.agent_version ? `v${agent.agent_version}` : null,
 								agent.os,

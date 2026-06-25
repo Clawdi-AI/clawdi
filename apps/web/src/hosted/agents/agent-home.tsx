@@ -10,8 +10,8 @@ import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-vi
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
- * the manifest editor (`HostedAgentDetail`); a self-managed (CLI) agent — or
- * one we can't resolve to a deployment — falls back to the connected detail.
+ * the hosted agent detail (`HostedAgentDetail`); a connected agent — or one
+ * we can't resolve to a deployment — falls back to the connected detail.
  * The deployment lookup is hosted-only data, so the whole branch lives here
  * behind the IS_HOSTED dynamic import.
  */
