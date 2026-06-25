@@ -28,7 +28,7 @@ import { cn, relativeTime } from "@/lib/utils";
 
 const OPERATION_LABELS: Record<string, string> = {
 	topup: "Top-up",
-	invoice: "Invoice top-up",
+	invoice: "Top-up",
 	x402: "On-chain top-up",
 	grant_signup: "Signup grant",
 	grant_subscription: "Monthly grant",

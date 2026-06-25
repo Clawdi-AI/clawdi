@@ -305,7 +305,7 @@ export function DeployWizard() {
 					ui_mode: "hosted",
 					deploy_config: deployConfig,
 				});
-				if (redirectTo(result.action_url || result.checkout_url || result.invoice_url)) return;
+				if (redirectTo(result.action_url || result.checkout_url)) return;
 				toast.error("Couldn't start checkout", {
 					description: "No checkout URL was returned. Please try again.",
 				});
