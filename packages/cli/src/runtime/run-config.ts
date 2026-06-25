@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import { buildMitmBrokerEnv } from "./mitm-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
@@ -34,6 +35,7 @@ const runtimeRunConfigSchema = z
 		command: z.string().min(1),
 		defaultArgs: z.array(z.string()).default([]),
 		env: z.record(envKeySchema, z.string()).default({}),
+		secretEnv: z.record(envKeySchema, z.string().min(1)).default({}),
 		secretFilePath: z.string().min(1).nullable().default(null),
 		prependPath: z.array(z.string().min(1)).default([]),
 		cwd: z.string().min(1).optional(),
@@ -100,6 +102,7 @@ export function buildRuntimeRunConfig(input: {
 	mitmProfileBundlePath?: string | null;
 	settings?: RuntimeRunSettings;
 	secretFilePath?: string | null;
+	secretEnv?: Record<string, string>;
 }): RuntimeRunConfig {
 	const defaultPath = input.commandPath ? [dirname(input.commandPath)] : [];
 	const prependPath = [...defaultPath, ...(input.settings?.prependPath ?? [])].filter(
@@ -115,6 +118,7 @@ export function buildRuntimeRunConfig(input: {
 		command: input.settings?.command ?? input.commandPath ?? input.runtime,
 		defaultArgs: input.settings?.args ?? DEFAULT_RUNTIME_ARGS[input.runtime],
 		env: input.settings?.env ?? {},
+		secretEnv: input.secretEnv ?? {},
 		secretFilePath: input.secretFilePath ?? null,
 		prependPath,
 		cwd: input.settings?.cwd ?? input.workspaceRoot,
@@ -167,7 +171,10 @@ export function buildRuntimeRunInvocation(
 	const env = {
 		...baseEnv,
 		...read.config.env,
-		...(read.config.secretFilePath ? { CLAWDI_MITM_SECRET_FILE: read.config.secretFilePath } : {}),
+		...runtimeSecretEnv(read.config.secretFilePath, read.config.secretEnv),
+		...(read.config.secretFilePath && read.config.mitmProfileBundlePath
+			? { CLAWDI_MITM_SECRET_FILE: read.config.secretFilePath }
+			: {}),
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
 	const brokerEnv = buildMitmBrokerEnv({
@@ -186,4 +193,46 @@ export function buildRuntimeRunInvocation(
 		env: brokerEnv,
 		configPath: read.path,
 	};
+}
+
+function runtimeSecretEnv(
+	secretFilePath: string | null,
+	secretEnv: Record<string, string>,
+): Record<string, string> {
+	const entries = Object.entries(secretEnv);
+	if (entries.length === 0) return {};
+	if (!secretFilePath) {
+		throw new Error("Runtime run config references secrets but has no secret file.");
+	}
+	let rawSecrets: unknown;
+	try {
+		rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));
+	} catch (error) {
+		throw new Error(
+			`Runtime secret file is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (!rawSecrets || typeof rawSecrets !== "object" || Array.isArray(rawSecrets)) {
+		throw new Error("Runtime secret file must contain a JSON object.");
+	}
+	const secrets = rawSecrets as Record<string, unknown>;
+	const env: Record<string, string> = {};
+	for (const [envName, ref] of entries) {
+		const value = runtimeSecretValue(secrets, ref);
+		if (!value) {
+			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
+		}
+		env[envName] = value;
+	}
+	return env;
+}
+
+function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
+	const normalized = normalizeSecretRef(ref);
+	const candidates = normalized && normalized !== ref ? [ref, normalized] : [ref];
+	for (const candidate of candidates) {
+		const value = secrets[candidate];
+		if (typeof value === "string" && value.length > 0) return value;
+	}
+	return null;
 }

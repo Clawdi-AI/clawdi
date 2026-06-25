@@ -729,7 +729,9 @@ describe("runtime manifest datasource", () => {
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig).not.toHaveProperty("secretEnv");
+		expect(runConfig.secretEnv).toEqual({
+			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
+		});
 		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
