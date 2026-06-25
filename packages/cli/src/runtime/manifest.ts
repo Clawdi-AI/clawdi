@@ -593,7 +593,7 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 		managedBy: "clawdi runtime init",
 		target:
 			name === "openclaw"
-				? "openclaw config patch --stdin"
+				? "openclaw config patch --stdin --replace-path models.providers"
 				: name === "hermes"
 					? "official Hermes user config"
 					: "clawdi mcp",
@@ -688,7 +688,7 @@ function applyHostedAiProviderProjection(
 		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 		runRuntimeUserCommand(
 			observation.commandPath,
-			["config", "patch", "--stdin"],
+			["config", "patch", "--stdin", "--replace-path", "models.providers"],
 			file.content,
 			home,
 			workspaceRoot,

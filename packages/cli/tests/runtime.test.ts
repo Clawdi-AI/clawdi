@@ -637,6 +637,7 @@ describe("runtime manifest datasource", () => {
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-provider-patch.json");
+		const openclawCommand = join(root, "openclaw-provider-command.txt");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -646,7 +647,8 @@ describe("runtime manifest datasource", () => {
 			openclawBin,
 			[
 				"#!/bin/sh",
-				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`printf '%s\\n' "$*" > '${openclawCommand}'`,
+				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
 				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
@@ -709,6 +711,9 @@ describe("runtime manifest datasource", () => {
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(openclawCommand, "utf-8").trim()).toBe(
+			"config patch --stdin --replace-path models.providers",
+		);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/openai-codex/gpt-5.4-mini");
 		expect(patch.models.providers.default).toMatchObject({
