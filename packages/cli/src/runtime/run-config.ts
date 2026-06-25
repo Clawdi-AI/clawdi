@@ -188,7 +188,7 @@ export function buildRuntimeRunInvocation(
 	return {
 		runtime: read.runtime,
 		command,
-		args: [...read.config.defaultArgs, ...args.slice(1)],
+		args: args.length > 1 ? args.slice(1) : read.config.defaultArgs,
 		cwd: read.config.cwd,
 		env: brokerEnv,
 		configPath: read.path,

@@ -260,7 +260,7 @@ describe("run command project folder selection", () => {
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe(hermesPath);
-		expect(calls[0].args).toEqual(["--no-browser", "--version"]);
+		expect(calls[0].args).toEqual(["--version"]);
 		expect(calls[0].cwd).toBe(projectRoot);
 		expect(calls[0].env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
 		expect(calls[0].env.PATH?.startsWith(join(tmpRoot, "home", "clawdi", ".local", "bin"))).toBe(
@@ -371,9 +371,52 @@ describe("run command project folder selection", () => {
 
 		expect(calls).toHaveLength(1);
 		expect(broker.calls).toHaveLength(0);
+		expect(calls[0].args).toEqual(["gateway", "run"]);
 		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+	});
+
+	it("does not prepend supervisor default args to hosted runtime subcommands", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "openclaw.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "openclaw",
+				enabled: true,
+				generatedAt: "2026-06-25T00:00:00Z",
+				generation: 2,
+				instanceId: "iid_test",
+				command: "openclaw",
+				defaultArgs: ["gateway", "run", "--auth", "none"],
+				env: {},
+				secretEnv: {},
+				secretFilePath: null,
+				prependPath: [join(tmpRoot, "home", "clawdi", ".openclaw", "bin")],
+				cwd: projectRoot,
+				commandPath: openclawPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
+				mitmProfileBundlePath: null,
+			}),
+		);
+		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+
+		await run(["openclaw", "agent", "--local"], {}, spawnImpl);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].command).toBe(openclawPath);
+		expect(calls[0].args).toEqual(["agent", "--local"]);
 	});
 
 	it("keeps hosted runtime wrapper alive until the child exits", async () => {

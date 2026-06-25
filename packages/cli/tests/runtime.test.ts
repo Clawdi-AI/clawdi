@@ -770,7 +770,7 @@ describe("runtime manifest datasource", () => {
 						default: {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
-							model: "openai-codex/gpt-5.5",
+							model: "gpt-5.5",
 							apiMode: "openai_responses",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
