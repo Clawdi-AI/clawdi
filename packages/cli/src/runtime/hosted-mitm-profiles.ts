@@ -14,10 +14,7 @@ interface HostedRuntimeManifestProjection {
 interface HostedProviderProjection {
 	baseUrl?: string | null;
 	apiMode?: string | null;
-	apiKeySecretRef?: string | null;
 }
-
-const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
 
 export function hostedManifestMitmProfiles(
 	hosted: HostedRuntimeManifestProjection,
@@ -25,7 +22,7 @@ export function hostedManifestMitmProfiles(
 	if (hosted.mitmProfiles !== undefined) {
 		return mitmProfileInputBundleSchema.parse(hosted.mitmProfiles);
 	}
-	return { profiles: managedProviderMitmProfiles(hosted) };
+	return { profiles: [] };
 }
 
 function providerUsesDirectProjection(apiMode: string | null): boolean {
@@ -55,54 +52,6 @@ export function directProviderPassthroughProfile(
 		priority: 240,
 		owner: "provider-projection",
 	};
-}
-
-function managedProviderMitmProfiles(hosted: HostedRuntimeManifestProjection): HostedMitmProfile[] {
-	const provider = defaultProviderProjection(hosted.providers);
-	const providerBaseUrl = cleanBaseUrl(provider?.baseUrl);
-	const providerApiMode = cleanString(provider?.apiMode);
-	const secretRef = normalizeSecretRef(provider?.apiKeySecretRef);
-	if (!providerBaseUrl || !providerUsesCodexBackendProjection(providerApiMode) || !secretRef) {
-		return [];
-	}
-	return [
-		{
-			id: "codex-chatgpt-backend-responses",
-			enabled: true,
-			kind: "provider",
-			match: {
-				scheme: "https",
-				host: "chatgpt.com",
-				path: { type: "equals", value: "/backend-api/codex/responses" },
-				headers: {
-					authorization: {
-						type: "equals",
-						value: MANAGED_MITM_PLACEHOLDER_VALUE,
-						prefix: "Bearer ",
-					},
-				},
-				query: {},
-			},
-			rewrite: {
-				upstreamBaseUrl: codexBackendResponsesUrl(providerBaseUrl),
-				preservePath: false,
-				setHeaders: {
-					authorization: {
-						type: "secretRef",
-						secretRef,
-						prefix: "Bearer ",
-					},
-				},
-			},
-			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-			priority: 125,
-			owner: "provider-projection",
-		},
-	];
-}
-
-function providerUsesCodexBackendProjection(apiMode: string | null): boolean {
-	return apiMode === "codex_responses" || apiMode === "openai_responses";
 }
 
 export function normalizeSecretRef(value: string | null | undefined): string | null {
@@ -138,21 +87,4 @@ function providerPathPrefix(pathname: string): string {
 	const cleaned = pathname.replace(/\/+$/, "");
 	if (!cleaned) return "/";
 	return `${cleaned}/`;
-}
-
-function codexBackendResponsesUrl(baseUrl: string): string {
-	const parsed = new URL(baseUrl);
-	const path = parsed.pathname.replace(/\/+$/, "");
-	if (path.endsWith("/backend-api/codex/responses")) {
-		parsed.pathname = path;
-	} else if (path.endsWith("/backend-api/codex")) {
-		parsed.pathname = `${path}/responses`;
-	} else if (path.endsWith("/v1")) {
-		parsed.pathname = `${path.slice(0, -"/v1".length)}/backend-api/codex/responses`;
-	} else {
-		parsed.pathname = `${path}/backend-api/codex/responses`;
-	}
-	parsed.search = "";
-	parsed.hash = "";
-	return parsed.toString().replace(/\/$/, "");
 }

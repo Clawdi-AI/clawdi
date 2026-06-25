@@ -643,7 +643,7 @@ function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMod
 	if (raw === "openai_chat" || raw === "openai_responses" || raw === "codex_responses") {
 		return raw;
 	}
-	return "codex_responses";
+	return "openai_chat";
 }
 
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
