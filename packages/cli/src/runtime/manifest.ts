@@ -128,7 +128,7 @@ function writeSecretValues(
 		dirMode: 0o700,
 	});
 	makeRootOwned(dirname(path));
-	makeRootOwned(path);
+	makeRuntimeSecretReadable(path);
 	try {
 		chmodSync(path, 0o600);
 	} catch {
@@ -250,6 +250,17 @@ function makeRootOwned(path: string): void {
 	} catch {
 		// Best effort for local tests and non-root development environments.
 	}
+}
+
+function makeRuntimeSecretReadable(path: string): void {
+	const dir = dirname(path);
+	makeRootOwned(dir);
+	try {
+		chmodSync(dir, 0o711);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+	makeRuntimeUserOwned(path);
 }
 
 function makeRuntimeUserPrivateDir(path: string): void {
@@ -1554,10 +1565,10 @@ export function convergeRuntimeManifest(
 	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
+	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
-	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	const supervisorConfig = writeSupervisorConfig(
 		enabledRuntimes,
 		manifest,
