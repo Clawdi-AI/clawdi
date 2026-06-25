@@ -568,7 +568,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("generates managed Codex MITM profiles from hosted-runtime manifests", async () => {
+	it("does not derive provider MITM profiles from hosted-runtime manifests", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -624,22 +624,7 @@ describe("runtime manifest datasource", () => {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			expect("manifest" in loaded).toBe(true);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([
-				expect.objectContaining({
-					id: "codex-chatgpt-backend-responses",
-					kind: "provider",
-					match: expect.objectContaining({
-						scheme: "https",
-						host: "chatgpt.com",
-						path: { type: "equals", value: "/backend-api/codex/responses" },
-					}),
-					rewrite: expect.objectContaining({
-						upstreamBaseUrl: "https://ai-gateway.example.test/backend-api/codex/responses",
-						preservePath: false,
-					}),
-					owner: "provider-projection",
-				}),
-			]);
+			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
 			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 		} finally {
 			restore();

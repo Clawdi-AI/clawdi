@@ -1721,7 +1721,7 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("projects Clawdi-managed Codex Responses providers to OpenClaw Codex transport", async () => {
+	it("projects Clawdi-managed OpenAI chat providers directly to OpenClaw", async () => {
 		const catalog = {
 			schema_version: 1,
 			providers: [
@@ -1731,7 +1731,7 @@ describe("ai-provider commands", () => {
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
 					default_model: "openai-codex/gpt-5.5",
-					api_mode: "codex_responses",
+					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
@@ -1743,24 +1743,25 @@ describe("ai-provider commands", () => {
 		const projection = buildAgentTargetProjection("openclaw", catalog);
 		const patch = JSON.parse(projection.files[0]!.content);
 
-		expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.5");
-		expect(patch.models.providers.openai.baseUrl).toBe("https://chatgpt.com/backend-api");
-		expect(patch.models.providers.openai.api).toBe("openai-chatgpt-responses");
-		expect(patch.models.providers.openai.agentRuntime).toBeUndefined();
-		expect(patch.models.providers.openai.models[0]).toMatchObject({
-			id: "gpt-5.5",
-			name: "gpt-5.5",
-			api: "openai-chatgpt-responses",
-			agentRuntime: { id: "pi" },
+		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed/openai-codex/gpt-5.5");
+		expect(patch.models.providers["clawdi-managed"].baseUrl).toBe(
+			"https://sub2api.example.test/v1",
+		);
+		expect(patch.models.providers["clawdi-managed"].api).toBe("openai-completions");
+		expect(patch.models.providers["clawdi-managed"].agentRuntime).toBeUndefined();
+		expect(patch.models.providers["clawdi-managed"].models[0]).toMatchObject({
+			id: "openai-codex/gpt-5.5",
+			name: "openai-codex/gpt-5.5",
+			api: "openai-completions",
 		});
-		expect(patch.models.providers.openai.apiKey).toEqual({
+		expect(patch.models.providers["clawdi-managed"].apiKey).toEqual({
 			source: "env",
 			provider: "default",
-			id: "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN",
+			id: "CLAWDI_OPENAI_API_KEY",
 		});
 	});
 
-	it("projects Clawdi-managed Codex Responses providers to Hermes through MITM official endpoints", () => {
+	it("projects Clawdi-managed OpenAI chat providers directly to Hermes", () => {
 		const projection = buildAgentTargetProjection("hermes", {
 			schema_version: 1,
 			providers: [
@@ -1770,7 +1771,7 @@ describe("ai-provider commands", () => {
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
 					default_model: "openai-codex/gpt-5.5",
-					api_mode: "codex_responses",
+					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_OPENAI_API_KEY",
@@ -1781,11 +1782,12 @@ describe("ai-provider commands", () => {
 
 		const patch = projection.files[0]?.content ?? "";
 		expect(patch).toContain('provider: "custom:clawdi-managed"');
-		expect(patch).toContain('api: "https://chatgpt.com/backend-api/codex"');
-		expect(patch).toContain('default_model: "gpt-5.5"');
-		expect(patch).toContain('key_env: "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN"');
-		expect(patch).not.toContain("https://sub2api.example.test");
-		expect(patch).not.toContain("CLAWDI_OPENAI_API_KEY");
+		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
+		expect(patch).toContain('transport: "chat_completions"');
+		expect(patch).toContain('default_model: "openai-codex/gpt-5.5"');
+		expect(patch).toContain('key_env: "CLAWDI_OPENAI_API_KEY"');
+		expect(patch).not.toContain("chatgpt.com");
+		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
 	});
 
 	it("projects user BYOK Codex Responses providers to the OpenClaw PI route", async () => {

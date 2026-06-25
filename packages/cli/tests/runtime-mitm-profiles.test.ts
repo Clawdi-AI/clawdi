@@ -123,7 +123,7 @@ describe("runtime MITM profile schema", () => {
 		expect(bundle.profiles).toEqual([]);
 	});
 
-	it("enables the hosted broker for managed Codex provider projection", () => {
+	it("does not derive provider MITM profiles from hosted provider projection", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
@@ -135,40 +135,7 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles).toEqual([
-			{
-				id: "codex-chatgpt-backend-responses",
-				enabled: true,
-				kind: "provider",
-				match: {
-					scheme: "https",
-					host: "chatgpt.com",
-					path: { type: "equals", value: "/backend-api/codex/responses" },
-					headers: {
-						authorization: {
-							type: "equals",
-							value: "clawdi-mitm-placeholder",
-							prefix: "Bearer ",
-						},
-					},
-					query: {},
-				},
-				rewrite: {
-					upstreamBaseUrl: "https://ai-gateway.example.test/backend-api/codex/responses",
-					preservePath: false,
-					setHeaders: {
-						authorization: {
-							type: "secretRef",
-							secretRef: "secret://provider.default.apiKey",
-							prefix: "Bearer ",
-						},
-					},
-				},
-				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-				priority: 125,
-				owner: "provider-projection",
-			},
-		]);
+		expect(bundle.profiles).toEqual([]);
 	});
 
 	it("builds a direct provider allowlist only when another manifest feature enables the broker", () => {
@@ -198,7 +165,7 @@ describe("runtime MITM profile schema", () => {
 		});
 	});
 
-	it("does not derive provider MITM profiles without a managed Codex projection", () => {
+	it("does not derive provider MITM profiles without explicit manifest profiles", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
