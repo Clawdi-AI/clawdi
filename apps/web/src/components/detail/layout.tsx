@@ -87,7 +87,7 @@ export function DetailSectionNav<T extends string>({
 				const Icon = item.icon;
 				const active = item.id === activeId;
 				const className = cn(
-					"flex min-w-40 shrink-0 items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:w-full lg:min-w-0",
+					"flex min-w-fit shrink-0 items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:w-full lg:min-w-0",
 					active
 						? "bg-accent text-accent-foreground"
 						: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -104,11 +104,6 @@ export function DetailSectionNav<T extends string>({
 									</span>
 								) : null}
 							</span>
-							{item.description ? (
-								<span className="mt-0.5 hidden text-xs leading-snug opacity-80 lg:block">
-									{item.description}
-								</span>
-							) : null}
 						</span>
 					</>
 				);

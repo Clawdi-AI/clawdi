@@ -13,7 +13,7 @@ import {
 	Unplug,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -77,6 +77,7 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, Omit<DetailNavItem<AgentTab>, "id"
 
 export function ConnectedAgentDetail({ environmentId }: { environmentId: string }) {
 	const id = environmentId;
+	const pathname = usePathname();
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -218,7 +219,7 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 		if (tab === "sessions") next.delete("tab");
 		else next.set("tab", tab);
 		const query = next.toString();
-		return query ? `/agents/${id}?${query}` : `/agents/${id}`;
+		return query ? `${pathname}?${query}` : pathname;
 	};
 	const navItems: DetailNavItem<AgentTab>[] = [
 		{
@@ -259,7 +260,7 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 		if (tab === "sessions") next.delete("tab");
 		else next.set("tab", tab);
 		const query = next.toString();
-		router.replace(query ? `/agents/${id}?${query}` : `/agents/${id}`, { scroll: false });
+		router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
 	};
 
 	// Wait until `agent` is loaded — otherwise `agentTypeLabel(undefined)`
