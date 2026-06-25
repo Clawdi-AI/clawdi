@@ -2396,6 +2396,87 @@ fi
 		}
 	});
 
+	it("runtime CLI update resolves floating npm tags before treating an install as current", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const npmLog = join(root, "npm.log");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${npmLog}'
+if [ "\${1:-}" = "view" ]; then
+  echo '"0.12.10-beta.22"'
+  exit 0
+fi
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ -z "$prefix" ]; then
+  echo "missing --prefix" >&2
+  exit 64
+fi
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.12.10-beta.22"
+  exit 0
+fi
+echo "fake clawdi"
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		try {
+			const paths = getRuntimePaths();
+			seedCurrentCliInstall(state, "clawdi@beta", "0.12.10-beta.21");
+			const result = applyRuntimeCliDesiredState(
+				{
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_floating_cli_tag",
+					environmentId: "env_floating_cli_tag",
+					instanceId: "iid_floating_cli_tag",
+					generation: 1,
+					issuedAt: "2026-06-06T00:00:00Z",
+					system: { home, workspace: join(home, "clawdi") },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
+					runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+				},
+				paths,
+			);
+
+			expect(result.status).toBe("installed");
+			expect(result.version).toBe("0.12.10-beta.22");
+			expect(readlinkSync(paths.cliManagedBin)).toBe(result.activeTarget);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(status.packageSpec).toBe("clawdi@beta");
+			expect(status.version).toBe("0.12.10-beta.22");
+			expect(readFileSync(npmLog, "utf-8")).toContain("view clawdi@beta version --json");
+			expect(readFileSync(npmLog, "utf-8")).toContain("install");
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("runtime watch keeps self re-exec when convergence fails after CLI install", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");

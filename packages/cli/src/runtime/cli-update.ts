@@ -41,6 +41,7 @@ interface RuntimeCliBootstrapStatus {
 }
 
 const NPM_INSTALL_TIMEOUT_MS = 180_000;
+const NPM_VIEW_TIMEOUT_MS = 30_000;
 const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 
 export function applyRuntimeCliDesiredState(
@@ -203,6 +204,7 @@ function isCurrentCliInstall(
 	if ((status.registry ?? null) !== registry) return false;
 	if (status.activePath !== paths.cliManagedBin) return false;
 	if (!status.activeTarget || !isExecutable(status.activeTarget)) return false;
+	if (!installedFloatingSpecVersionIsCurrent(status, packageSpec, registry)) return false;
 	return isExecutable(paths.cliManagedBin);
 }
 
@@ -215,11 +217,57 @@ function recoverCurrentCliInstallFromActiveLink(
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
 	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
+	const version = smokeCliVersion(activeTarget);
+	if (!installedFloatingSpecVersionIsCurrent({ version }, packageSpec, registry)) return null;
 	return {
 		npmPrefix,
 		activeTarget,
-		version: smokeCliVersion(activeTarget),
+		version,
 	};
+}
+
+function installedFloatingSpecVersionIsCurrent(
+	status: Pick<RuntimeCliBootstrapStatus, "version">,
+	packageSpec: string,
+	registry: string | null,
+): boolean {
+	if (!isFloatingNpmPackageSpec(packageSpec)) return true;
+	if (!status.version) return false;
+	const desiredVersion = resolveNpmPackageVersion(packageSpec, registry);
+	return desiredVersion === null || status.version === desiredVersion;
+}
+
+function isFloatingNpmPackageSpec(packageSpec: string): boolean {
+	if (packageSpec === "clawdi") return true;
+	const match = /^clawdi@(.+)$/.exec(packageSpec);
+	if (!match) return false;
+	const specifier = match[1] ?? "";
+	return !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(specifier);
+}
+
+function resolveNpmPackageVersion(packageSpec: string, registry: string | null): string | null {
+	const result = spawnSync(
+		"npm",
+		["view", packageSpec, "version", "--json", ...(registry ? ["--registry", registry] : [])],
+		{
+			encoding: "utf8",
+			timeout: NPM_VIEW_TIMEOUT_MS,
+			env: {
+				...process.env,
+				NO_UPDATE_NOTIFIER: "1",
+				NPM_CONFIG_UPDATE_NOTIFIER: "false",
+			},
+		},
+	);
+	if (result.status !== 0) return null;
+	const output = result.stdout.trim();
+	if (!output) return null;
+	try {
+		const parsed = JSON.parse(output) as unknown;
+		return typeof parsed === "string" && parsed.trim() ? parsed.trim() : null;
+	} catch {
+		return output;
+	}
 }
 
 function installCliPackage(
