@@ -711,8 +711,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
 			expect(existsSync(join(home, ".local", "bin", "hermes"))).toBe(false);
 			expect(existsSync(join(serviceStateRoot, "bin", "openclaw"))).toBe(true);
-			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(false);
+			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(true);
 			expect(existsSync(join(serviceStateRoot, "bin", "codex"))).toBe(false);
+			expect(readFileSync(join(serviceStateRoot, "bin", "hermes"), "utf-8")).toContain(
+				`exec '${join(serviceStateRoot, "bin", "clawdi")}' run -- hermes "$@"`,
+			);
 
 			const openclawInventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),

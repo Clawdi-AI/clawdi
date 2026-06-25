@@ -268,6 +268,58 @@ describe("run command project folder selection", () => {
 		);
 	});
 
+	it("rejects disabled hosted runtime commands before native binaries can run", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "hermes.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				enabled: false,
+				generatedAt: "2026-06-25T00:00:00Z",
+				generation: 2,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: [],
+				env: {},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+
+		const originalExit = process.exit;
+		const originalLog = console.log;
+		const logs: string[] = [];
+		process.exit = ((code?: string | number | null) => {
+			throw new Error(`process.exit:${code ?? 0}`);
+		}) as typeof process.exit;
+		console.log = (message?: unknown) => {
+			logs.push(String(message ?? ""));
+		};
+		try {
+			await expect(run(["hermes"], {}, spawnImpl)).rejects.toThrow("process.exit:1");
+		} finally {
+			console.log = originalLog;
+			process.exit = originalExit;
+		}
+
+		expect(calls).toHaveLength(0);
+		expect(logs.join("\n")).toContain("Runtime hermes is disabled");
+	});
+
 	it("passes hosted runtime provider secrets only to the managed MITM broker", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
