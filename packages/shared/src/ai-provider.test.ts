@@ -135,7 +135,7 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toEqual([]);
 	});
 
-	test("requires Clawdi-managed providers to use OpenAI Responses mode", () => {
+	test("accepts Clawdi-managed providers in OpenAI chat mode", () => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
 			providers: [
@@ -143,8 +143,30 @@ describe("validateAiProviderCatalog", () => {
 					id: "clawdi-managed",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "openai-codex/gpt-5.5",
+					default_model: "gpt-5.5",
 					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				},
+			],
+			defaults: { chat_provider_id: "clawdi-managed" },
+		});
+
+		expect(result.valid).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+
+	test("requires Clawdi-managed providers to use OpenAI chat mode", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "clawdi-managed",
+					type: "custom_openai_compatible",
+					base_url: "https://managed.example/v1",
+					default_model: "gpt-5.5",
+					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -155,7 +177,7 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(
-			"Provider clawdi-managed managed_by clawdi must use api_mode openai_responses.",
+			"Provider clawdi-managed managed_by clawdi must use api_mode openai_chat.",
 		);
 	});
 });

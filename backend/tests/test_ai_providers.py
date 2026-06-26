@@ -117,7 +117,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
         },
     )
     assert managed_wrong_mode.status_code == 422, managed_wrong_mode.text
-    assert "must use api_mode openai_responses" in managed_wrong_mode.text
+    assert "must use api_mode openai_chat" in managed_wrong_mode.text
 
     managed = await client.post(
         "/api/ai-providers",
@@ -125,15 +125,15 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "clawdi-managed",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "openai-codex/gpt-5.5",
-            "api_mode": "openai_responses",
+            "default_model": "gpt-5.5",
+            "api_mode": "openai_chat",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
             "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
         },
     )
     assert managed.status_code == 200, managed.text
-    assert managed.json()["api_mode"] == "openai_responses"
+    assert managed.json()["api_mode"] == "openai_chat"
 
     plaintext_extra = await client.post(
         "/api/ai-providers",

@@ -794,7 +794,8 @@ async def test_runtime_manifest_projects_provider_secret_values(
             type="custom_openai_compatible",
             base_url="https://sub2api.test/v1",
             default_model="gpt-5.5",
-            api_mode="codex_responses",
+            # Simulate a stale managed provider row from before the chat-completions contract.
+            api_mode="openai_responses",
             auth_type="api_key",
             auth_metadata={"source": "managed"},
             managed_by="clawdi",
@@ -826,7 +827,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "kind": "openai-compatible",
         "baseUrl": "https://sub2api.test/v1",
         "model": "gpt-5.5",
-        "apiMode": "openai_responses",
+        "apiMode": "openai_chat",
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.default.apiKey",
     }

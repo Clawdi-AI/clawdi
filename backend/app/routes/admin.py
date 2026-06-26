@@ -250,7 +250,7 @@ async def admin_upsert_clawdi_managed_ai_provider(
 
     This intentionally does not expose a generic admin AI-provider write API.
     Hosted deploy orchestration only needs to install the fixed
-    Clawdi-managed OpenAI-compatible Responses provider and rotate its key.
+    Clawdi-managed OpenAI-compatible chat provider and rotate its key.
     """
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     try:

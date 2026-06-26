@@ -122,7 +122,7 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderType, string>> = {
 };
 
 const CLAWDI_MANAGED_PROVIDER_ID = "clawdi-managed";
-const CLAWDI_MANAGED_API_MODE = "openai_responses";
+const CLAWDI_MANAGED_API_MODE = "openai_chat";
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
 
 export function isAiProviderId(input: string): boolean {
