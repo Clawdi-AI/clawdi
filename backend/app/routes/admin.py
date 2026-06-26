@@ -56,6 +56,8 @@ from app.schemas.admin import (
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
     AdminEnvironmentCreate,
+    AdminManagedAiProviderResponse,
+    AdminManagedAiProviderUpsert,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
@@ -74,6 +76,12 @@ from app.services.channels import (
     store_channel_secrets,
     sync_channel_commands,
     upsert_channel_secrets,
+)
+from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_API_MODE,
+    MANAGED_AI_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    upsert_clawdi_managed_provider,
 )
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
@@ -227,6 +235,70 @@ async def admin_revoke_api_key(
         api_key.id,
     )
     return ApiKeyRevokeResponse(status="revoked")
+
+
+@router.put(
+    "/ai-providers/clawdi-managed",
+    response_model=AdminManagedAiProviderResponse,
+)
+async def admin_upsert_clawdi_managed_ai_provider(
+    body: AdminManagedAiProviderUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminManagedAiProviderResponse:
+    """Upsert the first-party managed AI provider for a target user.
+
+    This intentionally does not expose a generic admin AI-provider write API.
+    Hosted deploy orchestration only needs to install the fixed
+    Clawdi-managed OpenAI-compatible Responses provider and rotate its key.
+    """
+    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    try:
+        provider = await upsert_clawdi_managed_provider(
+            db,
+            user=target,
+            base_url=body.base_url,
+            api_key=body.api_key.get_secret_value(),
+            default_model=body.default_model,
+            label=body.label,
+            capabilities=body.capabilities,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="ai_provider.managed.upsert",
+        resource_type="ai_provider",
+        resource_id=MANAGED_AI_PROVIDER_ID,
+        target_user_id=target.id,
+        source="api.admin",
+        details={
+            "provider_id": MANAGED_AI_PROVIDER_ID,
+            "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+            "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+            "default_model": body.default_model,
+            "has_capabilities": body.capabilities is not None,
+        },
+    )
+    await db.commit()
+    await db.refresh(provider)
+    logger.info(
+        "admin_managed_ai_provider_upserted target_clerk_id=%s provider_id=%s",
+        body.target_clerk_id,
+        provider.provider_id,
+    )
+    return AdminManagedAiProviderResponse(
+        owner_user_id=target.id,
+        owner_clerk_id=target.clerk_id,
+        provider_id=provider.provider_id,
+        api_mode=provider.api_mode or "",
+        runtime_env_name=provider.runtime_env_name or "",
+        base_url=provider.base_url,
+        default_model=provider.default_model,
+        has_api_key=True,
+    )
 
 
 @router.get("/channels", response_model=list[AdminChannelResponse])

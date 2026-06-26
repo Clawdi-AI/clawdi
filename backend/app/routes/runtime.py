@@ -16,14 +16,16 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.services.http_cache import if_none_match_contains, strong_json_etag
+from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_API_MODE,
+    MANAGED_AI_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_RUNTIME_ENV,
+)
 from app.services.vault_crypto import decrypt
 
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
 
 _DEFAULT_PROVIDER_SECRET_REF = "provider.default.apiKey"
-_MANAGED_PROVIDER_ID = "clawdi-managed"
-_MANAGED_PROVIDER_API_MODE = "openai_responses"
-_MANAGED_PROVIDER_RUNTIME_ENV_NAME = "CLAWDI_MANAGED_OPENAI_API_KEY"
 
 
 @router.get("/manifest")
@@ -200,8 +202,8 @@ async def _provider_projection(
     api_mode = provider.api_mode
     runtime_env_name = provider.runtime_env_name
     if _is_clawdi_managed_provider(provider):
-        api_mode = _MANAGED_PROVIDER_API_MODE
-        runtime_env_name = _MANAGED_PROVIDER_RUNTIME_ENV_NAME
+        api_mode = MANAGED_AI_PROVIDER_API_MODE
+        runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     if api_mode:
         projection["apiMode"] = api_mode
     if runtime_env_name:
@@ -217,7 +219,7 @@ async def _provider_projection(
 
 
 def _is_clawdi_managed_provider(provider: AiProvider) -> bool:
-    return provider.provider_id == _MANAGED_PROVIDER_ID or (
+    return provider.provider_id == MANAGED_AI_PROVIDER_ID or (
         provider.managed_by == "clawdi"
         and provider.auth_type == "api_key"
         and (provider.auth_metadata or {}).get("source") == "managed"
@@ -268,7 +270,7 @@ async def _select_provider(
         return result.scalar_one_or_none()
 
     result = await db.execute(
-        select(AiProvider).where(*filters, AiProvider.provider_id == _MANAGED_PROVIDER_ID)
+        select(AiProvider).where(*filters, AiProvider.provider_id == MANAGED_AI_PROVIDER_ID)
     )
     managed = result.scalar_one_or_none()
     if managed is not None:

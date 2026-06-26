@@ -37,6 +37,11 @@ from app.schemas.ai_provider import (
     AiProviderUpsert,
     AiProviderValidationResponse,
 )
+from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_API_MODE,
+    MANAGED_AI_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_RUNTIME_ENV,
+)
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/ai-providers", tags=["ai-providers"])
@@ -70,9 +75,6 @@ CODEX_OAUTH_CONFIG = {
     },
 }
 BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
-MANAGED_AI_PROVIDER_ID = "clawdi-managed"
-MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
-MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 RESERVED_OAUTH_AUTHORIZE_PARAMS = {
     "audience",
     "client_id",

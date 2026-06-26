@@ -450,6 +450,149 @@ async def test_admin_revoke_unknown_key(admin_client):
 
 
 @pytest.mark.asyncio
+async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
+    admin_client, db_session, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.services.managed_ai_provider import (
+        MANAGED_AI_PROVIDER_API_MODE,
+        MANAGED_AI_PROVIDER_ID,
+        MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    )
+    from app.services.vault_crypto import decrypt
+
+    raw_key = "sk-admin-managed-secret"
+    r = await admin_client.put(
+        "/api/admin/ai-providers/clawdi-managed",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": raw_key,
+            "default_model": "gpt-5.4-mini",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert raw_key not in r.text
+    assert r.json() == {
+        "owner_user_id": str(seed_user.id),
+        "owner_clerk_id": seed_user.clerk_id,
+        "provider_id": MANAGED_AI_PROVIDER_ID,
+        "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+        "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "default_model": "gpt-5.4-mini",
+        "has_api_key": True,
+    }
+
+    provider = (
+        await db_session.execute(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+            )
+        )
+    ).scalar_one()
+    assert provider.type == "custom_openai_compatible"
+    assert provider.api_mode == MANAGED_AI_PROVIDER_API_MODE
+    assert provider.auth_type == "api_key"
+    assert provider.auth_ref is None
+    assert provider.auth_metadata == {"source": "managed", "profile": "default"}
+    assert provider.managed_by == "clawdi"
+    assert provider.runtime_env_name == MANAGED_AI_PROVIDER_RUNTIME_ENV
+    assert provider.archived_at is None
+
+    payload = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+                AiProviderAuthPayload.auth_profile == "default",
+            )
+        )
+    ).scalar_one()
+    assert payload.kind == "api_key"
+    assert payload.source == "managed"
+    assert payload.payload_metadata == {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
+    assert decrypt(payload.encrypted_payload, payload.nonce) == raw_key
+
+
+@pytest.mark.asyncio
+async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
+    admin_client, db_session, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.services.managed_ai_provider import MANAGED_AI_PROVIDER_ID
+    from app.services.vault_crypto import decrypt
+
+    first = await admin_client.put(
+        "/api/admin/ai-providers/clawdi-managed",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-first-admin-managed-secret",
+        },
+    )
+    assert first.status_code == 200, first.text
+    second_key = "sk-second-admin-managed-secret"
+    second = await admin_client.put(
+        "/api/admin/ai-providers/clawdi-managed",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": second_key,
+            "default_model": "gpt-5.4",
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second_key not in second.text
+
+    providers = (
+        await db_session.execute(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+            )
+        )
+    ).scalars().all()
+    assert len(providers) == 1
+    assert providers[0].default_model == "gpt-5.4"
+
+    payloads = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+            )
+        )
+    ).scalars().all()
+    assert len(payloads) == 1
+    assert decrypt(payloads[0].encrypted_payload, payloads[0].nonce) == second_key
+
+
+@pytest.mark.asyncio
+async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_client, seed_user):
+    raw_key = "sk-invalid-url-secret"
+    r = await admin_client.put(
+        "/api/admin/ai-providers/clawdi-managed",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "not-a-url",
+            "api_key": raw_key,
+        },
+    )
+    assert r.status_code == 422
+    assert raw_key not in r.text
+
+
+@pytest.mark.asyncio
 async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_session, seed_user):
     import uuid
 

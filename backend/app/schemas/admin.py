@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
@@ -110,6 +110,30 @@ class AdminRuntimeStateResponse(BaseModel):
     deployment_id: str
     instance_id: str
     generation: int
+
+
+class AdminManagedAiProviderUpsert(BaseModel):
+    """Create or rotate the first-party managed AI provider for a user."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    target_clerk_id: str
+    base_url: str = Field(min_length=1, max_length=1000)
+    api_key: SecretStr = Field(min_length=1)
+    default_model: str | None = Field(default=None, max_length=300)
+    label: str | None = Field(default=None, max_length=200)
+    capabilities: dict[str, Any] | None = None
+
+
+class AdminManagedAiProviderResponse(BaseModel):
+    owner_user_id: UUID
+    owner_clerk_id: str
+    provider_id: str
+    api_mode: str
+    runtime_env_name: str
+    base_url: str
+    default_model: str | None = None
+    has_api_key: bool
 
 
 class AdminChannelCreate(BaseModel):
