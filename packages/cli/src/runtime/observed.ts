@@ -226,9 +226,7 @@ function providerReasons(provider: JsonRecord, secretAvailable: boolean | null):
 }
 
 function isOpenAiCompatibleMode(apiMode: string | null): boolean {
-	return (
-		apiMode === "openai_chat" || apiMode === "openai_responses" || apiMode === "codex_responses"
-	);
+	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
 function readSupervisorObserved(paths: RuntimePaths): JsonRecord | null {

@@ -231,9 +231,7 @@ function providerHealthReasons(
 }
 
 function isOpenAiCompatibleMode(apiMode: string | null): boolean {
-	return (
-		apiMode === "openai_chat" || apiMode === "openai_responses" || apiMode === "codex_responses"
-	);
+	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
