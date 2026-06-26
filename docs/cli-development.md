@@ -242,9 +242,9 @@ The monorepo has two GitHub Release lines:
 - `clawdi-YYYY-MM-DD` for Clawdi app/backend/web changes. Additional releases
   on the same UTC day append `-2`, `-3`, and so on. The suffix is a same-day
   release sequence, not a semver patch number.
-  `.github/workflows/clawdi-release.yml` creates this release
-  when relevant files land on `main`; it can also be run manually with a
-  specific version/commit after an out-of-band production deploy.
+  `.github/workflows/clawdi-release.yml` is manual-only and should be run with
+  a specific version/commit after a production deploy that needs public release
+  notes.
 
 Use the GitHub release body as the published release notes and keep notable
 entries mirrored in `CHANGELOG.md`. GitHub's generated notes are categorized by

@@ -278,7 +278,7 @@ export default async function PublicSharePage({ params }: { params: Promise<Para
 				<footer className="border-t pt-4 text-xs text-muted-foreground">
 					Shared via{" "}
 					<Link href="/" className="font-medium underline-offset-4 hover:underline">
-						Clawdi Cloud
+						Clawdi
 					</Link>
 				</footer>
 			</div>
@@ -308,9 +308,9 @@ function ShareHeader() {
 						alt=""
 						width={28}
 						height={28}
-						className="size-7 shrink-0"
+						className="size-7 shrink-0 rounded-md"
 					/>
-					<span className="text-sm font-semibold tracking-tight">Clawdi Cloud</span>
+					<span className="text-sm font-semibold tracking-tight">Clawdi</span>
 				</Link>
 				<ShareHeaderUser />
 			</div>

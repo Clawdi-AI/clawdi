@@ -125,6 +125,7 @@ const NAME_CLASS: Record<AgentIconSize, string> = {
 	sm: "text-sm font-medium",
 	md: "text-sm font-medium",
 	lg: "text-base font-medium",
+	rail: "text-base font-medium",
 	xl: "text-2xl font-semibold tracking-tight",
 };
 
@@ -136,6 +137,7 @@ const SUBTITLE_GAP: Record<AgentIconSize, string> = {
 	sm: "mt-0.5",
 	md: "mt-0.5",
 	lg: "mt-0.5",
+	rail: "mt-0.5",
 	xl: "mt-1",
 };
 

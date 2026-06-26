@@ -11,10 +11,9 @@ import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
-import { sessionColumnsCompact } from "@/components/sessions/session-columns";
+import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
@@ -205,12 +204,11 @@ export default function DashboardPage() {
 								</Link>
 							</Button>
 						</div>
-						<DataTable
-							columns={sessionColumnsCompact}
-							data={sessions ?? []}
+						<SessionFeed
+							sessions={sessions ?? []}
 							isLoading={sessionsLoading}
-							getRowHref={(s) => sessionDetailHref(s.id)}
-							rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
+							grouped={false}
+							sessionHref={(session) => sessionDetailHref(session.id)}
 							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
 						/>
 					</section>

@@ -6,11 +6,14 @@ import { cn } from "@/lib/utils";
  * `size-N` / `rounded-N` through `className`, those are the very
  * inconsistencies this component now controls.
  *
- * Five sizes share one corner radius (`rounded-md`) so an agent
+ * Product surfaces share one corner radius (`rounded-md`) so an agent
  * reads identically across the dashboard tile, the agent detail
  * hero, the picker dropdown, the sessions table row, and the
  * agent-target picker. Without that, screenshots from different
  * pages look like they're showing different products.
+ *
+ * The Discord-style sidebar rail uses `rail`: same brand art, but tuned
+ * to sit inside a larger 44px hit target without visually filling it.
  *
  * Chat-bubble avatars (sessions transcript) want a circular crop
  * to match the user avatar; that one usage opts out via
@@ -19,13 +22,14 @@ import { cn } from "@/lib/utils";
 
 const KNOWN: ReadonlySet<string> = new Set(["claude_code", "codex", "hermes", "openclaw"]);
 
-export type AgentIconSize = "xs" | "sm" | "md" | "lg" | "xl";
+export type AgentIconSize = "xs" | "sm" | "md" | "lg" | "rail" | "xl";
 
 const SIZE_CLASS: Record<AgentIconSize, string> = {
 	xs: "size-4",
 	sm: "size-5",
 	md: "size-6",
 	lg: "size-8",
+	rail: "size-9",
 	xl: "size-12",
 };
 
@@ -34,6 +38,7 @@ const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
 	sm: "size-3",
 	md: "size-3.5",
 	lg: "size-4",
+	rail: "size-4",
 	xl: "size-6",
 };
 
@@ -52,7 +57,8 @@ export function AgentIcon({
 	shape?: "rounded" | "circle";
 	className?: string;
 }) {
-	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
+	const radius =
+		shape === "circle" ? "rounded-full" : size === "rail" ? "rounded-2xl" : "rounded-md";
 	if (agent && KNOWN.has(agent)) {
 		return (
 			<img

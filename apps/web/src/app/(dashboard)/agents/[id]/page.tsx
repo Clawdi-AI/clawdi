@@ -1,32 +1,17 @@
-"use client";
+import { redirect } from "next/navigation";
+import { AgentDetailClient } from "@/app/(dashboard)/agents/[id]/agent-detail-client";
+import { agentSectionHref, hasAgentTabQuery } from "@/lib/agent-routes";
 
-import dynamic from "next/dynamic";
-import { useParams } from "next/navigation";
-import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
-import { Skeleton } from "@/components/ui/skeleton";
-import { IS_HOSTED } from "@/lib/hosted";
-import { useV2Access } from "@/lib/v2-access";
+type AgentPageProps = {
+	params: Promise<{ id: string }>;
+	searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
 
-// Hosted builds route through `AgentHome`, which renders hosted agent detail
-// for agents backed by a hosted deployment and falls back to the connected
-// detail otherwise. OSS builds render the connected detail directly —
-// the hosted chunk (and the deploy-API client it carries) never ships.
-const AgentHome = IS_HOSTED
-	? dynamic(() => import("@/hosted/agents/agent-home").then((m) => ({ default: m.AgentHome })))
-	: null;
-
-export default function AgentDetailPage() {
-	const { id } = useParams<{ id: string }>();
-	const v2Access = useV2Access();
-	if (AgentHome && v2Access.isLoading) {
-		return (
-			<div className="space-y-4 px-4 py-2 lg:px-6">
-				<Skeleton className="h-10 w-64" />
-				<Skeleton className="h-9 w-full max-w-md" />
-				<Skeleton className="h-48 w-full" />
-			</div>
-		);
+export default async function AgentDetailPage({ params, searchParams }: AgentPageProps) {
+	const [{ id }, query] = await Promise.all([params, searchParams]);
+	if (hasAgentTabQuery(query)) {
+		redirect(agentSectionHref(id, "overview", query));
 	}
-	if (AgentHome && v2Access.canUseV2) return <AgentHome environmentId={id} />;
-	return <ConnectedAgentDetail environmentId={id} />;
+
+	return <AgentDetailClient environmentId={id} section="overview" />;
 }

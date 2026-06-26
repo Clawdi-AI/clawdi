@@ -40,13 +40,13 @@ const DESCRIPTION =
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE_URL),
 	// Per-page layouts/pages can override `title` with a plain string and
-	// this template will suffix " · Clawdi Cloud" automatically.
+	// this template will suffix " · Clawdi" automatically.
 	title: {
-		default: "Clawdi Cloud",
-		template: "%s · Clawdi Cloud",
+		default: "Clawdi",
+		template: "%s · Clawdi",
 	},
 	description: DESCRIPTION,
-	applicationName: "Clawdi Cloud",
+	applicationName: "Clawdi",
 	manifest: "/site.webmanifest",
 	icons: {
 		icon: [
@@ -58,14 +58,14 @@ export const metadata: Metadata = {
 	},
 	openGraph: {
 		type: "website",
-		siteName: "Clawdi Cloud",
-		title: "Clawdi Cloud",
+		siteName: "Clawdi",
+		title: "Clawdi",
 		description: DESCRIPTION,
 		url: SITE_URL,
 	},
 	twitter: {
 		card: "summary",
-		title: "Clawdi Cloud",
+		title: "Clawdi",
 		description: DESCRIPTION,
 	},
 	// Private beta: keep the dashboard out of search indexes until launch.

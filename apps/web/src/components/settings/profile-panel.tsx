@@ -1,7 +1,7 @@
 "use client";
 
 import { UserCog } from "lucide-react";
-import { SettingsPanelHeader } from "@/components/settings/settings-shell";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuthActions, useCurrentUser } from "@/lib/auth-client";

@@ -17,14 +17,13 @@ import {
 	Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { type DetailNavItem, DetailNavLayout, DetailSectionNav } from "@/components/detail/layout";
+import type { DetailNavItem } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
-import { PageHeader } from "@/components/page-header";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +41,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
@@ -65,9 +63,17 @@ import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import { useCheckout, usePlans } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import {
+	type AgentSectionId,
+	agentSectionHref,
+	agentSectionLabel,
+	agentSessionDetailHref,
+	HOSTED_AGENT_SECTION_IDS,
+} from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
+import { settingsQueryHref } from "@/lib/settings-routes";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
 import { aiProviderRuntimeId, buildAiProviderBootstrap } from "@/v2/ai-providers/runtime-bootstrap";
@@ -83,7 +89,7 @@ import {
 } from "@/v2/channels/channels-hooks";
 
 type Runtime = "openclaw" | "hermes";
-type HostedAgentTab = "overview" | "console" | "ai" | "channels" | "compute";
+type HostedAgentTab = "overview" | "console" | "sessions" | "ai" | "channels" | "compute";
 const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
 	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
 	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
@@ -91,42 +97,40 @@ const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
 const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"overview",
 	"console",
+	"sessions",
 	"ai",
 	"channels",
 	"compute",
 ]);
-const HOSTED_AGENT_NAV: DetailNavItem<HostedAgentTab>[] = [
-	{
-		id: "overview",
-		label: "Overview",
+const HOSTED_AGENT_NAV_META: Record<
+	HostedAgentTab,
+	Omit<DetailNavItem<HostedAgentTab>, "id" | "label" | "count">
+> = {
+	overview: {
 		description: "Status, model, resources, and recent sessions.",
 		icon: Info,
 	},
-	{
-		id: "console",
-		label: "Console",
+	console: {
 		description: "Open the live runtime UI.",
 		icon: MonitorPlay,
 	},
-	{
-		id: "ai",
-		label: "AI Provider",
+	sessions: {
+		description: "History synced by this hosted runtime.",
+		icon: RefreshCw,
+	},
+	ai: {
 		description: "Runtime-scoped provider and model binding.",
 		icon: Zap,
 	},
-	{
-		id: "channels",
-		label: "Channels",
+	channels: {
 		description: "Messaging links for this hosted agent.",
 		icon: Link2,
 	},
-	{
-		id: "compute",
-		label: "Compute",
+	compute: {
 		description: "Plan, lifecycle, and runtime availability.",
 		icon: Cpu,
 	},
-];
+};
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
 const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
 const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
@@ -138,14 +142,6 @@ function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oa
 		: "api_key";
 }
 
-function statusTone(status: string): "success" | "info" | "warning" | "destructive" | "neutral" {
-	if (status === "running" || status === "ready") return "success";
-	if (status === "provisioning" || status === "starting" || status === "pending") return "info";
-	if (status === "stopped") return "neutral";
-	if (status === "failed" || status === "error") return "destructive";
-	return "neutral";
-}
-
 function statusLabel(status: string): string {
 	if (status === "running" || status === "ready") return "Running";
 	if (status === "provisioning") return "Provisioning";
@@ -155,8 +151,12 @@ function statusLabel(status: string): string {
 	return status;
 }
 
-function parseHostedAgentTab(value: string | null): HostedAgentTab | null {
-	return value && HOSTED_AGENT_TABS.has(value as HostedAgentTab) ? (value as HostedAgentTab) : null;
+function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
+	if (!value) return null;
+	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab) &&
+		HOSTED_AGENT_TABS.has(value as HostedAgentTab)
+		? (value as HostedAgentTab)
+		: null;
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -194,23 +194,34 @@ export function HostedAgentDetail({
 	environmentId,
 	deployment,
 	runtime,
+	section = "overview",
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
+	section?: AgentSectionId;
 }) {
 	const api = useApi();
-	const pathname = usePathname();
+	const router = useRouter();
 	const ci = deployment.config_info;
 	const name = deploymentDisplayName(deployment.name);
 	const runtimeLabel = RUNTIME_LABEL[runtime];
-	useSetBreadcrumbTitle(`${name} · ${runtimeLabel}`);
+	const activeTab = parseHostedAgentTab(section) ?? "overview";
+	useSetAgentBreadcrumbTitle({
+		agentId: environmentId,
+		agentTitle: `${name} · ${runtimeLabel}`,
+		section: activeTab,
+	});
 
 	const isPerformance = ci?.compute_plan_slug === "compute_performance";
 	const consoleUrl = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
-	const router = useRouter();
 	const searchParams = useSearchParams();
-	const activeTab = parseHostedAgentTab(searchParams.get("tab")) ?? "overview";
+	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(environmentId, sessionId);
+
+	useEffect(() => {
+		if (parseHostedAgentTab(section)) return;
+		router.replace(agentSectionHref(environmentId, "overview", searchParams.toString()));
+	}, [environmentId, router, searchParams, section]);
 
 	const sessions = useQuery({
 		queryKey: ["agent-sessions", environmentId],
@@ -223,95 +234,71 @@ export function HostedAgentDetail({
 		enabled: isCloudEnvId(environmentId),
 	});
 
-	const setTab = (tab: HostedAgentTab) => {
-		const next = new URLSearchParams(searchParams.toString());
-		if (tab === "overview") next.delete("tab");
-		else next.set("tab", tab);
-		const query = next.toString();
-		router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-	};
-	const tabHref = (tab: HostedAgentTab) => {
-		const next = new URLSearchParams(searchParams.toString());
-		if (tab === "overview") next.delete("tab");
-		else next.set("tab", tab);
-		const query = next.toString();
-		return query ? `${pathname}?${query}` : pathname;
-	};
-	const navItems = HOSTED_AGENT_NAV.map((item) => ({ ...item, href: tabHref(item.id) }));
-	const activeNavItem =
-		HOSTED_AGENT_NAV.find((item) => item.id === activeTab) ?? HOSTED_AGENT_NAV[0];
+	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
+	const activeTabLabel = agentSectionLabel(activeTab);
 
 	return (
 		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
-			{/* Header — shared PageHeader chassis, scoped to THIS runtime agent. */}
-			<PageHeader
-				title={name}
-				adornment={<AgentIcon agent={runtime} size="lg" className="ring-2 ring-background" />}
-				status={
-					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-						<StatusBadge status={statusTone(deployment.status)} withDot>
-							{statusLabel(deployment.status)}
-						</StatusBadge>
-						<span>Hosted agent</span>
-						<span>·</span>
-						<span>{runtimeLabel} runtime</span>
-						<span>·</span>
-						<span className="inline-flex items-center gap-1">
-							{isPerformance ? <Zap className="size-3.5" /> : <Cpu className="size-3.5" />}
-							{isPerformance ? "Performance" : "Free"}
-						</span>
+			<section className="space-y-4">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
+						{activeNavItem.description ? (
+							<p className="mt-1 text-sm text-muted-foreground">{activeNavItem.description}</p>
+						) : null}
 					</div>
-				}
-				actions={
-					consoleUrl ? (
+					{consoleUrl ? (
 						<Button asChild variant="outline" size="sm">
 							<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
 								Open {runtimeLabel}
 								<ExternalLink className="size-3.5" />
 							</a>
 						</Button>
-					) : undefined
-				}
-			/>
-
-			<DetailNavLayout
-				nav={
-					<DetailSectionNav
-						items={navItems}
-						activeId={activeTab}
-						onSelect={setTab}
-						label="Hosted agent sections"
+					) : null}
+				</div>
+				{activeTab === "overview" ? (
+					<OverviewTab
+						deployment={deployment}
+						runtime={runtime}
+						isPerformance={isPerformance}
+						sessions={sessions.data?.items ?? []}
+						sessionsLoading={sessions.isLoading}
+						sessionsError={sessions.error}
+						onRetrySessions={() => sessions.refetch()}
+						sessionHref={(session) => scopedSessionHref(session.id)}
 					/>
-				}
-			>
-				<section className="space-y-4">
-					<div>
-						<h2 className="text-sm font-semibold">{activeNavItem.label}</h2>
-						{activeNavItem.description ? (
-							<p className="mt-1 text-xs text-muted-foreground">{activeNavItem.description}</p>
-						) : null}
+				) : null}
+				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
+				{activeTab === "sessions" ? (
+					<div className="max-w-4xl">
+						{sessions.error ? (
+							<ChannelError
+								error={sessions.error}
+								onRetry={() => sessions.refetch()}
+								title="Couldn't load sessions"
+							/>
+						) : (
+							<SessionFeed
+								sessions={sessions.data?.items ?? []}
+								isLoading={sessions.isLoading}
+								emptyMessage="No sessions from this agent yet."
+								showAgent={false}
+								sessionHref={(session) => scopedSessionHref(session.id)}
+							/>
+						)}
 					</div>
-					{activeTab === "overview" ? (
-						<OverviewTab
-							deployment={deployment}
-							runtime={runtime}
-							isPerformance={isPerformance}
-							sessions={sessions.data?.items ?? []}
-							sessionsLoading={sessions.isLoading}
-							sessionsError={sessions.error}
-							onRetrySessions={() => sessions.refetch()}
-						/>
-					) : null}
-					{activeTab === "console" ? (
-						<ConsoleTab deployment={deployment} runtime={runtime} />
-					) : null}
-					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
-					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
-					{activeTab === "compute" ? (
-						<ComputeTab deployment={deployment} isPerformance={isPerformance} runtime={runtime} />
-					) : null}
-				</section>
-			</DetailNavLayout>
+				) : null}
+				{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
+				{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
+				{activeTab === "compute" ? (
+					<ComputeTab
+						deployment={deployment}
+						isPerformance={isPerformance}
+						runtime={runtime}
+						billingSettingsHref={settingsQueryHref("billing-plan", searchParams)}
+					/>
+				) : null}
+			</section>
 		</div>
 	);
 }
@@ -335,6 +322,7 @@ function OverviewTab({
 	sessionsLoading,
 	sessionsError,
 	onRetrySessions,
+	sessionHref,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
@@ -343,6 +331,7 @@ function OverviewTab({
 	sessionsLoading: boolean;
 	sessionsError: unknown;
 	onRetrySessions: () => void;
+	sessionHref: (session: SessionListItem) => string;
 }) {
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
@@ -373,6 +362,7 @@ function OverviewTab({
 							isLoading={sessionsLoading}
 							emptyMessage="No sessions from this agent yet."
 							showAgent={false}
+							sessionHref={sessionHref}
 						/>
 					)}
 				</div>
@@ -667,7 +657,7 @@ function AiProviderTab({
 			<p className="text-xs text-muted-foreground">
 				Add, validate, or remove providers on{" "}
 				<Link href="/ai-providers" className="underline">
-					AI Providers
+					Model Providers
 				</Link>
 				.
 			</p>
@@ -918,10 +908,12 @@ function ComputeTab({
 	deployment,
 	isPerformance,
 	runtime,
+	billingSettingsHref,
 }: {
 	deployment: HostedDeployment;
 	isPerformance: boolean;
 	runtime: Runtime;
+	billingSettingsHref: string;
 }) {
 	const router = useRouter();
 	const lifecycle = useDeploymentLifecycle();
@@ -1153,7 +1145,7 @@ function ComputeTab({
 							</div>
 						) : (
 							<Button asChild variant="outline" size="sm">
-								<Link href="/settings/billing/plan">
+								<Link href={billingSettingsHref}>
 									Manage billing
 									<ArrowUpRight className="size-3.5" />
 								</Link>

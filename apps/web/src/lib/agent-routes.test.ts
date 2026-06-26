@@ -1,0 +1,88 @@
+import { describe, expect, it } from "bun:test";
+import {
+	agentRouteQueryString,
+	agentSectionHref,
+	agentSectionLabel,
+	agentSectionLabelFromSegment,
+	agentSectionSegment,
+	agentSessionDetailHref,
+	hasAgentTabQuery,
+	parseAgentPathname,
+	parseAgentSectionSegment,
+} from "./agent-routes";
+
+describe("agent routes", () => {
+	it("builds canonical segment routes for agent sections", () => {
+		expect(agentSectionHref("agent 1")).toBe("/agents/agent%201");
+		expect(agentSectionHref("agent 1", "sessions")).toBe("/agents/agent%201/sessions");
+		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
+		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
+		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
+		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
+			"/agents/agent%201/sessions/session%201",
+		);
+	});
+
+	it("drops unsupported tab query params when building section links", () => {
+		expect(agentSectionHref("agent 1", "compute", "tab=compute&settings=billing-plan")).toBe(
+			"/agents/agent%201/compute?settings=billing-plan",
+		);
+		expect(
+			agentSectionHref("agent 1", "sessions", {
+				tab: "sessions",
+				tag: ["a", "b"],
+				empty: undefined,
+			}),
+		).toBe("/agents/agent%201/sessions?tag=a&tag=b");
+	});
+
+	it("parses only canonical section segments", () => {
+		expect(agentSectionSegment("projects")).toBe("project-access");
+		expect(parseAgentSectionSegment("project-access")).toBe("projects");
+		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
+		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
+		expect(parseAgentSectionSegment("projects")).toBeNull();
+		expect(parseAgentSectionSegment("ai")).toBeNull();
+		expect(parseAgentSectionSegment("channels")).toBeNull();
+		expect(parseAgentSectionSegment("bad")).toBeNull();
+	});
+
+	it("keeps labels and URL segments in one route table", () => {
+		expect(agentSectionLabel("projects")).toBe("Project Access");
+		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
+		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
+		expect(agentSectionLabelFromSegment("bad")).toBeNull();
+	});
+
+	it("detects and removes tab params without changing the canonical section", () => {
+		expect(hasAgentTabQuery({ tab: "compute" })).toBe(true);
+		expect(hasAgentTabQuery({ settings: "billing-plan" })).toBe(false);
+		expect(agentRouteQueryString({ tab: "compute", settings: "billing-plan" })).toBe(
+			"settings=billing-plan",
+		);
+		expect(agentSectionHref("agent 1", "overview", { tab: "sessions" })).toBe("/agents/agent%201");
+		expect(agentSectionHref("agent 1", "projects", { tab: "compute" })).toBe(
+			"/agents/agent%201/project-access",
+		);
+	});
+
+	it("parses agent pathnames for sidebar state", () => {
+		expect(parseAgentPathname("/")).toBeNull();
+		expect(parseAgentPathname("/agents/agent%201")).toEqual({
+			agentId: "agent 1",
+			section: "overview",
+			sessionId: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/project-access")).toEqual({
+			agentId: "agent 1",
+			section: "projects",
+			sessionId: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/sessions/session%201")).toEqual({
+			agentId: "agent 1",
+			section: "sessions",
+			sessionId: "session 1",
+		});
+		expect(parseAgentPathname("/agents/agent%201/projects")).toBeNull();
+	});
+});

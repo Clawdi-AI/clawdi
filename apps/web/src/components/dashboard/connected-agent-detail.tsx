@@ -13,25 +13,12 @@ import {
 	Unplug,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import {
-	AgentLabel,
-	agentSourceKindLabel,
-	agentTypeLabel,
-	cleanMachineName,
-	isHostedAgentEnvironment,
-} from "@/components/dashboard/agent-label";
-import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
-import {
-	type DetailNavItem,
-	DetailNavLayout,
-	DetailNotFound,
-	DetailPanel,
-	DetailSectionNav,
-} from "@/components/detail/layout";
+import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import { type DetailNavItem, DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -45,50 +32,65 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import {
+	type AgentSectionId,
+	agentSectionHref,
+	agentSectionLabel,
+	agentSessionDetailHref,
+	CONNECTED_AGENT_SECTION_IDS,
+} from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
-import { errorMessage, relativeTime } from "@/lib/utils";
+import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type AgentTab = "sessions" | "skills" | "projects";
+type AgentTab = "overview" | "sessions" | "skills" | "projects";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
 
-const AGENT_DETAIL_NAV_META: Record<AgentTab, Omit<DetailNavItem<AgentTab>, "id" | "count">> = {
+const AGENT_DETAIL_NAV_META: Record<
+	AgentTab,
+	Omit<DetailNavItem<AgentTab>, "id" | "label" | "count">
+> = {
+	overview: {
+		icon: Home,
+		description: "Status, inventory, and recent activity for this agent.",
+	},
 	sessions: {
 		icon: MessageSquare,
-		label: "Sessions",
 		description: "History synced by this agent.",
 	},
 	skills: {
 		icon: Sparkles,
-		label: "Skills",
 		description: "Installed in this agent's Agent Project.",
 	},
 	projects: {
 		icon: Layers,
-		label: "Projects",
-		description: "Project access and read order.",
+		description: "Agent Project, added Projects, and read order.",
 	},
 };
 
-export function ConnectedAgentDetail({ environmentId }: { environmentId: string }) {
+export function ConnectedAgentDetail({
+	environmentId,
+	section = "overview",
+}: {
+	environmentId: string;
+	section?: AgentSectionId;
+}) {
 	const id = environmentId;
-	const pathname = usePathname();
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
-	// Hosted tiles navigate here with `?source=on-clawdi` so the sync
-	// badge can render hosted-aware remediation copy (no CLI snippets,
-	// pointer to the Clawdi dashboard for lifecycle ops). Self-managed
-	// callers omit the param and the badge falls back to its default
-	// "self-managed" behavior — same shape as the overview-grid badge.
 	const searchParams = useSearchParams();
-	const badgeSource = searchParams.get("source") === "on-clawdi" ? "on-clawdi" : "self-managed";
-	const requestedTab = parseAgentTab(searchParams.get("tab")) ?? "sessions";
+	const activeTab = parseAgentTab(section) ?? "overview";
+
+	useEffect(() => {
+		if (parseAgentTab(section)) return;
+		router.replace(agentSectionHref(id, "overview", searchParams.toString()));
+	}, [id, router, searchParams, section]);
 
 	const {
 		data: agent,
@@ -102,13 +104,6 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 					params: { path: { environment_id: id } },
 				}),
 			),
-		// Daemon liveness (online/errored/offline badge) is computed
-		// from `last_sync_at`. Without polling, a daemon dying
-		// while the user is on this page would never paint red —
-		// they'd think the daemon was fine until they navigate
-		// away and back. 10s matches the heartbeat-cadence ÷ 3,
-		// so the badge transitions within ~one missed beat.
-		refetchInterval: 10_000,
 	});
 
 	const { data: projects } = useQuery({
@@ -208,67 +203,15 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 	});
 
 	const sessionTotal = sessionsPage?.total ?? 0;
-	const detailSource =
-		agent && isHostedAgentEnvironment(agent)
-			? "hosted"
-			: badgeSource === "on-clawdi"
-				? "hosted"
-				: "connected";
-	const tabHref = (tab: AgentTab) => {
-		const next = new URLSearchParams(searchParams.toString());
-		if (tab === "sessions") next.delete("tab");
-		else next.set("tab", tab);
-		const query = next.toString();
-		return query ? `${pathname}?${query}` : pathname;
-	};
-	const navItems: DetailNavItem<AgentTab>[] = [
-		{
-			id: "sessions",
-			...AGENT_DETAIL_NAV_META.sessions,
-			count: sessionTotal,
-			href: tabHref("sessions"),
-		},
-		{
-			id: "skills",
-			...AGENT_DETAIL_NAV_META.skills,
-			count: skillsForThisEnv?.length,
-			href: tabHref("skills"),
-		},
-		{
-			id: "projects",
-			...AGENT_DETAIL_NAV_META.projects,
-			count: projectBindings?.length,
-			href: tabHref("projects"),
-		},
-	];
-
-	// Controlled tab state so the row-level "Install skills" button can
-	// render only on the Skills tab — keeping the action contextual to
-	// what the user is looking at, instead of floating an Install CTA
-	// over a Sessions list it has nothing to do with.
-	const [activeTab, setActiveTab] = useState<AgentTab>(requestedTab);
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
+	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
+	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
 
-	useEffect(() => {
-		setActiveTab(requestedTab);
-	}, [requestedTab]);
-
-	const setTab = (tab: AgentTab) => {
-		setActiveTab(tab);
-		const next = new URLSearchParams(searchParams.toString());
-		if (tab === "sessions") next.delete("tab");
-		else next.set("tab", tab);
-		const query = next.toString();
-		router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-	};
-
-	// Wait until `agent` is loaded — otherwise `agentTypeLabel(undefined)`
-	// returns the literal "Unknown", which would briefly flash in the
-	// breadcrumb during the initial query.
-	useSetBreadcrumbTitle(
-		agent ? cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type) : null,
-	);
+	const agentTitle = agent
+		? cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)
+		: null;
+	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	const disconnect = useMutation({
 		mutationFn: async () =>
@@ -314,82 +257,24 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 				</div>
 			) : agent ? (
 				<>
-					{/* Same AgentLabel pattern as the overview tile, just
-					    bumped to size="xl". Two visual rows: title +
-					    flex-wrap subtitle (agent_type, version, os,
-					    last seen, sync badge). Icon vertically centers
-					    against the text block — items-center. */}
 					<h1 className="sr-only">
 						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
 					</h1>
-					<div className="flex items-center justify-between gap-4">
-						<AgentLabel
-							machineName={agent.machine_name}
-							type={agent.agent_type}
-							size="xl"
-							primary="machine"
-							titleAdornment={
-								<Badge variant="secondary">{agentSourceKindLabel(detailSource)}</Badge>
-							}
-							meta={[
-								agent.agent_version ? `v${agent.agent_version}` : null,
-								agent.os,
-								agent.last_seen_at ? `last seen ${relativeTime(agent.last_seen_at)}` : null,
-								<DaemonStatusBadge env={agent} source={badgeSource} />,
-							]}
-							className="min-w-0 flex-1"
-						/>
-						<ConfirmAction
-							title="Disconnect this agent?"
-							description={
-								<>
-									<p>Sessions and skills stay in your account.</p>
-									<p>
-										This agent will stop syncing and sessions will no longer be tagged with it.
-										Reconnect from that agent to resume.
-									</p>
-								</>
-							}
-							confirmLabel="Disconnect agent"
-							onConfirm={onDisconnect}
-						>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={disconnect.isPending}
-								className="shrink-0"
-							>
-								<Unplug className="text-warning" />
-								Disconnect
-							</Button>
-						</ConfirmAction>
-					</div>
 
-					<DetailNavLayout
-						nav={
-							<DetailSectionNav
-								items={navItems}
-								activeId={activeTab}
-								onSelect={setTab}
-								label="Agent detail sections"
-							/>
-						}
-					>
-						<section className="space-y-4">
-							<div className="flex flex-wrap items-start justify-between gap-3">
-								<div>
-									<div className="flex items-center gap-2">
-										{ActiveTabIcon ? (
-											<ActiveTabIcon className="size-4 text-muted-foreground" />
-										) : null}
-										<h2 className="text-sm font-semibold">{activeTabMeta.label}</h2>
-									</div>
-									{activeTabMeta.description ? (
-										<p className="mt-1 text-xs text-muted-foreground">
-											{activeTabMeta.description}
-										</p>
+					<section className="space-y-4">
+						<div className="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<div className="flex items-center gap-2">
+									{ActiveTabIcon ? (
+										<ActiveTabIcon className="size-4 text-muted-foreground" />
 									) : null}
+									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
 								</div>
+								{activeTabMeta.description ? (
+									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
+								) : null}
+							</div>
+							<div className="flex flex-wrap items-center gap-2">
 								{activeTab === "skills" ? (
 									<Button asChild variant="outline" size="sm">
 										<Link
@@ -400,59 +285,117 @@ export function ConnectedAgentDetail({ environmentId }: { environmentId: string 
 										</Link>
 									</Button>
 								) : null}
+								<ConfirmAction
+									title="Disconnect this agent?"
+									description={
+										<>
+											<p>Sessions and skills stay in your account.</p>
+											<p>
+												This agent will stop syncing and sessions will no longer be tagged with it.
+												Reconnect from that agent to resume.
+											</p>
+										</>
+									}
+									confirmLabel="Disconnect agent"
+									onConfirm={onDisconnect}
+								>
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={disconnect.isPending}
+										className="shrink-0"
+									>
+										<Unplug className="text-warning" />
+										Disconnect
+									</Button>
+								</ConfirmAction>
 							</div>
+						</div>
 
-							{activeTab === "sessions" ? (
-								<div className="max-w-4xl">
-									<SessionFeed
-										sessions={sessionsPage?.items ?? []}
-										isLoading={sessionsLoading}
-										emptyMessage="No sessions synced from this agent yet."
-										showAgent={false}
-									/>
-								</div>
-							) : null}
-
-							{activeTab === "skills" ? (
-								<SkillCardGrid
-									skills={skillsForThisEnv ?? []}
-									isLoading={skillsLoading}
-									emptyMessage="No skills installed on this agent yet."
-									readOnlySkillCheck={(s) =>
-										!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-									}
-									onUninstall={(skillKey, projectId) =>
-										uninstallSkill.mutate({ skillKey, projectId })
-									}
-									uninstallPending={uninstallSkill.isPending}
+						{activeTab === "overview" ? (
+							<div className="grid gap-3 sm:grid-cols-3">
+								<AgentStatPanel label="Sessions" value={sessionTotal} />
+								<AgentStatPanel
+									label="Skills"
+									value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
 								/>
-							) : null}
+								<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
+							</div>
+						) : null}
 
-							{activeTab === "projects" ? (
-								<AgentProjectsPanel
-									agentId={id}
-									bindings={projectBindings ?? []}
-									projects={projects ?? []}
-									isLoading={projectBindingsLoading}
-									onChanged={() => {
-										queryClient.invalidateQueries({
-											queryKey: ["agent-project-bindings", id],
-										});
-										queryClient.invalidateQueries({ queryKey: ["projects"] });
-									}}
+						{activeTab === "overview" ? (
+							<div className="max-w-4xl">
+								<SessionFeed
+									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
+									isLoading={sessionsLoading}
+									emptyMessage="No sessions synced from this agent yet."
+									showAgent={false}
+									sessionHref={(session) => scopedSessionHref(session.id)}
 								/>
-							) : null}
-						</section>
-					</DetailNavLayout>
+							</div>
+						) : null}
+
+						{activeTab === "sessions" ? (
+							<div className="max-w-4xl">
+								<SessionFeed
+									sessions={sessionsPage?.items ?? []}
+									isLoading={sessionsLoading}
+									emptyMessage="No sessions synced from this agent yet."
+									showAgent={false}
+									sessionHref={(session) => scopedSessionHref(session.id)}
+								/>
+							</div>
+						) : null}
+
+						{activeTab === "skills" ? (
+							<SkillCardGrid
+								skills={skillsForThisEnv ?? []}
+								isLoading={skillsLoading}
+								emptyMessage="No skills installed on this agent yet."
+								readOnlySkillCheck={(s) =>
+									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+								}
+								onUninstall={(skillKey, projectId) =>
+									uninstallSkill.mutate({ skillKey, projectId })
+								}
+								uninstallPending={uninstallSkill.isPending}
+							/>
+						) : null}
+
+						{activeTab === "projects" ? (
+							<AgentProjectsPanel
+								agentId={id}
+								bindings={projectBindings ?? []}
+								projects={projects ?? []}
+								isLoading={projectBindingsLoading}
+								onChanged={() => {
+									queryClient.invalidateQueries({
+										queryKey: ["agent-project-bindings", id],
+									});
+									queryClient.invalidateQueries({ queryKey: ["projects"] });
+								}}
+							/>
+						) : null}
+					</section>
 				</>
 			) : null}
 		</div>
 	);
 }
 
-function parseAgentTab(value: string | null): AgentTab | null {
-	if (value === "sessions" || value === "skills" || value === "projects") return value;
+function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
+	if (value === "overview") return "overview";
+	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
+}
+
+function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {
+	return (
+		<DetailPanel className="p-3">
+			<div className="text-xl font-semibold tabular-nums">{value}</div>
+			<div className="text-xs text-muted-foreground">{label}</div>
+		</DetailPanel>
+	);
 }
 
 function AgentProjectsPanel({

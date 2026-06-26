@@ -5,7 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { SettingsPanelHeader } from "@/components/settings/settings-shell";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
