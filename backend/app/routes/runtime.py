@@ -188,6 +188,7 @@ async def _provider_projection(
     state: HostedRuntimeState,
 ) -> tuple[dict[str, Any], dict[str, str], list[Any]]:
     provider_id = _runtime_provider_id(state)
+    runtime_model = _runtime_provider_model(state)
     provider = await _select_provider(db, auth=auth, provider_id=provider_id)
     if provider is None:
         return {}, {}, []
@@ -197,8 +198,9 @@ async def _provider_projection(
         "kind": "openai-compatible",
         "baseUrl": provider.base_url,
     }
-    if provider.default_model:
-        projection["model"] = provider.default_model
+    model = runtime_model or provider.default_model
+    if model:
+        projection["model"] = model
     api_mode = provider.api_mode
     runtime_env_name = provider.runtime_env_name
     if _is_clawdi_managed_provider(provider):
@@ -254,6 +256,30 @@ def _runtime_provider_id(state: HostedRuntimeState) -> str | None:
             "runtime state provider id does not match enabled runtime provider id",
         )
     return state.provider_id or declared_provider_id
+
+
+def _runtime_provider_model(state: HostedRuntimeState) -> str | None:
+    declared_models: set[str] = set()
+    for runtime in (state.runtimes or {}).values():
+        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
+            continue
+        model = runtime.get("model", runtime.get("primary_model"))
+        if model is None:
+            continue
+        if not isinstance(model, str) or not model.strip():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "enabled runtime provider model must be a non-empty string",
+            )
+        declared_models.add(model.strip())
+
+    if len(declared_models) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "enabled runtimes must use a single provider model",
+        )
+
+    return next(iter(declared_models), None)
 
 
 async def _select_provider(

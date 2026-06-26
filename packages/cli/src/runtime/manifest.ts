@@ -210,10 +210,30 @@ function providerHealthReasons(
 			reasons.push("base_url_invalid");
 		}
 	}
+	if (!stringValue(provider.model)) {
+		reasons.push("model_missing");
+	}
+	const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
+	if (baseUrl && isOpenAiCompatibleMode(apiMode)) {
+		try {
+			const parsed = new URL(baseUrl);
+			if (!parsed.pathname || parsed.pathname === "/") {
+				reasons.push("base_url_path_missing");
+			}
+		} catch {
+			// Already reported as base_url_invalid above.
+		}
+	}
 	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
 		reasons.push("secret_missing");
 	}
 	return reasons;
+}
+
+function isOpenAiCompatibleMode(apiMode: string | null): boolean {
+	return (
+		apiMode === "openai_chat" || apiMode === "openai_responses" || apiMode === "codex_responses"
+	);
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

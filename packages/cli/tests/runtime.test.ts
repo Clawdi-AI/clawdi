@@ -2211,7 +2211,7 @@ fi
 				model: null,
 				apiKeySecretRef: "provider.default.apiKey",
 				secretAvailable: false,
-				reasons: ["secret_missing"],
+				reasons: ["model_missing", "secret_missing"],
 			},
 		});
 	});
@@ -4125,14 +4125,14 @@ exit 64
 				readFileSync(join(state, "status", "provider-health.json"), "utf-8"),
 			);
 			expect(providerHealth.providers.default).toEqual({
-				status: "ok",
+				status: "error",
 				configured: true,
 				kind: "openai-compatible",
 				baseUrl: "https://sub2api.test/v1",
 				model: null,
 				apiKeySecretRef: "provider.default.apiKey",
 				secretAvailable: true,
-				reasons: [],
+				reasons: ["model_missing"],
 			});
 			expect(JSON.stringify(providerHealth)).not.toContain("sk-runtime");
 		} finally {
