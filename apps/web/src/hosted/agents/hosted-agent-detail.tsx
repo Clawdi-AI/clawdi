@@ -1047,7 +1047,7 @@ function ComputeTab({
 								</div>
 								{!isCurrent && enabled && siblingEnv ? (
 									<Button asChild variant="ghost" size="sm">
-										<Link href={`/agents/${siblingEnv}`}>
+										<Link href={agentSectionHref(siblingEnv)}>
 											Open
 											<ArrowUpRight className="size-3.5" />
 										</Link>

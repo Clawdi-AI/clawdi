@@ -552,7 +552,7 @@ export default function ProjectDetailPage() {
 									</Badge>
 								)}
 								<Link
-									href={`/agents/${env.id}`}
+									href={agentSectionHref(env.id)}
 									className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<span className="sr-only">Open agent {cleanMachineName(env.machine_name)}</span>

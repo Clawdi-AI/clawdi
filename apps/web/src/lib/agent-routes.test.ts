@@ -6,6 +6,7 @@ import {
 	agentSectionLabelFromSegment,
 	agentSectionSegment,
 	agentSessionDetailHref,
+	agentSkillDetailHref,
 	hasAgentTabQuery,
 	parseAgentPathname,
 	parseAgentSectionSegment,
@@ -21,6 +22,10 @@ describe("agent routes", () => {
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
 			"/agents/agent%201/sessions/session%201",
 		);
+		expect(agentSkillDetailHref("agent 1", "team/foo", "proj 1")).toBe(
+			"/agents/agent%201/skills/team/foo?project=proj%201",
+		);
+		expect(agentSkillDetailHref("agent 1", "team/foo")).toBe("/agents/agent%201/skills/team/foo");
 	});
 
 	it("drops unsupported tab query params when building section links", () => {
@@ -72,16 +77,31 @@ describe("agent routes", () => {
 			agentId: "agent 1",
 			section: "overview",
 			sessionId: undefined,
+			skillKey: undefined,
 		});
 		expect(parseAgentPathname("/agents/agent%201/project-access")).toEqual({
 			agentId: "agent 1",
 			section: "projects",
 			sessionId: undefined,
+			skillKey: undefined,
 		});
 		expect(parseAgentPathname("/agents/agent%201/sessions/session%201")).toEqual({
 			agentId: "agent 1",
 			section: "sessions",
 			sessionId: "session 1",
+			skillKey: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/skills/team%2Ffoo")).toEqual({
+			agentId: "agent 1",
+			section: "skills",
+			sessionId: undefined,
+			skillKey: "team/foo",
+		});
+		expect(parseAgentPathname("/agents/agent%201/skills/team/foo")).toEqual({
+			agentId: "agent 1",
+			section: "skills",
+			sessionId: undefined,
+			skillKey: "team/foo",
 		});
 		expect(parseAgentPathname("/agents/agent%201/projects")).toBeNull();
 	});

@@ -9,6 +9,7 @@ import { BillingError } from "@/hosted/billing/components/state-views";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -88,7 +89,7 @@ export function HostedAgentControls() {
 					const openclaw = d.openclaw_ui_url;
 					const hermes = d.hermes_ui_url;
 					const meta = metaLine(d);
-					const inAppHref = hostedEnvironmentHref(d) ?? `/agents/${encodeURIComponent(d.id)}`;
+					const inAppHref = hostedEnvironmentHref(d) ?? agentSectionHref(d.id);
 					const provisioning = !openclaw && !hermes;
 					return (
 						<div key={d.id} className="flex flex-col gap-2.5 rounded-lg border p-3">

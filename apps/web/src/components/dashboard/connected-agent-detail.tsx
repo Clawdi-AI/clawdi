@@ -37,6 +37,7 @@ import {
 	agentSectionHref,
 	agentSectionLabel,
 	agentSessionDetailHref,
+	agentSkillDetailHref,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
@@ -207,6 +208,8 @@ export function ConnectedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
 	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
+	const scopedSkillHref = (skill: SkillSummary) =>
+		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
 
 	const agentTitle = agent
 		? cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)
@@ -359,6 +362,7 @@ export function ConnectedAgentDetail({
 									uninstallSkill.mutate({ skillKey, projectId })
 								}
 								uninstallPending={uninstallSkill.isPending}
+								skillHref={scopedSkillHref}
 							/>
 						) : null}
 

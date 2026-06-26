@@ -14,6 +14,7 @@ import { skillDetailHref } from "@/lib/project-resource-model";
 import { cn, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type SkillHrefBuilder = (skill: SkillSummary) => string;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
  * treatment as projects and vaults: emoji identity tile, name, version,
@@ -33,6 +34,7 @@ export function SkillCard({
 	selected = false,
 	onToggleSelect,
 	sourceLabel,
+	skillHref,
 }: {
 	skill: SkillSummary;
 	readOnly?: boolean;
@@ -43,9 +45,12 @@ export function SkillCard({
 	onToggleSelect?: (skill: SkillSummary) => void;
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
+	/** Build the detail link for the current navigation scope. */
+	skillHref?: SkillHrefBuilder;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!skill.project_id;
+	const detailHref = skillHref?.(skill) ?? skillDetailHref(skill.skill_key, skill.project_id);
 	return (
 		<div
 			className={cn(
@@ -145,7 +150,7 @@ export function SkillCard({
 				</button>
 			) : (
 				<Link
-					href={skillDetailHref(skill.skill_key, skill.project_id)}
+					href={detailHref}
 					className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					<span className="sr-only">Open {skill.name}</span>
@@ -166,6 +171,7 @@ export function SkillCardGrid({
 	selectedKeys,
 	onToggleSelect,
 	sourceLabelFor,
+	skillHref,
 }: {
 	skills: SkillSummary[];
 	isLoading: boolean;
@@ -179,6 +185,8 @@ export function SkillCardGrid({
 	selectedKeys?: Set<string>;
 	onToggleSelect?: (skill: SkillSummary) => void;
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
+	/** Build the detail link for the current navigation scope. */
+	skillHref?: SkillHrefBuilder;
 }) {
 	if (isLoading) {
 		return (
@@ -209,6 +217,7 @@ export function SkillCardGrid({
 					selected={selectedKeys?.has(skillSelectionKey(skill)) ?? false}
 					onToggleSelect={onToggleSelect}
 					sourceLabel={sourceLabelFor?.(skill) ?? null}
+					skillHref={skillHref}
 				/>
 			))}
 		</div>

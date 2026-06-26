@@ -59,6 +59,7 @@ export type ParsedAgentPathname = {
 	agentId: string;
 	section: AgentSectionId;
 	sessionId?: string;
+	skillKey?: string;
 };
 
 export function agentSectionSegment(section: AgentSectionId): string {
@@ -90,7 +91,11 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (!section) return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
-	return { agentId, section, sessionId };
+	const skillKey =
+		section === "skills" && parts[3]
+			? parts.slice(3).map(safeDecodeURIComponent).join("/")
+			: undefined;
+	return { agentId, section, sessionId, skillKey };
 }
 
 function agentRouteSearchParams(query?: AgentRouteQuery): URLSearchParams {
@@ -134,6 +139,16 @@ export function agentSectionHref(
 
 export function agentSessionDetailHref(agentId: string, sessionId: string): string {
 	return `${agentSectionHref(agentId, "sessions")}/${encodeURIComponent(sessionId)}`;
+}
+
+export function agentSkillDetailHref(
+	agentId: string,
+	skillKey: string,
+	projectId?: string | null,
+): string {
+	const encodedSkillPath = skillKey.split("/").map(encodeURIComponent).join("/");
+	const path = `${agentSectionHref(agentId, "skills")}/${encodedSkillPath}`;
+	return projectId ? `${path}?project=${encodeURIComponent(projectId)}` : path;
 }
 
 function safeDecodeURIComponent(value: string): string {

@@ -81,31 +81,43 @@ export function AppBreadcrumb() {
 	return (
 		<Breadcrumb>
 			<BreadcrumbList>
-				{segments.map((_seg, i) => {
-					const href = `/${segments.slice(0, i + 1).join("/")}`;
-					const isLast = i === segments.length - 1;
-					const label = segmentLabel(segments, i, href, overrideTitle, segmentTitles);
-					return (
-						<span key={href} className="contents">
-							<BreadcrumbItem>
-								{isLast ? (
-									<BreadcrumbPage className="max-w-[calc(100vw-6rem)] truncate sm:max-w-[420px]">
-										{label}
-									</BreadcrumbPage>
-								) : (
-									// asChild + next/link: shadcn's default BreadcrumbLink is
-									// a raw <a> which forces a full page reload + drops
-									// prefetch. asChild lets us pass our own anchor — Next's
-									// Link gives SPA navigation and hover-prefetch.
-									<BreadcrumbLink asChild>
-										<Link href={href}>{label}</Link>
-									</BreadcrumbLink>
-								)}
-							</BreadcrumbItem>
-							{!isLast ? <BreadcrumbSeparator /> : null}
-						</span>
-					);
-				})}
+				{segments
+					.map((_seg, i) => i)
+					.filter(
+						(i) =>
+							!(
+								segments[0] === "agents" &&
+								segments[2] === "skills" &&
+								segments.length > 4 &&
+								i > 2 &&
+								i < segments.length - 1
+							),
+					)
+					.map((i) => {
+						const href = `/${segments.slice(0, i + 1).join("/")}`;
+						const isLast = i === segments.length - 1;
+						const label = segmentLabel(segments, i, href, overrideTitle, segmentTitles);
+						return (
+							<span key={href} className="contents">
+								<BreadcrumbItem>
+									{isLast ? (
+										<BreadcrumbPage className="max-w-[calc(100vw-6rem)] truncate sm:max-w-[420px]">
+											{label}
+										</BreadcrumbPage>
+									) : (
+										// asChild + next/link: shadcn's default BreadcrumbLink is
+										// a raw <a> which forces a full page reload + drops
+										// prefetch. asChild lets us pass our own anchor — Next's
+										// Link gives SPA navigation and hover-prefetch.
+										<BreadcrumbLink asChild>
+											<Link href={href}>{label}</Link>
+										</BreadcrumbLink>
+									)}
+								</BreadcrumbItem>
+								{!isLast ? <BreadcrumbSeparator /> : null}
+							</span>
+						);
+					})}
 			</BreadcrumbList>
 		</Breadcrumb>
 	);

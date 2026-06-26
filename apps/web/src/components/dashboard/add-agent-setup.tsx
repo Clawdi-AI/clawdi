@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -180,7 +181,7 @@ export function AddAgentSetup() {
 									className="min-w-0 flex-1"
 								/>
 								<Button asChild size="sm" variant="outline">
-									<Link href={`/agents/${env.id}`}>Open agent</Link>
+									<Link href={agentSectionHref(env.id)}>Open agent</Link>
 								</Button>
 							</div>
 						))}
