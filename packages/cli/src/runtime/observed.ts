@@ -207,15 +207,28 @@ function providerReasons(provider: JsonRecord, secretAvailable: boolean | null):
 		reasons.push("base_url_missing");
 	} else {
 		try {
-			new URL(baseUrl);
+			const parsed = new URL(baseUrl);
+			const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
+			if (isOpenAiCompatibleMode(apiMode) && (!parsed.pathname || parsed.pathname === "/")) {
+				reasons.push("base_url_path_missing");
+			}
 		} catch {
 			reasons.push("base_url_invalid");
 		}
+	}
+	if (!stringValue(provider.model)) {
+		reasons.push("model_missing");
 	}
 	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
 		reasons.push("secret_missing");
 	}
 	return reasons;
+}
+
+function isOpenAiCompatibleMode(apiMode: string | null): boolean {
+	return (
+		apiMode === "openai_chat" || apiMode === "openai_responses" || apiMode === "codex_responses"
+	);
 }
 
 function readSupervisorObserved(paths: RuntimePaths): JsonRecord | null {
