@@ -11,7 +11,7 @@ from app.models.user import User
 from app.services.vault_crypto import encrypt
 
 MANAGED_AI_PROVIDER_ID = "clawdi-managed"
-MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
+MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
 MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 MANAGED_AI_PROVIDER_TYPE = "custom_openai_compatible"
 MANAGED_AI_PROVIDER_LABEL = "Clawdi managed"
