@@ -3799,6 +3799,63 @@ exit 64
 		expect(openclawSection).not.toContain("ui-secret");
 	});
 
+	it("keeps provider-secret runtime launchers at the system boundary", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const convergence = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_provider_secret_boundary",
+					environmentId: "env_provider_secret_boundary",
+					instanceId: "iid_provider_secret_boundary",
+					generation: 1,
+					issuedAt: "2026-06-26T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+						hermes: { enabled: false },
+					},
+					projection: {
+						providers: {
+							default: {
+								kind: "openai-compatible",
+								baseUrl: "https://provider.test/v1",
+								model: "gpt-5.5",
+								apiMode: "openai_responses",
+								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								apiKeySecretRef: "provider.default.apiKey",
+							},
+						},
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: "test://provider-secret-boundary",
+				offline: false,
+				secretValues: { "provider.default.apiKey": "sk-runtime" },
+			},
+			getRuntimePaths(),
+		);
+
+		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
+		const uiBridgeSection = supervisorConfig.split("[program:clawdi-openclaw]")[0];
+		const openclawSection = supervisorConfig.split("[program:clawdi-openclaw]")[1] ?? "";
+		expect(uiBridgeSection).toContain("[program:clawdi-ui-bridge]");
+		expect(uiBridgeSection).toContain("user=clawdi");
+		expect(openclawSection).toContain("command=/usr/bin/env clawdi run -- openclaw");
+		expect(openclawSection).not.toMatch(/^user=clawdi$/m);
+		expect(openclawSection).not.toContain("sk-runtime");
+	});
+
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
