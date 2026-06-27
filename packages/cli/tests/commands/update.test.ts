@@ -107,9 +107,10 @@ describe("detectInstaller", () => {
 
 describe("installCommand", () => {
 	it("prints the installer-specific manual command", () => {
-		expect(installCommand("npm")).toBe("npm i -g clawdi");
-		expect(installCommand("bun")).toBe("bun add -g clawdi");
-		expect(installCommand(null)).toBe("npm i -g clawdi");
+		expect(installCommand("npm")).toBe("npm i -g clawdi@latest");
+		expect(installCommand("bun")).toBe("bun add -g clawdi@latest");
+		expect(installCommand(null)).toBe("npm i -g clawdi@latest");
+		expect(installCommand("npm", "beta")).toBe("npm i -g clawdi@beta");
 	});
 });
 
@@ -125,7 +126,7 @@ describe("update --json", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0", beta: "99.0.0" } }),
 			},
 		]);
 		try {
@@ -160,7 +161,7 @@ describe("update --json", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: current } }),
+				response: () => jsonResponse({ "dist-tags": { latest: current, beta: current } }),
 			},
 		]);
 		try {
@@ -244,6 +245,34 @@ describe("daemonAutoUpdateOnce", () => {
 			});
 			expect(result).toBe("installed");
 			expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", "clawdi@latest"] }]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("follows the beta dist-tag when the daemon is running a beta build", async () => {
+		const calls: { installer: string; args: string[] }[] = [];
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () =>
+					jsonResponse({
+						"dist-tags": { latest: "0.12.9", beta: "0.12.10-beta.26" },
+					}),
+			},
+		]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "0.12.10-beta.25",
+				installer: "npm",
+				installRunner: async (installer, args) => {
+					calls.push({ installer, args });
+					return 0;
+				},
+			});
+			expect(result).toBe("installed");
+			expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", "clawdi@beta"] }]);
 		} finally {
 			restore();
 		}
@@ -414,10 +443,17 @@ describe("maybeAutoUpdate", () => {
 
 	it("auto-installs major updates from human CLI startup", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
+		const { getCliVersion } = await import("../../src/lib/version");
+		const current = getCliVersion();
+		const channel = current.includes("-")
+			? (current.split("-", 2)[1]?.split(".", 1)[0] ?? "latest")
+			: "latest";
+		const cacheFile = channel === "latest" ? "update.json" : `update-${channel}.json`;
+		const expectedSpec = channel === "latest" ? "clawdi@latest" : `clawdi@${channel}`;
 		// Plant cache with a version way higher than package.json so this
 		// remains a major-bump test regardless of the fixture version.
 		writeFileSync(
-			join(tmpHome, ".clawdi", "update.json"),
+			join(tmpHome, ".clawdi", cacheFile),
 			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
 		);
 		const installs: {
@@ -450,7 +486,7 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).not.toContain("Major release");
 		expect(installs).toHaveLength(1);
 		expect(installs[0]?.installer).toBe("npm");
-		expect(installs[0]?.args).toEqual(["i", "-g", "clawdi@latest"]);
+		expect(installs[0]?.args).toEqual(["i", "-g", expectedSpec]);
 		expect(installs[0]?.latest).toBe("999.0.0");
 		expect(installs[0]?.logFd ?? -1).toBeGreaterThanOrEqual(0);
 	});

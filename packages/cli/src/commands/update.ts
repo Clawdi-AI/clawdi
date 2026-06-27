@@ -51,13 +51,13 @@ type AutoUpdateRuntime = {
 	) => void;
 };
 
-function cachePath(): string {
-	return join(getClawdiDir(), "update.json");
+function cachePath(channel = "latest"): string {
+	return join(getClawdiDir(), channel === "latest" ? "update.json" : `update-${channel}.json`);
 }
 
-function readCache(): UpdateCache | null {
+function readCache(channel = "latest"): UpdateCache | null {
 	try {
-		const p = cachePath();
+		const p = cachePath(channel);
 		if (!existsSync(p)) return null;
 		return JSON.parse(readFileSync(p, "utf-8")) as UpdateCache;
 	} catch {
@@ -65,11 +65,11 @@ function readCache(): UpdateCache | null {
 	}
 }
 
-function writeCache(latest: string): void {
+function writeCache(latest: string, channel = "latest"): void {
 	try {
 		mkdirSync(getClawdiDir(), { recursive: true });
 		writeFileSync(
-			cachePath(),
+			cachePath(channel),
 			`${JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
@@ -78,14 +78,21 @@ function writeCache(latest: string): void {
 	}
 }
 
-async function fetchLatest(timeoutMs = 3000): Promise<string | null> {
+function updateChannelForVersion(version: string): string {
+	const pre = parseVersion(version).pre;
+	if (!pre) return "latest";
+	const channel = pre.split(".", 1)[0]?.trim() ?? "";
+	return /^[A-Za-z0-9._-]+$/.test(channel) ? channel : "latest";
+}
+
+async function fetchLatest(timeoutMs = 3000, channel = "latest"): Promise<string | null> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const res = await fetch(REGISTRY_URL, { signal: controller.signal });
 		if (!res.ok) return null;
-		const data = (await res.json()) as { "dist-tags"?: { latest?: string } };
-		return data["dist-tags"]?.latest ?? null;
+		const data = (await res.json()) as { "dist-tags"?: Record<string, string | undefined> };
+		return data["dist-tags"]?.[channel] ?? null;
 	} catch {
 		return null;
 	} finally {
@@ -125,9 +132,10 @@ function isNewer(latest: string, current: string): boolean {
  */
 export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 	const current = getCliVersion();
-	const latest = await fetchLatest();
+	const channel = updateChannelForVersion(current);
+	const latest = await fetchLatest(3000, channel);
 
-	if (latest) writeCache(latest);
+	if (latest) writeCache(latest, channel);
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(
@@ -165,7 +173,7 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 		console.log(
 			chalk.cyan(`A newer version is available. Install with:`) +
 				"\n  " +
-				chalk.white(installCommand(installer)),
+				chalk.white(installCommand(installer, channel)),
 		);
 		return;
 	}
@@ -176,12 +184,12 @@ export async function update(opts: { json?: boolean; check?: boolean } = {}) {
 		console.log(
 			chalk.yellow("Neither bun nor npm is on PATH; install manually:") +
 				"\n  " +
-				chalk.white(installCommand(null)),
+				chalk.white(installCommand(null, channel)),
 		);
 		return;
 	}
 
-	const args = installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+	const args = installArgs(installer, channel);
 	console.log();
 	console.log(chalk.cyan(`Installing v${latest} via ${installer}…`));
 	const result = spawnSync(installer, args, { stdio: "inherit" });
@@ -346,12 +354,18 @@ function detectAutoUpdateInstaller(runtime: AutoUpdateRuntime): Installer | null
 	return runtime.detectInstaller?.() ?? detectInstaller();
 }
 
-function installArgs(installer: Installer): string[] {
-	return installer === "bun" ? ["add", "-g", "clawdi@latest"] : ["i", "-g", "clawdi@latest"];
+function packageSpecForChannel(channel: string): string {
+	return channel === "latest" ? "clawdi@latest" : `clawdi@${channel}`;
 }
 
-export function installCommand(installer: Installer | null): string {
-	return installer === "bun" ? "bun add -g clawdi" : "npm i -g clawdi";
+function installArgs(installer: Installer, channel = "latest"): string[] {
+	const spec = packageSpecForChannel(channel);
+	return installer === "bun" ? ["add", "-g", spec] : ["i", "-g", spec];
+}
+
+export function installCommand(installer: Installer | null, channel = "latest"): string {
+	const spec = packageSpecForChannel(channel);
+	return installer === "bun" ? `bun add -g ${spec}` : `npm i -g ${spec}`;
 }
 
 // `npx clawdi …` and `bunx clawdi …` install the package into a per-call
@@ -420,15 +434,15 @@ function autoUpdateDisabled(): boolean {
 	return stored.autoUpdate === false || stored.autoUpdate === "false";
 }
 
-async function latestFromCacheOrRegistry(): Promise<string | null> {
-	const cached = readCache();
+async function latestFromCacheOrRegistry(channel = "latest"): Promise<string | null> {
+	const cached = readCache(channel);
 	const now = Date.now();
 	if (cached && now - new Date(cached.checkedAt).getTime() <= CACHE_TTL_MS) {
 		return cached.latest;
 	}
-	const latest = await fetchLatest();
+	const latest = await fetchLatest(3000, channel);
 	if (latest) {
-		writeCache(latest);
+		writeCache(latest, channel);
 		return latest;
 	}
 	return cached?.latest ?? null;
@@ -526,30 +540,31 @@ export async function daemonAutoUpdateOnce(
 	if (opts.signal?.aborted) return "disabled";
 
 	const current = opts.currentVersion ?? getCliVersion();
-	const latest = await latestFromCacheOrRegistry();
+	const channel = updateChannelForVersion(current);
+	const latest = await latestFromCacheOrRegistry(channel);
 	if (!latest || !isNewer(latest, current)) return "no_update";
 
 	const installer = opts.installer === undefined ? detectInstaller() : opts.installer;
 	if (!installer) {
-		log.warn("daemon.auto_update_no_installer", { current, latest });
+		log.warn("daemon.auto_update_no_installer", { current, latest, channel });
 		return "no_installer";
 	}
 
 	const release = acquireDaemonUpdateLock();
 	if (!release) return "locked";
 	try {
-		log.info("daemon.auto_update_installing", { current, latest, installer });
+		log.info("daemon.auto_update_installing", { current, latest, channel, installer });
 		const status = await (opts.installRunner ?? runInstall)(
 			installer,
-			installArgs(installer),
+			installArgs(installer, channel),
 			opts.signal,
 		);
 		if (status !== 0) {
-			log.warn("daemon.auto_update_failed", { current, latest, installer, status });
+			log.warn("daemon.auto_update_failed", { current, latest, channel, installer, status });
 			return "failed";
 		}
 		writeLastVersion(current);
-		log.info("daemon.auto_update_installed", { from: current, to: latest, installer });
+		log.info("daemon.auto_update_installed", { from: current, to: latest, channel, installer });
 		return "installed";
 	} finally {
 		release();
@@ -589,7 +604,7 @@ export function startDaemonAutoUpdate(opts: {
  *   1. If the binary version differs from `last-version` on disk, print a
  *      one-line "updated to v…" notice (the previous run's spawn finished).
  *   2. If a newer release exists in the cache, kick off a detached
- *      `npm/bun add -g clawdi@latest` so the next invocation gets it.
+ *      `npm/bun add -g clawdi@<channel>` so the next invocation gets it.
  *
  * Opt-out: `CLAWDI_NO_AUTO_UPDATE=1` env, `clawdi config set autoUpdate
  * false`, non-TTY (CI), or running via npx/bunx.
@@ -633,6 +648,7 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 		// best-effort
 	}
 	writeLastVersion(current);
+	const channel = updateChannelForVersion(current);
 
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
@@ -644,7 +660,7 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	const stored = getStoredConfig() as { autoUpdate?: unknown };
 	if (stored.autoUpdate === false || stored.autoUpdate === "false") return;
 
-	const cached = readCache();
+	const cached = readCache(channel);
 	const now = Date.now();
 	let latest: string | null = cached?.latest ?? null;
 
@@ -653,14 +669,14 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 		// for a registry lookup (3 s timeout); without this the first
 		// auto-update opportunity is silently dropped, costing the user one
 		// stale invocation before the system kicks in.
-		latest = await fetchLatest();
-		if (latest) writeCache(latest);
+		latest = await fetchLatest(3000, channel);
+		if (latest) writeCache(latest, channel);
 	} else if (now - new Date(cached.checkedAt).getTime() > CACHE_TTL_MS) {
 		// Have stale data — use it now, refresh in the background for the
 		// next invocation. Keeps the hot path snappy after the first run.
-		fetchLatest()
+		fetchLatest(3000, channel)
 			.then((l) => {
-				if (l) writeCache(l);
+				if (l) writeCache(l, channel);
 			})
 			.catch(() => {});
 	}
@@ -671,18 +687,18 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	const installer = detectAutoUpdateInstaller(runtime);
 	if (!installer) return;
 
-	// No single-flight lock. Two concurrent CLIs both spawning `npm i -g
-	// clawdi@latest` would serialize on npm's own per-package install lock —
+	// No single-flight lock. Two concurrent CLIs both spawning an npm install
+	// for the same package spec serialize on npm's own per-package install lock —
 	// at worst one waits, both end up at the same target version. The
 	// previous mkdir-based lock added stale-recovery complexity for a
 	// non-correctness gain (saving one redundant spawn + a duplicate
 	// "Updating…" line); not worth it.
 	//
-	// `clawdi@latest` (not the pinned cache version) keeps installs
+	// Installing the dist-tag (not the pinned cache version) keeps installs
 	// idempotent — a newer release landing between cache write and now is
-	// picked up automatically, and `last-version` on next invocation
-	// detects the change.
-	const args = installArgs(installer);
+	// picked up automatically, and `last-version` on next invocation detects
+	// the change.
+	const args = installArgs(installer, channel);
 
 	// Redirect installer output to a logfile so silent failures (network
 	// flake, perms error, npm 4xx) leave a trail. `stdio: "ignore"` would
