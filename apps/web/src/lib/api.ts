@@ -1,8 +1,8 @@
 "use client";
 
-import { extractApiDetail, type paths } from "@clawdi/shared/api";
+import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -13,6 +13,12 @@ import { env } from "@/lib/env";
 export { ApiError, toastApiError } from "@/lib/api-errors";
 
 const API_URL = env.NEXT_PUBLIC_API_URL;
+type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
+
+function apiUrl(path: string): string {
+	const base = API_URL.endsWith("/") ? API_URL : `${API_URL}/`;
+	return new URL(path.replace(/^\/+/, ""), base).toString();
+}
 
 /**
  * Client-side request ceiling. A hung backend or a black-holed connection must
@@ -96,4 +102,50 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 export function ensureBlob(value: unknown): Blob {
 	if (value instanceof Blob) return value;
 	throw new Error("Expected a binary API response");
+}
+
+async function apiErrorDetail(response: Response): Promise<string> {
+	try {
+		if ((response.headers.get("content-type") ?? "").includes("application/json")) {
+			const body: unknown = await response.json();
+			return extractApiDetail(body);
+		}
+		return (await response.text()) || response.statusText;
+	} catch {
+		return response.statusText;
+	}
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+	const body: unknown = await response.json();
+	return body as T;
+}
+
+export function useSkillArchiveUploader() {
+	const { getToken } = useAuthToken();
+	return useCallback(
+		async (projectId: string, skillKey: string, archive: Blob): Promise<SkillUploadResponse> => {
+			const fileName = `${skillKey.replace(/\//g, "-")}.tar.gz`;
+			const form = new FormData();
+			form.append("skill_key", skillKey);
+			form.append("file", archive, fileName);
+
+			const headers = new Headers();
+			const token = await getToken();
+			if (token) headers.set("Authorization", `Bearer ${token}`);
+
+			const response = await fetchWithTimeout(
+				new Request(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/skills/upload`), {
+					method: "POST",
+					headers,
+					body: form,
+				}),
+			);
+			if (!response.ok) {
+				throw new ApiError(response.status, await apiErrorDetail(response));
+			}
+			return readJson<SkillUploadResponse>(response);
+		},
+		[getToken],
+	);
 }

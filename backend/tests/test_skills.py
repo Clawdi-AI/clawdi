@@ -517,6 +517,35 @@ async def test_nested_skill_round_trips_through_project_routes(
 
 
 @pytest.mark.asyncio
+async def test_scope_skill_read_routes_remain_compat_aliases(
+    client: httpx.AsyncClient, project_id: str
+):
+    """Prod compatibility: binaries built during the Scope -> Project
+    migration still call `/api/scopes/{id}/skills/...` for reads.
+    Project ids preserve the old scope id, so these should behave like
+    the project-explicit read routes instead of 404ing at the router.
+    """
+    content = "---\nname: compat\ndescription: old scope URL\n---\n# Compat\n"
+    skill_key = "compat/nested"
+    tar_bytes, _ = tar_from_content(skill_key, content)
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": skill_key},
+        files={"file": ("compat-nested.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    detail = await client.get(f"/api/scopes/{project_id}/skills/{skill_key}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["skill_key"] == skill_key
+    assert detail.json()["project_id"] == project_id
+
+    download = await client.get(f"/api/scopes/{project_id}/skills/{skill_key}/download")
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"].startswith("application/gzip")
+
+
+@pytest.mark.asyncio
 async def test_malformed_skill_upload_logs_validation_reason(
     client: httpx.AsyncClient,
     project_id: str,

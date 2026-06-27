@@ -46,6 +46,7 @@ from app.routes.share_redeem import router as share_redeem_router
 from app.routes.sharing import router as sharing_router
 from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
+from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.composio import close_composio_client
@@ -240,6 +241,7 @@ app.include_router(projects_router)
 app.include_router(runtime_router)
 app.include_router(skills_router)
 app.include_router(skills_project_router)
+app.include_router(skills_scope_router)
 app.include_router(sync_router)
 app.include_router(memories_router)
 app.include_router(settings_router)

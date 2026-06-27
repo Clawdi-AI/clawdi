@@ -13,12 +13,13 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
 )
 from pydantic import BaseModel, Field
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +60,7 @@ from app.schemas.session import (
     SessionUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
 from app.services.session_content import (
@@ -77,6 +79,10 @@ _MAX_RUNTIME_OBSERVED_BYTES = 64 * 1024
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
 _LEGACY_HOSTED_MACHINE_NAME_RE = re.compile(r"^v2-hosted-[a-f0-9]{6,16}$")
+_MANUAL_SESSION_SUMMARY_FILTER = text(
+    "(sessions.summary IS NULL OR "
+    "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
+)
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
@@ -306,8 +312,14 @@ async def register_environment(
         return EnvironmentCreatedResponse(id=str(winner.id))
 
 
-@router.get("/api/environments")
+@router.get(
+    "/api/environments",
+    response_model=list[EnvironmentResponse],
+    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
+)
 async def list_environments(
+    request: Request,
+    response: Response,
     # Bare get_auth is intentional. Even narrowly-scoped api_keys
     # (e.g. the legacy `sessions:write`-only deploy key) need to
     # discover their own env at boot to find its default_project.
@@ -317,7 +329,7 @@ async def list_environments(
     # themselves.
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> list[EnvironmentResponse]:
+) -> list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
     # key enumerate sibling machines and their default_project_ids
@@ -348,7 +360,7 @@ async def list_environments(
         )
         states_by_env = {state.environment_id: state for state in states}
     hosted_deployments_by_machine = _hosted_deployments_by_machine(envs, states_by_env)
-    return [
+    payload = [
         _env_to_response(
             e,
             states_by_env.get(e.id),
@@ -356,6 +368,12 @@ async def list_environments(
         )
         for e in envs
     ]
+    etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=10, must-revalidate"}
+    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return payload
 
 
 @router.get("/api/environments/runtime-observed")
@@ -1424,53 +1442,51 @@ async def list_sessions(
     else:
         relevance_expr = None  # type: ignore[assignment]
 
-    base = (
-        select(
-            Session,
-            AgentEnvironment.agent_type,
-            AgentEnvironment.machine_name,
-            is_shared_subq,
-        )
-        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-        .where(Session.user_id == auth.user_id)
-    )
+    base = select(
+        Session,
+        AgentEnvironment.agent_type,
+        AgentEnvironment.machine_name,
+        is_shared_subq,
+    ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+    session_filters = [Session.user_id == auth.user_id]
+    agent_filter = AgentEnvironment.agent_type == agent if agent else None
     if bound_env is not None:
-        base = base.where(Session.environment_id == bound_env)
+        session_filters.append(Session.environment_id == bound_env)
     # Filter on `last_activity_at` (not `started_at`) so a long-
     # running session that began before the window but was active
     # inside it still surfaces under "Today" / "Last 7 days".
     if since:
-        base = base.where(Session.last_activity_at >= since)
+        session_filters.append(Session.last_activity_at >= since)
     if until:
-        base = base.where(Session.last_activity_at < until)
-    if agent:
-        base = base.where(AgentEnvironment.agent_type == agent)
+        session_filters.append(Session.last_activity_at < until)
     if environment_id:
-        base = base.where(Session.environment_id == environment_id)
+        session_filters.append(Session.environment_id == environment_id)
 
     if model:
-        base = base.where(Session.model.in_(model))
+        session_filters.append(Session.model.in_(model))
     if tag:
         # AND semantics for tags: every requested tag must be present.
         # `tags @> ARRAY[...]` is the indexable form vs N separate
         # `tags && ARRAY[t]` clauses.
-        base = base.where(Session.tags.op("@>")(tag))
+        session_filters.append(Session.tags.op("@>")(tag))
     if min_messages is not None:
-        base = base.where(Session.message_count >= min_messages)
+        session_filters.append(Session.message_count >= min_messages)
     if min_duration is not None:
-        base = base.where(Session.duration_seconds >= min_duration)
+        session_filters.append(Session.duration_seconds >= min_duration)
     if has_pr is True:
         # `related_refs ? 'prs'` would also match `{"prs": null}` — we
         # want a non-empty array. The JSONB length check is explicit
         # and matches what `_session_to_response` carries.
-        base = base.where(
-            Session.related_refs.is_not(None),
-            func.jsonb_array_length(Session.related_refs.op("->")("prs")) > 0,
+        session_filters.extend(
+            (
+                Session.related_refs.is_not(None),
+                func.jsonb_array_length(Session.related_refs.op("->")("prs")) > 0,
+            )
         )
     elif has_pr is False:
         # Explicit "no PRs" — NULL `related_refs` (never extracted)
         # counts as "no PR".
-        base = base.where(
+        session_filters.append(
             or_(
                 Session.related_refs.is_(None),
                 func.coalesce(
@@ -1485,10 +1501,11 @@ async def list_sessions(
         # Heuristic, mirrored from the dashboard feed's muting regex
         # (^(Cron:|\[)). Most fleets are dominated by cron/heartbeat
         # sessions; "Manual only" is how users find their own work.
-        # COALESCE so NULL summaries count as manual, not as neither.
-        summary_text = func.coalesce(Session.summary, "")
-        is_automated = or_(summary_text.like("Cron:%"), summary_text.like("[%"))
-        base = base.where(is_automated if automated else ~is_automated)
+        if automated:
+            summary_text = func.coalesce(Session.summary, "")
+            session_filters.append(or_(summary_text.like("Cron:%"), summary_text.like("[%")))
+        else:
+            session_filters.append(_MANUAL_SESSION_SUMMARY_FILTER)
 
     if q:
         # pg_trgm `similarity()` for typo / partial-word tolerance.
@@ -1498,13 +1515,23 @@ async def list_sessions(
         # for the typical few-thousand-rows-per-user. If a power user
         # ever hits real latency here, swap to `WHERE summary % :q`
         # plus a GIN index. Threshold tuned for "type to filter" UX.
-        base = base.where(relevance_expr >= _TRGM_THRESHOLD)
+        session_filters.append(relevance_expr >= _TRGM_THRESHOLD)
+
+    base = base.where(*session_filters)
+    if agent_filter is not None:
+        base = base.where(agent_filter)
 
     # Run the count BEFORE attaching ORDER BY: PG would otherwise
     # plan a sort over the full filtered set just to discard it for
     # COUNT(*). For 50k+ session users this saves a measurable
     # fraction of list-page latency.
-    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    count_base = select(Session.id).where(*session_filters)
+    if agent_filter is not None:
+        count_base = count_base.outerjoin(
+            AgentEnvironment,
+            Session.environment_id == AgentEnvironment.id,
+        ).where(agent_filter)
+    total = (await db.execute(select(func.count()).select_from(count_base.subquery()))).scalar_one()
 
     # Resolve sort column. `relevance` is special — only valid when
     # `q` is present (else fall back to the date default so the empty-

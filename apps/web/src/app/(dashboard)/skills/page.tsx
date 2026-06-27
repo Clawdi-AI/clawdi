@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { ensureBlob, unwrap, useApi } from "@/lib/api";
+import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -77,6 +77,7 @@ export default function SkillsPage() {
 
 function SkillsPageInner() {
 	const api = useApi();
+	const uploadSkillArchive = useSkillArchiveUploader();
 	const queryClient = useQueryClient();
 	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
 	// remains supported for older deep links from agent detail pages.
@@ -366,17 +367,7 @@ function SkillsPageInner() {
 					continue;
 				}
 				try {
-					const fileName = `${newest.skill_key.replace(/\//g, "-")}.tar.gz`;
-					const form = new FormData();
-					form.append("skill_key", newest.skill_key);
-					form.append("file", blob, fileName);
-					await unwrap(
-						await api.POST("/api/projects/{project_id}/skills/upload", {
-							params: { path: { project_id: copy.project_id } },
-							body: { skill_key: newest.skill_key, file: fileName },
-							bodySerializer: () => form,
-						}),
-					);
+					await uploadSkillArchive(copy.project_id, newest.skill_key, blob);
 					updated += 1;
 				} catch {
 					failed.push(copy.project_name ?? "unknown project");

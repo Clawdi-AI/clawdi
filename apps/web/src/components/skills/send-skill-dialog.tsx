@@ -27,7 +27,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { ensureBlob, unwrap, useApi } from "@/lib/api";
+import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -52,6 +52,7 @@ export function SendSkillDialog({
 	onDone?: () => void;
 }) {
 	const api = useApi();
+	const uploadSkillArchive = useSkillArchiveUploader();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
@@ -129,17 +130,7 @@ export function SendSkillDialog({
 							}),
 						),
 					);
-					const fileName = `${skill.skill_key.replace(/\//g, "-")}.tar.gz`;
-					const form = new FormData();
-					form.append("skill_key", skill.skill_key);
-					form.append("file", blob, fileName);
-					await unwrap(
-						await api.POST("/api/projects/{project_id}/skills/upload", {
-							params: { path: { project_id: target } },
-							body: { skill_key: skill.skill_key, file: fileName },
-							bodySerializer: () => form,
-						}),
-					);
+					await uploadSkillArchive(target, skill.skill_key, blob);
 					copied += 1;
 					if (removeFromSource) {
 						try {

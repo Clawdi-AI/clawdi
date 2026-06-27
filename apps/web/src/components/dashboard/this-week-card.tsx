@@ -1,9 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
 import type { ContributionDay, DashboardStats } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
 import { formatNumber } from "@/lib/utils";
@@ -20,28 +18,11 @@ export function ThisWeekCard({
 	stats: DashboardStats | undefined;
 	contribution: ContributionDay[] | undefined;
 }) {
-	const api = useApi();
 	const ready = !!stats;
 	const weekSessions = sessionsInLastDays(contribution, 7);
 	const todaySessions = sessionsInLastDays(contribution, 1);
 	const topModel = formatModelLabel(stats?.favorite_model) || null;
-
-	// "388 sessions this week" is a fleet vanity number when ~3/4 of it
-	// is cron/heartbeat ticks. Split out the user's own (manual) count —
-	// that's the number that means anything. One cheap count query:
-	// page_size=1, we only read `total`.
-	const { data: manualWeek } = useQuery({
-		queryKey: ["this-week-manual"],
-		queryFn: async () => {
-			const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-			const page = unwrap(
-				await api.GET("/api/sessions", {
-					params: { query: { page_size: 1, automated: false, since } },
-				}),
-			);
-			return page.total;
-		},
-	});
+	const manualWeek = stats?.manual_sessions_last_7_days;
 	const automatedWeek = manualWeek === undefined ? null : Math.max(0, weekSessions - manualWeek);
 
 	return (

@@ -3536,6 +3536,10 @@ export interface components {
             vault_keys_count: number;
             /** Connectors Count */
             connectors_count: number;
+            /** Manual Sessions Last 7 Days */
+            manual_sessions_last_7_days: number;
+            /** Contribution */
+            contribution: components["schemas"]["ContributionDayResponse"][];
         };
         /** DefaultProjectResponse */
         DefaultProjectResponse: {
@@ -6580,6 +6584,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EnvironmentResponse"][];
                 };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
