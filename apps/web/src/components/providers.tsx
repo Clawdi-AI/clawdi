@@ -2,10 +2,11 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useCurrentUser } from "@/lib/auth-client";
 
 export function Providers({ children }: { children: React.ReactNode }) {
 	const [queryClient] = useState(() => new QueryClient());
@@ -13,11 +14,40 @@ export function Providers({ children }: { children: React.ReactNode }) {
 		<ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
 			<NuqsAdapter>
 				<QueryClientProvider client={queryClient}>
-					<AnalyticsProvider>
-						<TooltipProvider delayDuration={200}>{children}</TooltipProvider>
-					</AnalyticsProvider>
+					<QueryCacheAuthBoundary queryClient={queryClient}>
+						<AnalyticsProvider>
+							<TooltipProvider delayDuration={200}>{children}</TooltipProvider>
+						</AnalyticsProvider>
+					</QueryCacheAuthBoundary>
 				</QueryClientProvider>
 			</NuqsAdapter>
 		</ThemeProvider>
 	);
+}
+
+function QueryCacheAuthBoundary({
+	children,
+	queryClient,
+}: {
+	children: React.ReactNode;
+	queryClient: QueryClient;
+}) {
+	const { isLoaded, isSignedIn, user } = useCurrentUser();
+	const lastAuthKey = useRef<string | null>(null);
+
+	useEffect(() => {
+		if (!isLoaded) return;
+
+		const authKey = isSignedIn ? (user?.id ?? "signed-in") : "signed-out";
+		if (lastAuthKey.current === null) {
+			lastAuthKey.current = authKey;
+			return;
+		}
+		if (lastAuthKey.current !== authKey) {
+			queryClient.clear();
+			lastAuthKey.current = authKey;
+		}
+	}, [isLoaded, isSignedIn, queryClient, user?.id]);
+
+	return children;
 }
