@@ -233,26 +233,36 @@ export function HostedAgentDetail({
 
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
+	const isConsoleTab = activeTab === "console";
 
 	return (
-		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
-			<section className="space-y-4">
-				<div className="flex flex-wrap items-start justify-between gap-3">
-					<div>
-						<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
-						{activeNavItem.description ? (
-							<p className="mt-1 text-sm text-muted-foreground">{activeNavItem.description}</p>
+		<div
+			data-hosted="true"
+			className={
+				isConsoleTab
+					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+					: "space-y-6 px-4 lg:px-6"
+			}
+		>
+			<section className={isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
+				{isConsoleTab ? null : (
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
+							{activeNavItem.description ? (
+								<p className="mt-1 text-sm text-muted-foreground">{activeNavItem.description}</p>
+							) : null}
+						</div>
+						{consoleUrl ? (
+							<Button asChild variant="outline" size="sm">
+								<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
+									Open {runtimeLabel}
+									<ExternalLink className="size-3.5" />
+								</a>
+							</Button>
 						) : null}
 					</div>
-					{consoleUrl ? (
-						<Button asChild variant="outline" size="sm">
-							<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-								Open {runtimeLabel}
-								<ExternalLink className="size-3.5" />
-							</a>
-						</Button>
-					) : null}
-				</div>
+				)}
 				{activeTab === "overview" ? (
 					<OverviewTab
 						deployment={deployment}
@@ -265,7 +275,7 @@ export function HostedAgentDetail({
 						sessionHref={(session) => scopedSessionHref(session.id)}
 					/>
 				) : null}
-				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
+				{isConsoleTab ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
 				{activeTab === "sessions" ? (
 					<div className="max-w-4xl">
 						{sessions.error ? (
@@ -417,12 +427,14 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	}
 
 	return (
-		<div className="space-y-3">
-			<LiveNote>This is the live {label} UI, embedded from the running agent.</LiveNote>
-
-			<div className="flex flex-wrap items-center justify-between gap-2">
-				<span className="text-sm font-medium">{label}</span>
-				<Button asChild variant="outline" size="sm">
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y bg-background md:rounded-b-xl">
+			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
+				<div className="flex min-w-0 items-center gap-2 text-sm">
+					<MonitorPlay className="size-4 shrink-0 text-muted-foreground" />
+					<span className="shrink-0 font-medium">{label}</span>
+					<span className="min-w-0 truncate text-muted-foreground">Live runtime UI</span>
+				</div>
+				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
 					<a href={url} target="_blank" rel="noopener noreferrer">
 						Open full screen
 						<Maximize2 className="size-3.5" />
@@ -436,10 +448,10 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 				key={runtime}
 				src={url}
 				title={`${label} console`}
-				className="hidden h-[70vh] min-h-[520px] w-full rounded-lg border bg-background sm:block"
+				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
 				allow="clipboard-read; clipboard-write"
 			/>
-			<div className="rounded-lg border border-dashed p-6 text-center sm:hidden">
+			<div className="flex min-h-[420px] flex-1 items-center justify-center border border-dashed p-6 text-center sm:hidden">
 				<p className="text-sm text-muted-foreground">
 					The console is best viewed full screen on a small screen.
 				</p>

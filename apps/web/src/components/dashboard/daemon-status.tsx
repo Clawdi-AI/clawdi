@@ -139,10 +139,19 @@ const SHORT_LABEL: Record<Status, string> = {
 	paused: "Sync paused",
 };
 
+const COMPACT_LABEL: Record<Status, string> = {
+	live: "Live",
+	"set-up": "Setup",
+	errored: "Error",
+	paused: "Paused",
+};
+
 export function DaemonStatusBadge({
 	env,
 	source = "self-managed",
 	manageHref,
+	compact = false,
+	tooltipDetail,
 }: {
 	env: Env;
 	/** "on-clawdi" tiles change the dialog copy across every non-
@@ -161,27 +170,33 @@ export function DaemonStatusBadge({
 	 * omit it; hosted callers without a deployment link get a plain
 	 * "contact support / check agent settings" message. */
 	manageHref?: string;
+	/** Use a one-word label in constrained layouts such as the sidebar header. */
+	compact?: boolean;
+	/** Extra context shown only in the tooltip for crowded layouts. */
+	tooltipDetail?: string;
 }) {
 	const status = classify(env);
 	const isHosted = source === "on-clawdi";
 	const [open, setOpen] = useState(false);
+	const label =
+		isHosted && status === "set-up"
+			? compact
+				? "Pending"
+				: "Sync pending"
+			: compact
+				? COMPACT_LABEL[status]
+				: SHORT_LABEL[status];
 	const inner = (
 		<span
 			className={cn(
-				"inline-flex items-center gap-1.5",
+				"inline-flex items-center gap-1.5 whitespace-nowrap",
+				compact && "gap-1",
 				status === "live" ? "text-muted-foreground" : TEXT_TONE[status],
 				"cursor-pointer hover:text-foreground",
 			)}
 		>
 			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", DOT_TONE[status])} />
-			<span>
-				{/* Hosted "set-up" reads as "Sync pending" — the rollout
-				    is in flight, not waiting on the user. Other states
-				    use the same label as self-managed because they have
-				    the same product meaning regardless of who provisioned
-				    the hosted runtime. */}
-				{isHosted && status === "set-up" ? "Sync pending" : SHORT_LABEL[status]}
-			</span>
+			<span className="whitespace-nowrap">{label}</span>
 		</span>
 	);
 	// Hosted users see a tooltip that doesn't promise a CLI fix.
@@ -213,13 +228,21 @@ export function DaemonStatusBadge({
 						// for visual fit in the meta line; pair it with an
 						// explicit focus-visible ring so keyboard users
 						// still see where they are.
-						className="appearance-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+						className={cn(
+							"appearance-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+							compact && "shrink-0 whitespace-nowrap",
+						)}
 					>
 						{inner}
 					</button>
 				</TooltipTrigger>
 				<TooltipContent side="bottom" className="text-xs">
-					{tooltip}
+					<div className="flex flex-col gap-0.5">
+						<span>{tooltip}</span>
+						{tooltipDetail ? (
+							<span className="font-normal text-muted-foreground">{tooltipDetail}</span>
+						) : null}
+					</div>
 				</TooltipContent>
 			</Tooltip>
 			{/* Dialog content portals into document.body, but React events
