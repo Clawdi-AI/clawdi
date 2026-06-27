@@ -68,6 +68,15 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 # of phase 2).
 project_router = APIRouter(prefix="/api/projects/{project_id}/skills", tags=["skills"])
 
+# Back-compat for binaries built during the Scope -> Project migration.
+# The table row id was preserved, so old `/api/scopes/{id}/skills/...`
+# read URLs can be served by the project-explicit handlers.
+scope_router = APIRouter(
+    prefix="/api/scopes/{scope_id}/skills",
+    tags=["skills"],
+    include_in_schema=False,
+)
+
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
@@ -964,18 +973,27 @@ async def download_skill_project(
     delete) still gate on `validate_project_for_caller`, which stays
     owner-only.
     """
-    await validate_project_read_for_caller(db, auth, project_id)
-    result = await db.execute(
-        select(Skill).where(
-            Skill.project_id == project_id,
-            Skill.skill_key == skill_key,
-            Skill.is_active,
-        )
+    return await _get_project_skill_download(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
     )
-    skill = result.scalar_one_or_none()
-    if not skill:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
-    return await _build_skill_download(skill, skill_key)
+
+
+@scope_router.get("/{skill_key:path}/download")
+async def download_skill_scope_compat(
+    scope_id: UUID = Path(...),
+    skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    auth: AuthContext = Depends(require_scope("skills:read")),
+    db: AsyncSession = Depends(get_session),
+):
+    return await _get_project_skill_download(
+        db=db,
+        auth=auth,
+        project_id=scope_id,
+        skill_key=skill_key,
+    )
 
 
 # NOTE: bare-key GETs declared AFTER `/{skill_key:path}/download` so
@@ -1015,6 +1033,68 @@ async def get_skill_project(
     shared-project skill metadata/content, while write paths stay
     owner-only via `validate_project_for_caller`.
     """
+    return await _get_project_skill_detail(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+
+
+@scope_router.get("/{skill_key:path}")
+async def get_skill_scope_compat(
+    scope_id: UUID = Path(...),
+    skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    auth: AuthContext = Depends(require_scope("skills:read")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillDetailResponse:
+    return await _get_project_skill_detail(
+        db=db,
+        auth=auth,
+        project_id=scope_id,
+        skill_key=skill_key,
+    )
+
+
+async def _get_project_skill_download(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    skill_key: str,
+) -> Response:
+    skill = await _get_project_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    return await _build_skill_download(skill, skill_key)
+
+
+async def _get_project_skill_detail(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    skill_key: str,
+) -> SkillDetailResponse:
+    skill = await _get_project_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+    )
+    return await _build_skill_detail(skill, db)
+
+
+async def _get_project_skill(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    skill_key: str,
+) -> Skill:
     await validate_project_read_for_caller(db, auth, project_id)
     result = await db.execute(
         select(Skill).where(
@@ -1026,7 +1106,7 @@ async def get_skill_project(
     skill = result.scalar_one_or_none()
     if not skill:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
-    return await _build_skill_detail(skill, db)
+    return skill
 
 
 async def _build_skill_download(skill: Skill, skill_key: str) -> Response:

@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -194,43 +194,37 @@ async def list_projects(
     """List every project the caller can read. JWT auth -> all of
     the user's visible projects. Agent API key -> that Agent Project only.
     """
-    visible_project_ids = await project_ids_visible_to(db, auth)
-    if not visible_project_ids:
-        return []
-    result = await db.execute(
-        select(Project)
-        .where(Project.id.in_(visible_project_ids))
+    caller_user_id = auth.user_id
+    membership_join = and_(
+        ProjectMembership.project_id == Project.id,
+        ProjectMembership.member_user_id == caller_user_id,
+    )
+    stmt = (
+        select(Project, User, ProjectMembership)
+        .outerjoin(User, User.id == Project.user_id)
+        .outerjoin(ProjectMembership, membership_join)
         .order_by(Project.created_at.desc())
     )
-    rows = result.scalars().all()
-    caller_user_id = auth.user_id
-    owner_ids = {project.user_id for project in rows}
-    owners = {}
-    if owner_ids:
-        owner_rows = (await db.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
-        owners = {owner.id: owner for owner in owner_rows}
-
-    membership_rows = (
-        (
-            await db.execute(
-                select(ProjectMembership).where(
-                    ProjectMembership.member_user_id == caller_user_id,
-                    ProjectMembership.project_id.in_(visible_project_ids),
-                )
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        bound_project_id = await resolve_default_write_project(db, auth)
+        stmt = stmt.where(Project.id == bound_project_id)
+    else:
+        stmt = stmt.where(
+            or_(
+                Project.user_id == caller_user_id,
+                ProjectMembership.member_user_id == caller_user_id,
             )
         )
-        .scalars()
-        .all()
-    )
-    memberships = {membership.project_id: membership for membership in membership_rows}
+
+    result = await db.execute(stmt)
     return [
         _project_response(
-            p,
+            project,
             caller_user_id,
-            owner=owners.get(p.user_id),
-            membership=memberships.get(p.id),
+            owner=owner,
+            membership=membership,
         )
-        for p in rows
+        for project, owner, membership in result.all()
     ]
 
 

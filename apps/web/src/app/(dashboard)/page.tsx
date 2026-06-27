@@ -23,6 +23,7 @@ import { relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
 const RECENT_SESSIONS_LIMIT = 15;
+const DASHBOARD_STALE_MS = 30_000;
 
 function countProjectTypes(
 	projects: Array<{ kind?: string | null }> | undefined,
@@ -77,14 +78,16 @@ export default function DashboardPage() {
 	const api = useApi();
 	const v2Access = useV2Access();
 
-	const { data: stats } = useQuery({
+	const { data: stats, isLoading: statsLoading } = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: async () => unwrap(await api.GET("/api/dashboard/stats")),
+		staleTime: DASHBOARD_STALE_MS,
 	});
 
 	const { data: projects, isLoading: projectsLoading } = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		staleTime: DASHBOARD_STALE_MS,
 	});
 
 	const { data: environments, isLoading: envsLoading } = useQuery({
@@ -95,11 +98,6 @@ export default function DashboardPage() {
 		// stay green indefinitely. Match the agent detail page's
 		// 10s cadence so the live indicator is actually live.
 		refetchInterval: 10_000,
-	});
-
-	const { data: contribution, isLoading: contribLoading } = useQuery({
-		queryKey: ["dashboard-contribution"],
-		queryFn: async () => unwrap(await api.GET("/api/dashboard/contribution")),
 	});
 
 	// Manual sessions only: on a working fleet ~3/4 of sessions are
@@ -113,8 +111,10 @@ export default function DashboardPage() {
 					params: { query: { page_size: RECENT_SESSIONS_LIMIT, automated: false } },
 				}),
 			),
+		staleTime: DASHBOARD_STALE_MS,
 	});
 	const sessions = sessionsPage?.items;
+	const contribution = stats?.contribution;
 
 	const streakLine =
 		stats && stats.current_streak > 0
@@ -181,7 +181,7 @@ export default function DashboardPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent>
-							{contribLoading ? (
+							{statsLoading ? (
 								<Skeleton className="h-28 w-full rounded-md" />
 							) : contribution ? (
 								<ContributionGraph data={contribution} />

@@ -3,6 +3,12 @@ from datetime import date
 from pydantic import BaseModel
 
 
+class ContributionDayResponse(BaseModel):
+    date: date
+    count: int
+    level: int
+
+
 class DashboardStatsResponse(BaseModel):
     total_sessions: int
     total_messages: int
@@ -17,9 +23,5 @@ class DashboardStatsResponse(BaseModel):
     vault_count: int
     vault_keys_count: int
     connectors_count: int
-
-
-class ContributionDayResponse(BaseModel):
-    date: date
-    count: int
-    level: int
+    manual_sessions_last_7_days: int
+    contribution: list[ContributionDayResponse]

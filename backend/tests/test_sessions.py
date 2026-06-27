@@ -11,11 +11,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def _register_env(client: httpx.AsyncClient) -> str:
+async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
     r = await client.post(
         "/api/environments",
         json={
-            "machine_id": "test-machine-1",
+            "machine_id": machine_id,
             "machine_name": "Test Mac",
             "agent_type": "claude-code",
             "agent_version": "0.1.0",
@@ -33,6 +33,30 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
     # Same (user, machine_id, agent_type) must return the same environment row,
     # not create a duplicate.
     assert first == second
+
+
+@pytest.mark.asyncio
+async def test_environments_support_conditional_get(client: httpx.AsyncClient):
+    env_id = await _register_env(client, machine_id=f"etag-{uuid.uuid4().hex}")
+
+    first = await client.get("/api/environments")
+    assert first.status_code == 200, first.text
+    etag = first.headers.get("ETag")
+    assert etag
+    assert first.headers.get("Cache-Control") == "private, max-age=10, must-revalidate"
+
+    not_modified = await client.get("/api/environments", headers={"If-None-Match": etag})
+    assert not_modified.status_code == 304, not_modified.text
+    assert not_modified.headers.get("ETag") == etag
+
+    heartbeat = await client.post(f"/api/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    changed = await client.get("/api/environments", headers={"If-None-Match": etag})
+    assert changed.status_code == 200, changed.text
+    assert changed.headers.get("ETag") != etag
+    updated = next(item for item in changed.json() if item["id"] == env_id)
+    assert updated["queue_depth_high_water"] == 1
 
 
 @pytest.mark.asyncio
