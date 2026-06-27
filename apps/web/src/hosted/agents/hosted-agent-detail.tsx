@@ -73,6 +73,7 @@ import {
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
+import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
@@ -221,13 +222,7 @@ export function HostedAgentDetail({
 	}, [environmentId, router, searchParams, section]);
 
 	const sessions = useQuery({
-		queryKey: ["agent-sessions", environmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/sessions", {
-					params: { query: { environment_id: environmentId, page_size: 20 } },
-				}),
-			),
+		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
 		enabled: isCloudEnvId(environmentId),
 	});
 

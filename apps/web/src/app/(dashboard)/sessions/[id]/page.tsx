@@ -29,6 +29,12 @@ import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import {
+	SESSION_DETAIL_GC_MS,
+	SESSION_DETAIL_STALE_MS,
+	SESSION_MESSAGES_GC_MS,
+	SESSION_MESSAGES_STALE_MS,
+} from "@/lib/session-queries";
+import {
 	cn,
 	formatAbsoluteTooltip,
 	formatNumber,
@@ -67,6 +73,8 @@ export function SessionDetailContent({
 			if (status >= 400 && status < 500) return false;
 			return failureCount < 2;
 		},
+		staleTime: SESSION_DETAIL_STALE_MS,
+		gcTime: SESSION_DETAIL_GC_MS,
 	});
 
 	// Direction toggle: "desc" (newest-first, default) is the most
@@ -133,7 +141,7 @@ export function SessionDetailContent({
 		// end (rather than reordering already-loaded pages, which
 		// would only show the OLDEST 100 in newest-first mode —
 		// confusing).
-		queryKey: ["session-messages", sessionId, direction],
+		queryKey: ["session-messages", sessionId, session?.content_hash ?? null, direction],
 		initialPageParam:
 			direction === "desc"
 				? ({ offset: initialDescOffset, limit: initialDescLimit } as PageParam)
@@ -170,6 +178,8 @@ export function SessionDetailContent({
 			if (status >= 400 && status < 500) return false;
 			return failureCount < 2;
 		},
+		staleTime: SESSION_MESSAGES_STALE_MS,
+		gcTime: SESSION_MESSAGES_GC_MS,
 	});
 
 	// Flatten pages → ordered message list, paired with a stable

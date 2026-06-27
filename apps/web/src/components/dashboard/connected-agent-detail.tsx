@@ -44,6 +44,7 @@ import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
+import { sessionListQueryOptions } from "@/lib/session-queries";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -131,13 +132,7 @@ export function ConnectedAgentDetail({
 	});
 
 	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
-		queryKey: ["agent-sessions", id],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/sessions", {
-					params: { query: { environment_id: id, page_size: 50 } },
-				}),
-			),
+		...sessionListQueryOptions(api, { environment_id: id, page_size: 50 }),
 		enabled: !!agent,
 	});
 

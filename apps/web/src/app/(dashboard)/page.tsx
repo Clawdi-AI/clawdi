@@ -19,10 +19,12 @@ import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
+import { sessionListQueryOptions } from "@/lib/session-queries";
 import { relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
 const RECENT_SESSIONS_LIMIT = 15;
+const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
 const DASHBOARD_STALE_MS = 30_000;
 
 function countProjectTypes(
@@ -103,17 +105,13 @@ export default function DashboardPage() {
 	// Manual sessions only: on a working fleet ~3/4 of sessions are
 	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
 	// work under them. Automation is one click away via View all.
-	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
-		queryKey: ["recent-sessions", "manual"],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/sessions", {
-					params: { query: { page_size: RECENT_SESSIONS_LIMIT, automated: false } },
-				}),
-			),
-		staleTime: DASHBOARD_STALE_MS,
-	});
-	const sessions = sessionsPage?.items;
+	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery(
+		sessionListQueryOptions(api, {
+			page_size: RECENT_SESSIONS_CACHE_PAGE_SIZE,
+			automated: false,
+		}),
+	);
+	const sessions = sessionsPage?.items.slice(0, RECENT_SESSIONS_LIMIT);
 	const contribution = stats?.contribution;
 
 	const streakLine =
@@ -198,7 +196,7 @@ export default function DashboardPage() {
 								</p>
 							</div>
 							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
-								<Link href={projectResourceHref("sessions")}>
+								<Link href={`${projectResourceHref("sessions")}?automated=false`}>
 									View all
 									<ArrowRight />
 								</Link>

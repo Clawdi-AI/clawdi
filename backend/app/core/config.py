@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_environment: str = ""  # falls back to `environment` if empty
     sentry_traces_sample_rate: float = 0.0
+    slow_request_log_ms: float = 750.0
     metrics_bearer_token: str = ""
     metrics_basic_auth_user: str = "prometheus"
     metrics_basic_auth_password: str = ""

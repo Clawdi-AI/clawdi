@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle, LayoutList, Table2 } from "lucide-react";
 import {
@@ -10,7 +10,7 @@ import {
 	parseAsStringLiteral,
 	useQueryStates,
 } from "nuqs";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
@@ -26,6 +26,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, sessionDetailHref } from "@/lib/project-resource-model";
+import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
 
@@ -78,6 +79,7 @@ export default function SessionsPage() {
 
 function SessionsListInner() {
 	const api = useApi();
+	const queryClient = useQueryClient();
 
 	// All filter / sort / pagination state lives in the URL via
 	// nuqs. `clearOnDefault: true` keeps `/sessions` clean when
@@ -117,35 +119,31 @@ function SessionsListInner() {
 		params.has_pr !== null ||
 		params.automated !== null;
 
-	const { data, isLoading, isFetching, error } = useQuery({
-		queryKey: [
-			"sessions",
+	const sessionQuery = useMemo<SessionListQuery>(
+		() => ({
+			page: params.page,
+			page_size: params.pageSize,
+			q: debouncedSearch || undefined,
+			sort: params.sort,
+			order: params.order,
+			agent: params.agent || undefined,
+			has_pr: params.has_pr,
+			automated: params.automated,
+		}),
+		[
+			debouncedSearch,
+			params.agent,
+			params.automated,
+			params.has_pr,
+			params.order,
 			params.page,
 			params.pageSize,
-			debouncedSearch,
 			params.sort,
-			params.order,
-			params.agent,
-			params.has_pr,
-			params.automated,
 		],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/api/sessions", {
-					params: {
-						query: {
-							page: params.page,
-							page_size: params.pageSize,
-							q: debouncedSearch || undefined,
-							sort: params.sort,
-							order: params.order,
-							agent: params.agent || undefined,
-							has_pr: params.has_pr ?? undefined,
-							automated: params.automated ?? undefined,
-						},
-					},
-				}),
-			),
+	);
+
+	const { data, isLoading, isFetching, error } = useQuery({
+		...sessionListQueryOptions(api, sessionQuery),
 		// Keep previous results visible during refetch; the
 		// `isFetching && !isLoading` opacity transition below is
 		// the only "loading" signal the user sees.
@@ -195,6 +193,13 @@ function SessionsListInner() {
 
 	const total = data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / params.pageSize));
+
+	useEffect(() => {
+		if (!data || params.page >= pageCount) return;
+		void queryClient.prefetchQuery(
+			sessionListQueryOptions(api, { ...sessionQuery, page: params.page + 1 }),
+		);
+	}, [api, data, pageCount, params.page, queryClient, sessionQuery]);
 
 	const groupable = params.sort === "last_activity_at" || params.sort === "started_at";
 

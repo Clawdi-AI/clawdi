@@ -21,6 +21,7 @@ from app.core.database import get_session
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.request_timing import RequestTimingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
@@ -134,15 +135,16 @@ app = FastAPI(
 # subsequent `add_middleware` call around the previous stack, so the LAST
 # call becomes the OUTERMOST handler seeing the request first. We want:
 #
-#   request → RequestID → CORS → BodySizeLimit → route
-#                                                    ↓
-#   response ← RequestID ← CORS ← BodySizeLimit ← route
+#   request → SecurityHeaders → RequestID → RequestTiming → CORS → BodySizeLimit → route
+#                                                                                      ↓
+#   response ← SecurityHeaders ← RequestID ← RequestTiming ← CORS ← BodySizeLimit ← route
 #
-# so a CORS-rejected preflight still carries X-Request-ID on the way back
-# out, and BodySizeLimit fires AFTER CORS preflight (preflight is OPTIONS,
-# which the limiter ignores anyway). The limiter sits inside CORS so
-# legitimate CORS responses still apply when we 413; otherwise a browser
-# upload over the cap would see an opaque network error instead of
+# so security headers are a final response wrapper, a CORS-rejected preflight
+# still carries X-Request-ID on the way back out, RequestTiming can correlate
+# slow logs with that id, and BodySizeLimit fires AFTER CORS preflight
+# (preflight is OPTIONS, which the limiter ignores anyway). The limiter sits
+# inside CORS so legitimate CORS responses still apply when we 413; otherwise
+# a browser upload over the cap would see an opaque network error instead of
 # "Request body too large".
 
 # Global cap on declared body size for body-bearing methods.
@@ -189,12 +191,14 @@ app.add_middleware(
         # but the dashboard relies on this once it stops fetching
         # the full list every render.
         "ETag",
+        "X-Process-Time-Ms",
     ],
     # 10 min production, but in dev the preflight cache outlives endpoint
     # changes (new routes registered during uvicorn --reload get rejected by
     # stale cached 404 preflights). Shorten in dev for fast iteration.
     max_age=30 if settings.environment != "production" else 600,
 )
+app.add_middleware(RequestTimingMiddleware, slow_ms=settings.slow_request_log_ms)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
