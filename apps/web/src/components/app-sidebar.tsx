@@ -1080,7 +1080,7 @@ export function AppSidebar({
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
 	const agentsLoaded = environments !== undefined;
-	const agents = mounted ? (environments ?? []) : [];
+	const agents = environments ?? [];
 	const activeAgent = activeAgentId ? agents.find((env) => env.id === activeAgentId) : null;
 	const activeSection = agentRoute?.section ?? "overview";
 	const [settingsSection, setSettingsSection] = useQueryState(
@@ -1111,8 +1111,6 @@ export function AppSidebar({
 		closeMobileSidebar();
 		openSettings();
 	};
-
-	if (!mounted) return null;
 
 	return (
 		<>

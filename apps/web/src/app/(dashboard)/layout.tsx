@@ -20,6 +20,34 @@ export const metadata = pageMetadata(
 // it means adding one.
 const CONTENT_MAX_WIDTH = "max-w-[96rem]";
 
+function AppSidebarFallback() {
+	return (
+		<>
+			<div
+				aria-hidden
+				className="sticky top-0 hidden h-svh w-(--clawdi-rail-width) shrink-0 border-r bg-sidebar/95 md:block"
+			/>
+			<div
+				aria-hidden
+				data-state="expanded"
+				data-collapsible=""
+				data-variant="inset"
+				data-side="left"
+				data-slot="sidebar"
+				className="group peer hidden text-sidebar-foreground md:block"
+			>
+				<div data-slot="sidebar-gap" className="relative w-(--sidebar-width) bg-transparent" />
+				<div
+					data-slot="sidebar-container"
+					className="fixed inset-y-0 left-[var(--clawdi-rail-width)] z-10 hidden h-svh w-(--sidebar-width) p-2 md:flex"
+				>
+					<div className="flex h-full w-full flex-col bg-sidebar" />
+				</div>
+			</div>
+		</>
+	);
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarProvider
@@ -34,7 +62,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 		>
 			<CommandPaletteProvider>
 				<BreadcrumbTitleProvider>
-					<Suspense fallback={null}>
+					<Suspense fallback={<AppSidebarFallback />}>
 						<AppSidebar variant="inset" />
 					</Suspense>
 					{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
