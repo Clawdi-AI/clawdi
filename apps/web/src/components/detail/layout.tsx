@@ -49,105 +49,10 @@ export function DetailPanel({ children, className }: { children: ReactNode; clas
 	);
 }
 
-export type DetailNavItem<T extends string> = {
-	id: T;
-	label: string;
+export type DetailSectionMeta = {
 	description?: string;
-	href?: string;
 	icon?: ComponentType<{ className?: string }>;
-	count?: ReactNode;
 };
-
-export function DetailNavLayout({ nav, children }: { nav: ReactNode; children: ReactNode }) {
-	return (
-		<div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
-			<aside className="min-w-0 lg:sticky lg:top-[calc(var(--header-height)+1rem)]">{nav}</aside>
-			<div className="min-w-0">{children}</div>
-		</div>
-	);
-}
-
-export function DetailSectionNav<T extends string>({
-	items,
-	activeId,
-	onSelect,
-	label,
-}: {
-	items: DetailNavItem<T>[];
-	activeId: T;
-	onSelect: (id: T) => void;
-	label: string;
-}) {
-	return (
-		<nav
-			aria-label={label}
-			className="-mx-1 flex gap-1 overflow-x-auto border-b px-1 pb-2 lg:mx-0 lg:block lg:space-y-1 lg:overflow-visible lg:border-b-0 lg:px-0 lg:pb-0"
-		>
-			{items.map((item) => {
-				const Icon = item.icon;
-				const active = item.id === activeId;
-				const className = cn(
-					"flex min-w-fit shrink-0 items-start gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:w-full lg:min-w-0",
-					active
-						? "bg-accent text-accent-foreground"
-						: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-				);
-				const content = (
-					<>
-						{Icon ? <Icon className="mt-0.5 size-4 shrink-0" /> : null}
-						<span className="min-w-0 flex-1">
-							<span className="flex min-w-0 items-center gap-2">
-								<span className="truncate font-medium">{item.label}</span>
-								{item.count !== undefined && item.count !== null ? (
-									<span className="ml-auto shrink-0 text-xs tabular-nums opacity-70">
-										{item.count}
-									</span>
-								) : null}
-							</span>
-						</span>
-					</>
-				);
-				if (item.href) {
-					return (
-						<a
-							key={item.id}
-							href={item.href}
-							aria-current={active ? "page" : undefined}
-							onClick={(event) => {
-								if (
-									event.defaultPrevented ||
-									event.button !== 0 ||
-									event.metaKey ||
-									event.altKey ||
-									event.ctrlKey ||
-									event.shiftKey
-								) {
-									return;
-								}
-								event.preventDefault();
-								onSelect(item.id);
-							}}
-							className={className}
-						>
-							{content}
-						</a>
-					);
-				}
-				return (
-					<button
-						key={item.id}
-						type="button"
-						aria-current={active ? "page" : undefined}
-						onClick={() => onSelect(item.id)}
-						className={className}
-					>
-						{content}
-					</button>
-				);
-			})}
-		</nav>
-	);
-}
 
 /** Standard "X not found" alert used by 404 / not-owned states. */
 export function DetailNotFound({ title, message }: { title: string; message: string }) {

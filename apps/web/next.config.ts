@@ -2,10 +2,13 @@ import type { NextConfig } from "next";
 
 const isHostedBuild = process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
 const posthogProxyPath = "/_cdi/px";
-const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? "")
-	.split(",")
-	.map((origin) => origin.trim())
-	.filter(Boolean);
+const allowedDevOrigins = Array.from(
+	new Set(
+		["localhost", "127.0.0.1", ...(process.env.NEXT_ALLOWED_DEV_ORIGINS ?? "").split(",")]
+			.map((origin) => origin.trim())
+			.filter(Boolean),
+	),
+);
 
 const nextConfig: NextConfig = {
 	transpilePackages: ["@clawdi/shared"],
@@ -52,21 +55,18 @@ const nextConfig: NextConfig = {
 
 		return rewrites;
 	},
-	// Billing surfaces moved under routed Settings (`/settings/billing/*`).
-	// Keep the old top-level paths working for any saved deep links. Hosted
-	// builds only — these routes never resolve to content in OSS. Temporary
-	// (307) redirects so the mapping can still evolve without sticky browser
-	// caches.
+	// Billing surfaces now live in the settings dialog query state. Keep the
+	// short billing entrypoints from landing on deleted routed settings pages.
 	async redirects() {
 		if (!isHostedBuild) return [];
 		return [
-			{ source: "/wallet", destination: "/settings/billing/wallet", permanent: false },
-			{ source: "/subscription", destination: "/settings/billing/plan", permanent: false },
+			{ source: "/wallet", destination: "/?settings=billing-wallet", permanent: false },
+			{ source: "/subscription", destination: "/?settings=billing-plan", permanent: false },
 			// Pricing folded into the Plan tab's upgrade flow — old links land there.
-			{ source: "/pricing", destination: "/settings/billing/plan", permanent: false },
+			{ source: "/pricing", destination: "/?settings=billing-plan", permanent: false },
 			{
 				source: "/settings/billing/pricing",
-				destination: "/settings/billing/plan",
+				destination: "/?settings=billing-plan",
 				permanent: false,
 			},
 		];

@@ -35,6 +35,7 @@ import {
 } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
@@ -316,7 +317,7 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
-			router.push(`/agents/${encodeURIComponent(deployment.id)}?source=on-clawdi`);
+			router.push(agentSectionHref(deployment.id, "overview", "source=on-clawdi"));
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { free?: Plan; performance?: Plan } {
 	return {
@@ -52,6 +53,7 @@ export function PlanComparison({
 	onTermChange?: (term: number) => void;
 } = {}) {
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const plansQuery = usePlans();
 	const runAction = useActionLock();
 	const [internalTerm, setInternalTerm] = useState(1);
@@ -222,7 +224,7 @@ export function PlanComparison({
 						<Button
 							className="w-full"
 							variant="outline"
-							onClick={() => router.push("/settings/billing/wallet")}
+							onClick={() => router.push(settingsQueryHref("billing-wallet", searchParams))}
 						>
 							<Sparkles /> Open Wallet
 						</Button>

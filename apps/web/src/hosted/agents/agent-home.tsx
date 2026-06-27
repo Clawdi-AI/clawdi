@@ -7,6 +7,7 @@ import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
+import type { AgentSectionId } from "@/lib/agent-routes";
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
@@ -15,7 +16,13 @@ import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-vi
  * The deployment lookup is hosted-only data, so the whole branch lives here
  * behind the IS_HOSTED dynamic import.
  */
-export function AgentHome({ environmentId }: { environmentId: string }) {
+export function AgentHome({
+	environmentId,
+	section,
+}: {
+	environmentId: string;
+	section: AgentSectionId;
+}) {
 	const searchParams = useSearchParams();
 	const {
 		deployment,
@@ -62,7 +69,12 @@ export function AgentHome({ environmentId }: { environmentId: string }) {
 						? "openclaw"
 						: "hermes";
 		return (
-			<HostedAgentDetail environmentId={resolvedEnvId} deployment={deployment} runtime={runtime} />
+			<HostedAgentDetail
+				environmentId={resolvedEnvId}
+				deployment={deployment}
+				runtime={runtime}
+				section={section}
+			/>
 		);
 	}
 
@@ -77,5 +89,5 @@ export function AgentHome({ environmentId }: { environmentId: string }) {
 		);
 	}
 
-	return <ConnectedAgentDetail environmentId={environmentId} />;
+	return <ConnectedAgentDetail environmentId={environmentId} section={section} />;
 }

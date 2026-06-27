@@ -22,7 +22,7 @@ export default function ShareNotFound() {
 				mistyped.
 			</p>
 			<Link href="/" className="mt-6 text-sm font-medium underline-offset-4 hover:underline">
-				Go to Clawdi Cloud
+				Go to Clawdi
 			</Link>
 		</div>
 	);

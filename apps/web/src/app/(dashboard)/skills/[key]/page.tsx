@@ -18,7 +18,8 @@ import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { cleanMachineName } from "@/components/dashboard/agent-label";
 import {
 	DetailMeta,
 	DetailNotFound,
@@ -35,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { errorMessage, relativeTime } from "@/lib/utils";
@@ -64,6 +66,16 @@ export default function SkillDetailPage() {
 function SkillDetailPageInner() {
 	const { key: routeKey } = useParams<{ key: string }>();
 	const skillKey = useMemo(() => decodeResourceRouteParam(routeKey), [routeKey]);
+	return <SkillDetailContent skillKey={skillKey} />;
+}
+
+export function SkillDetailContent({
+	skillKey,
+	agentId,
+}: {
+	skillKey: string;
+	agentId?: string | null;
+}) {
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -79,6 +91,9 @@ function SkillDetailPageInner() {
 	// there's only one row, so the resolver is unambiguous).
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
 	const selectedProjectId = projectIdParam;
+	const skillListHref = agentId
+		? agentSectionHref(agentId, "skills")
+		: projectResourceHref("skills");
 
 	const {
 		data: skill,
@@ -100,7 +115,10 @@ function SkillDetailPageInner() {
 		},
 	});
 
-	useSetBreadcrumbTitle(skill?.name || (skill ? skillKey : null));
+	const breadcrumbTitle = skill?.name || (skill ? skillKey : null);
+	const agentTitle = skill?.machine_name ? cleanMachineName(skill.machine_name) : null;
+	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, agentTitle);
+	useSetBreadcrumbTitle(breadcrumbTitle);
 
 	const { data: defaultProject, error: projectError } = useQuery({
 		queryKey: ["projects", "default"],
@@ -237,7 +255,7 @@ function SkillDetailPageInner() {
 					: "Removed from this agent. Other agents keep their copies.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
-			router.push(projectResourceHref("skills"));
+			router.push(skillListHref);
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});

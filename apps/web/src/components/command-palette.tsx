@@ -3,18 +3,17 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	Brain,
-	FolderKanban,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
 	MessageSquare,
 	MessagesSquare,
-	Plug,
 	Settings,
 	Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -30,22 +29,17 @@ import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
 	PROJECT_RESOURCE_GROUPS,
-	type ProjectResourceId,
 	projectResourceDefinitionsForGroup,
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
+import {
+	DEFAULT_SETTINGS_SECTION,
+	normalizeSettingsSection,
+	settingsQueryHref,
+} from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useV2Access } from "@/lib/v2-access";
-
-const RESOURCE_ICONS = {
-	projects: FolderKanban,
-	skills: Sparkles,
-	vaults: Key,
-	sessions: MessageSquare,
-	memories: Brain,
-	connectors: Plug,
-} satisfies Record<ProjectResourceId, LucideIcon>;
 
 interface NavShortcut {
 	label: string;
@@ -67,20 +61,13 @@ const BASE_NAV_SHORTCUTS: NavShortcut[] = [
 		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
 			label: definition.navLabel,
 			href: definition.href,
-			icon: RESOURCE_ICONS[definition.id],
+			icon: PROJECT_RESOURCE_ICONS[definition.id],
 			subtitle: projectResourcePathLabel(definition),
 			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
 				definition.projectScope,
 			)} ${projectResourcePathLabel(definition)}`,
 		})),
 	),
-	{
-		label: "Settings",
-		href: "/settings",
-		icon: Settings,
-		subtitle: "General, Profile, API Keys",
-		searchText: "settings general profile api keys ai providers billing preferences account",
-	},
 ];
 
 const V2_NAV_SHORTCUTS: NavShortcut[] = [
@@ -92,11 +79,12 @@ const V2_NAV_SHORTCUTS: NavShortcut[] = [
 		searchText: "channels telegram discord whatsapp imessage bots messaging",
 	},
 	{
-		label: "AI Providers",
+		label: "Model Providers",
 		href: "/ai-providers",
 		icon: Sparkles,
 		subtitle: "Account resources",
-		searchText: "ai providers models openai anthropic openrouter gemini mistral byok api key",
+		searchText:
+			"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
 	},
 ];
 
@@ -170,13 +158,18 @@ function CommandPalette({
 	const v2Access = useV2Access();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
-	const navShortcuts = useMemo(
-		() =>
-			IS_HOSTED && v2Access.canUseV2
-				? [...BASE_NAV_SHORTCUTS, ...V2_NAV_SHORTCUTS]
-				: BASE_NAV_SHORTCUTS,
-		[v2Access.canUseV2],
-	);
+	const navShortcuts = useMemo(() => {
+		const settingsShortcut: NavShortcut = {
+			label: "Settings",
+			href: settingsQueryHref("general"),
+			icon: Settings,
+			subtitle: "General, Profile, API Keys",
+			searchText: "settings general profile api keys model providers billing preferences account",
+		};
+		return IS_HOSTED && v2Access.canUseV2
+			? [...BASE_NAV_SHORTCUTS, settingsShortcut, ...V2_NAV_SHORTCUTS]
+			: [...BASE_NAV_SHORTCUTS, settingsShortcut];
+	}, [v2Access.canUseV2]);
 
 	// Reset the input when the palette closes so reopening is a fresh state
 	// — otherwise stale results from the previous query briefly flash before
@@ -200,6 +193,13 @@ function CommandPalette({
 	const jump = useCallback(
 		(href: string) => {
 			onOpenChange(false);
+			if (href.startsWith("?settings=") && typeof window !== "undefined") {
+				const section =
+					normalizeSettingsSection(new URLSearchParams(href).get("settings")) ??
+					DEFAULT_SETTINGS_SECTION;
+				router.push(settingsQueryHref(section, new URLSearchParams(window.location.search)));
+				return;
+			}
 			router.push(href);
 		},
 		[router, onOpenChange],

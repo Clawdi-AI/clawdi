@@ -1,7 +1,9 @@
 name: Release Clawdi
 
-# Creates a GitHub Release for backend/web/shared/root-config changes that
-# land on main.
+# Creates a GitHub Release for backend/web/shared/root-config changes when an
+# operator explicitly runs it after a production deploy. This is intentionally
+# manual: merging ordinary app/backend/web PRs should not spam dated GitHub
+# releases.
 # This repo is a monorepo: the npm package has its own `clawdi-cli-vX.Y.Z`
 # release, while the Clawdi app/backend/web line uses calendar-versioned
 # `clawdi-YYYY-MM-DD` releases, with `-2`, `-3`, ... appended only for
@@ -16,17 +18,6 @@ on:
       target:
         description: "Commit SHA to release. Defaults to the workflow SHA."
         required: false
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "apps/web/**"
-      - "packages/shared/**"
-      - "package.json"
-      - "bun.lock"
-      - "turbo.json"
-      - "tsconfig.base.json"
-      - "biome.json"
 
 permissions:
   contents: write

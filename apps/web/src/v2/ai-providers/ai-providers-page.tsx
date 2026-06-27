@@ -35,7 +35,7 @@ export function AiProvidersPage() {
 	return (
 		<div data-v2="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
-				title="AI Providers"
+				title="Model Providers"
 				description={DESCRIPTION}
 				actions={
 					<Button

@@ -28,6 +28,7 @@ export function SessionFeed({
 	groupBy = "last_activity_at",
 	showAgent = true,
 	quietAutomated = true,
+	sessionHref = (session) => sessionDetailHref(session.id),
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;
@@ -40,6 +41,8 @@ export function SessionFeed({
 	/** Mute Cron/heartbeat rows. Turn OFF while searching — muted search
 	 * results read as disabled (journey simulation finding J1). */
 	quietAutomated?: boolean;
+	/** Build the detail link for the current navigation scope. */
+	sessionHref?: (session: SessionListItem) => string;
 }) {
 	if (isLoading) {
 		return (
@@ -71,6 +74,7 @@ export function SessionFeed({
 						session={session}
 						showAgent={showAgent}
 						quietAutomated={quietAutomated}
+						href={sessionHref(session)}
 					/>
 				))}
 			</div>
@@ -101,6 +105,7 @@ export function SessionFeed({
 								session={session}
 								showAgent={showAgent}
 								quietAutomated={quietAutomated}
+								href={sessionHref(session)}
 							/>
 						))}
 					</div>
@@ -114,10 +119,12 @@ function SessionFeedCard({
 	session,
 	showAgent = true,
 	quietAutomated = true,
+	href,
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
 	quietAutomated?: boolean;
+	href: string;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
@@ -133,8 +140,8 @@ function SessionFeedCard({
 			)}
 		>
 			<Link
-				href={sessionDetailHref(session.id)}
-				className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				href={href}
+				className="absolute inset-0 z-10 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				<span className="sr-only">Open session {session.local_session_id}</span>
 			</Link>

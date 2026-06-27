@@ -1,17 +1,21 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, Key, Plus, Settings, Trash2, User, Workflow } from "lucide-react";
-import Link from "next/link";
-import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+import {
+	BarChart3,
+	CreditCard,
+	Key,
+	type LucideIcon,
+	SlidersHorizontal,
+	User,
+	WalletCards,
+} from "lucide-react";
+import dynamic from "next/dynamic";
+import { useEffect, useRef, useState } from "react";
+import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
+import { GeneralPanel } from "@/components/settings/general-panel";
+import { ProfilePanel } from "@/components/settings/profile-panel";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
-import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
 	DialogContent,
@@ -19,395 +23,211 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { IS_HOSTED } from "@/lib/hosted";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
-import { type ApiError, unwrap, useApi } from "@/lib/api";
-import type { ApiKey } from "@/lib/api-schemas";
-import { useCurrentUser } from "@/lib/auth-client";
-import { getProjectResourceDefinition, projectResourceHref } from "@/lib/project-resource-model";
+	DEFAULT_SETTINGS_SECTION,
+	SETTINGS_SECTION_IDS,
+	type SettingsSectionId,
+} from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
+import { useV2Access } from "@/lib/v2-access";
 
-type Section = "general" | "profile" | "projects" | "api-keys";
+const WalletPage = IS_HOSTED
+	? dynamic(
+			() => import("@/hosted/billing/wallet/wallet-page").then((m) => ({ default: m.WalletPage })),
+			{ loading: HostedRouteSkeleton },
+		)
+	: null;
 
-const SECTIONS: { id: Section; label: string; icon: typeof Settings }[] = [
-	{ id: "general", label: "General", icon: Settings },
-	{ id: "profile", label: "Profile", icon: User },
-	{ id: "projects", label: "Projects", icon: Workflow },
-	{ id: "api-keys", label: "API Keys", icon: Key },
+const SubscriptionPage = IS_HOSTED
+	? dynamic(
+			() =>
+				import("@/hosted/billing/subscription/subscription-page").then((m) => ({
+					default: m.SubscriptionPage,
+				})),
+			{ loading: HostedRouteSkeleton },
+		)
+	: null;
+
+const UsagePage = IS_HOSTED
+	? dynamic(
+			() => import("@/hosted/billing/usage/usage-page").then((m) => ({ default: m.UsagePage })),
+			{ loading: HostedRouteSkeleton },
+		)
+	: null;
+
+type SettingsNavItem = {
+	id: SettingsSectionId;
+	label: string;
+	description: string;
+	icon: LucideIcon;
+	v2Only?: boolean;
+};
+
+const SETTINGS_NAV: SettingsNavItem[] = [
+	{
+		id: "general",
+		label: "General",
+		description: "Appearance and app preferences",
+		icon: SlidersHorizontal,
+	},
+	{
+		id: "profile",
+		label: "Profile",
+		description: "Account identity",
+		icon: User,
+	},
+	{
+		id: "api-keys",
+		label: "API Keys",
+		description: "CLI and server tokens",
+		icon: Key,
+	},
+	{
+		id: "billing-wallet",
+		label: "Wallet",
+		description: "Balance and top-ups",
+		icon: WalletCards,
+		v2Only: true,
+	},
+	{
+		id: "billing-plan",
+		label: "Compute",
+		description: "Plans and billing",
+		icon: CreditCard,
+		v2Only: true,
+	},
+	{
+		id: "billing-usage",
+		label: "Usage",
+		description: "AI Credit consumption",
+		icon: BarChart3,
+		v2Only: true,
+	},
 ];
-const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export function SettingsDialog({
 	open,
-	onClose,
-	initialSection = "general",
+	section,
+	onSectionChange,
+	onOpenChange,
 }: {
 	open: boolean;
-	onClose: () => void;
-	initialSection?: Section;
+	section: SettingsSectionId;
+	onSectionChange: (section: SettingsSectionId) => void;
+	onOpenChange: (open: boolean) => void;
 }) {
-	const [section, setSection] = useState<Section>(initialSection);
+	const activeButtonRef = useRef<HTMLButtonElement | null>(null);
+	const v2Access = useV2Access();
+	const [mounted, setMounted] = useState(false);
+	useEffect(() => {
+		setMounted(true);
+	}, []);
+	const showBilling = mounted && IS_HOSTED && v2Access.canUseV2;
+	const items = SETTINGS_NAV.filter((item) => !item.v2Only || showBilling);
+	const activeSection = items.some((item) => item.id === section)
+		? section
+		: DEFAULT_SETTINGS_SECTION;
 
 	useEffect(() => {
-		if (open) setSection(initialSection);
-	}, [open, initialSection]);
+		if (!open) return;
+		const frame = window.requestAnimationFrame(() => {
+			activeButtonRef.current?.focus({ preventScroll: true });
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [open, activeSection]);
 
 	return (
-		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
-				className="flex h-[85vh] max-h-[640px] w-[calc(100%-1rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:h-[560px] sm:max-h-[85vh] sm:max-w-3xl"
-				showCloseButton
+				onOpenAutoFocus={(event) => {
+					event.preventDefault();
+					activeButtonRef.current?.focus({ preventScroll: true });
+				}}
+				className="h-[min(820px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl"
 			>
 				<DialogHeader className="sr-only">
 					<DialogTitle>Settings</DialogTitle>
-					<DialogDescription>
-						Account, profile, and API key management for Clawdi Cloud.
-					</DialogDescription>
+					<DialogDescription>Account, billing, and application settings.</DialogDescription>
 				</DialogHeader>
 
-				<div className="flex min-h-0 flex-1 flex-col sm:grid sm:grid-cols-[200px_1fr]">
-					<nav
-						aria-label="Settings sections"
-						className="flex shrink-0 gap-1 border-b p-2 overflow-x-auto sm:flex-col sm:border-r sm:border-b-0 sm:p-3 sm:overflow-x-visible"
-					>
-						{SECTIONS.map((s) => (
-							<button
-								key={s.id}
-								type="button"
-								onClick={() => setSection(s.id)}
-								className={cn(
-									"flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-left transition-colors",
-									section === s.id
-										? "bg-accent text-accent-foreground"
-										: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-								)}
-							>
-								<s.icon className="size-4" />
-								{s.label}
-							</button>
-						))}
-					</nav>
-
-					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-						<div className="flex flex-col gap-6 px-6 py-6">
-							{section === "general" ? <GeneralPanel /> : null}
-							{section === "profile" ? <ProfilePanel /> : null}
-							{section === "projects" ? <ProjectsPanel onClose={onClose} /> : null}
-							{section === "api-keys" ? <ApiKeysPanel /> : null}
+				<div className="grid h-full min-h-0 grid-rows-[auto_1fr] md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-1">
+					<aside className="flex min-w-0 flex-col border-b bg-muted/30 md:border-r md:border-b-0">
+						<div className="flex h-14 shrink-0 items-center px-4 md:h-16">
+							<div className="min-w-0">
+								<div className="truncate text-sm font-semibold">Settings</div>
+								<div className="truncate text-xs text-muted-foreground">Clawdi preferences</div>
+							</div>
 						</div>
-					</div>
+						<nav
+							aria-label="Settings sections"
+							className="flex gap-1 overflow-x-auto px-2 pb-2 md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-3 md:pb-3"
+						>
+							{items.map((item) => {
+								const Icon = item.icon;
+								const active = activeSection === item.id;
+								return (
+									<Button
+										key={item.id}
+										ref={active ? activeButtonRef : undefined}
+										type="button"
+										variant="ghost"
+										aria-current={active ? "page" : undefined}
+										data-active={active}
+										onClick={() => onSectionChange(item.id)}
+										className={cn(
+											"h-auto min-w-44 shrink-0 justify-start gap-3 whitespace-normal rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-background/70 hover:text-foreground md:min-w-0",
+											"data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs",
+										)}
+									>
+										<span
+											className={cn(
+												"flex size-8 shrink-0 items-center justify-center rounded-md",
+												active
+													? "bg-primary text-primary-foreground"
+													: "bg-background text-foreground",
+											)}
+										>
+											<Icon />
+										</span>
+										<span className="grid min-w-0 flex-1 leading-tight">
+											<span className="truncate font-medium">{item.label}</span>
+											<span className="truncate text-xs text-muted-foreground">
+												{item.description}
+											</span>
+										</span>
+									</Button>
+								);
+							})}
+						</nav>
+					</aside>
+
+					<section className="min-h-0 overflow-y-auto py-6 md:py-8">
+						<div className="mx-auto w-full max-w-5xl">
+							<SettingsPanel section={activeSection} />
+						</div>
+					</section>
 				</div>
 			</DialogContent>
 		</Dialog>
 	);
 }
 
-// ---------------------------------------------------------------------------
-// Section header — consistent h3 + description across panels.
-// ---------------------------------------------------------------------------
+function SettingsPanel({ section }: { section: SettingsSectionId }) {
+	if (!SETTINGS_SECTION_IDS.includes(section)) return <GeneralPanel />;
 
-function PanelHeader({ title, description }: { title: string; description?: React.ReactNode }) {
-	return (
-		<div className="space-y-1">
-			<h3 className="text-base font-semibold">{title}</h3>
-			{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
-		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// General — theme + app info. Keeps the panel from feeling empty.
-// ---------------------------------------------------------------------------
-
-function GeneralPanel() {
-	const { theme, setTheme } = useTheme();
-
-	return (
-		<>
-			<PanelHeader title="General" />
-			<div className="flex items-center justify-between">
-				<div className="space-y-0.5">
-					<Label htmlFor="settings-theme">Theme</Label>
-					<p className="text-xs text-muted-foreground">
-						Light, dark, or follow the system preference.
-					</p>
-				</div>
-				<Select value={theme ?? "system"} onValueChange={setTheme}>
-					<SelectTrigger id="settings-theme" className="w-[160px]">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="light">Light</SelectItem>
-						<SelectItem value="dark">Dark</SelectItem>
-						<SelectItem value="system">System</SelectItem>
-					</SelectContent>
-				</Select>
-			</div>
-		</>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Projects — link to shared Projects and access management.
-// ---------------------------------------------------------------------------
-
-function ProjectsPanel({ onClose }: { onClose: () => void }) {
-	return (
-		<>
-			<PanelHeader title="Projects" description={PROJECTS_RESOURCE.description} />
-			<div className="rounded-lg border p-4">
-				<div className="flex items-start gap-3">
-					<Workflow className="mt-0.5 size-4 text-muted-foreground" />
-					<div className="min-w-0 flex-1 space-y-2">
-						<div className="text-sm font-medium">Manage project access</div>
-						<p className="text-sm text-muted-foreground">
-							Use the Projects page to review owned projects, shared memberships, share links,
-							invitations, and member access in one place.
-						</p>
-						<Button asChild size="sm" variant="outline">
-							<Link href={projectResourceHref("projects")} onClick={onClose}>
-								Open Projects
-							</Link>
-						</Button>
-					</div>
-				</div>
-			</div>
-		</>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Profile — read-only for now; Clerk owns account editing.
-// ---------------------------------------------------------------------------
-
-function ProfilePanel() {
-	const { user } = useCurrentUser();
-	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
-
-	return (
-		<>
-			<PanelHeader title="Profile" />
-			<div className="flex items-center gap-4">
-				<Avatar className="size-14">
-					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-					<AvatarFallback>{initial}</AvatarFallback>
-				</Avatar>
-				<div className="space-y-0.5">
-					<div className="text-sm font-medium">{user?.fullName ?? "Anonymous"}</div>
-					<div className="text-sm text-muted-foreground">
-						{user?.primaryEmailAddress?.emailAddress}
-					</div>
-				</div>
-			</div>
-		</>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// API Keys — CLI-facing bearer tokens.
-// ---------------------------------------------------------------------------
-
-function ApiKeysPanel() {
-	const api = useApi();
-	const queryClient = useQueryClient();
-	const [newLabel, setNewLabel] = useState("");
-	const [createdKey, setCreatedKey] = useState<string | null>(null);
-
-	const { data: keys, isLoading } = useQuery({
-		queryKey: ["api-keys"],
-		queryFn: async () => unwrap(await api.GET("/api/auth/keys")),
-	});
-
-	const createKey = useMutation({
-		mutationFn: async (label: string) =>
-			unwrap(await api.POST("/api/auth/keys", { body: { label } })),
-		onSuccess: (data) => {
-			setCreatedKey(data.raw_key);
-			setNewLabel("");
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-		},
-		onError: (e: ApiError) => toast.error("Couldn't Create Key", { description: e.detail }),
-	});
-
-	const revokeKey = useMutation({
-		mutationFn: async (keyId: string) =>
-			unwrap(
-				await api.DELETE("/api/auth/keys/{key_id}", {
-					params: { path: { key_id: keyId } },
-				}),
-			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			toast.success("Key Turned Off");
-		},
-		onError: (e: ApiError) => toast.error("Couldn't Turn Off Key", { description: e.detail }),
-	});
-
-	const columns = useMemo<ColumnDef<ApiKey>[]>(
-		() => [
-			{
-				accessorKey: "label",
-				header: "Label",
-				cell: ({ row }) => (
-					<div className="flex items-center gap-2">
-						<span className="font-medium">{row.original.label}</span>
-						{row.original.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
-					</div>
-				),
-			},
-			{
-				accessorKey: "key_prefix",
-				header: "Prefix",
-				cell: ({ row }) => (
-					<span className="font-mono text-xs text-muted-foreground">
-						{row.original.key_prefix}…
-					</span>
-				),
-			},
-			{
-				accessorKey: "created_at",
-				header: "Created",
-				cell: ({ row }) => (
-					<span className="text-xs text-muted-foreground">
-						{new Date(row.original.created_at).toLocaleDateString()}
-					</span>
-				),
-			},
-			{
-				accessorKey: "last_used_at",
-				header: "Last used",
-				cell: ({ row }) =>
-					row.original.last_used_at ? (
-						<span className="text-xs text-muted-foreground">
-							{new Date(row.original.last_used_at).toLocaleDateString()}
-						</span>
-					) : (
-						<span className="text-xs text-muted-foreground">—</span>
-					),
-			},
-			{
-				id: "actions",
-				header: "",
-				cell: ({ row }) =>
-					!row.original.revoked_at ? (
-						<ConfirmAction
-							title={`Turn off ${row.original.label}?`}
-							description={
-								<p>
-									If a machine is still using this key, sync will stop within a minute. Sign in
-									again from that machine to resume.
-								</p>
-							}
-							confirmLabel="Turn Off Key"
-							destructive
-							onConfirm={() => revokeKey.mutate(row.original.id)}
-						>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-sm"
-								disabled={revokeKey.isPending}
-								aria-label="Turn off key"
-								className="text-muted-foreground hover:text-destructive"
-							>
-								<Trash2 className="size-3.5" />
-							</Button>
-						</ConfirmAction>
-					) : null,
-				size: 40,
-			},
-		],
-		[revokeKey],
-	);
-
-	return (
-		<>
-			<PanelHeader
-				title="API Keys"
-				description={
-					<>
-						On a laptop,{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-							clawdi auth login
-						</code>{" "}
-						handles auth automatically — you don&apos;t need to touch this. Create a key here when
-						you&apos;re setting up a server or container that can&apos;t open a browser, then paste
-						it into{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-							CLAWDI_AUTH_TOKEN
-						</code>{" "}
-						(this is the env var the CLI and{" "}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi daemon</code>{" "}
-						actually read).
-					</>
-				}
-			/>
-
-			{/* Create form */}
-			<form
-				className="flex gap-2 border-t pt-4"
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (newLabel) createKey.mutate(newLabel);
-				}}
-			>
-				<Label htmlFor="new-key-label" className="sr-only">
-					New API key label
-				</Label>
-				<Input
-					id="new-key-label"
-					value={newLabel}
-					onChange={(e) => setNewLabel(e.target.value)}
-					placeholder="my-laptop…"
-					className="flex-1"
-					name="new-key-label"
-					autoComplete="off"
-				/>
-				<Button type="submit" disabled={!newLabel || createKey.isPending}>
-					<Plus />
-					Create
-				</Button>
-			</form>
-
-			{/* Created key banner */}
-			{createdKey ? (
-				<div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-4">
-					<div className="text-sm font-medium text-primary">
-						Key created — copy it now, it won't be shown again.
-					</div>
-					<div className="flex items-center gap-2">
-						<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
-							{createdKey}
-						</code>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							onClick={() => {
-								navigator.clipboard.writeText(createdKey);
-								toast.success("Copied to Clipboard");
-							}}
-							aria-label="Copy key"
-						>
-							<Copy />
-						</Button>
-					</div>
-				</div>
-			) : null}
-
-			<DataTable
-				columns={columns}
-				data={keys ?? []}
-				isLoading={isLoading}
-				emptyMessage="No API keys yet."
-			/>
-		</>
-	);
+	switch (section) {
+		case "profile":
+			return <ProfilePanel />;
+		case "api-keys":
+			return <ApiKeysPanel />;
+		case "billing-wallet":
+			return WalletPage ? <WalletPage /> : <GeneralPanel />;
+		case "billing-plan":
+			return SubscriptionPage ? <SubscriptionPage /> : <GeneralPanel />;
+		case "billing-usage":
+			return UsagePage ? <UsagePage /> : <GeneralPanel />;
+		default:
+			return <GeneralPanel />;
+	}
 }

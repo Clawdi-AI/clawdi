@@ -38,7 +38,7 @@ export function SignInToView({ shareUrl }: { shareUrl: string }) {
 					</button>
 				</SignInButton>
 				<Link href="/" className="font-medium underline-offset-4 hover:underline">
-					Go to Clawdi Cloud
+					Go to Clawdi
 				</Link>
 			</div>
 		</div>

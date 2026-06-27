@@ -1,7 +1,7 @@
 import { pageMetadata } from "@/app/page-metadata";
 
 export const metadata = pageMetadata(
-	"AI Providers",
+	"Model Providers",
 	"Managed AI by default, plus your own OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or custom providers.",
 );
 

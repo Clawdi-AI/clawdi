@@ -17,6 +17,7 @@ import { ENTITY_CARD_BASE, EntityMeta } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -66,7 +67,7 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 			runtimeLabel: formatRuntime(env.agent_type),
 			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 			lastSeenAt: env.last_seen_at,
-			href: `/agents/${env.id}`,
+			href: agentSectionHref(env.id),
 			active: isAgentActive(env.last_seen_at),
 			env,
 		}));

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { pageMetadata } from "@/app/page-metadata";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
@@ -22,16 +23,20 @@ const CONTENT_MAX_WIDTH = "max-w-[96rem]";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarProvider
+			defaultOpen
 			style={
 				{
 					"--sidebar-width": "calc(var(--spacing) * 64)",
+					"--clawdi-rail-width": "calc(var(--spacing) * 16)",
 					"--header-height": "calc(var(--spacing) * 12)",
 				} as React.CSSProperties
 			}
 		>
 			<CommandPaletteProvider>
 				<BreadcrumbTitleProvider>
-					<AppSidebar variant="inset" />
+					<Suspense fallback={null}>
+						<AppSidebar variant="inset" />
+					</Suspense>
 					{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
 					    dashboard-01's inset variant. Keep the scroll container inside
 					    the inset so the sticky SiteHeader pins correctly. */}

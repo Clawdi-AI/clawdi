@@ -9,6 +9,7 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -151,8 +152,12 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		// in-app place to click.
 		const envId = cloudEnvIds[runtime];
 		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
-		const detailHref = matchedEnv ? `/agents/${matchedEnv.id}?source=on-clawdi` : `/agents/${d.id}`;
-		const computeHref = `${detailHref}${detailHref.includes("?") ? "&" : "?"}tab=compute`;
+		const detailHref = matchedEnv
+			? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
+			: agentSectionHref(d.id);
+		const computeHref = matchedEnv
+			? agentSectionHref(matchedEnv.id, "compute", "source=on-clawdi")
+			: agentSectionHref(d.id, "compute");
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,

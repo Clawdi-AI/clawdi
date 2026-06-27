@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentInline } from "@/components/dashboard/agent-label";
+import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AgentInline, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -38,13 +38,27 @@ import {
 
 export default function SessionDetailPage() {
 	const { id } = useParams<{ id: string }>();
+	return <SessionDetailContent sessionId={id} />;
+}
+
+export function SessionDetailContent({
+	sessionId,
+	agentId,
+}: {
+	sessionId: string;
+	agentId?: string | null;
+}) {
 	const api = useApi();
 	const { user } = useCurrentUser();
 
 	const { data: session, isLoading: isSessionLoading } = useQuery({
-		queryKey: ["session", id],
+		queryKey: ["session", sessionId],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/sessions/{session_id}", { params: { path: { session_id: id } } })),
+			unwrap(
+				await api.GET("/api/sessions/{session_id}", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
 		// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
 		// recover on retry and the default 3× retry makes the page hang in
 		// "Loading..." for seconds before the user learns the URL is bogus.
@@ -119,7 +133,7 @@ export default function SessionDetailPage() {
 		// end (rather than reordering already-loaded pages, which
 		// would only show the OLDEST 100 in newest-first mode —
 		// confusing).
-		queryKey: ["session-messages", id, direction],
+		queryKey: ["session-messages", sessionId, direction],
 		initialPageParam:
 			direction === "desc"
 				? ({ offset: initialDescOffset, limit: initialDescLimit } as PageParam)
@@ -129,7 +143,7 @@ export default function SessionDetailPage() {
 			return unwrap(
 				await api.GET("/api/sessions/{session_id}/messages", {
 					params: {
-						path: { session_id: id },
+						path: { session_id: sessionId },
 						query: { offset, limit },
 					},
 				}),
@@ -192,7 +206,15 @@ export default function SessionDetailPage() {
 	const summaryText = session
 		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
 		: null;
-	useSetBreadcrumbTitle(summaryText);
+	const agentBreadcrumbTitle = session
+		? cleanMachineName(session.machine_name) || agentTypeLabel(session.agent_type)
+		: null;
+	useSetAgentBreadcrumbTitle({
+		agentId,
+		agentTitle: agentBreadcrumbTitle,
+		section: "sessions",
+		title: summaryText,
+	});
 
 	if (isSessionLoading) {
 		return (

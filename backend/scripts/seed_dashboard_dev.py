@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import secrets
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -33,6 +34,20 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.models.agent_project_binding import AgentProjectBinding  # noqa: E402
+from app.models.ai_provider import AiProvider  # noqa: E402
+from app.models.channel import (  # noqa: E402
+    BINDING_STATUS_ACTIVE,
+    BOT_AGENT_LINK_STATUS_ACTIVE,
+    CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PRIVATE,
+    MESSAGE_DIRECTION_INBOUND,
+    ChannelAccount,
+    ChannelBinding,
+    ChannelBotAgentLink,
+    ChannelMessage,
+)
+from app.models.hosted_runtime import HostedRuntimeState  # noqa: E402
 from app.models.memory import Memory  # noqa: E402
 from app.models.project import (  # noqa: E402
     PROJECT_KIND_ENVIRONMENT,
@@ -44,12 +59,28 @@ from app.models.project_membership import ProjectMembership  # noqa: E402
 from app.models.session import AgentEnvironment, Session  # noqa: E402
 from app.models.skill import Skill  # noqa: E402
 from app.models.user import User  # noqa: E402
-from app.models.vault import Vault, VaultItem  # noqa: E402
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment  # noqa: E402
+from app.services.channels import (  # noqa: E402
+    encrypt_optional_token,
+    generate_agent_token,
+    hash_token,
+)
 from app.services.vault_crypto import encrypt  # noqa: E402
+
+DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
+DEV_V2_APP_ID = "app_dev_sidebar"
+DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
+DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
+DEV_V2_PROVIDER_ID = "openrouter-dev"
+_STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _stable_uuid(clerk_id: str, label: str) -> uuid.UUID:
+    return uuid.uuid5(_STABLE_UUID_NAMESPACE, f"{clerk_id}:{label}")
 
 
 async def _delete_user_by_clerk_id(db: AsyncSession, clerk_id: str) -> None:
@@ -144,6 +175,90 @@ async def _create_agent_project_graph(
     return env_project, env
 
 
+async def _create_hosted_runtime_graph(
+    db: AsyncSession,
+    *,
+    user: User,
+    workspace: Project,
+    clerk_id: str,
+    runtime: str,
+    now: datetime,
+) -> tuple[Project, AgentEnvironment]:
+    display_name = "OpenClaw" if runtime == "openclaw" else "Hermes"
+    env_project = Project(
+        id=_stable_uuid(clerk_id, f"hosted-{runtime}-project"),
+        user_id=user.id,
+        name=f"{display_name} Agent Project",
+        slug=f"hosted-{runtime}",
+        kind=PROJECT_KIND_ENVIRONMENT,
+        description=f"Auto-managed project for the seeded hosted {display_name} runtime.",
+    )
+    db.add(env_project)
+    await db.flush()
+
+    env = AgentEnvironment(
+        id=_stable_uuid(clerk_id, f"hosted-{runtime}-env"),
+        user_id=user.id,
+        machine_id=DEV_V2_HOSTED_MACHINE_ID,
+        machine_name=DEV_V2_HOSTED_MACHINE_NAME,
+        agent_type=runtime,
+        agent_version="v2-dev",
+        os="linux",
+        last_seen_at=now - timedelta(minutes=2),
+        last_sync_at=now - timedelta(minutes=3),
+        last_revision_seen=7,
+        sync_enabled=True,
+        default_project_id=env_project.id,
+    )
+    db.add(env)
+    await db.flush()
+
+    env_project.origin_environment_id = env.id
+    db.add_all(
+        [
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=env_project.id,
+                binding_type="primary",
+                priority=0,
+                default_write_enabled=True,
+                created_by_user_id=user.id,
+            ),
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=workspace.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=user.id,
+            ),
+            HostedRuntimeState(
+                environment_id=env.id,
+                deployment_id=DEV_V2_DEPLOYMENT_ID,
+                app_id=DEV_V2_APP_ID,
+                instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
+                generation=3,
+                provider_id=DEV_V2_PROVIDER_ID,
+                system={"status": "running", "seed": "dashboard-dev"},
+                control_plane={
+                    "cloudApiUrl": settings.public_api_url,
+                    "dashboardUrl": settings.web_origin,
+                },
+                clawdi_cli={"version": "dev"},
+                runtimes={runtime: {"enabled": True, "status": "running"}},
+                live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
+                recovery={"mode": "dev"},
+                mitm_profiles={},
+                mcp={"enabled": True},
+                tools={"channels": True, "aiProviders": True},
+                observed={"status": "running", "runtime": runtime},
+            ),
+        ]
+    )
+    await db.flush()
+    return env_project, env
+
+
 def _skill(
     *,
     user_id,
@@ -169,8 +284,8 @@ def _skill(
     )
 
 
-def _vault(*, user_id, project_id, slug: str, name: str) -> Vault:
-    return Vault(user_id=user_id, project_id=project_id, slug=slug, name=name)
+def _vault(*, user_id, slug: str, name: str) -> Vault:
+    return Vault(user_id=user_id, slug=slug, name=name)
 
 
 def _memory(*, user_id, content: str, category: str, tags: list[str]) -> Memory:
@@ -242,6 +357,87 @@ def _try_add_vault_items(vault: Vault, names: list[str]) -> list[VaultItem]:
     return items
 
 
+def _seed_ai_provider(user: User) -> AiProvider:
+    return AiProvider(
+        owner_user_id=user.id,
+        scope="account_global",
+        provider_id=DEV_V2_PROVIDER_ID,
+        type="openrouter",
+        label="OpenRouter Dev",
+        base_url="https://openrouter.ai/api/v1",
+        default_model="openai/gpt-4o-mini",
+        api_mode="openai_chat",
+        capabilities={"chat": True, "responses": False, "tools": True, "vision": True},
+        auth_type="api_key",
+        auth_ref="OPENROUTER_API_KEY",
+        auth_metadata={"source": "env"},
+        managed_by="user",
+        runtime_env_name="OPENROUTER_API_KEY",
+    )
+
+
+def _seed_channel_graph(
+    *,
+    user: User,
+    agent: AgentEnvironment,
+    now: datetime,
+) -> tuple[ChannelAccount, ChannelBotAgentLink, ChannelBinding, ChannelMessage]:
+    account_id = uuid.uuid4()
+    link_id = uuid.uuid4()
+    binding_id = uuid.uuid4()
+    provider_token = "dev-telegram-provider-token"
+    encrypted_provider_token, provider_token_nonce = encrypt_optional_token(provider_token)
+    agent_token = generate_agent_token(CHANNEL_PROVIDER_TELEGRAM)
+    encrypted_agent_token, agent_token_nonce = encrypt_optional_token(agent_token)
+    account = ChannelAccount(
+        id=account_id,
+        user_id=user.id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name="Dev Telegram",
+        status=CHANNEL_STATUS_ACTIVE,
+        visibility=CHANNEL_VISIBILITY_PRIVATE,
+        encrypted_provider_token=encrypted_provider_token,
+        provider_token_nonce=provider_token_nonce,
+        webhook_secret_hash=hash_token("dev-telegram-webhook-secret"),
+        config={"bot_username": "clawdi_dev_bot", "seed": "dashboard-dev"},
+    )
+    link = ChannelBotAgentLink(
+        id=link_id,
+        account_id=account_id,
+        user_id=user.id,
+        agent_id=agent.id,
+        agent_token_hash=hash_token(agent_token),
+        encrypted_agent_token=encrypted_agent_token,
+        agent_token_nonce=agent_token_nonce,
+        status=BOT_AGENT_LINK_STATUS_ACTIVE,
+        config={"seed": "dashboard-dev"},
+    )
+    binding = ChannelBinding(
+        id=binding_id,
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        user_id=user.id,
+        external_chat_id="dev-chat-001",
+        external_chat_type="private",
+        external_chat_name="Dev Preview Chat",
+        paired_external_user_id="dev-user-001",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        binding_id=binding_id,
+        user_id=user.id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id=binding.external_chat_id,
+        provider_message_id=f"seed-{int(now.timestamp())}",
+        text="Can you summarize today's launch checklist?",
+        payload={"seed": "dashboard-dev"},
+        delivered_at=now - timedelta(minutes=8),
+    )
+    return account, link, binding, message
+
+
 async def seed(clerk_id: str, agent_type: str) -> None:
     owner_clerk_id = f"{clerk_id}_shared_owner"
     engine = create_async_engine(settings.database_url, echo=False, future=True)
@@ -291,6 +487,22 @@ async def seed(clerk_id: str, agent_type: str) -> None:
             now=now,
             agent_type=agent_type,
         )
+        hosted_openclaw_project, hosted_openclaw_env = await _create_hosted_runtime_graph(
+            db,
+            user=user,
+            workspace=workspace,
+            clerk_id=clerk_id,
+            runtime="openclaw",
+            now=now,
+        )
+        hosted_hermes_project, hosted_hermes_env = await _create_hosted_runtime_graph(
+            db,
+            user=user,
+            workspace=workspace,
+            clerk_id=clerk_id,
+            runtime="hermes",
+            now=now,
+        )
 
         db.add(
             ProjectMembership(
@@ -322,6 +534,24 @@ async def seed(clerk_id: str, agent_type: str) -> None:
                     description="Local commands and checks for the development machine.",
                 ),
                 _skill(
+                    user_id=user.id,
+                    project_id=hosted_openclaw_project.id,
+                    skill_key="hosted/runtime-check",
+                    name="Hosted Runtime Check",
+                    description=(
+                        "Inspect hosted runtime health, provider bindings, and channel links."
+                    ),
+                ),
+                _skill(
+                    user_id=user.id,
+                    project_id=hosted_hermes_project.id,
+                    skill_key="hosted/message-triage",
+                    name="Message Triage",
+                    description=(
+                        "Classify inbound channel messages and choose the next agent action."
+                    ),
+                ),
+                _skill(
                     user_id=owner.id,
                     project_id=shared_project.id,
                     skill_key="design/ui-critique",
@@ -333,24 +563,28 @@ async def seed(clerk_id: str, agent_type: str) -> None:
 
         github_vault = _vault(
             user_id=user.id,
-            project_id=workspace.id,
             slug="github",
             name="GitHub",
         )
         deploy_vault = _vault(
             user_id=user.id,
-            project_id=env_project.id,
             slug="deploy",
             name="Deploy",
         )
         design_vault = _vault(
             user_id=owner.id,
-            project_id=shared_project.id,
             slug="figma",
             name="Figma",
         )
         db.add_all([github_vault, deploy_vault, design_vault])
         await db.flush()
+        db.add_all(
+            [
+                VaultProjectAttachment(vault_id=github_vault.id, project_id=workspace.id),
+                VaultProjectAttachment(vault_id=deploy_vault.id, project_id=env_project.id),
+                VaultProjectAttachment(vault_id=design_vault.id, project_id=shared_project.id),
+            ]
+        )
 
         try:
             db.add_all(_try_add_vault_items(github_vault, ["GITHUB_TOKEN", "GH_ORG"]))
@@ -358,6 +592,20 @@ async def seed(clerk_id: str, agent_type: str) -> None:
             db.add_all(_try_add_vault_items(design_vault, ["FIGMA_TOKEN"]))
         except (RuntimeError, ValueError) as exc:
             print(f"skipped vault items: {exc}", file=sys.stderr)
+
+        db.add(_seed_ai_provider(user))
+        channel_account, channel_link, channel_binding, channel_message = _seed_channel_graph(
+            user=user,
+            agent=hosted_openclaw_env,
+            now=now,
+        )
+        db.add(channel_account)
+        await db.flush()
+        db.add(channel_link)
+        await db.flush()
+        db.add(channel_binding)
+        await db.flush()
+        db.add(channel_message)
 
         db.add_all(
             [
@@ -432,6 +680,33 @@ async def seed(clerk_id: str, agent_type: str) -> None:
                     model="gpt-5.4",
                     tags=["local-dev"],
                 ),
+                _session(
+                    user_id=user.id,
+                    environment_id=hosted_openclaw_env.id,
+                    local_session_id="dev-hosted-openclaw-onboarding",
+                    project_path="/workspace/openclaw",
+                    started_at=now - timedelta(minutes=55),
+                    minutes=31,
+                    summary=(
+                        "Validated OpenClaw hosted runtime setup, model provider, "
+                        "and channel handoff."
+                    ),
+                    message_count=27,
+                    model="openai/gpt-4o-mini",
+                    tags=["hosted", "openclaw", "v2"],
+                ),
+                _session(
+                    user_id=user.id,
+                    environment_id=hosted_hermes_env.id,
+                    local_session_id="dev-hosted-hermes-message-loop",
+                    project_path="/workspace/hermes",
+                    started_at=now - timedelta(hours=5, minutes=10),
+                    minutes=44,
+                    summary="Exercised Hermes message routing and runtime provider bootstrap.",
+                    message_count=35,
+                    model="openai/gpt-4o-mini",
+                    tags=["hosted", "hermes", "channels"],
+                ),
             ]
         )
 
@@ -443,6 +718,9 @@ async def seed(clerk_id: str, agent_type: str) -> None:
         print(f"USER_ID={user.id}")
         print(f"PROJECT_ID={workspace.id}")
         print(f"ENVIRONMENT_ID={env.id}")
+        print(f"V2_DEPLOYMENT_ID={DEV_V2_DEPLOYMENT_ID}")
+        print(f"V2_OPENCLAW_ENVIRONMENT_ID={hosted_openclaw_env.id}")
+        print(f"V2_HERMES_ENVIRONMENT_ID={hosted_hermes_env.id}")
         print(f"SHARED_PROJECT_ID={shared_project.id}")
 
     await engine.dispose()

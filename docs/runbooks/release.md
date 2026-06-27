@@ -16,11 +16,11 @@ create a Clawdi release from an already-deployed commit.
   before treating it as final release copy.
 
 For app/backend/web releases, the date is UTC. A numeric suffix is a same-day
-release sequence, not a semantic-version patch number. The automatic workflow
-computes the next sequence by looking at existing `clawdi-YYYY-MM-DD*` tags:
-first release is unsuffixed, second is `-2`, third is `-3`. Older dotted
-`clawdi-v...` CalVer tags are considered only during the transition so the
-same UTC day does not restart at `-1`.
+release sequence, not a semantic-version patch number. The manual
+`Release Clawdi` workflow computes the next sequence by looking at existing
+`clawdi-YYYY-MM-DD*` tags: first release is unsuffixed, second is `-2`, third
+is `-3`. Older dotted `clawdi-v...` CalVer tags are considered only during the
+transition so the same UTC day does not restart at `-1`.
 
 Reserve `vX.Y.Z` tag shapes for semver release lines. The dated app release
 line intentionally avoids both the `v` prefix and dotted date suffixes so users
@@ -77,8 +77,9 @@ releases.
 
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
-   - `.github/workflows/clawdi-release.yml` runs for backend, web, shared
-     package, and root build/tooling config paths, then creates `clawdi-...`.
+   - `.github/workflows/clawdi-release.yml` is manual-only. Run `Release Clawdi`
+     only after the deployed commit should get public app/backend/web release
+     notes.
    - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
      CLI publish workflow file, then publishes only when the local CLI version
      differs from npm.
@@ -89,13 +90,13 @@ releases.
    npm view clawdi dist-tags
    ```
 
-4. For app/backend/web releases, verify the GitHub release exists and has
-   user-facing notes. If production deploy happened out of band, run
-   `Release Clawdi` manually with the deployed commit SHA. Manual versions must
-   use `YYYY-MM-DD` or `YYYY-MM-DD-N`; the workflow adds the `clawdi-` prefix.
-   If a manually provided tag already exists, the workflow skips release
-   creation. Automatic runs choose the next same-day sequence when a tag for
-   the current UTC date already exists.
+4. For app/backend/web releases, run `Release Clawdi` manually with the
+   deployed commit SHA, then verify the GitHub release exists and has
+   user-facing notes. Manual versions must use `YYYY-MM-DD` or `YYYY-MM-DD-N`;
+   the workflow adds the `clawdi-` prefix. If a manually provided tag already
+   exists, the workflow skips release creation. If the version is omitted, the
+   workflow chooses the next same-day sequence when a tag for the current UTC
+   date already exists.
 5. Review generated GitHub release notes for both release lines. Edit the
    release body when PR titles are too implementation-focused, a PR touched
    both release lines, generated notes include unrelated entries, or the notes
