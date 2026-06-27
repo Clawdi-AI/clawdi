@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -67,6 +68,263 @@ async def test_heartbeat_writes_observability_fields(
     assert detail["queue_depth_high_water"] == 3
     assert detail["last_sync_error"] is None
     assert detail["last_sync_at"] is not None  # was None pre-heartbeat
+
+
+@pytest.mark.asyncio
+async def test_environment_identity_update_round_trips(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    updated = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"display_name": "Build runner", "avatar_preset": "aurora"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["display_name"] == "Build runner"
+    assert updated.json()["avatar_preset"] == "aurora"
+    assert updated.json()["avatar_url"] is None
+
+    detail = await client.get(f"/api/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["display_name"] == "Build runner"
+    assert detail.json()["avatar_preset"] == "aurora"
+
+    cleared = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"display_name": "", "avatar_preset": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["display_name"] is None
+    assert cleared.json()["avatar_preset"] is None
+
+
+@pytest.mark.asyncio
+async def test_environment_update_rejects_avatar_url_field(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    response = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"avatar_url": "https://example.com/agent.png"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_environment_update_rejects_unknown_avatar_preset(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    response = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"avatar_preset": "external-url"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_upload_stores_public_asset(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+    response = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", png, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    avatar_url = response.json()["avatar_url"]
+    assert response.json()["avatar_preset"] is None
+    assert "/api/assets/agent-avatars/" in avatar_url
+    assert avatar_url.endswith(".png")
+
+    path = urlparse(avatar_url).path
+    asset = await client.get(path)
+    assert asset.status_code == 200, asset.text
+    assert asset.content == png
+    assert asset.headers["content-type"].startswith("image/png")
+
+    cleared = await client.delete(f"/api/environments/{env_id}/avatar")
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["avatar_url"] is None
+    assert cleared.json()["avatar_preset"] is None
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_reupload_uses_new_asset_url(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+    first_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    second_png = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
+
+    first = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", first_png, "image/png")},
+    )
+    assert first.status_code == 200, first.text
+    first_path = urlparse(first.json()["avatar_url"]).path
+
+    second = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", second_png, "image/png")},
+    )
+    assert second.status_code == 200, second.text
+    second_path = urlparse(second.json()["avatar_url"]).path
+
+    assert second_path != first_path
+    old_asset = await client.get(first_path)
+    assert old_asset.status_code == 404
+    new_asset = await client.get(second_path)
+    assert new_asset.status_code == 200
+    assert new_asset.content == second_png
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_failed_reupload_keeps_existing_asset(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.routes import sessions as sessions_routes
+
+    env_id = await _create_env(client)
+    first_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    second_png = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
+
+    first = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", first_png, "image/png")},
+    )
+    assert first.status_code == 200, first.text
+    first_path = urlparse(first.json()["avatar_url"]).path
+
+    class FailingPutStore:
+        def __init__(self, delegate):
+            self.delegate = delegate
+
+        async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+            del key, data, content_type
+            raise RuntimeError("object store unavailable")
+
+        async def get(self, key: str) -> bytes:
+            return await self.delegate.get(key)
+
+        async def delete(self, key: str) -> None:
+            await self.delegate.delete(key)
+
+        async def exists(self, key: str) -> bool:
+            return await self.delegate.exists(key)
+
+    monkeypatch.setattr(
+        sessions_routes,
+        "file_store",
+        FailingPutStore(sessions_routes.file_store),
+    )
+
+    with pytest.raises(RuntimeError, match="object store unavailable"):
+        await client.post(
+            f"/api/environments/{env_id}/avatar",
+            files={"file": ("agent.png", second_png, "image/png")},
+        )
+
+    detail = await client.get(f"/api/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    assert urlparse(detail.json()["avatar_url"]).path == first_path
+
+    old_asset = await client.get(first_path)
+    assert old_asset.status_code == 200
+    assert old_asset.content == first_png
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_preset_replaces_uploaded_asset(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+    uploaded = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", png, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    old_path = urlparse(uploaded.json()["avatar_url"]).path
+
+    updated = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"avatar_preset": "forest"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["avatar_url"] is None
+    assert updated.json()["avatar_preset"] == "forest"
+
+    deleted_asset = await client.get(old_path)
+    assert deleted_asset.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_upload_replaces_preset(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+    preset = await client.patch(
+        f"/api/environments/{env_id}",
+        json={"avatar_preset": "ember"},
+    )
+    assert preset.status_code == 200, preset.text
+    assert preset.json()["avatar_preset"] == "ember"
+
+    uploaded = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.png", png, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert uploaded.json()["avatar_url"] is not None
+    assert uploaded.json()["avatar_preset"] is None
+
+
+@pytest.mark.asyncio
+async def test_environment_avatar_upload_rejects_non_image(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    response = await client.post(
+        f"/api/environments/{env_id}/avatar",
+        files={"file": ("agent.txt", b"not an image", "text/plain")},
+    )
+    assert response.status_code == 415, response.text
+
+
+@pytest.mark.asyncio
+async def test_environment_reorder_persists_list_order(client: httpx.AsyncClient):
+    first_id = await _create_env(client)
+    second_id = await _create_env(client)
+    third_id = await _create_env(client)
+
+    response = await client.patch(
+        "/api/environments/order",
+        json={"environment_ids": [third_id, first_id, second_id]},
+    )
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()][:3] == [third_id, first_id, second_id]
+    assert [item["sort_order"] for item in response.json()][:3] == [0, 1, 2]
+
+    listed = await client.get("/api/environments")
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()][:3] == [third_id, first_id, second_id]
+
+
+@pytest.mark.asyncio
+async def test_environment_reorder_rejects_duplicate_ids(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    response = await client.patch(
+        "/api/environments/order",
+        json={"environment_ids": [env_id, env_id]},
+    )
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.asyncio
+async def test_environment_reorder_rejects_unknown_ids(client: httpx.AsyncClient):
+    env_id = await _create_env(client)
+
+    response = await client.patch(
+        "/api/environments/order",
+        json={"environment_ids": [env_id, str(uuid.uuid4())]},
+    )
+    assert response.status_code == 404, response.text
 
 
 @pytest.mark.asyncio

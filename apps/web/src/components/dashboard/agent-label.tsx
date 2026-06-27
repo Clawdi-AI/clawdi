@@ -1,3 +1,4 @@
+import { Cloud, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export function AgentInline({
 	if (!machine && !type) return null;
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
-			<AgentIcon agent={type} size="xs" />
+			<AgentIcon agent={type} size="xs" identitySeed={machine || typeLabel} />
 			<span className="font-medium text-foreground">{title}</span>
 			{subtitle ? <span>· {subtitle}</span> : null}
 		</span>
@@ -90,12 +91,156 @@ export function agentSourceFromEnvironment(env: {
 	return isHostedAgentEnvironment(env) ? "hosted" : "connected";
 }
 
+export function agentDisplayName(env: {
+	display_name?: string | null;
+	machine_name?: string | null;
+	agent_type?: string | null;
+	hosted_managed?: boolean | null;
+	hosted_deployment_id?: string | null;
+}): string {
+	const custom = cleanMachineName(env.display_name);
+	if (custom) return custom;
+	if (isHostedAgentEnvironment(env)) return agentTypeLabel(env.agent_type);
+	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+}
+
+export function agentIdentitySeed(env: {
+	id?: string | null;
+	display_name?: string | null;
+	machine_name?: string | null;
+	agent_type?: string | null;
+}): string {
+	return (
+		env.id ||
+		cleanMachineName(env.display_name) ||
+		cleanMachineName(env.machine_name) ||
+		agentTypeLabel(env.agent_type)
+	);
+}
+
 export function agentSourceLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Hosted" : "Connected";
+	return source === "hosted" ? "Cloud" : "Your machine";
 }
 
 export function agentSourceKindLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Hosted agent" : "Connected agent";
+	return source === "hosted" ? "Clawdi Cloud agent" : "Your machine agent";
+}
+
+export function agentSourceDescription(source: AgentSourceKind): string {
+	return source === "hosted"
+		? "Deployed and managed by Clawdi Cloud"
+		: "Runs from your machine or server";
+}
+
+export function AgentSourceBadge({
+	source,
+	compact = false,
+	iconOnly = false,
+	className,
+}: {
+	source: AgentSourceKind;
+	compact?: boolean;
+	iconOnly?: boolean;
+	className?: string;
+}) {
+	const Icon = source === "hosted" ? Cloud : Laptop;
+	const label = agentSourceLabel(source);
+	const title = agentSourceDescription(source);
+	return (
+		<span
+			title={title}
+			className={cn(
+				"inline-flex shrink-0 items-center whitespace-nowrap border font-semibold leading-none",
+				iconOnly ? "size-4 justify-center rounded-full p-0" : "rounded-md px-1.5 py-0.5",
+				compact ? "gap-1 text-[10px]" : "gap-1.5 text-[10px]",
+				source === "hosted"
+					? "border-primary/30 bg-primary/10 text-primary"
+					: "border-identity-7-fg/20 bg-identity-7-bg text-identity-7-fg",
+				className,
+			)}
+		>
+			<Icon className="size-2.5" />
+			{iconOnly ? <span className="sr-only">{label}</span> : label}
+		</span>
+	);
+}
+
+export function AgentSourceBadgeForEnvironment({
+	env,
+	compact,
+	iconOnly,
+	showConnected = false,
+	className,
+}: {
+	env: {
+		hosted_managed?: boolean | null;
+		hosted_deployment_id?: string | null;
+	};
+	compact?: boolean;
+	iconOnly?: boolean;
+	showConnected?: boolean;
+	className?: string;
+}) {
+	const source = agentSourceFromEnvironment(env);
+	if (source === "connected" && !showConnected) return null;
+	return (
+		<AgentSourceBadge source={source} compact={compact} iconOnly={iconOnly} className={className} />
+	);
+}
+
+export function agentTextLabel(
+	env: {
+		display_name?: string | null;
+		machine_name?: string | null;
+		agent_type?: string | null;
+		hosted_managed?: boolean | null;
+		hosted_deployment_id?: string | null;
+	},
+	{ includeSource = true }: { includeSource?: boolean } = {},
+): string {
+	const identity = agentDisplayName(env);
+	const runtime = agentTypeLabel(env.agent_type);
+	const source = agentSourceFromEnvironment(env);
+	const parts = [
+		includeSource && source === "hosted" ? agentSourceLabel(source) : null,
+		identity,
+		runtime !== identity ? runtime : null,
+	].filter((part): part is string => Boolean(part));
+	return parts.join(" · ");
+}
+
+export function compareAgentEnvironments(
+	a: {
+		id?: string | null;
+		display_name?: string | null;
+		machine_name?: string | null;
+		agent_type?: string | null;
+		hosted_managed?: boolean | null;
+		hosted_deployment_id?: string | null;
+		sort_order?: number | null;
+	},
+	b: {
+		id?: string | null;
+		display_name?: string | null;
+		machine_name?: string | null;
+		agent_type?: string | null;
+		hosted_managed?: boolean | null;
+		hosted_deployment_id?: string | null;
+		sort_order?: number | null;
+	},
+): number {
+	const aOrder = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+	const bOrder = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+	if (aOrder !== bOrder) return aOrder - bOrder;
+
+	const aName = agentDisplayName(a);
+	const bName = agentDisplayName(b);
+	const name = aName.localeCompare(bName);
+	if (name !== 0) return name;
+
+	const type = agentTypeLabel(a.agent_type).localeCompare(agentTypeLabel(b.agent_type));
+	if (type !== 0) return type;
+	return (a.id ?? "").localeCompare(b.id ?? "");
 }
 
 /** Strip mDNS-style suffixes (`.local`, `.lan`) from a hostname.
@@ -143,7 +288,11 @@ const SUBTITLE_GAP: Record<AgentIconSize, string> = {
 
 export function AgentLabel({
 	machineName,
+	displayName,
 	type,
+	avatarUrl,
+	avatarPreset,
+	identitySeed,
 	size = "sm",
 	primary = "machine",
 	meta,
@@ -151,7 +300,11 @@ export function AgentLabel({
 	className,
 }: {
 	machineName: string | null | undefined;
+	displayName?: string | null | undefined;
 	type: string | null | undefined;
+	avatarUrl?: string | null | undefined;
+	avatarPreset?: string | null | undefined;
+	identitySeed?: string | null | undefined;
 	size?: AgentIconSize;
 	/** Which field is the H1 line. Defaults to "machine" — the
 	 * machine name is the user's own label; agent_type drops to
@@ -173,7 +326,9 @@ export function AgentLabel({
 }) {
 	const typeLabel = agentTypeLabel(type);
 	const cleanedMachine = cleanMachineName(machineName);
-	const titleText = primary === "type" ? typeLabel : cleanedMachine || typeLabel;
+	const cleanedDisplayName = cleanMachineName(displayName);
+	const titleText =
+		primary === "type" ? typeLabel : cleanedDisplayName || cleanedMachine || typeLabel;
 	// The disambiguator is the OTHER field — when title is the type
 	// we surface the machine name (and vice versa). Suppressed if
 	// it'd duplicate the title (e.g. hosted tiles whose
@@ -190,7 +345,13 @@ export function AgentLabel({
 
 	return (
 		<div className={cn("flex min-w-0 items-center gap-3", className)}>
-			<AgentIcon agent={type} size={size} />
+			<AgentIcon
+				agent={type}
+				size={size}
+				identitySeed={identitySeed ?? (cleanedDisplayName || cleanedMachine || typeLabel)}
+				avatarUrl={avatarUrl}
+				avatarPreset={avatarPreset}
+			/>
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
 					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>

@@ -1,15 +1,12 @@
 "use client";
 
-import { Bot, ExternalLink, Settings2, Sparkles } from "lucide-react";
-import Link from "next/link";
+import { Bot, ExternalLink, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
-import { agentSectionHref } from "@/lib/agent-routes";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -62,14 +59,14 @@ export function HostedAgentControls() {
 		return (
 			<Card data-hosted="true">
 				<CardHeader>
-					<CardTitle className="text-base">Hosted agents</CardTitle>
-					<CardDescription>Open a live agent or manage its settings.</CardDescription>
+					<CardTitle className="text-base">Clawdi Cloud agents</CardTitle>
+					<CardDescription>Open a live cloud agent.</CardDescription>
 				</CardHeader>
 				<CardContent>
 					<BillingError
 						error={deployments.error}
 						onRetry={() => deployments.refetch()}
-						title="Couldn’t load hosted agents"
+						title="Couldn’t load Clawdi Cloud agents"
 					/>
 				</CardContent>
 			</Card>
@@ -81,15 +78,14 @@ export function HostedAgentControls() {
 	return (
 		<Card data-hosted="true">
 			<CardHeader>
-				<CardTitle className="text-base">Hosted agents</CardTitle>
-				<CardDescription>Open a live agent or manage its settings.</CardDescription>
+				<CardTitle className="text-base">Clawdi Cloud agents</CardTitle>
+				<CardDescription>Open a live cloud agent.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-3">
 				{items.map((d) => {
 					const openclaw = d.openclaw_ui_url;
 					const hermes = d.hermes_ui_url;
 					const meta = metaLine(d);
-					const inAppHref = hostedEnvironmentHref(d) ?? agentSectionHref(d.id);
 					const provisioning = !openclaw && !hermes;
 					return (
 						<div key={d.id} className="flex flex-col gap-2.5 rounded-lg border p-3">
@@ -137,11 +133,6 @@ export function HostedAgentControls() {
 										<Sparkles /> Hermes
 									</Button>
 								)}
-								<Button asChild size="sm" variant="ghost">
-									<Link href={inAppHref}>
-										<Settings2 /> Manage
-									</Link>
-								</Button>
 							</div>
 						</div>
 					);

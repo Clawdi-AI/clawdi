@@ -17,7 +17,12 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentLabel, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	AgentLabel,
+	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
+	compareAgentEnvironments,
+} from "@/components/dashboard/agent-label";
 import { DetailPanel } from "@/components/detail/layout";
 import {
 	displayProjectName,
@@ -520,7 +525,7 @@ export default function ProjectDetailPage() {
 				id="agents"
 				title="Agents"
 				count={agentCount}
-				description="Connected agents that can use this Project at runtime."
+				description="Agents that can use this Project at runtime."
 				action={addToAgentDialog(
 					<Button variant="outline" size="sm">
 						<Bot className="mr-1.5 size-3.5" />
@@ -538,8 +543,13 @@ export default function ProjectDetailPage() {
 							<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 								<AgentLabel
 									machineName={env.machine_name}
+									displayName={env.display_name}
 									type={env.agent_type}
+									avatarUrl={env.avatar_url}
+									avatarPreset={env.avatar_preset}
+									identitySeed={env.id}
 									size="sm"
+									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 									className="min-w-0 flex-1"
 								/>
 								{home ? (
@@ -555,7 +565,7 @@ export default function ProjectDetailPage() {
 									href={agentSectionHref(env.id)}
 									className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
-									<span className="sr-only">Open agent {cleanMachineName(env.machine_name)}</span>
+									<span className="sr-only">Open agent {displayAgentName(env)}</span>
 								</Link>
 							</div>
 						))}
@@ -852,24 +862,39 @@ function UseProjectWithAgentDialog({
 									className="h-auto min-h-9 w-full justify-between py-2"
 								>
 									{selectedEnv ? (
-										<span className="flex min-w-0 items-center gap-2">
-											<span className="truncate">{displayAgentName(selectedEnv)}</span>
-											<span className="shrink-0 text-xs text-muted-foreground">
-												{agentTypeLabel(selectedEnv.agent_type)}
-											</span>
-										</span>
+										<AgentLabel
+											machineName={selectedEnv.machine_name}
+											displayName={selectedEnv.display_name}
+											type={selectedEnv.agent_type}
+											avatarUrl={selectedEnv.avatar_url}
+											avatarPreset={selectedEnv.avatar_preset}
+											identitySeed={selectedEnv.id}
+											size="sm"
+											titleAdornment={<AgentSourceBadgeForEnvironment env={selectedEnv} compact />}
+											className="min-w-0 flex-1"
+										/>
 									) : (
 										<SelectValue placeholder="Choose an agent…" />
 									)}
 								</SelectTrigger>
 								<SelectContent position="popper" align="start">
 									{orderedEnvironments.map((env) => (
-										<SelectItem key={env.id} value={env.id} className="py-2">
+										<SelectItem
+											key={env.id}
+											value={env.id}
+											textValue={displayAgentName(env)}
+											className="py-2"
+										>
 											<AgentLabel
 												machineName={env.machine_name}
+												displayName={env.display_name}
 												type={env.agent_type}
+												avatarUrl={env.avatar_url}
+												avatarPreset={env.avatar_preset}
+												identitySeed={env.id}
 												size="sm"
 												primary="machine"
+												titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 												meta={[
 													env.last_sync_at
 														? `synced ${formatShortDate(env.last_sync_at)}`
@@ -1130,13 +1155,11 @@ function VaultRow({ vault }: { vault: VaultSummary; ownProjectId: string }) {
 }
 
 function compareEnvironmentsForUse(a: Env, b: Env) {
-	const timestamp = (env: Env) =>
-		new Date(env.last_sync_at ?? env.last_seen_at ?? "1970-01-01T00:00:00.000Z").getTime();
-	return timestamp(b) - timestamp(a);
+	return compareAgentEnvironments(a, b);
 }
 
 function displayAgentName(env: Env) {
-	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+	return agentDisplayName(env);
 }
 
 function formatShortDate(value: string) {

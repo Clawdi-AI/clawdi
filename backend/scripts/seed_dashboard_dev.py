@@ -123,6 +123,7 @@ async def _create_agent_project_graph(
     workspace: Project,
     now: datetime,
     agent_type: str,
+    sort_order: int,
 ) -> tuple[Project, AgentEnvironment]:
     env_project = Project(
         user_id=user.id,
@@ -145,6 +146,7 @@ async def _create_agent_project_graph(
         last_sync_at=now - timedelta(minutes=6),
         last_revision_seen=3,
         sync_enabled=True,
+        sort_order=sort_order,
         default_project_id=env_project.id,
     )
     db.add(env)
@@ -183,6 +185,7 @@ async def _create_hosted_runtime_graph(
     clerk_id: str,
     runtime: str,
     now: datetime,
+    sort_order: int,
 ) -> tuple[Project, AgentEnvironment]:
     display_name = "OpenClaw" if runtime == "openclaw" else "Hermes"
     env_project = Project(
@@ -208,6 +211,7 @@ async def _create_hosted_runtime_graph(
         last_sync_at=now - timedelta(minutes=3),
         last_revision_seen=7,
         sync_enabled=True,
+        sort_order=sort_order,
         default_project_id=env_project.id,
     )
     db.add(env)
@@ -486,6 +490,7 @@ async def seed(clerk_id: str, agent_type: str) -> None:
             workspace=workspace,
             now=now,
             agent_type=agent_type,
+            sort_order=0,
         )
         hosted_openclaw_project, hosted_openclaw_env = await _create_hosted_runtime_graph(
             db,
@@ -494,6 +499,7 @@ async def seed(clerk_id: str, agent_type: str) -> None:
             clerk_id=clerk_id,
             runtime="openclaw",
             now=now,
+            sort_order=1,
         )
         hosted_hermes_project, hosted_hermes_env = await _create_hosted_runtime_graph(
             db,
@@ -502,6 +508,7 @@ async def seed(clerk_id: str, agent_type: str) -> None:
             clerk_id=clerk_id,
             runtime="hermes",
             now=now,
+            sort_order=2,
         )
 
         db.add(

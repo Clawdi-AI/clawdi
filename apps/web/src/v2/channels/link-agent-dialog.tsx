@@ -1,12 +1,13 @@
 "use client";
 
+import type { components } from "@clawdi/shared/api";
 import { CircleCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-	agentSourceFromEnvironment,
-	agentSourceLabel,
-	agentTypeLabel,
-	cleanMachineName,
+	AgentLabel,
+	AgentSourceBadgeForEnvironment,
+	agentTextLabel,
+	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -29,8 +30,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ChannelError, TokenReveal } from "@/v2/channels/channel-ui";
 import { useEnvironments, useLinkAgent } from "@/v2/channels/channels-hooks";
 
+type Environment = components["schemas"]["EnvironmentResponse"];
+
 /**
- * Link a connected agent to a channel — instant, no token paste. On success
+ * Link an agent to a channel — instant, no token paste. On success
  * the scoped agent token is revealed once (the handle the agent runtime uses
  * to send/receive on this channel).
  */
@@ -72,10 +75,7 @@ export function LinkAgentDialog({
 		});
 	}
 
-	const agents = envs.data ?? [];
-	const hasHosted = agents.some((env) => agentSourceFromEnvironment(env) === "hosted");
-	const hasConnected = agents.some((env) => agentSourceFromEnvironment(env) === "connected");
-	const showSource = hasHosted && hasConnected;
+	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -120,8 +120,8 @@ export function LinkAgentDialog({
 							</SelectTrigger>
 							<SelectContent>
 								{agents.map((env) => (
-									<SelectItem key={env.id} value={env.id}>
-										{agentOptionLabel(env, showSource)}
+									<SelectItem key={env.id} value={env.id} textValue={agentOptionLabel(env)}>
+										<AgentOption env={env} />
 									</SelectItem>
 								))}
 							</SelectContent>
@@ -148,17 +148,27 @@ export function LinkAgentDialog({
 	);
 }
 
-function agentOptionLabel(
-	env: {
-		machine_name?: string | null;
-		agent_type?: string | null;
-		hosted_managed?: boolean | null;
-		hosted_deployment_id?: string | null;
-	},
-	includeSource: boolean,
-): string {
-	const identity = cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
-	const runtime = agentTypeLabel(env.agent_type);
-	const source = agentSourceLabel(agentSourceFromEnvironment(env));
-	return includeSource ? `${source} · ${identity} · ${runtime}` : `${identity} · ${runtime}`;
+function agentOptionLabel(env: {
+	machine_name?: string | null;
+	display_name?: string | null;
+	agent_type?: string | null;
+	hosted_managed?: boolean | null;
+	hosted_deployment_id?: string | null;
+}): string {
+	return agentTextLabel(env);
+}
+
+function AgentOption({ env }: { env: Environment }) {
+	return (
+		<AgentLabel
+			machineName={env.machine_name}
+			displayName={env.display_name}
+			type={env.agent_type}
+			avatarUrl={env.avatar_url}
+			avatarPreset={env.avatar_preset}
+			identitySeed={env.id}
+			size="sm"
+			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+		/>
+	);
 }

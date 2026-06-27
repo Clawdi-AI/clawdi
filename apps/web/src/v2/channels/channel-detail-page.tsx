@@ -18,10 +18,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
-	agentSourceFromEnvironment,
-	agentSourceLabel,
-	agentTypeLabel,
-	cleanMachineName,
+	AgentLabel,
+	AgentSourceBadgeForEnvironment,
+	agentTextLabel,
 } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { InfoCard } from "@/components/info-card";
@@ -86,20 +85,33 @@ function formatWhen(iso: string | null | undefined): string {
 }
 
 type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
+type Environment = NonNullable<EnvironmentList>[number];
 
-function hasMixedAgentSources(envs: EnvironmentList): boolean {
-	const sources = new Set((envs ?? []).map((env) => agentSourceFromEnvironment(env)));
-	return sources.size > 1;
+function findEnv(envs: EnvironmentList, agentId: string): Environment | null {
+	return envs?.find((e) => e.id === agentId) ?? null;
 }
 
 /** "machine · agent-type" label for an agent id, falling back to the raw id. */
-function envName(envs: EnvironmentList, agentId: string, includeSource = false): string {
-	const env = envs?.find((e) => e.id === agentId);
-	const source = env ? agentSourceLabel(agentSourceFromEnvironment(env)) : null;
-	const label = env
-		? `${cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type)} · ${agentTypeLabel(env.agent_type)}`
-		: agentId;
-	return env ? [includeSource ? source : null, label].filter(Boolean).join(" · ") : agentId;
+function envName(envs: EnvironmentList, agentId: string, includeSource = true): string {
+	const env = findEnv(envs, agentId);
+	return env ? agentTextLabel(env, { includeSource }) : agentId;
+}
+
+function AgentName({ env, fallback }: { env: Environment | null; fallback: string }) {
+	if (!env) return <span className="truncate text-sm font-medium">{fallback}</span>;
+	return (
+		<AgentLabel
+			machineName={env.machine_name}
+			displayName={env.display_name}
+			type={env.agent_type}
+			avatarUrl={env.avatar_url}
+			avatarPreset={env.avatar_preset}
+			identitySeed={env.id}
+			size="sm"
+			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+			className="min-w-0"
+		/>
+	);
 }
 
 export function ChannelDetailPage() {
@@ -241,7 +253,6 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 	const unlink = useUnlinkChannelAgent(accountId);
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [rotated, setRotated] = useState<Record<string, string>>({});
-	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (links.error) {
@@ -284,9 +295,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 						<div key={link.id} className="rounded-lg border p-3">
 							<div className="flex items-center justify-between gap-3">
 								<div className="min-w-0">
-									<div className="truncate text-sm font-medium">
-										{envName(envs.data, link.agent_id, showAgentSource)}
-									</div>
+									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
 									<div className="text-xs capitalize text-muted-foreground">
 										{link.status} · linked {formatWhen(link.created_at)}
 									</div>
@@ -369,7 +378,6 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const create = useCreateWhatsappTenantCred(accountId);
 	const revoke = useRevokeWhatsappTenantCred(accountId);
 	const [linkId, setLinkId] = useState("");
-	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	const linkItems = links.data ?? [];
 	const devices = creds.data ?? [];
@@ -416,11 +424,18 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 									<SelectValue placeholder="Choose an agent" />
 								</SelectTrigger>
 								<SelectContent>
-									{linkItems.map((l) => (
-										<SelectItem key={l.id} value={l.id}>
-											{envName(envs.data, l.agent_id, showAgentSource)}
-										</SelectItem>
-									))}
+									{linkItems.map((l) => {
+										const env = findEnv(envs.data, l.agent_id);
+										return (
+											<SelectItem
+												key={l.id}
+												value={l.id}
+												textValue={envName(envs.data, l.agent_id)}
+											>
+												<AgentName env={env} fallback={l.agent_id} />
+											</SelectItem>
+										);
+									})}
 								</SelectContent>
 							</Select>
 						</div>
@@ -465,8 +480,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 									</div>
 								)}
 								<div className="text-xs text-muted-foreground">
-									{envName(envs.data, d.agent_id, showAgentSource)} · added{" "}
-									{formatWhen(d.created_at)}
+									{envName(envs.data, d.agent_id)} · added {formatWhen(d.created_at)}
 								</div>
 							</div>
 							<ConfirmAction
@@ -511,7 +525,6 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const [ttl, setTtl] = useState("900");
 	const [result, setResult] = useState<{ code: string; expires_at: string } | null>(null);
 	const meta = providerMeta(provider);
-	const showAgentSource = hasMixedAgentSources(envs.data);
 
 	function generate() {
 		create.mutate(
@@ -539,8 +552,8 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							</SelectTrigger>
 							<SelectContent>
 								{(envs.data ?? []).map((env) => (
-									<SelectItem key={env.id} value={env.id}>
-										{envName(envs.data, env.id, showAgentSource)}
+									<SelectItem key={env.id} value={env.id} textValue={envName(envs.data, env.id)}>
+										<AgentName env={env} fallback={env.id} />
 									</SelectItem>
 								))}
 							</SelectContent>

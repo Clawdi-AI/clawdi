@@ -15,6 +15,7 @@ function env(overrides: Partial<Env> = {}): Env {
 		last_sync_at: null,
 		last_sync_error: null,
 		last_revision_seen: null,
+		sort_order: 0,
 		queue_depth_high_water: 0,
 		dropped_count: 0,
 		sync_enabled: false,

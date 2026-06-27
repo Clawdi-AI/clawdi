@@ -19,6 +19,7 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
+		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
 			"/agents/agent%201/sessions/session%201",
 		);
@@ -46,6 +47,7 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("project-access")).toBe("projects");
 		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
 		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
+		expect(parseAgentSectionSegment("settings")).toBe("settings");
 		expect(parseAgentSectionSegment("projects")).toBeNull();
 		expect(parseAgentSectionSegment("ai")).toBeNull();
 		expect(parseAgentSectionSegment("channels")).toBeNull();
@@ -56,6 +58,7 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("projects")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
+		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
 	});
 

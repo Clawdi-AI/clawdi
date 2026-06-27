@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	agentDisplayName,
+	cleanMachineName,
+	compareAgentEnvironments,
+} from "@/components/dashboard/agent-label";
 
 describe("cleanMachineName", () => {
 	test("strips local network suffixes", () => {
@@ -7,7 +11,68 @@ describe("cleanMachineName", () => {
 		expect(cleanMachineName("lab.lan")).toBe("lab");
 	});
 
-	test("keeps backend-provided machine names as the display source of truth", () => {
+	test("keeps machine names intact for lower-level cleaning", () => {
 		expect(cleanMachineName("v2-hosted-a1b2c3d4")).toBe("v2-hosted-a1b2c3d4");
+	});
+});
+
+describe("agentDisplayName", () => {
+	test("uses runtime as the default Cloud agent name", () => {
+		expect(
+			agentDisplayName({
+				machine_name: "Shared Hosted Compute",
+				agent_type: "openclaw",
+				hosted_managed: true,
+			}),
+		).toBe("OpenClaw");
+	});
+
+	test("uses machine name as the default connected agent name", () => {
+		expect(agentDisplayName({ machine_name: "Jing-Mac.local", agent_type: "codex" })).toBe(
+			"Jing-Mac",
+		);
+	});
+
+	test("prefers user display name for every source", () => {
+		expect(
+			agentDisplayName({
+				display_name: "Launch runner",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "hermes",
+				hosted_managed: true,
+			}),
+		).toBe("Launch runner");
+	});
+});
+
+describe("compareAgentEnvironments", () => {
+	test("uses persisted sort order before name or runtime", () => {
+		const first = {
+			id: "agent-a",
+			machine_name: "Zed",
+			agent_type: "codex",
+			sort_order: 1,
+		};
+		const second = {
+			id: "agent-b",
+			machine_name: "Alpha",
+			agent_type: "openclaw",
+			sort_order: 0,
+		};
+
+		expect([first, second].sort(compareAgentEnvironments).map((agent) => agent.id)).toEqual([
+			"agent-b",
+			"agent-a",
+		]);
+	});
+
+	test("falls back to display name and id for stable ordering", () => {
+		const agents = [
+			{ id: "c", machine_name: "beta", agent_type: "codex", sort_order: null },
+			{ id: "a", display_name: "Alpha", machine_name: "zed", agent_type: "codex" },
+			{ id: "b", display_name: "Alpha", machine_name: "zed", agent_type: "codex" },
+		];
+
+		expect(agents.sort(compareAgentEnvironments).map((agent) => agent.id)).toEqual(["a", "b", "c"]);
 	});
 });

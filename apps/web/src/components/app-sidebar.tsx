@@ -1,12 +1,31 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import {
+	closestCenter,
+	DndContext,
+	type DragEndEvent,
+	KeyboardSensor,
+	PointerSensor,
+	TouchSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import {
+	arrayMove,
+	SortableContext,
+	sortableKeyboardCoordinates,
+	useSortable,
+	verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	BookOpen,
 	CircleHelp,
 	Cpu,
 	ExternalLink,
+	GripVertical,
 	Layers,
 	LayoutDashboard,
 	Link2,
@@ -22,15 +41,22 @@ import {
 	Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
+	AgentSourceBadge,
+	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
+	agentIdentitySeed,
+	agentSourceKindLabel,
+	agentTextLabel,
 	agentTypeLabel,
-	cleanMachineName,
+	compareAgentEnvironments,
 	displayMachineName,
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
@@ -84,7 +110,7 @@ import {
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
 } from "@/lib/settings-routes";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
 /** Tinted chip around a nav icon — the identity-palette hue carries the
@@ -109,7 +135,7 @@ function RailIconChip({ tint, children }: { tint: string; children: React.ReactN
 	return (
 		<span
 			className={cn(
-				"flex size-9 shrink-0 items-center justify-center rounded-xl [&>svg]:size-4.5",
+				"flex size-7 shrink-0 items-center justify-center rounded-md border border-sidebar-border/70 [&>svg]:size-3.5",
 				tint,
 			)}
 		>
@@ -142,6 +168,11 @@ const CONNECTED_AGENT_SECTIONS: {
 		id: "projects",
 		icon: Layers,
 		tooltip: "Agent Project and added Projects",
+	},
+	{
+		id: "settings",
+		icon: Settings,
+		tooltip: "Name and avatar for this agent",
 	},
 ];
 
@@ -180,6 +211,11 @@ const HOSTED_AGENT_SECTIONS: {
 		icon: Cpu,
 		tooltip: "Deployment compute and lifecycle",
 	},
+	{
+		id: "settings",
+		icon: Settings,
+		tooltip: "Name and avatar for this agent",
+	},
 ];
 
 const AGENT_SECTION_TINTS = {
@@ -191,6 +227,7 @@ const AGENT_SECTION_TINTS = {
 	ai: "bg-identity-2-bg text-identity-2-fg",
 	channels: "bg-identity-5-bg text-identity-5-fg",
 	compute: "bg-identity-8-bg text-identity-8-fg",
+	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
 type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
@@ -211,8 +248,17 @@ type AgentSectionDefinition = {
 	tooltip: string;
 };
 
-function agentDisplayName(agent: SidebarEnvironment): string {
-	return cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type);
+function reorderEnvironmentsForCache(
+	current: SidebarEnvironment[],
+	orderedIds: string[],
+): SidebarEnvironment[] {
+	const byId = new Map(current.map((env) => [env.id, env]));
+	const requested = new Set(orderedIds);
+	const reordered = orderedIds
+		.map((id) => byId.get(id))
+		.filter((env): env is SidebarEnvironment => Boolean(env));
+	reordered.push(...current.filter((env) => !requested.has(env.id)));
+	return reordered.map((env, index) => ({ ...env, sort_order: index }));
 }
 
 function SidebarNavSection({
@@ -577,6 +623,7 @@ function FocusNavigationPane({
 function RailFocusButton({
 	href,
 	label,
+	caption,
 	active,
 	onNavigate,
 	showTooltip = true,
@@ -584,33 +631,57 @@ function RailFocusButton({
 }: {
 	href: string;
 	label: string;
+	caption?: string;
 	active: boolean;
 	onNavigate?: () => void;
 	showTooltip?: boolean;
 	children: React.ReactNode;
 }) {
+	const hasCaption = Boolean(caption);
 	const button = (
 		<SidebarMenuButton
 			asChild
 			size="lg"
 			isActive={active}
 			aria-label={label}
-			className="size-11 justify-center rounded-2xl p-0"
+			className={cn(
+				hasCaption
+					? "h-[4.25rem] w-full flex-col justify-center gap-1.5 rounded-xl px-1 py-1.5"
+					: "size-11 justify-center rounded-2xl p-0",
+			)}
 		>
-			<Link href={href} onClick={onNavigate}>
+			<Link href={href} draggable={false} onClick={onNavigate}>
 				{children}
+				{caption ? (
+					<span
+						className={cn(
+							"block max-w-16 truncate text-center text-[11px] leading-[13px] font-medium",
+							active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
+						)}
+						title={label}
+					>
+						{caption}
+					</span>
+				) : null}
 				<span className="sr-only">{label}</span>
 			</Link>
 		</SidebarMenuButton>
 	);
 	return (
-		<div className="group/rail-focus relative flex size-11 items-center justify-center">
+		<div
+			className={cn(
+				"group/rail-focus relative flex items-center justify-center",
+				hasCaption ? "h-[4.25rem] w-full" : "size-11",
+			)}
+		>
 			<span
 				aria-hidden="true"
 				className={cn(
 					"absolute -left-2.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
 					active
-						? "h-8 opacity-100"
+						? hasCaption
+							? "h-11 opacity-100"
+							: "h-8 opacity-100"
 						: "h-2 group-hover/rail-focus:h-4 group-hover/rail-focus:opacity-50",
 				)}
 			/>
@@ -625,6 +696,86 @@ function RailFocusButton({
 				button
 			)}
 		</div>
+	);
+}
+
+function SortableAgentRailItem({
+	agent,
+	active,
+	onNavigate,
+	onPointerNavigate,
+	showTooltip,
+}: {
+	agent: SidebarEnvironment;
+	active: boolean;
+	onNavigate?: () => void;
+	onPointerNavigate: (href: string) => void;
+	showTooltip: boolean;
+}) {
+	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+		id: agent.id,
+	});
+	const hosted = isHostedAgentEnvironment(agent);
+	const label = agentTextLabel(agent);
+	const caption = displayMachineName(agentDisplayName(agent));
+	const href = agentSectionHref(agent.id);
+	const style: React.CSSProperties = {
+		transform: CSS.Transform.toString(transform),
+		transition,
+	};
+
+	return (
+		<SidebarMenuItem
+			ref={setNodeRef}
+			style={style}
+			className={cn(
+				"group/agent-rail-item relative w-full touch-pan-y",
+				isDragging && "opacity-75",
+			)}
+		>
+			<RailFocusButton
+				href={href}
+				label={label}
+				caption={caption}
+				active={active}
+				onNavigate={onNavigate}
+				showTooltip={showTooltip}
+			>
+				<span className="relative inline-flex cursor-grab active:cursor-grabbing">
+					<AgentIcon
+						agent={agent.agent_type}
+						size="rail"
+						identitySeed={agentIdentitySeed(agent)}
+						avatarUrl={agent.avatar_url}
+						avatarPreset={agent.avatar_preset}
+					/>
+					{hosted ? (
+						<AgentSourceBadge
+							source="hosted"
+							iconOnly
+							className="absolute -top-1 -right-1 size-3.5 border-sidebar-border bg-sidebar p-0 text-primary shadow-sm ring-1 ring-sidebar [&>svg]:size-2"
+						/>
+					) : null}
+				</span>
+			</RailFocusButton>
+			<button
+				type="button"
+				tabIndex={-1}
+				aria-hidden="true"
+				className="absolute inset-0 z-10 cursor-grab rounded-xl bg-transparent active:cursor-grabbing"
+				onClick={() => onPointerNavigate(href)}
+				{...listeners}
+			/>
+			<button
+				type="button"
+				className="pointer-events-none absolute top-0.5 right-0.5 z-20 flex size-5 cursor-grab items-center justify-center rounded-md bg-sidebar text-muted-foreground opacity-0 shadow-sm ring-1 ring-sidebar-border transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+				{...attributes}
+				{...listeners}
+				aria-label={`Reorder ${caption}`}
+			>
+				<GripVertical className="size-3" aria-hidden="true" />
+			</button>
+		</SidebarMenuItem>
 	);
 }
 
@@ -647,6 +798,63 @@ function FocusRailContent({
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
+	const api = useApi();
+	const router = useRouter();
+	const queryClient = useQueryClient();
+	const suppressNextRailClick = useRef(false);
+	const sensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
+		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+	);
+	const orderedAgents = [...agents].sort(compareAgentEnvironments);
+	const orderedAgentIds = orderedAgents.map((agent) => agent.id);
+	const reorderAgents = useMutation({
+		mutationFn: async (environmentIds: string[]) =>
+			unwrap(
+				await api.PATCH("/api/environments/order", { body: { environment_ids: environmentIds } }),
+			),
+		onMutate: async (environmentIds) => {
+			await queryClient.cancelQueries({ queryKey: ["environments"] });
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["environments"]);
+			queryClient.setQueryData<SidebarEnvironment[]>(["environments"], (current) =>
+				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
+			);
+			return { previous };
+		},
+		onError: (error, _environmentIds, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(["environments"], context.previous);
+			}
+			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
+		},
+		onSuccess: (data) => {
+			queryClient.setQueryData(["environments"], data);
+		},
+	});
+	const onDragEnd = (event: DragEndEvent) => {
+		const { active, over } = event;
+		if (!over || active.id === over.id) return;
+		const from = orderedAgentIds.indexOf(String(active.id));
+		const to = orderedAgentIds.indexOf(String(over.id));
+		if (from < 0 || to < 0) return;
+		const next = arrayMove(orderedAgentIds, from, to);
+		reorderAgents.mutate(next);
+	};
+	const releaseRailClickSuppression = () => {
+		window.setTimeout(() => {
+			suppressNextRailClick.current = false;
+		}, 0);
+	};
+	const onRailAgentPointerNavigate = (href: string) => {
+		if (suppressNextRailClick.current) {
+			suppressNextRailClick.current = false;
+			return;
+		}
+		onNavigate?.();
+		router.push(href);
+	};
+
 	return (
 		<>
 			<SidebarHeader className="h-(--clawdi-rail-width) items-center justify-center p-0">
@@ -672,12 +880,13 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2.5 px-2.5 py-2.5">
+			<SidebarContent className="items-center gap-2 px-2.5 py-2.5">
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<RailFocusButton
 							href="/"
 							label="Console"
+							caption="Console"
 							active={!activeAgentId}
 							onNavigate={onNavigate}
 							showTooltip={showTooltips}
@@ -691,24 +900,32 @@ function FocusRailContent({
 
 				<SidebarSeparator className="mx-auto w-8" />
 
-				<SidebarMenu className="items-center">
-					{agents.map((agent) => {
-						const name = agentDisplayName(agent);
-						const label = `${displayMachineName(name)} · ${agentTypeLabel(agent.agent_type)}`;
-						return (
-							<SidebarMenuItem key={agent.id}>
-								<RailFocusButton
-									href={agentSectionHref(agent.id)}
-									label={label}
+				<SidebarMenu className="w-full items-center gap-1">
+					<DndContext
+						sensors={sensors}
+						collisionDetection={closestCenter}
+						onDragStart={() => {
+							suppressNextRailClick.current = true;
+						}}
+						onDragCancel={releaseRailClickSuppression}
+						onDragEnd={(event) => {
+							onDragEnd(event);
+							releaseRailClickSuppression();
+						}}
+					>
+						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
+							{orderedAgents.map((agent) => (
+								<SortableAgentRailItem
+									key={agent.id}
+									agent={agent}
 									active={activeAgentId === agent.id}
 									onNavigate={onNavigate}
+									onPointerNavigate={onRailAgentPointerNavigate}
 									showTooltip={showTooltips}
-								>
-									<AgentIcon agent={agent.agent_type} size="rail" />
-								</RailFocusButton>
-							</SidebarMenuItem>
-						);
-					})}
+								/>
+							))}
+						</SortableContext>
+					</DndContext>
 					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
 				</SidebarMenu>
 			</SidebarContent>
@@ -740,18 +957,16 @@ function agentHeaderMeta(
 	detailLabel: string;
 	activityLabel: string;
 } {
-	const source = hosted ? "Hosted" : "Connected";
+	const sourceDetail = hosted ? agentSourceKindLabel("hosted") : null;
 	const typeLabel = agentTypeLabel(agent.agent_type);
 	const version = agentVersionLabel(agent.agent_version);
 	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
 	const activityLabel = relativeSeen ? `last seen ${relativeSeen}` : "never seen";
-	const visible = [
-		source,
-		hosted ? `${typeLabel} runtime` : typeLabel,
-		agent.os?.trim() || null,
-	].filter((item): item is string => Boolean(item));
+	const visible = [hosted ? `${typeLabel} runtime` : typeLabel, agent.os?.trim() || null].filter(
+		(item): item is string => Boolean(item),
+	);
 	const detail = [
-		source,
+		sourceDetail,
 		hosted ? `${typeLabel} runtime` : typeLabel,
 		version,
 		agent.os?.trim() || null,
@@ -783,7 +998,7 @@ function FocusHeader({
 		return (
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold leading-5">
-					{showV2Features ? "Hosted Agent" : "Agent"}
+					{showV2Features ? "Clawdi Cloud agent" : "Agent"}
 				</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
 					{activeAgentId ? activeAgentId.slice(0, 8) : "Loading navigation"}
@@ -799,8 +1014,9 @@ function FocusHeader({
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
 	return (
 		<div className="min-w-0 text-left">
-			<div className="truncate text-sm font-semibold leading-5" title={title}>
-				{displayName}
+			<div className="flex min-w-0 items-center gap-2" title={title}>
+				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
+				<AgentSourceBadgeForEnvironment env={activeAgent} compact />
 			</div>
 			{meta.visibleLabel ? (
 				<div
@@ -1079,8 +1295,9 @@ export function AppSidebar({
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
-	const agentsLoaded = environments !== undefined;
-	const agents = environments ?? [];
+	const hydratedEnvironments = mounted ? environments : undefined;
+	const agentsLoaded = hydratedEnvironments !== undefined;
+	const agents = hydratedEnvironments ?? [];
 	const activeAgent = activeAgentId ? agents.find((env) => env.id === activeAgentId) : null;
 	const activeSection = agentRoute?.section ?? "overview";
 	const [settingsSection, setSettingsSection] = useQueryState(

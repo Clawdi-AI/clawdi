@@ -6,7 +6,11 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import {
+	AgentsCard,
+	isAgentActive,
+	selfManagedAgentTiles,
+} from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
@@ -120,6 +124,12 @@ export default function DashboardPage() {
 			: null;
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
+	const fleetAgents = environments ?? [];
+	const fleetLastActive =
+		fleetAgents
+			.map((env) => env.last_seen_at)
+			.filter((value): value is string => Boolean(value))
+			.sort((a, b) => b.localeCompare(a))[0] ?? null;
 
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
@@ -137,14 +147,9 @@ export default function DashboardPage() {
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
 			<Greeting
-				activeCount={selfManagedTiles.filter((t) => t.active).length}
-				total={selfManagedCount}
-				lastActive={
-					selfManagedTiles
-						.map((t) => t.lastSeenAt)
-						.filter((t): t is string => Boolean(t))
-						.sort((a, b) => b.localeCompare(a))[0] ?? null
-				}
+				activeCount={fleetAgents.filter((env) => isAgentActive(env.last_seen_at)).length}
+				total={fleetAgents.length}
+				lastActive={fleetLastActive}
 			/>
 
 			<div className="grid gap-4 lg:grid-cols-3">

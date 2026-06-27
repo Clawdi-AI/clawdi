@@ -13,6 +13,7 @@ import {
 	Plus,
 	QrCode,
 	RefreshCw,
+	Settings,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -22,6 +23,8 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
+import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { SessionFeed } from "@/components/sessions/session-feed";
@@ -47,7 +50,6 @@ import {
 	useDeleteDeployment,
 	useDeploymentLifecycle,
 	useOnboardAgent,
-	useRenameDeployment,
 	useSetAgentAiProvider,
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
@@ -90,7 +92,14 @@ import {
 } from "@/v2/channels/channels-hooks";
 
 type Runtime = "openclaw" | "hermes";
-type HostedAgentTab = "overview" | "console" | "sessions" | "ai" | "channels" | "compute";
+type HostedAgentTab =
+	| "overview"
+	| "console"
+	| "sessions"
+	| "ai"
+	| "channels"
+	| "compute"
+	| "settings";
 const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
 	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
 	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
@@ -102,6 +111,7 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"ai",
 	"channels",
 	"compute",
+	"settings",
 ]);
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
@@ -127,6 +137,10 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	compute: {
 		description: "Plan, lifecycle, and runtime availability.",
 		icon: Cpu,
+	},
+	settings: {
+		description: "Name and avatar used across the dashboard.",
+		icon: Settings,
 	},
 };
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
@@ -202,7 +216,17 @@ export function HostedAgentDetail({
 	const api = useApi();
 	const router = useRouter();
 	const ci = deployment.config_info;
-	const name = deploymentDisplayName(deployment.name);
+	const { data: agent } = useQuery({
+		queryKey: ["agent", environmentId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/api/environments/{environment_id}", {
+					params: { path: { environment_id: environmentId } },
+				}),
+			),
+		enabled: isCloudEnvId(environmentId),
+	});
+	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = RUNTIME_LABEL[runtime];
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
 	useSetAgentBreadcrumbTitle({
@@ -243,7 +267,10 @@ export function HostedAgentDetail({
 				{isConsoleTab ? null : (
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>
-							<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
+							<div className="flex items-center gap-2">
+								<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
+								<AgentSourceBadge source="hosted" compact />
+							</div>
 							{activeNavItem.description ? (
 								<p className="mt-1 text-sm text-muted-foreground">{activeNavItem.description}</p>
 							) : null}
@@ -300,6 +327,7 @@ export function HostedAgentDetail({
 						billingSettingsHref={settingsQueryHref("billing-plan", searchParams)}
 					/>
 				) : null}
+				{activeTab === "settings" ? <AgentSettingsPanel environmentId={environmentId} /> : null}
 			</section>
 		</div>
 	);
@@ -922,7 +950,6 @@ function ComputeTab({
 	const router = useRouter();
 	const lifecycle = useDeploymentLifecycle();
 	const del = useDeleteDeployment();
-	const rename = useRenameDeployment();
 	const setEnabled = useSetAgentEnabled();
 	const onboard = useOnboardAgent();
 	const plans = usePlans();
@@ -934,8 +961,6 @@ function ComputeTab({
 	const canRestart = RESTARTABLE_STATUSES.has(deployment.status);
 	const primaryLifecycleAction = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
-	const currentDisplayName = deploymentDisplayName(deployment.name);
-	const [name, setName] = useState(currentDisplayName);
 	const [term, setTerm] = useState(1);
 	const configured = new Set(ci?.configured_agents ?? []);
 	const envs = ci?.clawdi_cloud_environments ?? {};
@@ -957,9 +982,6 @@ function ComputeTab({
 			: deployment.status === "running" || deployment.status === "stopped"
 				? "An upgrade may already be pending for this Free agent."
 				: "Upgrade is available once this Free agent is running or stopped.";
-	useEffect(() => {
-		setName(currentDisplayName);
-	}, [currentDisplayName]);
 	useEffect(() => {
 		if (!perfOffers.length || perfOffers.some((offer) => offer.billing_term_months === term)) {
 			return;
@@ -1004,30 +1026,6 @@ function ComputeTab({
 				Compute is shared by every runtime in this deployment — changes here affect them all.
 			</p>
 
-			{/* Name (the compute / deployment name) */}
-			<Card data-hosted="true">
-				<CardContent className="space-y-2 pt-6">
-					<Label htmlFor="agent-name">Name</Label>
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<Input
-							id="agent-name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							placeholder="Agent name"
-							className="flex-1"
-							maxLength={64}
-						/>
-						<Button
-							onClick={() => rename.mutate({ id: deployment.id, name: name.trim() })}
-							disabled={!name.trim() || name.trim() === currentDisplayName || rename.isPending}
-						>
-							{rename.isPending ? <Spinner className="size-3.5" /> : null}
-							Save
-						</Button>
-					</div>
-				</CardContent>
-			</Card>
-
 			{/* Runtimes on this compute — toggle + jump to the sibling runtime agent. */}
 			<Card data-hosted="true">
 				<CardContent className="space-y-3 pt-6">
@@ -1041,7 +1039,7 @@ function ComputeTab({
 						const blockedByPlan = !isPerformance && !enabled && enabledCount >= 1;
 						return (
 							<div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
-								<AgentIcon agent={r.id} size="md" />
+								<AgentIcon agent={r.id} size="md" identitySeed={`${deployment.id}:${r.id}`} />
 								<div className="min-w-0 flex-1">
 									<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
 										{r.label}

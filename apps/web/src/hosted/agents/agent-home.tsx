@@ -82,8 +82,8 @@ export function AgentHome({
 		return (
 			<div data-hosted="true" className="space-y-4 px-4 py-2 lg:px-6">
 				<BillingEmpty
-					title="Hosted agent not found"
-					description="This hosted agent may still be provisioning or may have been removed."
+					title="Clawdi Cloud agent not found"
+					description="This Clawdi Cloud agent may still be provisioning or may have been removed."
 				/>
 			</div>
 		);

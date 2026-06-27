@@ -1,10 +1,11 @@
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
@@ -39,7 +40,9 @@ from app.schemas.common import Paginated
 from app.schemas.session import (
     EnvironmentCreate,
     EnvironmentCreatedResponse,
+    EnvironmentReorderRequest,
     EnvironmentResponse,
+    EnvironmentUpdate,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
     RuntimeObservedProviderHealthResponse,
@@ -76,6 +79,9 @@ log = logging.getLogger(__name__)
 
 file_store = get_file_store()
 _MAX_RUNTIME_OBSERVED_BYTES = 64 * 1024
+_MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024
+_AGENT_AVATAR_PREFIX = "agent-avatars/"
+_AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
 _LEGACY_HOSTED_MACHINE_NAME_RE = re.compile(r"^v2-hosted-[a-f0-9]{6,16}$")
@@ -283,6 +289,7 @@ async def register_environment(
             agent_version=body.agent_version,
             os=body.os,
             last_seen_at=datetime.now(UTC),
+            sort_order=await _next_environment_sort_order(db, auth.user_id),
             default_project_id=project.id,
         )
         db.add(env)
@@ -340,7 +347,11 @@ async def list_environments(
     stmt = (
         select(AgentEnvironment)
         .where(AgentEnvironment.user_id == auth.user_id)
-        .order_by(AgentEnvironment.last_seen_at.desc())
+        .order_by(
+            AgentEnvironment.sort_order.asc(),
+            AgentEnvironment.created_at.asc(),
+            AgentEnvironment.id.asc(),
+        )
     )
     if bound_env is not None:
         stmt = stmt.where(AgentEnvironment.id == bound_env)
@@ -392,7 +403,11 @@ async def list_environment_runtime_observed(
             await db.execute(
                 select(AgentEnvironment)
                 .where(*filters)
-                .order_by(AgentEnvironment.created_at.desc())
+                .order_by(
+                    AgentEnvironment.sort_order.asc(),
+                    AgentEnvironment.created_at.asc(),
+                    AgentEnvironment.id.asc(),
+                )
                 .limit(limit)
             )
         )
@@ -435,7 +450,68 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
-@router.get("/api/environments/{environment_id}")
+@router.patch("/api/environments/order", response_model=list[EnvironmentResponse])
+async def reorder_environments(
+    body: EnvironmentReorderRequest,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[EnvironmentResponse]:
+    requested_ids = body.environment_ids
+    requested_set = set(requested_ids)
+    if len(requested_set) != len(requested_ids):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Duplicate agent ids in order")
+
+    envs = (
+        (
+            await db.execute(
+                select(AgentEnvironment)
+                .where(AgentEnvironment.user_id == auth.user_id)
+                .order_by(
+                    AgentEnvironment.sort_order.asc(),
+                    AgentEnvironment.created_at.asc(),
+                    AgentEnvironment.id.asc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    env_by_id = {env.id: env for env in envs}
+    missing = requested_set.difference(env_by_id)
+    if missing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    ordered = [env_by_id[env_id] for env_id in requested_ids]
+    ordered.extend(env for env in envs if env.id not in requested_set)
+    for position, env in enumerate(ordered):
+        env.sort_order = position
+    await db.commit()
+
+    env_ids = [env.id for env in ordered]
+    states_by_env: dict[UUID, HostedRuntimeState] = {}
+    if env_ids:
+        states = (
+            (
+                await db.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        states_by_env = {state.environment_id: state for state in states}
+    hosted_deployments_by_machine = _hosted_deployments_by_machine(ordered, states_by_env)
+    return [
+        _env_to_response(
+            env,
+            states_by_env.get(env.id),
+            hosted_deployment_id=hosted_deployments_by_machine.get(env.machine_id),
+        )
+        for env in ordered
+    ]
+
+
+@router.get("/api/environments/{environment_id}", response_model=EnvironmentResponse)
 async def get_environment(
     environment_id: UUID,
     auth: AuthContext = Depends(get_auth),
@@ -465,6 +541,128 @@ async def get_environment(
     sibling_deployment_id = (
         None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
     )
+    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+
+
+@router.patch("/api/environments/{environment_id}", response_model=EnvironmentResponse)
+async def update_environment(
+    environment_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    if "display_name" in body.model_fields_set:
+        env.display_name = body.display_name
+    old_avatar_key = None
+    if "avatar_preset" in body.model_fields_set:
+        old_avatar_key = env.avatar_asset_key
+        env.avatar_asset_key = None
+        env.avatar_preset = body.avatar_preset
+    await db.commit()
+    await db.refresh(env)
+    await _delete_managed_avatar_key_best_effort(old_avatar_key)
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
+    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+
+
+@router.delete("/api/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+async def clear_environment_avatar(
+    environment_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    old_avatar_key = env.avatar_asset_key
+    env.avatar_asset_key = None
+    env.avatar_preset = None
+    await db.commit()
+    await db.refresh(env)
+    await _delete_managed_avatar_key_best_effort(old_avatar_key)
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
+    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+
+
+@router.post("/api/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+async def upload_environment_avatar(
+    environment_id: UUID,
+    file: UploadFile = File(...),
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    data = await file.read(_MAX_AGENT_AVATAR_BYTES + 1)
+    await file.close()
+    if len(data) > _MAX_AGENT_AVATAR_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Avatar image is too large")
+    detected = _detect_avatar_image(data)
+    if detected is None:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Avatar must be a PNG, JPEG, or WebP image",
+        )
+    content_type, extension = detected
+    key = f"{_AGENT_AVATAR_PREFIX}{uuid4().hex}{extension}"
+    old_avatar_key = env.avatar_asset_key
+    await file_store.put(key, data, content_type=content_type)
+    env.avatar_asset_key = key
+    env.avatar_preset = None
+    try:
+        await db.commit()
+    except Exception:
+        await _delete_managed_avatar_key_best_effort(key)
+        raise
+    await db.refresh(env)
+    await _delete_managed_avatar_key_best_effort(old_avatar_key)
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
     return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
 
@@ -506,6 +704,22 @@ async def get_environment_runtime_observed(
     )
 
 
+@router.get("/api/assets/{asset_key:path}", include_in_schema=False)
+async def get_public_asset(asset_key: str) -> Response:
+    if not _AGENT_AVATAR_KEY_RE.match(asset_key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found")
+    try:
+        data = await file_store.get(asset_key)
+    except FileNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found") from None
+    media_type = mimetypes.guess_type(asset_key)[0] or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 def _env_to_response(
     env: AgentEnvironment,
     hosted_state: HostedRuntimeState | None = None,
@@ -519,6 +733,10 @@ def _env_to_response(
     return EnvironmentResponse(
         id=str(env.id),
         machine_name=env.machine_name,
+        display_name=env.display_name,
+        avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
+        avatar_preset=env.avatar_preset,
+        sort_order=env.sort_order,
         agent_type=env.agent_type,
         agent_version=env.agent_version,
         os=env.os,
@@ -536,6 +754,40 @@ def _env_to_response(
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
     )
+
+
+def _detect_avatar_image(data: bytes) -> tuple[str, str] | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return None
+
+
+def _asset_url(key: str) -> str:
+    return f"{settings.public_api_url.rstrip('/')}/api/assets/{key}"
+
+
+async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
+    if not key or not _AGENT_AVATAR_KEY_RE.match(key):
+        return
+    try:
+        await file_store.delete(key)
+    except Exception:
+        log.warning("agent_avatar_delete_failed key=%s", key, exc_info=True)
+
+
+async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
+    value = (
+        await db.execute(
+            select(func.coalesce(func.max(AgentEnvironment.sort_order), -1) + 1).where(
+                AgentEnvironment.user_id == user_id
+            )
+        )
+    ).scalar_one()
+    return int(value)
 
 
 def _hosted_deployments_by_machine(

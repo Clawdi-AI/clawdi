@@ -14,6 +14,7 @@ export { ApiError, toastApiError } from "@/lib/api-errors";
 
 const API_URL = env.NEXT_PUBLIC_API_URL;
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
+type EnvironmentResponse = components["schemas"]["EnvironmentResponse"];
 
 function apiUrl(path: string): string {
 	const base = API_URL.endsWith("/") ? API_URL : `${API_URL}/`;
@@ -145,6 +146,31 @@ export function useSkillArchiveUploader() {
 				throw new ApiError(response.status, await apiErrorDetail(response));
 			}
 			return readJson<SkillUploadResponse>(response);
+		},
+		[getToken],
+	);
+}
+
+export function useAgentAvatarUploader() {
+	const { getToken } = useAuthToken();
+	return useCallback(
+		async (environmentId: string, file: File): Promise<EnvironmentResponse> => {
+			const form = new FormData();
+			form.append("file", file, file.name || "agent-avatar");
+
+			const headers = new Headers();
+			const token = await getToken();
+			if (token) headers.set("Authorization", `Bearer ${token}`);
+
+			const response = await fetchWithTimeout(
+				new Request(apiUrl(`/api/environments/${encodeURIComponent(environmentId)}/avatar`), {
+					method: "POST",
+					headers,
+					body: form,
+				}),
+			);
+			if (!response.ok) throw new ApiError(response.status, await apiErrorDetail(response));
+			return readJson<EnvironmentResponse>(response);
 		},
 		[getToken],
 	);

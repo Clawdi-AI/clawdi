@@ -24,6 +24,8 @@ dependencies = [
     "composio>=0.11",
     "composio-client>=1.39.0",
     "prometheus-client>=0.25.0",
+    "boto3>=1.35",
+    "botocore>=1.35",
 ]
 
 [project.optional-dependencies]

@@ -140,13 +140,6 @@ export function useBillingClient() {
 						body,
 					}),
 				),
-			renameDeployment: async (id: string, name: string) =>
-				unwrapDeploy(
-					await api.PATCH("/v2/deployments/{deployment_id}", {
-						params: { path: { deployment_id: id } },
-						body: { assistant_name: name, name },
-					}),
-				),
 			onboardAgent: async (id: string, agentType: string) => {
 				const runtime = runtimeAgentType(agentType);
 				return unwrapDeploy(

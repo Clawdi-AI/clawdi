@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 # Lone UTF-16 surrogates (U+D800..U+DFFF) are valid Python `str`
 # but cannot be encoded as UTF-8, so asyncpg rejects the bound
@@ -158,9 +158,37 @@ class EnvironmentCreatedResponse(BaseModel):
     id: str
 
 
+AgentAvatarPreset = Literal["aurora", "ember", "forest", "glacier", "mono", "sunrise"]
+
+
+class EnvironmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=120)
+    avatar_preset: AgentAvatarPreset | None = None
+
+    @field_validator("display_name", mode="after")
+    @classmethod
+    def _clean_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = _LONE_SURROGATE_RE.sub("", value).strip()
+        return cleaned or None
+
+
+class EnvironmentReorderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    environment_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
 class EnvironmentResponse(BaseModel):
     id: str
     machine_name: str
+    display_name: str | None = None
+    avatar_url: str | None = None
+    avatar_preset: AgentAvatarPreset | None = None
+    sort_order: int = 0
     agent_type: str
     agent_version: str | None
     os: str

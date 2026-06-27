@@ -645,6 +645,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/environments/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Reorder Environments */
+        patch: operations["reorder_environments_api_environments_order_patch"];
+        trace?: never;
+    };
     "/api/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -663,6 +680,25 @@ export interface paths {
          *     list query uses an outer-join so orphaned rows still render.
          */
         delete: operations["delete_environment_api_environments__environment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Environment */
+        patch: operations["update_environment_api_environments__environment_id__patch"];
+        trace?: never;
+    };
+    "/api/environments/{environment_id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Environment Avatar */
+        post: operations["upload_environment_avatar_api_environments__environment_id__avatar_post"];
+        /** Clear Environment Avatar */
+        delete: operations["clear_environment_avatar_api_environments__environment_id__avatar_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2699,6 +2735,11 @@ export interface components {
              */
             status: "reordered";
         };
+        /** Body_upload_environment_avatar_api_environments__environment_id__avatar_post */
+        Body_upload_environment_avatar_api_environments__environment_id__avatar_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_session_content_api_sessions__local_session_id__upload_post */
         Body_upload_session_content_api_sessions__local_session_id__upload_post: {
             /** File */
@@ -3636,12 +3677,28 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** EnvironmentReorderRequest */
+        EnvironmentReorderRequest: {
+            /** Environment Ids */
+            environment_ids: string[];
+        };
         /** EnvironmentResponse */
         EnvironmentResponse: {
             /** Id */
             id: string;
             /** Machine Name */
             machine_name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Avatar Url */
+            avatar_url?: string | null;
+            /** Avatar Preset */
+            avatar_preset?: ("aurora" | "ember" | "forest" | "glacier" | "mono" | "sunrise") | null;
+            /**
+             * Sort Order
+             * @default 0
+             */
+            sort_order: number;
             /** Agent Type */
             agent_type: string;
             /** Agent Version */
@@ -3680,6 +3737,13 @@ export interface components {
             hosted_deployment_id?: string | null;
             /** Default Project Id */
             default_project_id: string;
+        };
+        /** EnvironmentUpdate */
+        EnvironmentUpdate: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Avatar Preset */
+            avatar_preset?: ("aurora" | "ember" | "forest" | "glacier" | "mono" | "sunrise") | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -6658,6 +6722,39 @@ export interface operations {
             };
         };
     };
+    reorder_environments_api_environments_order_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentReorderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_environment_api_environments__environment_id__get: {
         parameters: {
             query?: never;
@@ -6706,6 +6803,107 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_environment_api_environments__environment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_environment_avatar_api_environments__environment_id__avatar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_environment_avatar_api_environments__environment_id__avatar_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_environment_avatar_api_environments__environment_id__avatar_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

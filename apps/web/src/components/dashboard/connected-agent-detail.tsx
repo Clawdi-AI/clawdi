@@ -8,6 +8,7 @@ import {
 	Layers,
 	MessageSquare,
 	Plus,
+	Settings,
 	Sparkles,
 	Trash2,
 	Unplug,
@@ -17,7 +18,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
+	agentTypeLabel,
+	cleanMachineName,
+} from "@/components/dashboard/agent-label";
+import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
 import {
 	isCustomProject,
@@ -48,7 +55,7 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type AgentTab = "overview" | "sessions" | "skills" | "projects";
+type AgentTab = "overview" | "sessions" | "skills" | "projects" | "settings";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
@@ -69,6 +76,10 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 	projects: {
 		icon: Layers,
 		description: "Agent Project, added Projects, and read order.",
+	},
+	settings: {
+		icon: Settings,
+		description: "Name and avatar used across the dashboard.",
 	},
 };
 
@@ -203,9 +214,7 @@ export function ConnectedAgentDetail({
 	const scopedSkillHref = (skill: SkillSummary) =>
 		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
 
-	const agentTitle = agent
-		? cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)
-		: null;
+	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	const disconnect = useMutation({
@@ -264,6 +273,7 @@ export function ConnectedAgentDetail({
 										<ActiveTabIcon className="size-4 text-muted-foreground" />
 									) : null}
 									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
+									<AgentSourceBadgeForEnvironment env={agent} compact />
 								</div>
 								{activeTabMeta.description ? (
 									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
@@ -372,6 +382,8 @@ export function ConnectedAgentDetail({
 								}}
 							/>
 						) : null}
+
+						{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
 					</section>
 				</>
 			) : null}

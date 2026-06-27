@@ -85,19 +85,6 @@ export function useSetAgentAiProvider() {
 	});
 }
 
-export function useRenameDeployment() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { id: string; name: string }) => client.renameDeployment(vars.id, vars.name),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			toast.success("Agent renamed");
-		},
-		onError: toastBillingError("Couldn't rename agent"),
-	});
-}
-
 export function useOnboardAgent() {
 	const client = useBillingClient();
 	const qc = useQueryClient();

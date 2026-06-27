@@ -165,7 +165,11 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			// AgentIcon already brands it and one deployment fans out to
 			// multiple tiles — using `d.name` here would print
 			// "openclaw-b5451f9c" on a Hermes tile.
-			name: runtimeDisplayName(runtime),
+			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
+			displayName: matchedEnv?.display_name ?? null,
+			avatarUrl: matchedEnv?.avatar_url ?? null,
+			avatarPreset: matchedEnv?.avatar_preset ?? null,
+			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
 			// Deployment slug as the secondary line lets users disambiguate
 			// when they have more than one hosted deployment. Mode info ("Daemon") is

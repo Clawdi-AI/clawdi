@@ -151,10 +151,16 @@ class Settings(BaseSettings):
     composio_api_key: str = ""
     composio_api_base_url: str = "https://backend.composio.dev"
 
-    # File store selection. `local` is the only implementation today; S3/R2
-    # plug in here without touching routes (see services/file_store.get_file_store).
+    # File store selection. `local` stores under FILE_STORE_LOCAL_PATH.
+    # `s3` uses S3-compatible object storage, including R2, via boto3.
     file_store_type: str = "local"
     file_store_local_path: str = "./data/files"
+    file_store_s3_bucket: str = ""
+    file_store_s3_region: str = "auto"
+    file_store_s3_endpoint_url: str = ""
+    file_store_s3_access_key_id: str = ""
+    file_store_s3_secret_access_key: str = ""
+    file_store_s3_force_path_style: bool = False
 
     # Memory embedder for the Builtin memory provider.
     # - "local": run paraphrase-multilingual-mpnet-base-v2 via fastembed

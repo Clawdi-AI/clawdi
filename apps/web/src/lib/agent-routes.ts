@@ -6,7 +6,8 @@ export type AgentSectionId =
 	| "console"
 	| "ai"
 	| "channels"
-	| "compute";
+	| "compute"
+	| "settings";
 
 export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
 export type AgentRouteQuery = string | URLSearchParams | RouteSearchParamsRecord | null | undefined;
@@ -16,6 +17,7 @@ export const CONNECTED_AGENT_SECTION_IDS = [
 	"sessions",
 	"skills",
 	"projects",
+	"settings",
 ] as const satisfies readonly AgentSectionId[];
 
 export const HOSTED_AGENT_SECTION_IDS = [
@@ -25,6 +27,7 @@ export const HOSTED_AGENT_SECTION_IDS = [
 	"ai",
 	"channels",
 	"compute",
+	"settings",
 ] as const satisfies readonly AgentSectionId[];
 
 const AGENT_SECTION_SEGMENTS = {
@@ -36,6 +39,7 @@ const AGENT_SECTION_SEGMENTS = {
 	ai: "model-provider",
 	channels: "channel-links",
 	compute: "compute",
+	settings: "settings",
 } as const satisfies Record<AgentSectionId, string>;
 
 const AGENT_SECTION_LABELS = {
@@ -47,6 +51,7 @@ const AGENT_SECTION_LABELS = {
 	ai: "Model Provider",
 	channels: "Channel Links",
 	compute: "Compute",
+	settings: "Settings",
 } as const satisfies Record<AgentSectionId, string>;
 
 const AGENT_SEGMENT_TO_SECTION = Object.fromEntries(
