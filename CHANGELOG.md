@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.26
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.26
+
+Package: `clawdi@0.12.10-beta.26`
+
+### Fixed
+
+- Fixed CLI auto-update for beta builds so beta daemons follow the npm `beta`
+  dist-tag instead of only checking `latest`.
+
 ## Clawdi CLI v0.12.10-beta.25
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.25
