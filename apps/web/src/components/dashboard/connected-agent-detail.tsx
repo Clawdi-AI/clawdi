@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
-import { type DetailNavItem, DetailNotFound, DetailPanel } from "@/components/detail/layout";
+import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -52,10 +52,7 @@ type AgentTab = "overview" | "sessions" | "skills" | "projects";
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
 
-const AGENT_DETAIL_NAV_META: Record<
-	AgentTab,
-	Omit<DetailNavItem<AgentTab>, "id" | "label" | "count">
-> = {
+const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 	overview: {
 		icon: Home,
 		description: "Status, inventory, and recent activity for this agent.",

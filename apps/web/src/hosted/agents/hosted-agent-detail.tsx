@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import type { DetailNavItem } from "@/components/detail/layout";
+import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Badge } from "@/components/ui/badge";
@@ -102,10 +102,7 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"compute",
 ]);
-const HOSTED_AGENT_NAV_META: Record<
-	HostedAgentTab,
-	Omit<DetailNavItem<HostedAgentTab>, "id" | "label" | "count">
-> = {
+const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
 		description: "Status, model, resources, and recent sessions.",
 		icon: Info,

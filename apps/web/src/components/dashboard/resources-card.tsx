@@ -1,16 +1,9 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import {
-	Brain,
-	CheckCircle2,
-	FolderKanban,
-	Key,
-	MessageSquare,
-	Plug,
-	Sparkles,
-} from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import Link from "next/link";
+import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,7 +15,6 @@ import {
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
-	type ProjectResourceId,
 	projectResourceCount,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
@@ -42,15 +34,6 @@ export type ProjectTypeCounts = {
 	agent: number;
 };
 
-const RESOURCE_ICONS = {
-	projects: FolderKanban,
-	skills: Sparkles,
-	vaults: Key,
-	sessions: MessageSquare,
-	memories: Brain,
-	connectors: Plug,
-} satisfies Record<ProjectResourceId, LucideIcon>;
-
 const FIRST_PATH_STEPS = ["Create Project", "Add Skills or Vaults"];
 
 function formatProjectTypeCounts(counts: ProjectTypeCounts) {
@@ -61,7 +44,7 @@ function buildResources(stats: DashboardStats, projectCount: number): Resource[]
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
 		return {
-			icon: RESOURCE_ICONS[id],
+			icon: PROJECT_RESOURCE_ICONS[id],
 			definition,
 			count: projectResourceCount(definition, stats, projectCount),
 		};

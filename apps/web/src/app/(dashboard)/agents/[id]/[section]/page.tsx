@@ -1,11 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { AgentDetailClient } from "@/app/(dashboard)/agents/[id]/agent-detail-client";
-import {
-	agentSectionHref,
-	agentSectionSegment,
-	hasAgentTabQuery,
-	parseAgentSectionSegment,
-} from "@/lib/agent-routes";
+import { agentSectionHref, hasAgentTabQuery, parseAgentSectionSegment } from "@/lib/agent-routes";
 
 type AgentSectionPageProps = {
 	params: Promise<{ id: string; section: string }>;
@@ -26,9 +21,7 @@ export default async function AgentSectionPage({ params, searchParams }: AgentSe
 	const section = parseAgentSectionSegment(decodedSection);
 	if (!section || section === "overview") notFound();
 
-	const canonicalSegment = agentSectionSegment(section);
-
-	if (decodedSection !== canonicalSegment || hasAgentTabQuery(query)) {
+	if (hasAgentTabQuery(query)) {
 		redirect(agentSectionHref(id, section, query));
 	}
 

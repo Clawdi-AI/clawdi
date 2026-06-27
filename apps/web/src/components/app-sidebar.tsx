@@ -4,12 +4,9 @@ import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpen,
-	Brain,
 	CircleHelp,
 	Cpu,
 	ExternalLink,
-	FolderKanban,
-	Key,
 	Layers,
 	LayoutDashboard,
 	Link2,
@@ -19,7 +16,6 @@ import {
 	MessageSquare,
 	MessagesSquare,
 	MonitorPlay,
-	Plug,
 	Search,
 	Settings,
 	Sparkles,
@@ -40,6 +36,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
+import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -77,7 +74,6 @@ import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
 	PROJECT_RESOURCE_GROUPS,
-	type ProjectResourceId,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
@@ -90,15 +86,6 @@ import {
 } from "@/lib/settings-routes";
 import { cn, relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
-
-const RESOURCE_ICONS = {
-	projects: FolderKanban,
-	skills: Sparkles,
-	vaults: Key,
-	sessions: MessageSquare,
-	memories: Brain,
-	connectors: Plug,
-} satisfies Record<ProjectResourceId, LucideIcon>;
 
 /** Tinted chip around a nav icon — the identity-palette hue carries the
  * "vivid, colourful" art direction into the app chrome itself, and each
@@ -308,7 +295,7 @@ function ConsoleResourcesSection({
 }) {
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
 		projectResourceDefinitionsForGroup(group.id).map((definition) => {
-			const Icon = RESOURCE_ICONS[definition.id];
+			const Icon = PROJECT_RESOURCE_ICONS[definition.id];
 			return {
 				id: definition.id,
 				label: definition.navLabel,

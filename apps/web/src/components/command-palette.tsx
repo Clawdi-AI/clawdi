@@ -3,18 +3,17 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	Brain,
-	FolderKanban,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
 	MessageSquare,
 	MessagesSquare,
-	Plug,
 	Settings,
 	Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -30,7 +29,6 @@ import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
 	PROJECT_RESOURCE_GROUPS,
-	type ProjectResourceId,
 	projectResourceDefinitionsForGroup,
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
@@ -42,15 +40,6 @@ import {
 } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useV2Access } from "@/lib/v2-access";
-
-const RESOURCE_ICONS = {
-	projects: FolderKanban,
-	skills: Sparkles,
-	vaults: Key,
-	sessions: MessageSquare,
-	memories: Brain,
-	connectors: Plug,
-} satisfies Record<ProjectResourceId, LucideIcon>;
 
 interface NavShortcut {
 	label: string;
@@ -72,7 +61,7 @@ const BASE_NAV_SHORTCUTS: NavShortcut[] = [
 		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
 			label: definition.navLabel,
 			href: definition.href,
-			icon: RESOURCE_ICONS[definition.id],
+			icon: PROJECT_RESOURCE_ICONS[definition.id],
 			subtitle: projectResourcePathLabel(definition),
 			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
 				definition.projectScope,

@@ -49,13 +49,9 @@ export function DetailPanel({ children, className }: { children: ReactNode; clas
 	);
 }
 
-export type DetailNavItem<T extends string> = {
-	id: T;
-	label: string;
+export type DetailSectionMeta = {
 	description?: string;
-	href?: string;
 	icon?: ComponentType<{ className?: string }>;
-	count?: ReactNode;
 };
 
 /** Standard "X not found" alert used by 404 / not-owned states. */
