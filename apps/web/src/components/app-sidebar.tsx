@@ -736,18 +736,27 @@ function agentHeaderMeta(
 	agent: SidebarEnvironment,
 	hosted: boolean,
 ): {
-	identity: string[];
-	activity: string[];
+	visibleLabel: string;
+	detailLabel: string;
+	activityLabel: string;
 } {
-	const identity = [
-		hosted ? `${agentTypeLabel(agent.agent_type)} runtime` : agentTypeLabel(agent.agent_type),
-		agentVersionLabel(agent.agent_version),
+	const source = hosted ? "Hosted" : "Connected";
+	const typeLabel = agentTypeLabel(agent.agent_type);
+	const version = agentVersionLabel(agent.agent_version);
+	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
+	const activityLabel = relativeSeen ? `last seen ${relativeSeen}` : "never seen";
+	const visible = [
+		source,
+		hosted ? `${typeLabel} runtime` : typeLabel,
 		agent.os?.trim() || null,
 	].filter((item): item is string => Boolean(item));
-	const activity = [
-		agent.last_seen_at ? `last seen ${relativeTime(agent.last_seen_at)}` : "never seen",
+	const detail = [
+		source,
+		hosted ? `${typeLabel} runtime` : typeLabel,
+		version,
+		agent.os?.trim() || null,
 	].filter((item): item is string => Boolean(item));
-	return { identity, activity };
+	return { visibleLabel: visible.join(" · "), detailLabel: detail.join(" · "), activityLabel };
 }
 
 function FocusHeader({
@@ -786,43 +795,32 @@ function FocusHeader({
 	const name = agentDisplayName(activeAgent);
 	const displayName = displayMachineName(name);
 	const hosted = showV2Features && isHostedAgentEnvironment(activeAgent);
-	const source = hosted ? "Hosted" : "Connected";
 	const meta = agentHeaderMeta(activeAgent, hosted);
-	const identityLabel = meta.identity.join(" · ");
-	const activityLabel = meta.activity.join(" · ");
+	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
 	return (
 		<div className="min-w-0 text-left">
-			<div className="flex min-w-0 items-center gap-2">
-				<div
-					className="min-w-0 flex-1 truncate text-sm font-semibold leading-5"
-					title={displayName}
-				>
-					{displayName}
-				</div>
-				<span className="shrink-0 text-[10px] font-medium leading-4 text-muted-foreground uppercase tracking-wide">
-					{source}
-				</span>
+			<div className="truncate text-sm font-semibold leading-5" title={title}>
+				{displayName}
 			</div>
-			{identityLabel ? (
+			{meta.visibleLabel ? (
 				<div
-					className="mt-0.5 truncate text-xs leading-4 text-muted-foreground"
-					title={identityLabel}
+					className="mt-1 truncate text-xs leading-4 text-muted-foreground"
+					title={meta.detailLabel}
 				>
-					{identityLabel}
+					{meta.visibleLabel}
 				</div>
 			) : null}
-			<div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4">
-				<span className="min-w-0 truncate text-muted-foreground" title={activityLabel}>
-					{activityLabel}
-				</span>
-				<span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
-					·
-				</span>
+			<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
 				<DaemonStatusBadge
 					env={activeAgent}
 					source={hosted ? "on-clawdi" : "self-managed"}
 					manageHref={hosted ? agentSectionHref(activeAgent.id, "compute") : undefined}
+					compact
+					tooltipDetail={meta.detailLabel}
 				/>
+				<span className="min-w-0 truncate text-muted-foreground" title={meta.activityLabel}>
+					{meta.activityLabel}
+				</span>
 			</div>
 		</div>
 	);
