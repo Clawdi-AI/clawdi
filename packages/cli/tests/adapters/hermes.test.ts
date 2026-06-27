@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -129,6 +129,28 @@ describe("HermesAdapter.collectSkills", () => {
 			name: "demo",
 		});
 		expect(skills[0]?.content).toContain("description: A nested demo skill");
+	});
+
+	it("skips archived dot-directories and invalid skill keys at every depth", async () => {
+		const skillsRoot = join(tmpHome, ".hermes", "skills");
+		mkdirSync(join(skillsRoot, ".archive", "old-skill"), { recursive: true });
+		writeFileSync(join(skillsRoot, ".archive", "old-skill", "SKILL.md"), "---\nname: old\n---\n");
+		mkdirSync(join(skillsRoot, "apple", ".archive", "old-reminders"), { recursive: true });
+		writeFileSync(
+			join(skillsRoot, "apple", ".archive", "old-reminders", "SKILL.md"),
+			"---\nname: old reminders\n---\n",
+		);
+		mkdirSync(join(skillsRoot, "bad key"), { recursive: true });
+		writeFileSync(join(skillsRoot, "bad key", "SKILL.md"), "---\nname: bad key\n---\n");
+		mkdirSync(join(skillsRoot, "apple", "_private"), { recursive: true });
+		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
+
+		const a = new HermesAdapter();
+		const skills = await a.collectSkills();
+		const keys = skills.map((s) => s.skillKey).sort();
+
+		expect(keys).toEqual(["core/demo"]);
+		expect(await a.listSkillKeys()).toEqual(["core/demo"]);
 	});
 
 	it("returns empty when skills dir is missing", async () => {

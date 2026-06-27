@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
+import { isValidSkillKey } from "../lib/skill-key";
 import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -54,6 +55,15 @@ function stateDbPath() {
 }
 function skillsDir() {
 	return join(hermesDir(), "skills");
+}
+
+function shouldSkipHermesSkillDir(entryName: string): boolean {
+	return entryName.startsWith(".") || SKIP_DIRS.has(entryName);
+}
+
+function hermesSkillKeyFromPath(fullPath: string): string | null {
+	const skillKey = relative(skillsDir(), fullPath).replaceAll("\\", "/");
+	return isValidSkillKey(skillKey) ? skillKey : null;
 }
 
 /**
@@ -210,7 +220,7 @@ export class HermesAdapter implements AgentAdapter {
 	private _scanSkillsDir(dir: string, results: RawSkill[]): void {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
+			if (shouldSkipHermesSkillDir(entry.name)) continue;
 			// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
 			// for the full reasoning. Hermes only filters at the top level
 			// — nested skills with the literal name "clawdi" deeper in the
@@ -221,7 +231,8 @@ export class HermesAdapter implements AgentAdapter {
 
 			if (existsSync(skillMd)) {
 				const content = readFileSync(skillMd, "utf-8");
-				const skillKey = relative(skillsDir(), fullPath);
+				const skillKey = hermesSkillKeyFromPath(fullPath);
+				if (!skillKey) continue;
 				const fileCount = readdirSync(fullPath, { recursive: true }).length;
 
 				results.push({
@@ -269,11 +280,12 @@ export class HermesAdapter implements AgentAdapter {
 		const walk = (dir: string): void => {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
-				if (SKIP_DIRS.has(entry.name)) continue;
+				if (shouldSkipHermesSkillDir(entry.name)) continue;
 				if (dir === skillsDir() && entry.name === "clawdi") continue;
 				const fullPath = join(dir, entry.name);
 				if (existsSync(join(fullPath, "SKILL.md"))) {
-					out.push(relative(skillsDir(), fullPath));
+					const skillKey = hermesSkillKeyFromPath(fullPath);
+					if (skillKey) out.push(skillKey);
 				} else {
 					walk(fullPath);
 				}
