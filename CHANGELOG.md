@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.25
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.25
+
+Package: `clawdi@0.12.10-beta.25`
+
+### Fixed
+
+- Fixed Hermes skill sync so archived dot-directories such as `.archive` are
+  ignored instead of being uploaded as invalid skill keys.
+
 ## Clawdi CLI v0.12.10-beta.0
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.0
