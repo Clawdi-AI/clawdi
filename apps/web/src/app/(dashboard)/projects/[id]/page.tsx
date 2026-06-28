@@ -546,7 +546,6 @@ export default function ProjectDetailPage() {
 									displayName={env.display_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
-									identitySeed={env.id}
 									size="sm"
 									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 									className="min-w-0 flex-1"
@@ -866,7 +865,6 @@ function UseProjectWithAgentDialog({
 											displayName={selectedEnv.display_name}
 											type={selectedEnv.agent_type}
 											avatarUrl={selectedEnv.avatar_url}
-											identitySeed={selectedEnv.id}
 											size="sm"
 											titleAdornment={<AgentSourceBadgeForEnvironment env={selectedEnv} compact />}
 											className="min-w-0 flex-1"
@@ -888,7 +886,6 @@ function UseProjectWithAgentDialog({
 												displayName={env.display_name}
 												type={env.agent_type}
 												avatarUrl={env.avatar_url}
-												identitySeed={env.id}
 												size="sm"
 												primary="machine"
 												titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}

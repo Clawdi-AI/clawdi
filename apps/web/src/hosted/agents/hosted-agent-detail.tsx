@@ -1136,7 +1136,7 @@ function ComputeSettingsSections({
 								<Fragment key={r.id}>
 									{index > 0 ? <Separator /> : null}
 									<div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
-										<AgentIcon agent={r.id} size="md" identitySeed={`${deployment.id}:${r.id}`} />
+										<AgentIcon agent={r.id} size="md" />
 										<div className="min-w-0 flex-1">
 											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
 												{r.label}

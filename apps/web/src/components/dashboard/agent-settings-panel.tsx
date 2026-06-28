@@ -10,7 +10,6 @@ import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
-	agentIdentitySeed,
 	agentTypeLabel,
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
@@ -206,12 +205,7 @@ export function AgentSettingsPanel({
 				onChange={onUploadChange}
 			/>
 			<div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
-				<AgentIcon
-					agent={agent.agent_type}
-					size="xl"
-					identitySeed={agentIdentitySeed(agent)}
-					avatarUrl={agent.avatar_url}
-				/>
+				<AgentIcon agent={agent.agent_type} size="xl" avatarUrl={agent.avatar_url} />
 				<div className="flex min-w-0 flex-col gap-1">
 					<div className="max-w-full truncate text-lg font-semibold leading-7">{displayName}</div>
 					<div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground sm:justify-start">
@@ -275,12 +269,7 @@ export function AgentSettingsPanel({
 			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
 					<div className="flex min-w-0 flex-1 items-center gap-3">
-						<AgentIcon
-							agent={agent.agent_type}
-							size="lg"
-							identitySeed={agentIdentitySeed(agent)}
-							avatarUrl={agent.avatar_url}
-						/>
+						<AgentIcon agent={agent.agent_type} size="lg" avatarUrl={agent.avatar_url} />
 						<div className="min-w-0">
 							<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
 							<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>

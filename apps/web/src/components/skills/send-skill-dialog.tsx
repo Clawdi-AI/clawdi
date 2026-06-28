@@ -285,7 +285,6 @@ function AgentTargetOption({ env }: { env: Environment }) {
 			displayName={env.display_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
-			identitySeed={env.id}
 			size="sm"
 			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 		/>

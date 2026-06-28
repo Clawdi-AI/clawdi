@@ -26,7 +26,7 @@ export function AgentInline({
 	if (!machine && !type) return null;
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
-			<AgentIcon agent={type} size="xs" identitySeed={machine || typeLabel} />
+			<AgentIcon agent={type} size="xs" />
 			<span className="font-medium text-foreground">{title}</span>
 			{subtitle ? <span>· {subtitle}</span> : null}
 		</span>
@@ -102,20 +102,6 @@ export function agentDisplayName(env: {
 	if (custom) return custom;
 	if (isHostedAgentEnvironment(env)) return agentTypeLabel(env.agent_type);
 	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
-}
-
-export function agentIdentitySeed(env: {
-	id?: string | null;
-	display_name?: string | null;
-	machine_name?: string | null;
-	agent_type?: string | null;
-}): string {
-	return (
-		env.id ||
-		cleanMachineName(env.display_name) ||
-		cleanMachineName(env.machine_name) ||
-		agentTypeLabel(env.agent_type)
-	);
 }
 
 export function agentSourceLabel(source: AgentSourceKind): string {
@@ -296,7 +282,6 @@ export function AgentLabel({
 	displayName,
 	type,
 	avatarUrl,
-	identitySeed,
 	size = "sm",
 	primary = "machine",
 	meta,
@@ -307,7 +292,6 @@ export function AgentLabel({
 	displayName?: string | null | undefined;
 	type: string | null | undefined;
 	avatarUrl?: string | null | undefined;
-	identitySeed?: string | null | undefined;
 	size?: AgentIconSize;
 	/** Which field is the H1 line. Defaults to "machine" — the
 	 * machine name is the user's own label; agent_type drops to
@@ -348,12 +332,7 @@ export function AgentLabel({
 
 	return (
 		<div className={cn("flex min-w-0 items-center gap-3", className)}>
-			<AgentIcon
-				agent={type}
-				size={size}
-				identitySeed={identitySeed ?? (cleanedDisplayName || cleanedMachine || typeLabel)}
-				avatarUrl={avatarUrl}
-			/>
+			<AgentIcon agent={type} size={size} avatarUrl={avatarUrl} />
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
 					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>

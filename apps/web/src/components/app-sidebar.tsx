@@ -49,7 +49,6 @@ import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
-	agentIdentitySeed,
 	agentSourceKindLabel,
 	agentTextLabel,
 	agentTypeLabel,
@@ -761,12 +760,7 @@ function SortableAgentRailItem({
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
-					<AgentIcon
-						agent={agent.agent_type}
-						size="rail"
-						identitySeed={agentIdentitySeed(agent)}
-						avatarUrl={agent.avatar_url}
-					/>
+					<AgentIcon agent={agent.agent_type} size="rail" avatarUrl={agent.avatar_url} />
 					{hosted ? (
 						<span
 							title="Clawdi Cloud agent"

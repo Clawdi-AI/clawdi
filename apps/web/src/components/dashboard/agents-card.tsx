@@ -8,7 +8,6 @@ import {
 	AgentLabel,
 	AgentSourceBadge,
 	agentDisplayName,
-	agentIdentitySeed,
 	cleanMachineName,
 	compareAgentEnvironments,
 	isHostedAgentEnvironment,
@@ -286,7 +285,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				displayName={tile.displayName}
 				type={tile.agentType}
 				avatarUrl={tile.avatarUrl}
-				identitySeed={tile.env ? agentIdentitySeed(tile.env) : tile.id}
 				size="lg"
 				meta={meta}
 				titleAdornment={sourcePill}

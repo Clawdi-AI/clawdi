@@ -179,7 +179,6 @@ export function AddAgentSetup() {
 									displayName={env.display_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
-									identitySeed={env.id}
 									size="sm"
 									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 									className="min-w-0 flex-1"
