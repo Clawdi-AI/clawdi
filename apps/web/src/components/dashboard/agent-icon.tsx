@@ -30,7 +30,7 @@ const SIZE_CLASS: Record<AgentIconSize, string> = {
 	sm: "size-5",
 	md: "size-6",
 	lg: "size-8",
-	rail: "size-7",
+	rail: "size-8",
 	xl: "size-12",
 };
 
@@ -39,7 +39,7 @@ const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
 	sm: "size-3",
 	md: "size-3.5",
 	lg: "size-4",
-	rail: "size-3.5",
+	rail: "size-4",
 	xl: "size-6",
 };
 

@@ -135,7 +135,7 @@ function RailIconChip({ tint, children }: { tint: string; children: React.ReactN
 	return (
 		<span
 			className={cn(
-				"flex size-7 shrink-0 items-center justify-center rounded-md border border-sidebar-border/70 [&>svg]:size-3.5",
+				"flex size-8 shrink-0 items-center justify-center rounded-md border border-sidebar-border/70 [&>svg]:size-4",
 				tint,
 			)}
 		>
@@ -646,7 +646,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-[4.25rem] w-full flex-col justify-center gap-1 rounded-xl px-1 py-1"
+					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-xl px-1 py-1"
 					: "size-11 justify-center rounded-2xl p-0",
 			)}
 		>
@@ -671,7 +671,7 @@ function RailFocusButton({
 		<div
 			className={cn(
 				"group/rail-focus relative flex items-center justify-center",
-				hasCaption ? "h-[4.25rem] w-full" : "size-11",
+				hasCaption ? "h-[4.5rem] w-full" : "size-11",
 			)}
 		>
 			<span
