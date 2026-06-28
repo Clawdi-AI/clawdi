@@ -66,6 +66,13 @@ Coolify may return resolved values for shared env rows instead of the literal
 parity, and cross-Application value digests rather than relying on the stored
 value text for shared rows.
 
+Some Coolify API tokens intentionally receive `null` for hidden shared env
+values. The audit treats that as an unreadable value, not as an empty runtime
+value. For the non-secret file-store selector, `.env.example` is the expected
+contract: if `FILE_STORE_TYPE` is hidden, the audit uses the manifest value to
+select the local-vs-S3 validation branch; if Coolify exposes a different value,
+the audit fails.
+
 `production-stack.json` also records source/deploy Application settings such as
 auto deploy, preview deploys, and container label behavior. Coolify's public
 Application API may not expose every setting on every installed version. The

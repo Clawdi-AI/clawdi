@@ -59,15 +59,20 @@ ENV_RESOLUTION_RETRY_DELAY_SECONDS = 3.0
 
 
 def parse_env_manifest(path: Path) -> set[str]:
-    keys: set[str] = set()
+    return set(parse_env_manifest_values(path))
+
+
+def parse_env_manifest_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key = line.split("=", 1)[0].strip()
+        key, value = line.split("=", 1)
+        key = key.strip()
         if key and (key[0].isalpha() or key[0] == "_"):
-            keys.add(key)
-    return keys
+            values[key] = value.strip()
+    return values
 
 
 def request_json(
@@ -126,6 +131,12 @@ def row_resolved_value(row: dict[str, Any]) -> object:
     return row.get("value")
 
 
+def shared_value_is_hidden(row: dict[str, Any]) -> bool:
+    return (
+        row.get("is_shared") is True and row.get("real_value") is None and row.get("value") is None
+    )
+
+
 def shared_value_is_pending(row: dict[str, Any]) -> bool:
     if row.get("is_shared") is not True:
         return False
@@ -133,7 +144,7 @@ def shared_value_is_pending(row: dict[str, Any]) -> bool:
     if real_value is not None:
         return isinstance(real_value, str) and looks_like_unresolved_shared_ref(real_value)
     value = row.get("value")
-    return value is None or (isinstance(value, str) and looks_like_unresolved_shared_ref(value))
+    return isinstance(value, str) and looks_like_unresolved_shared_ref(value)
 
 
 def env_resolution_pending(by_key: dict[str, dict[str, Any]]) -> bool:
@@ -182,20 +193,39 @@ def env_rows_by_key(rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any
 
 def file_store_required_non_empty_keys(
     by_key: dict[str, dict[str, Any]],
-) -> tuple[set[str], str | None]:
+    expected_file_store_type: str | None,
+) -> tuple[set[str], list[str]]:
     row = by_key.get("FILE_STORE_TYPE")
     if row is None:
-        return set(), None
-    kind_value = row_resolved_value(row) if row else None
+        return set(), []
+    kind_value = row_resolved_value(row)
+    expected_kind = normalize_literal_env_value(expected_file_store_type)
+    if isinstance(expected_kind, str):
+        expected_kind = expected_kind.strip().lower()
+
+    errors: list[str] = []
+    if shared_value_is_hidden(row) and expected_kind in {"local", "s3"}:
+        kind_value = expected_kind
+
     kind = str(kind_value or "").strip().lower()
     required = {"FILE_STORE_TYPE"}
+
+    if expected_kind and expected_kind not in {"local", "s3"}:
+        errors.append(
+            "env manifest FILE_STORE_TYPE must be 'local' or 's3', "
+            f"got {expected_file_store_type!r}"
+        )
+    if kind in {"local", "s3"} and expected_kind in {"local", "s3"} and kind != expected_kind:
+        errors.append(f"FILE_STORE_TYPE expected {expected_kind!r}, got {kind!r}")
+
     if kind == "local":
         required.add("FILE_STORE_LOCAL_PATH")
-        return required, None
+        return required, errors
     if kind == "s3":
         required.update(S3_REQUIRED_NON_EMPTY_KEYS)
-        return required, None
-    return required, f"FILE_STORE_TYPE must resolve to 'local' or 's3', got {kind_value!r}"
+        return required, errors
+    errors.append(f"FILE_STORE_TYPE must resolve to 'local' or 's3', got {kind_value!r}")
+    return required, errors
 
 
 def normalize_literal_env_value(value: object) -> str | None:
@@ -507,9 +537,11 @@ def audit_env(
     app_uuid: str,
     expected_shared_keys: set[str],
     expected_application_env: dict[str, str],
+    expected_env_values: dict[str, str] | None = None,
     env_resolution_attempts: int = 1,
     env_resolution_retry_delay_seconds: float = 0.0,
 ) -> tuple[list[str], dict[str, str]]:
+    expected_env_values = expected_env_values or {}
     attempts = max(env_resolution_attempts, 1)
     rows: list[dict[str, Any]] = []
     by_key: dict[str, dict[str, Any]] = {}
@@ -557,10 +589,13 @@ def audit_env(
                 errors.append(f"{app_name}: {key} does not resolve from shared variables")
 
     required_non_empty_keys = set(BASE_REQUIRED_NON_EMPTY_KEYS)
-    file_store_required, file_store_error = file_store_required_non_empty_keys(by_key)
+    file_store_required, file_store_errors = file_store_required_non_empty_keys(
+        by_key,
+        expected_file_store_type=expected_env_values.get("FILE_STORE_TYPE"),
+    )
     required_non_empty_keys.update(file_store_required)
-    if file_store_error:
-        errors.append(f"{app_name}: {file_store_error}")
+    for error in file_store_errors:
+        errors.append(f"{app_name}: {error}")
 
     for key in sorted(required_non_empty_keys & keys):
         value = row_resolved_value(by_key[key])
@@ -588,13 +623,14 @@ def audit_env(
         for key in sorted(expected_shared_keys & keys)
     }
     shared_refs = sum(1 for row in rows if row.get("is_shared") is True)
+    hidden_shared_refs = sum(1 for row in rows if shared_value_is_hidden(row))
     runtime_only = sum(
         1 for row in rows if row.get("is_runtime") is True and row.get("is_buildtime") is False
     )
     print(
         f"{app_name}: env_rows={len(rows)} keys={len(keys)} "
         f"shared_refs={shared_refs} app_env={len(expected_application_env)} "
-        f"runtime_only={runtime_only}"
+        f"runtime_only={runtime_only} hidden_shared_refs={hidden_shared_refs}"
     )
     return errors, digests
 
@@ -690,7 +726,8 @@ def main() -> int:
         raise SystemExit("--expect-commit must be a full 40-character git SHA.")
 
     stack = load_stack_manifest(args.stack_manifest)
-    expected_keys = parse_env_manifest(args.env_manifest)
+    expected_env_values = parse_env_manifest_values(args.env_manifest)
+    expected_keys = set(expected_env_values)
     missing_required_keys = REQUIRED_MANIFEST_KEYS - expected_keys
     if missing_required_keys:
         raise SystemExit(
@@ -754,6 +791,7 @@ def main() -> int:
             app_name=app_name,
             app_uuid=app_uuid,
             expected_shared_keys=expected_keys,
+            expected_env_values=expected_env_values,
             expected_application_env=application_env(expected),
             env_resolution_attempts=ENV_RESOLUTION_ATTEMPTS,
             env_resolution_retry_delay_seconds=ENV_RESOLUTION_RETRY_DELAY_SECONDS,
