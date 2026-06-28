@@ -212,8 +212,7 @@ def file_store_required_non_empty_keys(
 
     if expected_kind and expected_kind not in {"local", "s3"}:
         errors.append(
-            "env manifest FILE_STORE_TYPE must be 'local' or 's3', "
-            f"got {expected_file_store_type!r}"
+            f"expected FILE_STORE_TYPE must be 'local' or 's3', got {expected_file_store_type!r}"
         )
     if kind in {"local", "s3"} and expected_kind in {"local", "s3"} and kind != expected_kind:
         errors.append(f"FILE_STORE_TYPE expected {expected_kind!r}, got {kind!r}")
@@ -715,6 +714,12 @@ def main() -> int:
     parser.add_argument("--token", default=os.environ.get("COOLIFY_TOKEN"))
     parser.add_argument("--phase", choices=("api-only", "live", "none"), default="none")
     parser.add_argument("--expect-commit")
+    parser.add_argument(
+        "--expect-file-store-type",
+        choices=("local", "s3"),
+        default=os.environ.get("CLAWDI_EXPECT_FILE_STORE_TYPE"),
+        help=("Expected live FILE_STORE_TYPE. Defaults to FILE_STORE_TYPE in the env manifest."),
+    )
     parser.add_argument("--skip-deployment-commit-audit", action="store_true")
     args = parser.parse_args()
 
@@ -727,6 +732,8 @@ def main() -> int:
 
     stack = load_stack_manifest(args.stack_manifest)
     expected_env_values = parse_env_manifest_values(args.env_manifest)
+    if args.expect_file_store_type:
+        expected_env_values["FILE_STORE_TYPE"] = args.expect_file_store_type
     expected_keys = set(expected_env_values)
     missing_required_keys = REQUIRED_MANIFEST_KEYS - expected_keys
     if missing_required_keys:
