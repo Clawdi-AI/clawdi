@@ -646,7 +646,7 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-[4.25rem] w-full flex-col justify-center gap-1.5 rounded-xl px-1 py-1.5"
+					? "h-[4.25rem] w-full flex-col justify-center gap-1 rounded-xl px-1 py-1"
 					: "size-11 justify-center rounded-2xl p-0",
 			)}
 		>
@@ -655,7 +655,7 @@ function RailFocusButton({
 				{caption ? (
 					<span
 						className={cn(
-							"block max-w-16 truncate text-center text-[11px] leading-[13px] font-medium",
+							"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-[11px] leading-[13px] font-medium break-words",
 							active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
 						)}
 						title={label}
