@@ -6,7 +6,6 @@ import {
 	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
-	KeyboardSensor,
 	PointerSensor,
 	TouchSensor,
 	useSensor,
@@ -15,7 +14,6 @@ import {
 import {
 	arrayMove,
 	SortableContext,
-	sortableKeyboardCoordinates,
 	useSortable,
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -25,9 +23,7 @@ import {
 	BookOpen,
 	CircleHelp,
 	Cloud,
-	Cpu,
 	ExternalLink,
-	GripVertical,
 	Layers,
 	LayoutDashboard,
 	Link2,
@@ -43,7 +39,7 @@ import {
 	Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
 import { useEffect, useRef, useState } from "react";
@@ -208,14 +204,9 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Channels linked to this runtime",
 	},
 	{
-		id: "compute",
-		icon: Cpu,
-		tooltip: "Deployment compute and lifecycle",
-	},
-	{
 		id: "settings",
 		icon: Settings,
-		tooltip: "Name and avatar for this agent",
+		tooltip: "Profile, compute, and lifecycle",
 	},
 ];
 
@@ -227,7 +218,6 @@ const AGENT_SECTION_TINTS = {
 	console: "bg-identity-6-bg text-identity-6-fg",
 	ai: "bg-identity-2-bg text-identity-2-fg",
 	channels: "bg-identity-5-bg text-identity-5-fg",
-	compute: "bg-identity-8-bg text-identity-8-fg",
 	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
@@ -639,6 +629,8 @@ function RailFocusButton({
 	caption,
 	active,
 	onNavigate,
+	onPointerDown,
+	onTouchStart,
 	showTooltip = true,
 	children,
 }: {
@@ -646,7 +638,9 @@ function RailFocusButton({
 	label: string;
 	caption?: string;
 	active: boolean;
-	onNavigate?: () => void;
+	onNavigate?: React.MouseEventHandler<HTMLAnchorElement>;
+	onPointerDown?: React.PointerEventHandler<HTMLAnchorElement>;
+	onTouchStart?: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip?: boolean;
 	children: React.ReactNode;
 }) {
@@ -663,7 +657,14 @@ function RailFocusButton({
 					: "size-11 justify-center rounded-lg p-0",
 			)}
 		>
-			<Link href={href} draggable={false} onClick={onNavigate}>
+			<Link
+				href={href}
+				draggable={false}
+				onClick={onNavigate}
+				onPointerDown={onPointerDown}
+				onTouchStart={onTouchStart}
+				className="cursor-default"
+			>
 				{children}
 				{caption ? (
 					<span
@@ -716,16 +717,14 @@ function SortableAgentRailItem({
 	agent,
 	active,
 	onNavigate,
-	onPointerNavigate,
 	showTooltip,
 }: {
 	agent: SidebarEnvironment;
 	active: boolean;
-	onNavigate?: () => void;
-	onPointerNavigate: (href: string) => void;
+	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
 	showTooltip: boolean;
 }) {
-	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: agent.id,
 	});
 	const hosted = isHostedAgentEnvironment(agent);
@@ -737,6 +736,10 @@ function SortableAgentRailItem({
 		transition: isDragging ? undefined : transition,
 		zIndex: isDragging ? 20 : undefined,
 	};
+	const dragPointerDown: React.PointerEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onPointerDown ? (event) => listeners.onPointerDown?.(event) : undefined;
+	const dragTouchStart: React.TouchEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onTouchStart ? (event) => listeners.onTouchStart?.(event) : undefined;
 
 	return (
 		<SidebarMenuItem
@@ -753,15 +756,11 @@ function SortableAgentRailItem({
 				caption={caption}
 				active={active}
 				onNavigate={onNavigate}
+				onPointerDown={dragPointerDown}
+				onTouchStart={dragTouchStart}
 				showTooltip={showTooltip}
 			>
-				<span
-					className={cn(
-						"relative inline-flex rounded-md",
-						hosted &&
-							"bg-sky-50 p-0.5 ring-1 ring-sky-300/80 dark:bg-sky-500/10 dark:ring-sky-400/50",
-					)}
-				>
+				<span className="relative inline-flex rounded-md">
 					<AgentIcon
 						agent={agent.agent_type}
 						size="rail"
@@ -771,30 +770,13 @@ function SortableAgentRailItem({
 					{hosted ? (
 						<span
 							title="Clawdi Cloud agent"
-							className="-top-1 -right-1 pointer-events-none absolute z-20 flex h-3.5 min-w-3.5 items-center justify-center rounded-[4px] border border-sky-300 bg-sky-50 px-0.5 text-sky-700 shadow-sm dark:border-sky-500/40 dark:bg-sky-950 dark:text-sky-300"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-sidebar dark:bg-sky-400 dark:text-sky-950"
 						>
 							<Cloud aria-hidden="true" className="size-2.5" />
 						</span>
 					) : null}
 				</span>
 			</RailFocusButton>
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-hidden="true"
-				className="absolute inset-0 z-10 cursor-default rounded-lg bg-transparent transition-colors hover:bg-sidebar-accent/70 active:bg-sidebar-accent"
-				onClick={() => onPointerNavigate(href)}
-				{...listeners}
-			/>
-			<button
-				type="button"
-				className="pointer-events-none absolute top-0.5 right-0.5 z-20 flex size-5 cursor-grab items-center justify-center rounded-md bg-sidebar text-muted-foreground opacity-0 shadow-sm ring-1 ring-sidebar-border transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-				{...attributes}
-				{...listeners}
-				aria-label={`Reorder ${caption}`}
-			>
-				<GripVertical className="size-3" aria-hidden="true" />
-			</button>
 		</SidebarMenuItem>
 	);
 }
@@ -819,7 +801,6 @@ function FocusRailContent({
 	showTooltips?: boolean;
 }) {
 	const api = useApi();
-	const router = useRouter();
 	const queryClient = useQueryClient();
 	const suppressNextRailClick = useRef(false);
 	const draggingRailItem = useRef(false);
@@ -835,7 +816,6 @@ function FocusRailContent({
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
 		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
 	);
 	useEffect(() => {
 		if (!draggingRailItem.current) {
@@ -909,13 +889,13 @@ function FocusRailContent({
 			suppressNextRailClick.current = false;
 		}, 0);
 	};
-	const onRailAgentPointerNavigate = (href: string) => {
+	const onRailAgentNavigate: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
 		if (suppressNextRailClick.current) {
+			event.preventDefault();
 			suppressNextRailClick.current = false;
 			return;
 		}
 		onNavigate?.();
-		router.push(href);
 	};
 
 	return (
@@ -994,8 +974,7 @@ function FocusRailContent({
 									key={agent.id}
 									agent={agent}
 									active={activeAgentId === agent.id}
-									onNavigate={onNavigate}
-									onPointerNavigate={onRailAgentPointerNavigate}
+									onNavigate={onRailAgentNavigate}
 									showTooltip={showTooltips}
 								/>
 							))}
@@ -1105,7 +1084,7 @@ function FocusHeader({
 				<DaemonStatusBadge
 					env={activeAgent}
 					source={hosted ? "on-clawdi" : "self-managed"}
-					manageHref={hosted ? agentSectionHref(activeAgent.id, "compute") : undefined}
+					manageHref={hosted ? agentSectionHref(activeAgent.id, "settings") : undefined}
 					compact
 					tooltipDetail={meta.detailLabel}
 				/>

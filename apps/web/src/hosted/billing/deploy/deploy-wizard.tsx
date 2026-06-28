@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +52,7 @@ import { ConnectBotDialog } from "@/v2/channels/connect-bot-dialog";
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
+const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.form, "flex flex-col gap-6 px-4 lg:px-6");
 
 /** Personality presets accepted by hosted deployment onboarding. */
 const PERSONALITY_PRESETS = [
@@ -351,7 +353,7 @@ export function DeployWizard() {
 
 	if (plans.error) {
 		return (
-			<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an agent" />
 				<BillingError error={plans.error} onRetry={() => plans.refetch()} />
 			</div>
@@ -360,7 +362,7 @@ export function DeployWizard() {
 
 	if (plans.isLoading) {
 		return (
-			<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an agent" description="Preparing your compute options…" />
 				<Skeleton className="h-32 w-full rounded-lg" />
 				<Skeleton className="h-32 w-full rounded-lg" />
@@ -370,7 +372,7 @@ export function DeployWizard() {
 	}
 
 	return (
-		<div data-hosted="true" className="mx-auto w-full max-w-2xl space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
 			<PageHeader
 				title="Deploy an agent"
 				description="Pick a runtime and AI provider. Free uses one active slot per user; Performance uses one paid subscription per deployment."

@@ -25,6 +25,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -209,7 +210,7 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
-	const isSettingsTab = activeTab === "settings";
+	const contentWidthClass = connectedAgentContentWidthClass(activeTab);
 	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
 	const scopedSkillHref = (skill: SkillSummary) =>
 		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
@@ -218,11 +219,11 @@ export function ConnectedAgentDetail({
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-6 px-4 lg:px-6">
 			{error ? (
 				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<div className="space-y-3 py-2">
+				<div className="flex flex-col gap-3 py-2">
 					<Skeleton className="h-6 w-48" />
 					<Skeleton className="h-4 w-64" />
 				</div>
@@ -232,7 +233,7 @@ export function ConnectedAgentDetail({
 						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
 					</h1>
 
-					<section className={cn("space-y-4", isSettingsTab && "mx-auto w-full max-w-2xl")}>
+					<section className={cn("flex flex-col gap-4", contentWidthClass)}>
 						<div className="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<div className="flex items-center gap-2">
@@ -268,27 +269,23 @@ export function ConnectedAgentDetail({
 						) : null}
 
 						{activeTab === "overview" ? (
-							<div className="max-w-4xl">
-								<SessionFeed
-									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									showAgent={false}
-									sessionHref={(session) => scopedSessionHref(session.id)}
-								/>
-							</div>
+							<SessionFeed
+								sessions={(sessionsPage?.items ?? []).slice(0, 5)}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionHref={(session) => scopedSessionHref(session.id)}
+							/>
 						) : null}
 
 						{activeTab === "sessions" ? (
-							<div className="max-w-4xl">
-								<SessionFeed
-									sessions={sessionsPage?.items ?? []}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									showAgent={false}
-									sessionHref={(session) => scopedSessionHref(session.id)}
-								/>
-							</div>
+							<SessionFeed
+								sessions={sessionsPage?.items ?? []}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionHref={(session) => scopedSessionHref(session.id)}
+							/>
 						) : null}
 
 						{activeTab === "skills" ? (
@@ -334,6 +331,12 @@ function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
 	if (value === "overview") return "overview";
 	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
+}
+
+function connectedAgentContentWidthClass(tab: AgentTab): string {
+	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
+	if (tab === "skills") return CENTERED_PAGE_WIDTH_CLASS.wide;
+	return CENTERED_PAGE_WIDTH_CLASS.detail;
 }
 
 function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {

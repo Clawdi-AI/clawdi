@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowUpRight,
 	Cpu,
+	CreditCard,
 	ExternalLink,
 	Info,
 	Link2,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -27,10 +28,11 @@ import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
+import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,9 +63,19 @@ import type {
 	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
-import { useCheckout, usePlans } from "@/hosted/billing/hooks";
-import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import {
+	useCancelSubscription,
+	useCheckout,
+	usePlans,
+	usePortal,
+	useResumeSubscription,
+} from "@/hosted/billing/hooks";
+import {
+	planOffers,
+	selectOfferForTerm,
+	shortDate,
+} from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AgentSectionId,
@@ -76,7 +88,6 @@ import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { settingsQueryHref } from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
@@ -93,14 +104,7 @@ import {
 } from "@/v2/channels/channels-hooks";
 
 type Runtime = "openclaw" | "hermes";
-type HostedAgentTab =
-	| "overview"
-	| "console"
-	| "sessions"
-	| "ai"
-	| "channels"
-	| "compute"
-	| "settings";
+type HostedAgentTab = "overview" | "console" | "sessions" | "ai" | "channels" | "settings";
 const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
 	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
 	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
@@ -111,7 +115,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"sessions",
 	"ai",
 	"channels",
-	"compute",
 	"settings",
 ]);
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
@@ -135,12 +138,8 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		description: "Messaging links for this hosted agent.",
 		icon: Link2,
 	},
-	compute: {
-		description: "Plan, lifecycle, and runtime availability.",
-		icon: Cpu,
-	},
 	settings: {
-		description: "Name and avatar used across the dashboard.",
+		description: "Profile, compute, lifecycle, and runtime availability.",
 		icon: Settings,
 	},
 };
@@ -172,6 +171,15 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 		: null;
 }
 
+function hostedAgentContentWidthClass(tab: HostedAgentTab): string | null {
+	if (tab === "console") return null;
+	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
+	if (tab === "ai" || tab === "channels") {
+		return CENTERED_PAGE_WIDTH_CLASS.form;
+	}
+	return CENTERED_PAGE_WIDTH_CLASS.detail;
+}
+
 function LiveNote({ children }: { children: React.ReactNode }) {
 	return (
 		<p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -198,10 +206,8 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 /**
  * PER-RUNTIME agent detail. A compute (deployment) hosts 1–2 runtime agents
  * (OpenClaw / Hermes); each is a separate agent with its OWN env id, AI
- * provider binding, channel links, sessions, and console. This view is scoped
- * to a single `runtime` — its provider/channels/sessions/console — plus a
- * shared "Compute" tab (plan, lifecycle, runtime toggles, sibling-runtime link)
- * that operates on the whole deployment.
+ * provider binding, channel links, sessions, and console. Settings also includes
+ * the deployment-wide compute controls that affect every runtime.
  */
 export function HostedAgentDetail({
 	environmentId,
@@ -229,10 +235,11 @@ export function HostedAgentDetail({
 	});
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = RUNTIME_LABEL[runtime];
+	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
 	useSetAgentBreadcrumbTitle({
 		agentId: environmentId,
-		agentTitle: `${name} · ${runtimeLabel}`,
+		agentTitle,
 		section: activeTab,
 	});
 
@@ -253,8 +260,9 @@ export function HostedAgentDetail({
 
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
+	const ActiveTabIcon = activeNavItem.icon;
 	const isConsoleTab = activeTab === "console";
-	const isSettingsTab = activeTab === "settings";
+	const contentWidthClass = hostedAgentContentWidthClass(activeTab);
 
 	return (
 		<div
@@ -262,20 +270,22 @@ export function HostedAgentDetail({
 			className={
 				isConsoleTab
 					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: "space-y-6 px-4 lg:px-6"
+					: "flex flex-col gap-6 px-4 lg:px-6"
 			}
 		>
+			<h1 className="sr-only">{agentTitle}</h1>
 			<section
 				className={cn(
-					isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "space-y-4",
-					isSettingsTab && "mx-auto w-full max-w-2xl",
+					isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4",
+					contentWidthClass,
 				)}
 			>
 				{isConsoleTab ? null : (
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>
 							<div className="flex items-center gap-2">
-								<h1 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h1>
+								{ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+								<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
 								<AgentSourceBadge source="hosted" compact />
 							</div>
 							{activeNavItem.description ? (
@@ -306,35 +316,32 @@ export function HostedAgentDetail({
 				) : null}
 				{isConsoleTab ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
 				{activeTab === "sessions" ? (
-					<div className="max-w-4xl">
-						{sessions.error ? (
-							<ChannelError
-								error={sessions.error}
-								onRetry={() => sessions.refetch()}
-								title="Couldn't load sessions"
-							/>
-						) : (
-							<SessionFeed
-								sessions={sessions.data?.items ?? []}
-								isLoading={sessions.isLoading}
-								emptyMessage="No sessions from this agent yet."
-								showAgent={false}
-								sessionHref={(session) => scopedSessionHref(session.id)}
-							/>
-						)}
-					</div>
+					sessions.error ? (
+						<ChannelError
+							error={sessions.error}
+							onRetry={() => sessions.refetch()}
+							title="Couldn't load sessions"
+						/>
+					) : (
+						<SessionFeed
+							sessions={sessions.data?.items ?? []}
+							isLoading={sessions.isLoading}
+							emptyMessage="No sessions from this agent yet."
+							showAgent={false}
+							sessionHref={(session) => scopedSessionHref(session.id)}
+						/>
+					)
 				) : null}
 				{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
 				{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
-				{activeTab === "compute" ? (
-					<ComputeTab
+				{activeTab === "settings" ? (
+					<HostedAgentSettingsTab
+						environmentId={environmentId}
 						deployment={deployment}
 						isPerformance={isPerformance}
 						runtime={runtime}
-						billingSettingsHref={settingsQueryHref("billing-plan", searchParams)}
 					/>
 				) : null}
-				{activeTab === "settings" ? <AgentSettingsPanel environmentId={environmentId} /> : null}
 			</section>
 		</div>
 	);
@@ -374,7 +381,7 @@ function OverviewTab({
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
 	return (
-		<div className="space-y-5">
+		<div className="flex flex-col gap-5">
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 				<StatCard label="Status" value={statusLabel(deployment.status)} />
 				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
@@ -386,23 +393,21 @@ function OverviewTab({
 			</div>
 			<div>
 				<div className="mb-2 text-sm font-medium">Recent sessions</div>
-				<div className="max-w-4xl">
-					{sessionsError ? (
-						<ChannelError
-							error={sessionsError}
-							onRetry={onRetrySessions}
-							title="Couldn't load sessions"
-						/>
-					) : (
-						<SessionFeed
-							sessions={sessions}
-							isLoading={sessionsLoading}
-							emptyMessage="No sessions from this agent yet."
-							showAgent={false}
-							sessionHref={sessionHref}
-						/>
-					)}
-				</div>
+				{sessionsError ? (
+					<ChannelError
+						error={sessionsError}
+						onRetry={onRetrySessions}
+						title="Couldn't load sessions"
+					/>
+				) : (
+					<SessionFeed
+						sessions={sessions}
+						isLoading={sessionsLoading}
+						emptyMessage="No sessions from this agent yet."
+						showAgent={false}
+						sessionHref={sessionHref}
+					/>
+				)}
 			</div>
 		</div>
 	);
@@ -941,18 +946,39 @@ function LinkedChannelRow({
 	);
 }
 
-// ── Compute (shared across the runtimes on this deployment) ───────────────────
+// ── Settings / Compute ───────────────────────────────────────────────────────
 
-function ComputeTab({
+function HostedAgentSettingsTab({
+	environmentId,
 	deployment,
 	isPerformance,
 	runtime,
-	billingSettingsHref,
+}: {
+	environmentId: string;
+	deployment: HostedDeployment;
+	isPerformance: boolean;
+	runtime: Runtime;
+}) {
+	return (
+		<div className="flex flex-col gap-10">
+			<AgentSettingsPanel environmentId={environmentId} contained={false} />
+			<ComputeSettingsSections
+				deployment={deployment}
+				isPerformance={isPerformance}
+				runtime={runtime}
+			/>
+		</div>
+	);
+}
+
+function ComputeSettingsSections({
+	deployment,
+	isPerformance,
+	runtime,
 }: {
 	deployment: HostedDeployment;
 	isPerformance: boolean;
 	runtime: Runtime;
-	billingSettingsHref: string;
 }) {
 	const router = useRouter();
 	const lifecycle = useDeploymentLifecycle();
@@ -961,6 +987,9 @@ function ComputeTab({
 	const onboard = useOnboardAgent();
 	const plans = usePlans();
 	const checkout = useCheckout();
+	const portal = usePortal();
+	const cancelSubscription = useCancelSubscription();
+	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
 	const ci = deployment.config_info;
 	const canStop = STOPPABLE_STATUSES.has(deployment.status);
@@ -968,7 +997,9 @@ function ComputeTab({
 	const canRestart = RESTARTABLE_STATUSES.has(deployment.status);
 	const primaryLifecycleAction = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
-	const [term, setTerm] = useState(1);
+	const currentSubscription = deployment.compute_subscription;
+	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
+	const [term, setTerm] = useState(currentBillingTerm);
 	const configured = new Set(ci?.configured_agents ?? []);
 	const envs = ci?.clawdi_cloud_environments ?? {};
 	const enabledCount = RUNTIMES.filter((r) =>
@@ -981,6 +1012,20 @@ function ComputeTab({
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
+	const currentOffer = useMemo(
+		() => (perfPlan ? selectOfferForTerm(perfPlan, currentBillingTerm) : null),
+		[perfPlan, currentBillingTerm],
+	);
+	const subscriptionEndsAt =
+		currentSubscription?.cancel_at ?? currentSubscription?.current_period_end ?? null;
+	const subscriptionPeriodLabel = shortDate(subscriptionEndsAt);
+	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
+	const canChangeBillingTerm =
+		isPerformance &&
+		!!perfPlan &&
+		!!currentSubscription &&
+		!subscriptionCancelPending &&
+		term !== currentBillingTerm;
 	const canUpgrade = !isPerformance && deployment.upgrade_available;
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability..."
@@ -995,6 +1040,9 @@ function ComputeTab({
 		}
 		setTerm(perfOffers[0]?.billing_term_months ?? 1);
 	}, [perfOffers, term]);
+	useEffect(() => {
+		setTerm(currentBillingTerm);
+	}, [deployment.id, currentBillingTerm]);
 
 	async function startPerformanceUpgrade() {
 		if (!perfPlan) {
@@ -1027,95 +1075,159 @@ function ComputeTab({
 		}
 	}
 
-	return (
-		<div className="max-w-2xl space-y-4">
-			<p className="text-xs text-muted-foreground">
-				Compute is shared by every runtime in this deployment — changes here affect them all.
-			</p>
+	async function changeBillingTerm() {
+		if (!canChangeBillingTerm) return;
+		try {
+			const res = await portal.mutateAsync({
+				deployment_id: deployment.id,
+				flow: "subscription_update_confirm",
+				billing_term_months: term,
+			});
+			if (res.url || res.portal_url) {
+				window.location.href = res.url || res.portal_url;
+				return;
+			}
+			toast.message("Subscription update unavailable", {
+				description: res.message ?? "Please try again in a moment.",
+			});
+		} catch (error) {
+			toast.error("Couldn’t change billing term", { description: normalizeBillingError(error) });
+		}
+	}
 
-			{/* Runtimes on this compute — toggle + jump to the sibling runtime agent. */}
-			<Card data-hosted="true">
-				<CardContent className="space-y-3 pt-6">
-					<div className="text-sm font-medium">Runtimes on this compute</div>
+	async function cancelPerformanceSubscription() {
+		try {
+			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
+			toast.success("Subscription cancellation scheduled", {
+				description: res.current_period_end
+					? `Performance stays active until ${shortDate(res.current_period_end)}.`
+					: (res.message ?? undefined),
+			});
+		} catch (error) {
+			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
+		}
+	}
+
+	async function resumePerformanceSubscription() {
+		try {
+			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
+			toast.success("Subscription resumed");
+		} catch (error) {
+			toast.error("Couldn’t resume subscription", { description: normalizeBillingError(error) });
+		}
+	}
+
+	return (
+		<div className="flex flex-col gap-9">
+			<SettingsSection
+				title="Runtime availability"
+				description="Choose which runtimes are active on this hosted compute."
+			>
+				<div className="flex flex-col gap-4">
 					<LiveNote>Toggling a runtime adds/removes its program live — no restart.</LiveNote>
-					{RUNTIMES.map((r) => {
-						const enabled = r.id === "openclaw" ? !!ci?.enable_openclaw : !!ci?.enable_hermes;
-						const isConfigured = configured.has(r.id);
-						const isCurrent = r.id === runtime;
-						const siblingEnv = envs[r.id];
-						const blockedByPlan = !isPerformance && !enabled && enabledCount >= 1;
-						return (
-							<div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
-								<AgentIcon agent={r.id} size="md" identitySeed={`${deployment.id}:${r.id}`} />
-								<div className="min-w-0 flex-1">
-									<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-										{r.label}
-										{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
+					<div className="flex flex-col">
+						{RUNTIMES.map((r, index) => {
+							const enabled = r.id === "openclaw" ? !!ci?.enable_openclaw : !!ci?.enable_hermes;
+							const isConfigured = configured.has(r.id);
+							const isCurrent = r.id === runtime;
+							const siblingEnv = envs[r.id];
+							const blockedByPlan = !isPerformance && !enabled && enabledCount >= 1;
+							return (
+								<Fragment key={r.id}>
+									{index > 0 ? <Separator /> : null}
+									<div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
+										<AgentIcon agent={r.id} size="md" identitySeed={`${deployment.id}:${r.id}`} />
+										<div className="min-w-0 flex-1">
+											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+												{r.label}
+												{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
+											</div>
+											<div className="text-xs text-muted-foreground">{r.blurb}</div>
+										</div>
+										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+											{!isCurrent && enabled && siblingEnv ? (
+												<Button asChild variant="ghost" size="sm">
+													<Link href={agentSectionHref(siblingEnv)}>
+														Open
+														<ArrowUpRight className="size-3.5" />
+													</Link>
+												</Button>
+											) : null}
+											{isConfigured ? (
+												<Switch
+													checked={enabled}
+													disabled={
+														runtimePending || (enabled && enabledCount <= 1) || blockedByPlan
+													}
+													onCheckedChange={(next) =>
+														setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
+													}
+													aria-label={`Toggle ${r.label}`}
+												/>
+											) : (
+												<Button
+													size="sm"
+													variant="outline"
+													disabled={runtimePending || blockedByPlan}
+													title={
+														blockedByPlan
+															? "Performance compute is required to run both runtimes"
+															: undefined
+													}
+													onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
+												>
+													{onboard.isPending && onboard.variables?.agentType === r.id ? (
+														<Spinner className="size-3.5" />
+													) : (
+														<Plus className="size-3.5" />
+													)}
+													Add
+												</Button>
+											)}
+										</div>
 									</div>
-									<div className="text-xs text-muted-foreground">{r.blurb}</div>
-								</div>
-								{!isCurrent && enabled && siblingEnv ? (
-									<Button asChild variant="ghost" size="sm">
-										<Link href={agentSectionHref(siblingEnv)}>
-											Open
-											<ArrowUpRight className="size-3.5" />
-										</Link>
-									</Button>
-								) : null}
-								{isConfigured ? (
-									<Switch
-										checked={enabled}
-										disabled={runtimePending || (enabled && enabledCount <= 1) || blockedByPlan}
-										onCheckedChange={(next) =>
-											setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
-										}
-										aria-label={`Toggle ${r.label}`}
-									/>
-								) : (
-									<Button
-										size="sm"
-										variant="outline"
-										disabled={runtimePending || blockedByPlan}
-										title={
-											blockedByPlan
-												? "Performance compute is required to run both runtimes"
-												: undefined
-										}
-										onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
-									>
-										{onboard.isPending && onboard.variables?.agentType === r.id ? (
-											<Spinner className="size-3.5" />
-										) : (
-											<Plus className="size-3.5" />
-										)}
-										Add
-									</Button>
-								)}
-							</div>
-						);
-					})}
+								</Fragment>
+							);
+						})}
+					</div>
 					<p className="text-xs text-muted-foreground">
 						At least one runtime stays enabled. Running both at once needs Performance compute.
 					</p>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* Compute plan summary */}
-			<Card data-hosted="true">
-				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
-					<div>
-						<div className="flex items-center gap-1.5 text-sm font-medium">
+			<SettingsSection
+				title="Compute plan"
+				description="Compute is shared by every runtime in this deployment."
+			>
+				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+					<div className="min-w-0 flex-1">
+						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
 							{isPerformance ? <Zap className="size-4" /> : <Cpu className="size-4" />}
-							{isPerformance ? "Performance compute" : "Free compute"}
-							<Badge variant="outline" className="ml-1 font-normal text-muted-foreground">
+							<span>{isPerformance ? "Performance compute" : "Free compute"}</span>
+							<Badge variant="outline" className="font-normal text-muted-foreground">
 								Current
 							</Badge>
 						</div>
-						<p className="text-xs text-muted-foreground">
+						<p className="mt-1 text-xs text-muted-foreground">
 							Free uses one active slot per user. Performance uses one subscription per deployment.
 						</p>
+						{isPerformance && currentSubscription ? (
+							<p className="mt-2 text-xs text-muted-foreground">
+								{billingTermLabel(currentBillingTerm)}
+								{currentOffer ? (
+									<>
+										{" "}
+										· {formatCentsCompact(currentOffer.price_cents)}
+										{billingTermSuffix(currentBillingTerm)}
+									</>
+								) : null}
+								{" · "}
+								{subscriptionCancelPending ? "Ends" : "Renews"} {subscriptionPeriodLabel}
+							</p>
+						) : null}
 					</div>
-					<div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+					<div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end">
 						{!isPerformance && perfPlan ? (
 							<div className="text-xs text-muted-foreground sm:text-right">
 								<span className="font-medium text-foreground">
@@ -1134,7 +1246,7 @@ function ComputeTab({
 							</div>
 						) : null}
 						{!isPerformance ? (
-							<div className="flex w-full flex-col gap-2 sm:w-64">
+							<div className="flex w-full flex-col gap-2 lg:w-64">
 								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
 								<Button
 									size="sm"
@@ -1153,20 +1265,81 @@ function ComputeTab({
 								)}
 							</div>
 						) : (
-							<Button asChild variant="outline" size="sm">
-								<Link href={billingSettingsHref}>
-									Manage billing
-									<ArrowUpRight className="size-3.5" />
-								</Link>
-							</Button>
+							<div className="flex w-full flex-col gap-2 lg:w-72">
+								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={portal.isPending || !canChangeBillingTerm}
+									onClick={() => runAction(changeBillingTerm)}
+								>
+									{portal.isPending && portal.variables?.flow === "subscription_update_confirm" ? (
+										<Spinner className="size-3.5" />
+									) : (
+										<CreditCard className="size-3.5" />
+									)}
+									Change billing term
+								</Button>
+								{subscriptionCancelPending ? (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										disabled={resumeSubscription.isPending}
+										onClick={() => runAction(resumePerformanceSubscription)}
+									>
+										{resumeSubscription.isPending ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<RefreshCw className="size-3.5" />
+										)}
+										Resume subscription
+									</Button>
+								) : (
+									<ConfirmAction
+										title="Cancel Performance?"
+										description={
+											<p>
+												This deployment stays on Performance until {subscriptionPeriodLabel}, then
+												moves back to Free compute.
+											</p>
+										}
+										confirmLabel="Cancel at period end"
+										destructive
+										onConfirm={() => runAction(cancelPerformanceSubscription)}
+									>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={cancelSubscription.isPending}
+										>
+											{cancelSubscription.isPending ? (
+												<Spinner className="size-3.5" />
+											) : (
+												<Link2Off className="size-3.5" />
+											)}
+											Cancel subscription
+										</Button>
+									</ConfirmAction>
+								)}
+								{subscriptionCancelPending ? (
+									<p className="text-xs text-muted-foreground">
+										Billing term changes are unavailable while cancellation is scheduled.
+									</p>
+								) : null}
+							</div>
 						)}
 					</div>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* Lifecycle (whole deployment) */}
-			<Card data-hosted="true">
-				<CardContent className="flex flex-wrap gap-2 pt-6">
+			<SettingsSection
+				title="Lifecycle"
+				description="Restart, stop, or start the whole hosted compute."
+			>
+				<div className="flex flex-wrap gap-2.5">
 					<Button
 						variant="outline"
 						size="sm"
@@ -1191,14 +1364,15 @@ function ComputeTab({
 						) : null}
 						{canStop ? "Stop" : "Start"}
 					</Button>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			<Separator />
-
-			{/* Danger zone — deletes the whole compute (all its runtime agents). */}
-			<Card data-hosted="true" className="border-destructive/30">
-				<CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+			<SettingsSection
+				title="Danger zone"
+				description="Tear down this hosted compute and every runtime agent on it."
+				tone="danger"
+			>
+				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 					<div>
 						<div className="text-sm font-medium">Delete this compute</div>
 						<p className="text-xs text-muted-foreground">
@@ -1224,8 +1398,8 @@ function ComputeTab({
 							Delete
 						</Button>
 					</ConfirmAction>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 		</div>
 	);
 }

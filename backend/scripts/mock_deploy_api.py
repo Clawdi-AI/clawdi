@@ -313,8 +313,9 @@ async def plans() -> list[dict[str, Any]]:
             "slug": "compute_free",
             "name": "Free",
             "price_cents": 0,
-            "monthly_budget_credits": 1000,
             "points_per_usd": 100,
+            "signup_grant_credits": 500,
+            "subscription_grant_credits": 0,
             "vcpu": 1,
             "ram_gb": 2,
             "disk_size": 20,
@@ -325,8 +326,9 @@ async def plans() -> list[dict[str, Any]]:
             "slug": "compute_performance",
             "name": "Performance",
             "price_cents": 1900,
-            "monthly_budget_credits": 10000,
             "points_per_usd": 100,
+            "signup_grant_credits": 500,
+            "subscription_grant_credits": 500,
             "vcpu": 4,
             "ram_gb": 8,
             "disk_size": 80,
@@ -347,43 +349,6 @@ async def plans() -> list[dict[str, Any]]:
             ],
         },
     ]
-
-
-@app.get("/v2/subscription/current")
-async def subscription() -> dict[str, Any]:
-    now = _now()
-    return {
-        "id": "sub_dev_preview",
-        "plan_slug": "compute_performance",
-        "payment_provider": "mock",
-        "status": "active",
-        "current_period_start": _iso(now - timedelta(days=5)),
-        "current_period_end": _iso(now + timedelta(days=25)),
-        "budget_credits_total": 10000,
-        "budget_credits_used": 1234,
-        "addon_credits_remaining": 4200,
-        "points_per_usd": 100,
-        "use_addon_credits": True,
-        "cancel_at_period_end": False,
-        "billing_term_months": 1,
-        "billing_price_cents_snapshot": 1900,
-        "card_on_file": True,
-        "card_setup_required": False,
-        "card_brand": "visa",
-        "card_last4": "4242",
-        "card_exp_month": 12,
-        "card_exp_year": 2030,
-        "created_at": _iso(now - timedelta(days=5)),
-        "collection_method": "charge_automatically",
-        "entitled": True,
-        "activation_fee_amount_cents": 0,
-        "activation_fee_satisfied": True,
-    }
-
-
-@app.get("/v2/subscription/activation-fee")
-async def activation_fee() -> dict[str, Any]:
-    return {"amount_cents": 0, "satisfied": True}
 
 
 @app.post("/v2/subscription/checkout")

@@ -10,6 +10,8 @@ import {
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
+	ComputeSubscriptionCancelRequest,
+	ComputeSubscriptionResumeRequest,
 	DeployRequest,
 	PortalRequest,
 	WalletAutoReloadRequest,
@@ -21,8 +23,6 @@ export const billingKeys = {
 	wallet: ["billing", "wallet"] as const,
 	ledger: (limit: number) => ["billing", "ledger", limit] as const,
 	plans: ["billing", "plans"] as const,
-	subscription: ["billing", "subscription"] as const,
-	activationFee: ["billing", "activation-fee"] as const,
 	deployments: ["billing", "deployments"] as const,
 	me: ["billing", "me"] as const,
 	usage: ["billing", "usage"] as const,
@@ -116,22 +116,6 @@ export function usePlans() {
 	});
 }
 
-export function useSubscription() {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.subscription,
-		queryFn: () => client.getSubscription(),
-	});
-}
-
-export function useActivationFee() {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.activationFee,
-		queryFn: () => client.getActivationFee(),
-	});
-}
-
 export function useCheckout() {
 	const client = useBillingClient();
 	return useMutation({
@@ -139,13 +123,31 @@ export function useCheckout() {
 	});
 }
 
-export function usePortal() {
+export function useCancelSubscription() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (body: PortalRequest) => client.portal(body),
+		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.subscription });
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+		},
+	});
+}
+
+export function usePortal() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (body: PortalRequest) => client.portal(body),
+	});
+}
+
+export function useResumeSubscription() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 		},
 	});
 }

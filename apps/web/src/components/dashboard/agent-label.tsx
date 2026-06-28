@@ -146,23 +146,25 @@ export function AgentSourceBadge({
 	const Icon = source === "hosted" ? Cloud : Laptop;
 	const label = agentSourceLabel(source);
 	const title = agentSourceDescription(source);
+	const iconClass =
+		source === "hosted" ? "text-sky-600 dark:text-sky-300" : "text-muted-foreground";
 	return (
 		<span
 			title={title}
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap border font-medium leading-none",
+				"inline-flex shrink-0 items-center whitespace-nowrap border font-medium leading-none shadow-sm",
 				iconOnly
 					? "size-4 justify-center rounded-full p-0"
 					: compact
 						? "h-5 gap-1 rounded-full px-1.5 text-[11px]"
 						: "h-5 gap-1.5 rounded-full px-2 text-[11px]",
 				source === "hosted"
-					? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
-					: "border-border bg-muted/50 text-muted-foreground",
+					? "border-sky-200 bg-background text-foreground dark:border-sky-500/35 dark:bg-background/80"
+					: "border-border bg-background text-muted-foreground",
 				className,
 			)}
 		>
-			<Icon className={iconOnly ? "size-2.5" : "size-3.5"} />
+			<Icon className={cn(iconOnly ? "size-2.5" : "size-3.5", iconClass)} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
 		</span>
 	);

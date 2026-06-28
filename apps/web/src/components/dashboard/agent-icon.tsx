@@ -29,8 +29,17 @@ const SIZE_CLASS: Record<AgentIconSize, string> = {
 	sm: "size-5",
 	md: "size-6",
 	lg: "size-8",
-	rail: "size-8",
+	rail: "size-9",
 	xl: "size-12",
+};
+
+const SIZE_PX: Record<AgentIconSize, number> = {
+	xs: 16,
+	sm: 20,
+	md: 24,
+	lg: 32,
+	rail: 36,
+	xl: 48,
 };
 
 const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
@@ -38,7 +47,7 @@ const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
 	sm: "size-3",
 	md: "size-3.5",
 	lg: "size-4",
-	rail: "size-4",
+	rail: "size-4.5",
 	xl: "size-6",
 };
 
@@ -65,11 +74,14 @@ export function AgentIcon({
 }) {
 	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
 	const customAvatar = avatarUrl?.trim();
+	const pixelSize = SIZE_PX[size];
 	if (customAvatar) {
 		return (
 			<img
 				src={customAvatar}
 				alt=""
+				width={pixelSize}
+				height={pixelSize}
 				draggable={false}
 				className={cn(SIZE_CLASS[size], "shrink-0 bg-muted object-cover", radius, className)}
 			/>
@@ -80,6 +92,8 @@ export function AgentIcon({
 			<img
 				src={imageFile(agent)}
 				alt=""
+				width={pixelSize}
+				height={pixelSize}
 				draggable={false}
 				className={cn(SIZE_CLASS[size], "shrink-0 object-cover", radius, className)}
 			/>

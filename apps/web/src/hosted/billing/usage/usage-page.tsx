@@ -9,7 +9,7 @@ import { formatCredits } from "@/hosted/billing/format";
 import { useUsage } from "@/hosted/billing/hooks";
 import { shortDate } from "@/hosted/billing/subscription/subscription-utils";
 
-const DESCRIPTION = "AI Credit consumption across your agents.";
+const DESCRIPTION = "AI Credit consumption across your agents. Wallet credits do not reset.";
 
 export function UsagePage() {
 	const usage = useUsage();
@@ -54,7 +54,7 @@ export function UsagePage() {
 		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Usage"
-				description={`${shortDate(u.period_start)} – ${shortDate(u.period_end)}`}
+				description={`${shortDate(u.period_start)} – ${shortDate(u.period_end)} reporting window. Wallet credits do not reset.`}
 			/>
 
 			{/* Totals */}

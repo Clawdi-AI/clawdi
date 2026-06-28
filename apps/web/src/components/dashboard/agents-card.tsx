@@ -106,7 +106,7 @@ export interface AgentTile {
 	href: string;
 	external?: boolean;
 	/** Optional hosted remediation target passed into DaemonStatusBadge.
-	 * Points at the in-app hosted agent Compute tab, where lifecycle ops
+	 * Points at the in-app hosted agent settings page, where lifecycle ops
 	 * (Restart / Stop / Delete) live. Self-managed tiles leave this
 	 * undefined. */
 	manageHref?: string;

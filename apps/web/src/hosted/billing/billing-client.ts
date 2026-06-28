@@ -6,6 +6,8 @@ import { useMemo } from "react";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
+	ComputeSubscriptionCancelRequest,
+	ComputeSubscriptionResumeRequest,
 	DeployRequest,
 	PortalRequest,
 	RuntimeAgentType,
@@ -104,12 +106,14 @@ export function useBillingClient() {
 				unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
 			getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
-			getSubscription: async () => unwrapDeploy(await api.GET("/v2/subscription/current")),
-			getActivationFee: async () => unwrapDeploy(await api.GET("/v2/subscription/activation-fee")),
 			checkout: async (body: CheckoutRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/checkout", { body })),
+			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 			portal: async (body: PortalRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
+			resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/me")),

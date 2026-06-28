@@ -184,6 +184,190 @@ def test_audit_env_accepts_shared_manifest_and_application_env(monkeypatch):
     assert set(digests) == {"DATABASE_URL"}
 
 
+def test_audit_env_allows_empty_s3_values_while_file_store_is_local(monkeypatch):
+    module = _load_audit_module()
+    s3_keys = {
+        "FILE_STORE_S3_ACCESS_KEY_ID",
+        "FILE_STORE_S3_BUCKET",
+        "FILE_STORE_S3_ENDPOINT_URL",
+        "FILE_STORE_S3_FORCE_PATH_STYLE",
+        "FILE_STORE_S3_REGION",
+        "FILE_STORE_S3_SECRET_ACCESS_KEY",
+    }
+    rows = [
+        {
+            "key": "FILE_STORE_TYPE",
+            "value": "{{environment.FILE_STORE_TYPE}}",
+            "real_value": "local",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_LOCAL_PATH",
+            "value": "{{environment.FILE_STORE_LOCAL_PATH}}",
+            "real_value": "/data/files",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+    ]
+    rows.extend(
+        {
+            "key": key,
+            "value": f"{{{{environment.{key}}}}}",
+            "real_value": "",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        }
+        for key in sorted(s3_keys)
+    )
+
+    def fake_request_json(**_kwargs):
+        return {"data": rows}
+
+    monkeypatch.setattr(module, "request_json", fake_request_json)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE", "FILE_STORE_LOCAL_PATH"} | s3_keys,
+        expected_application_env={},
+    )
+
+    assert errors == []
+
+
+def test_audit_env_requires_s3_values_when_file_store_is_s3(monkeypatch):
+    module = _load_audit_module()
+    rows = [
+        {
+            "key": "FILE_STORE_TYPE",
+            "value": "{{environment.FILE_STORE_TYPE}}",
+            "real_value": "s3",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_LOCAL_PATH",
+            "value": "{{environment.FILE_STORE_LOCAL_PATH}}",
+            "real_value": "",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_S3_BUCKET",
+            "value": "{{environment.FILE_STORE_S3_BUCKET}}",
+            "real_value": "clawdi",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_S3_ACCESS_KEY_ID",
+            "value": "{{environment.FILE_STORE_S3_ACCESS_KEY_ID}}",
+            "real_value": "",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_S3_ENDPOINT_URL",
+            "value": "{{environment.FILE_STORE_S3_ENDPOINT_URL}}",
+            "real_value": "https://example.r2.cloudflarestorage.com",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_S3_REGION",
+            "value": "{{environment.FILE_STORE_S3_REGION}}",
+            "real_value": "auto",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_S3_SECRET_ACCESS_KEY",
+            "value": "{{environment.FILE_STORE_S3_SECRET_ACCESS_KEY}}",
+            "real_value": "",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+    ]
+
+    def fake_request_json(**_kwargs):
+        return {"data": rows}
+
+    monkeypatch.setattr(module, "request_json", fake_request_json)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={str(row["key"]) for row in rows},
+        expected_application_env={},
+    )
+
+    assert errors == [
+        "clawdi-backend: FILE_STORE_S3_ACCESS_KEY_ID resolves to an empty value",
+        "clawdi-backend: FILE_STORE_S3_SECRET_ACCESS_KEY resolves to an empty value",
+    ]
+
+
+def test_audit_env_rejects_unresolved_shared_references(monkeypatch):
+    module = _load_audit_module()
+
+    def fake_request_json(**_kwargs):
+        return {
+            "data": [
+                {
+                    "key": "FILE_STORE_TYPE",
+                    "value": "{{environment.FILE_STORE_TYPE}}",
+                    "real_value": "{{environment.FILE_STORE_TYPE}}",
+                    "is_preview": False,
+                    "is_shared": True,
+                    "is_runtime": True,
+                    "is_buildtime": False,
+                },
+            ]
+        }
+
+    monkeypatch.setattr(module, "request_json", fake_request_json)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE"},
+        expected_application_env={},
+    )
+
+    assert errors == [
+        "clawdi-backend: FILE_STORE_TYPE does not resolve from shared variables",
+        "clawdi-backend: FILE_STORE_TYPE must resolve to 'local' or 's3', got "
+        "'{{environment.FILE_STORE_TYPE}}'",
+    ]
+
+
 def test_audit_env_rejects_wrong_application_env_value(monkeypatch):
     module = _load_audit_module()
 

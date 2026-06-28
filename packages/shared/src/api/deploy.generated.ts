@@ -160,23 +160,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/subscription/activation-fee": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** V2 Activation Fee Status */
-        get: operations["v2_activation_fee_status_v2_subscription_activation_fee_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/subscription/checkout": {
         parameters: {
             query?: never;
@@ -194,17 +177,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/subscription/current": {
+    "/v2/subscription/cancel": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Current V2 Subscription */
-        get: operations["current_v2_subscription_v2_subscription_current_get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Cancel V2 Subscription */
+        post: operations["cancel_v2_subscription_v2_subscription_cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -239,6 +222,23 @@ export interface paths {
         put?: never;
         /** Portal V2 Subscription */
         post: operations["portal_v2_subscription_v2_subscription_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume V2 Subscription */
+        post: operations["resume_v2_subscription_v2_subscription_resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -395,19 +395,6 @@ export interface components {
             evm_wallet_address?: string | null;
             capabilities: components["schemas"]["V1UserProductCapabilities"];
         };
-        /** V2ActivationFeeStatusResponse */
-        V2ActivationFeeStatusResponse: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
-            /**
-             * Satisfied
-             * @default false
-             */
-            satisfied: boolean;
-        };
         /** V2AiProviderBindingInfo */
         V2AiProviderBindingInfo: {
             /** Provider Id */
@@ -472,6 +459,49 @@ export interface components {
         V2ComputePortalRequest: {
             /** Locale */
             locale?: string | null;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Billing Term Months */
+            billing_term_months?: number | null;
+            /**
+             * Flow
+             * @default billing_portal
+             * @enum {string}
+             */
+            flow: "billing_portal" | "subscription_update_confirm";
+        };
+        /** V2ComputeSubscriptionActionResponse */
+        V2ComputeSubscriptionActionResponse: {
+            /** Status */
+            status: string;
+            /** Billing Term Months */
+            billing_term_months: number;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /** Cancel At */
+            cancel_at?: string | null;
+            /** Message */
+            message?: string | null;
+        };
+        /** V2ComputeSubscriptionCancelRequest */
+        V2ComputeSubscriptionCancelRequest: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+        };
+        /** V2ComputeSubscriptionResumeRequest */
+        V2ComputeSubscriptionResumeRequest: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
         };
         /** V2DeploymentDeleteResponse */
         V2DeploymentDeleteResponse: {
@@ -488,6 +518,31 @@ export interface components {
             upgrade_task_id?: string | null;
             /** Upgrade Status */
             upgrade_status?: string | null;
+        };
+        /** V2HostedComputeSubscriptionInfo */
+        V2HostedComputeSubscriptionInfo: {
+            /** Status */
+            status: string;
+            /** Billing Term Months */
+            billing_term_months: number;
+            /** Price Cents */
+            price_cents?: number | null;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /**
+             * Cancel At Period End
+             * @default false
+             */
+            cancel_at_period_end: boolean;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /** Cancel At */
+            cancel_at?: string | null;
+            /** Canceled At */
+            canceled_at?: string | null;
         };
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
@@ -708,6 +763,7 @@ export interface components {
             /** Hermes Ui Url */
             hermes_ui_url?: string | null;
             config_info?: components["schemas"]["V2HostedDeploymentDetailsInfo"] | null;
+            compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
             /**
              * Created At
              * Format: date-time
@@ -790,10 +846,18 @@ export interface components {
             name: string;
             /** Price Cents */
             price_cents: number;
-            /** Monthly Budget Credits */
-            monthly_budget_credits: number;
             /** Points Per Usd */
             points_per_usd: number;
+            /**
+             * Signup Grant Credits
+             * @default 0
+             */
+            signup_grant_credits: number;
+            /**
+             * Subscription Grant Credits
+             * @default 0
+             */
+            subscription_grant_credits: number;
             /** Vcpu */
             vcpu: number;
             /** Ram Gb */
@@ -850,114 +914,6 @@ export interface components {
             language?: string | null;
             /** Timezone */
             timezone?: string | null;
-        };
-        /** V2SubscriptionResponse */
-        V2SubscriptionResponse: {
-            /**
-             * Id
-             * Format: sqid
-             * @example sub_K8fJ3pQm
-             */
-            id: string;
-            /** Plan Slug */
-            plan_slug: string;
-            /** Payment Provider */
-            payment_provider?: string | null;
-            /** Status */
-            status: string;
-            /** Current Period Start */
-            current_period_start: string | null;
-            /** Current Period End */
-            current_period_end: string | null;
-            /** Budget Credits Total */
-            budget_credits_total: number;
-            /** Budget Credits Used */
-            budget_credits_used?: number;
-            /** Addon Credits Remaining */
-            addon_credits_remaining: number;
-            /** Points Per Usd */
-            points_per_usd: number;
-            /**
-             * Use Addon Credits
-             * @default true
-             */
-            use_addon_credits: boolean;
-            /** Cancel At Period End */
-            cancel_at_period_end: boolean;
-            /**
-             * Billing Term Months
-             * @default 1
-             */
-            billing_term_months: number;
-            /** Billing Price Cents Snapshot */
-            billing_price_cents_snapshot?: number | null;
-            /** Pending Billing Term Months */
-            pending_billing_term_months?: number | null;
-            /** Pending Billing Term Effective At */
-            pending_billing_term_effective_at?: string | null;
-            /** Pending Downgrade Plan Slug */
-            pending_downgrade_plan_slug?: string | null;
-            /** Pending Downgrade Effective At */
-            pending_downgrade_effective_at?: string | null;
-            /**
-             * Card On File
-             * @default false
-             */
-            card_on_file: boolean;
-            /**
-             * Card Setup Required
-             * @default false
-             */
-            card_setup_required: boolean;
-            /** Card Brand */
-            card_brand?: string | null;
-            /** Card Last4 */
-            card_last4?: string | null;
-            /** Card Exp Month */
-            card_exp_month?: number | null;
-            /** Card Exp Year */
-            card_exp_year?: number | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Collection Method
-             * @default charge_automatically
-             */
-            collection_method: string;
-            /**
-             * Entitled
-             * @default true
-             */
-            entitled: boolean;
-            /**
-             * Activation Fee Amount Cents
-             * @default 0
-             */
-            activation_fee_amount_cents: number;
-            /**
-             * Activation Fee Satisfied
-             * @default false
-             */
-            activation_fee_satisfied: boolean;
-            /** Pending Collection Method */
-            pending_collection_method?: string | null;
-            /** Pending Collection Method Effective At */
-            pending_collection_method_effective_at?: string | null;
-            /** Entitled Until */
-            entitled_until?: string | null;
-            /** Contract Source */
-            contract_source?: string | null;
-            /** Prepaid Ends At */
-            prepaid_ends_at?: string | null;
-            /** Allowance Period Start */
-            allowance_period_start?: string | null;
-            /** Allowance Period End */
-            allowance_period_end?: string | null;
-            /** Next Allowance Reset At */
-            next_allowance_reset_at?: string | null;
         };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
@@ -1449,26 +1405,6 @@ export interface operations {
             };
         };
     };
-    v2_activation_fee_status_v2_subscription_activation_fee_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2ActivationFeeStatusResponse"];
-                };
-            };
-        };
-    };
     checkout_v2_subscription_v2_subscription_checkout_post: {
         parameters: {
             query?: never;
@@ -1502,14 +1438,18 @@ export interface operations {
             };
         };
     };
-    current_v2_subscription_v2_subscription_current_get: {
+    cancel_v2_subscription_v2_subscription_cancel_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2ComputeSubscriptionCancelRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1517,7 +1457,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2SubscriptionResponse"] | null;
+                    "application/json": components["schemas"]["V2ComputeSubscriptionActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1562,6 +1511,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2PortalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_v2_subscription_v2_subscription_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2ComputeSubscriptionResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeSubscriptionActionResponse"];
                 };
             };
             /** @description Validation Error */

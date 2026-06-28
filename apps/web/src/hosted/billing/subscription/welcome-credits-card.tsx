@@ -5,22 +5,28 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { formatCredits } from "@/hosted/billing/format";
-import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import type { Plan } from "@/hosted/billing/contracts";
+import { creditsToUsd } from "@/hosted/billing/format";
+import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 
 /**
- * Pure-$0 activation + $5 signup-grant feedback.
+ * Pure-$0 welcome + signup-grant feedback.
  *
- * Renders for a freshly-activated wallet user who hasn't deployed yet: it
- * confirms the $5 AI Credits grant landed (reading the `grant_signup` ledger
- * row) and points them at the deploy wizard. Returns null once the user has an
+ * Renders for a new wallet user who hasn't deployed yet: it
+ * confirms the AI Credits grant landed (reading the `grant_signup` ledger row)
+ * and points them at the deploy wizard. Returns null once the user has an
  * agent or when the v2 billing reads are unavailable.
  */
-export function ActivationCard() {
+function signupGrantCredits(plans: Plan[] | undefined): number {
+	return Math.max(0, ...(plans ?? []).map((plan) => plan.signup_grant_credits ?? 0));
+}
+
+export function WelcomeCreditsCard() {
 	const router = useRouter();
 	const wallet = useWallet();
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
+	const plans = usePlans();
 
 	// Past onboarding — they already have at least one agent.
 	if ((deployments.data?.length ?? 0) > 0) return null;
@@ -30,7 +36,12 @@ export function ActivationCard() {
 	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
 	const grantApplied = grant?.status === "applied";
 	const grantPending = grant?.status === "pending";
-	const grantCredits = grant ? formatCredits(Math.abs(grant.credits_amount)) : "$5 in credits";
+	const configuredSignupGrantCredits = signupGrantCredits(plans.data);
+	const grantCredits = grant
+		? creditsToUsd(Math.abs(grant.credits_amount), wallet.data.points_per_usd)
+		: configuredSignupGrantCredits > 0
+			? creditsToUsd(configuredSignupGrantCredits, wallet.data.points_per_usd)
+			: null;
 
 	return (
 		<Card data-hosted="true" className="border-primary/30 bg-primary/5">
@@ -42,7 +53,7 @@ export function ActivationCard() {
 					<div className="space-y-1">
 						<p className="font-medium">
 							{grantApplied
-								? `You’re all set — ${grantCredits} added to your wallet`
+								? `You’re all set — ${grantCredits} in AI Credits added to your wallet`
 								: grantPending
 									? "Adding your welcome credits…"
 									: "Welcome to Clawdi"}
@@ -51,7 +62,9 @@ export function ActivationCard() {
 							{grantApplied
 								? "Your Free compute slot is ready. Deploy your first agent — managed AI is on us to start."
 								: grantPending
-									? "Your $5 in AI Credits is on the way. You can deploy now; it’ll be ready in a moment."
+									? grantCredits
+										? `Your ${grantCredits} in AI Credits is on the way. You can deploy now; it’ll be ready in a moment.`
+										: "Your welcome credits are on the way. You can deploy now; they’ll be ready in a moment."
 									: "Your Free compute slot is ready at $0. Deploy your first agent to get going."}
 						</p>
 					</div>

@@ -6,7 +6,6 @@ export type AgentSectionId =
 	| "console"
 	| "ai"
 	| "channels"
-	| "compute"
 	| "settings";
 
 export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
@@ -26,7 +25,6 @@ export const HOSTED_AGENT_SECTION_IDS = [
 	"sessions",
 	"ai",
 	"channels",
-	"compute",
 	"settings",
 ] as const satisfies readonly AgentSectionId[];
 
@@ -38,7 +36,6 @@ const AGENT_SECTION_SEGMENTS = {
 	console: "console",
 	ai: "model-provider",
 	channels: "channel-links",
-	compute: "compute",
 	settings: "settings",
 } as const satisfies Record<AgentSectionId, string>;
 
@@ -50,7 +47,6 @@ const AGENT_SECTION_LABELS = {
 	console: "Runtime Console",
 	ai: "Model Provider",
 	channels: "Channel Links",
-	compute: "Compute",
 	settings: "Settings",
 } as const satisfies Record<AgentSectionId, string>;
 

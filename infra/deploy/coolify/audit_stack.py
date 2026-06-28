@@ -20,7 +20,7 @@ ANGLE_BRACKET_PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
 EXPECT_COMMIT_PLACEHOLDER = "EXPECT_COMMIT"
 CONFIGURE_IN_COOLIFY_PLACEHOLDER = "CONFIGURE_IN_COOLIFY"
 
-REQUIRED_NON_EMPTY_KEYS = {
+BASE_REQUIRED_NON_EMPTY_KEYS = {
     "ADMIN_API_KEY",
     "CLERK_PEM_PUBLIC_KEY",
     "CORS_ORIGINS",
@@ -30,13 +30,29 @@ REQUIRED_NON_EMPTY_KEYS = {
     "DB_POOL_TIMEOUT",
     "ENCRYPTION_KEY",
     "ENVIRONMENT",
-    "FILE_STORE_LOCAL_PATH",
-    "FILE_STORE_TYPE",
     "PUBLIC_API_URL",
     "TRUST_FORWARDED_FOR",
     "VAULT_ENCRYPTION_KEY",
     "WEB_ORIGIN",
 }
+FILE_STORE_MANIFEST_KEYS = {
+    "FILE_STORE_LOCAL_PATH",
+    "FILE_STORE_S3_ACCESS_KEY_ID",
+    "FILE_STORE_S3_BUCKET",
+    "FILE_STORE_S3_ENDPOINT_URL",
+    "FILE_STORE_S3_FORCE_PATH_STYLE",
+    "FILE_STORE_S3_REGION",
+    "FILE_STORE_S3_SECRET_ACCESS_KEY",
+    "FILE_STORE_TYPE",
+}
+S3_REQUIRED_NON_EMPTY_KEYS = {
+    "FILE_STORE_S3_ACCESS_KEY_ID",
+    "FILE_STORE_S3_BUCKET",
+    "FILE_STORE_S3_ENDPOINT_URL",
+    "FILE_STORE_S3_REGION",
+    "FILE_STORE_S3_SECRET_ACCESS_KEY",
+}
+REQUIRED_MANIFEST_KEYS = BASE_REQUIRED_NON_EMPTY_KEYS | FILE_STORE_MANIFEST_KEYS
 
 
 def parse_env_manifest(path: Path) -> set[str]:
@@ -101,6 +117,30 @@ def value_digest(value: object) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def row_resolved_value(row: dict[str, Any]) -> object:
+    if row.get("real_value") is not None:
+        return row.get("real_value")
+    return row.get("value")
+
+
+def file_store_required_non_empty_keys(
+    by_key: dict[str, dict[str, Any]],
+) -> tuple[set[str], str | None]:
+    row = by_key.get("FILE_STORE_TYPE")
+    if row is None:
+        return set(), None
+    kind_value = row_resolved_value(row) if row else None
+    kind = str(kind_value or "").strip().lower()
+    required = {"FILE_STORE_TYPE"}
+    if kind == "local":
+        required.add("FILE_STORE_LOCAL_PATH")
+        return required, None
+    if kind == "s3":
+        required.update(S3_REQUIRED_NON_EMPTY_KEYS)
+        return required, None
+    return required, f"FILE_STORE_TYPE must resolve to 'local' or 's3', got {kind_value!r}"
+
+
 def normalize_literal_env_value(value: object) -> str | None:
     if value is None:
         return None
@@ -133,6 +173,12 @@ def looks_like_placeholder(value: str) -> bool:
     if re.search(r"://(?:<|replace)(?:[/:?#.-]|$)", lower):
         return True
     return ANGLE_BRACKET_PLACEHOLDER_RE.search(normalized) is not None
+
+
+def looks_like_unresolved_shared_ref(value: str) -> bool:
+    normalized = value.strip().replace("\\{", "{").replace("\\}", "}")
+    pattern = r"\{\{\s*(environment|project|team|server)\.[^{}]+\s*\}\}"
+    return re.search(pattern, normalized) is not None
 
 
 def field_matches(
@@ -445,10 +491,21 @@ def audit_env(
         if real_value is None and row.get("is_shared") is not True:
             errors.append(f"{app_name}: {key} does not resolve to a value")
         if real_value is not None:
-            if key in REQUIRED_NON_EMPTY_KEYS and not str(real_value).strip():
-                errors.append(f"{app_name}: {key} resolves to an empty value")
             if isinstance(real_value, str) and looks_like_placeholder(real_value):
                 errors.append(f"{app_name}: {key} still looks like a placeholder")
+            if isinstance(real_value, str) and looks_like_unresolved_shared_ref(real_value):
+                errors.append(f"{app_name}: {key} does not resolve from shared variables")
+
+    required_non_empty_keys = set(BASE_REQUIRED_NON_EMPTY_KEYS)
+    file_store_required, file_store_error = file_store_required_non_empty_keys(by_key)
+    required_non_empty_keys.update(file_store_required)
+    if file_store_error:
+        errors.append(f"{app_name}: {file_store_error}")
+
+    for key in sorted(required_non_empty_keys & keys):
+        value = row_resolved_value(by_key[key])
+        if value is not None and not str(value).strip():
+            errors.append(f"{app_name}: {key} resolves to an empty value")
 
     for key, expected_value in sorted(expected_application_env.items()):
         row = by_key.get(key)
@@ -468,9 +525,7 @@ def audit_env(
 
     digests = {
         key: value_digest(
-            by_key[key].get("real_value")
-            if by_key[key].get("real_value") is not None
-            else by_key[key].get("value")
+            row_resolved_value(by_key[key])
         )
         for key in sorted(expected_shared_keys & keys)
     }
@@ -578,7 +633,7 @@ def main() -> int:
 
     stack = load_stack_manifest(args.stack_manifest)
     expected_keys = parse_env_manifest(args.env_manifest)
-    missing_required_keys = REQUIRED_NON_EMPTY_KEYS - expected_keys
+    missing_required_keys = REQUIRED_MANIFEST_KEYS - expected_keys
     if missing_required_keys:
         raise SystemExit(
             "Required non-empty keys missing from env manifest: "

@@ -14,8 +14,9 @@ import {
 	agentTypeLabel,
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,36 +38,15 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 	);
 }
 
-function SettingsSection({
-	title,
-	description,
-	children,
+export function AgentSettingsPanel({
+	environmentId,
+	contained = true,
 	className,
 }: {
-	title: string;
-	description?: string;
-	children: React.ReactNode;
+	environmentId: string;
+	contained?: boolean;
 	className?: string;
 }) {
-	return (
-		<section
-			className={cn(
-				"grid gap-4 px-6 py-5 md:grid-cols-[170px_minmax(0,1fr)] md:items-start",
-				className,
-			)}
-		>
-			<div className="space-y-1">
-				<div className="text-sm font-medium">{title}</div>
-				{description ? (
-					<p className="max-w-52 text-xs leading-5 text-muted-foreground">{description}</p>
-				) : null}
-			</div>
-			<div className="min-w-0">{children}</div>
-		</section>
-	);
-}
-
-export function AgentSettingsPanel({ environmentId }: { environmentId: string }) {
 	const api = useApi();
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -173,7 +153,7 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 
 	if (isLoading) {
 		return (
-			<div className="w-full">
+			<div className={cn(contained && CENTERED_PAGE_WIDTH_CLASS.settings, className)}>
 				<Skeleton className="h-[420px] w-full rounded-lg" />
 			</div>
 		);
@@ -181,12 +161,16 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 
 	if (error || !agent) {
 		return (
-			<Card className="w-full">
-				<CardHeader>
-					<CardTitle>Settings unavailable</CardTitle>
-					<CardDescription>{errorMessage(error ?? "Agent not found")}</CardDescription>
-				</CardHeader>
-			</Card>
+			<div
+				className={cn(
+					"flex flex-col gap-1 rounded-md border p-4",
+					contained && CENTERED_PAGE_WIDTH_CLASS.settings,
+					className,
+				)}
+			>
+				<div className="text-sm font-semibold">Settings unavailable</div>
+				<p className="text-sm text-muted-foreground">{errorMessage(error ?? "Agent not found")}</p>
+			</div>
 		);
 	}
 
@@ -206,179 +190,180 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 
 	return (
-		<div className="w-full">
+		<div
+			className={cn(
+				"flex flex-col gap-9",
+				contained && CENTERED_PAGE_WIDTH_CLASS.settings,
+				className,
+			)}
+		>
 			<input
 				ref={fileInputRef}
 				type="file"
 				accept="image/png,image/jpeg,image/webp"
+				aria-label="Upload agent avatar"
 				className="hidden"
 				onChange={onUploadChange}
 			/>
-			<Card className="gap-0 overflow-hidden py-0">
-				<CardHeader className="border-b bg-muted/20 px-6 py-6">
-					<div className="mx-auto flex max-w-full flex-col items-center gap-3 text-center">
+			<div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
+				<AgentIcon
+					agent={agent.agent_type}
+					size="xl"
+					identitySeed={agentIdentitySeed(agent)}
+					avatarUrl={agent.avatar_url}
+				/>
+				<div className="flex min-w-0 flex-col gap-1">
+					<div className="max-w-full truncate text-lg font-semibold leading-7">{displayName}</div>
+					<div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground sm:justify-start">
+						<span>{runtimeLabel}</span>
+						<AgentSourceBadgeForEnvironment env={agent} compact showConnected />
+					</div>
+				</div>
+			</div>
+
+			<SettingsSection
+				title="Display name"
+				description="Use a short name that distinguishes this agent from others."
+			>
+				<div className="flex flex-col gap-3">
+					<div className="flex flex-col gap-2 lg:flex-row">
+						<Label htmlFor="agent-display-name" className="sr-only">
+							Display name
+						</Label>
+						<Input
+							id="agent-display-name"
+							name="display_name"
+							value={draftName}
+							maxLength={120}
+							placeholder={defaultDisplayName}
+							autoComplete="off"
+							onChange={(event) => setDraftName(event.target.value)}
+						/>
+						<Button
+							type="button"
+							size="sm"
+							variant={nameChanged ? "default" : "outline"}
+							className="lg:h-9 lg:min-w-20"
+							disabled={!nameChanged || updateIdentity.isPending}
+							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
+						>
+							{updateIdentity.isPending ? (
+								<Spinner data-icon="inline-start" />
+							) : (
+								<Save data-icon="inline-start" />
+							)}
+							Save
+						</Button>
+					</div>
+					<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+						<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							className="h-7 w-fit px-2 text-xs text-muted-foreground"
+							disabled={!agent.display_name || updateIdentity.isPending}
+							onClick={() => updateIdentity.mutate({ display_name: null })}
+						>
+							<RotateCcw data-icon="inline-start" />
+							Use default name
+						</Button>
+					</div>
+				</div>
+			</SettingsSection>
+
+			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
+				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+					<div className="flex min-w-0 flex-1 items-center gap-3">
 						<AgentIcon
 							agent={agent.agent_type}
-							size="xl"
+							size="lg"
 							identitySeed={agentIdentitySeed(agent)}
 							avatarUrl={agent.avatar_url}
 						/>
-						<div className="min-w-0 space-y-1">
-							<CardTitle className="max-w-full truncate">{displayName}</CardTitle>
-							<CardDescription className="flex flex-wrap items-center justify-center gap-2">
-								<span>{runtimeLabel}</span>
-								<AgentSourceBadgeForEnvironment env={agent} compact showConnected />
-							</CardDescription>
+						<div className="min-w-0">
+							<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
+							<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>
 						</div>
 					</div>
-				</CardHeader>
-
-				<CardContent className="divide-y px-0">
-					<SettingsSection
-						title="Display name"
-						description="Use a short name that distinguishes this agent from others."
-					>
-						<div className="flex flex-col gap-2">
-							<div className="flex flex-col gap-2 sm:flex-row">
-								<Label htmlFor="agent-display-name" className="sr-only">
-									Display name
-								</Label>
-								<Input
-									id="agent-display-name"
-									value={draftName}
-									maxLength={120}
-									placeholder={defaultDisplayName}
-									onChange={(event) => setDraftName(event.target.value)}
-								/>
-								<Button
-									type="button"
-									size="sm"
-									variant={nameChanged ? "default" : "outline"}
-									className="sm:h-9"
-									disabled={!nameChanged || updateIdentity.isPending}
-									onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
-								>
-									{updateIdentity.isPending ? (
-										<Spinner data-icon="inline-start" />
-									) : (
-										<Save data-icon="inline-start" />
-									)}
-									Save
-								</Button>
-							</div>
-							<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-								<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
-								<Button
-									type="button"
-									size="sm"
-									variant="ghost"
-									className="h-7 w-fit px-2 text-xs text-muted-foreground"
-									disabled={!agent.display_name || updateIdentity.isPending}
-									onClick={() => updateIdentity.mutate({ display_name: null })}
-								>
-									<RotateCcw data-icon="inline-start" />
-									Use default name
-								</Button>
-							</div>
-						</div>
-					</SettingsSection>
-
-					<SettingsSection
-						title="Avatar"
-						description="Shown in the sidebar, pickers, and agent lists."
-					>
-						<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-							<div className="flex min-w-0 items-center gap-3">
-								<AgentIcon
-									agent={agent.agent_type}
-									size="lg"
-									identitySeed={agentIdentitySeed(agent)}
-									avatarUrl={agent.avatar_url}
-								/>
-								<div className="min-w-0">
-									<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
-									<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>
-								</div>
-							</div>
-							<div className="flex flex-wrap gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									disabled={isBusy}
-									onClick={() => fileInputRef.current?.click()}
-								>
-									{uploadMutation.isPending ? (
-										<Spinner data-icon="inline-start" />
-									) : (
-										<Upload data-icon="inline-start" />
-									)}
-									Upload image
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									disabled={isBusy || !hasCustomAvatar}
-									onClick={() => clearAvatar.mutate()}
-									className="text-muted-foreground"
-								>
-									{clearAvatar.isPending ? (
-										<Spinner data-icon="inline-start" />
-									) : (
-										<Trash2 data-icon="inline-start" />
-									)}
-									Remove
-								</Button>
-							</div>
-						</div>
-					</SettingsSection>
-
-					{!isHosted ? (
-						<SettingsSection
-							title="Disconnect"
-							description="Remove this connected agent from your dashboard."
+					<div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isBusy}
+							onClick={() => fileInputRef.current?.click()}
 						>
-							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-								<p className="max-w-md text-sm text-muted-foreground">
-									The agent stops syncing here. Existing sessions, skills, and Projects stay in your
-									account.
-								</p>
-								<ConfirmAction
-									title="Disconnect this agent?"
-									description={
-										<>
-											<p>Sessions and skills stay in your account.</p>
-											<p>
-												This agent will stop syncing and sessions will no longer be tagged with it.
-												Reconnect from that agent to resume.
-											</p>
-										</>
-									}
-									confirmLabel="Disconnect agent"
-									destructive
-									onConfirm={() => disconnect.mutateAsync()}
-								>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										disabled={disconnect.isPending}
-										className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-									>
-										{disconnect.isPending ? (
-											<Spinner data-icon="inline-start" />
-										) : (
-											<Unplug data-icon="inline-start" />
-										)}
-										Disconnect agent
-									</Button>
-								</ConfirmAction>
-							</div>
-						</SettingsSection>
-					) : null}
-				</CardContent>
-			</Card>
+							{uploadMutation.isPending ? (
+								<Spinner data-icon="inline-start" />
+							) : (
+								<Upload data-icon="inline-start" />
+							)}
+							Upload image
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							disabled={isBusy || !hasCustomAvatar}
+							onClick={() => clearAvatar.mutate()}
+							className="text-muted-foreground"
+						>
+							{clearAvatar.isPending ? (
+								<Spinner data-icon="inline-start" />
+							) : (
+								<Trash2 data-icon="inline-start" />
+							)}
+							Remove
+						</Button>
+					</div>
+				</div>
+			</SettingsSection>
+
+			{!isHosted ? (
+				<SettingsSection
+					title="Disconnect"
+					description="Remove this connected agent from your dashboard."
+					tone="danger"
+				>
+					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+						<p className="max-w-md text-sm text-muted-foreground">
+							The agent stops syncing here. Existing sessions, skills, and Projects stay in your
+							account.
+						</p>
+						<ConfirmAction
+							title="Disconnect this agent?"
+							description={
+								<>
+									<p>Sessions and skills stay in your account.</p>
+									<p>
+										This agent will stop syncing and sessions will no longer be tagged with it.
+										Reconnect from that agent to resume.
+									</p>
+								</>
+							}
+							confirmLabel="Disconnect agent"
+							destructive
+							onConfirm={() => disconnect.mutateAsync()}
+						>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={disconnect.isPending}
+								className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+							>
+								{disconnect.isPending ? (
+									<Spinner data-icon="inline-start" />
+								) : (
+									<Unplug data-icon="inline-start" />
+								)}
+								Disconnect agent
+							</Button>
+						</ConfirmAction>
+					</div>
+				</SettingsSection>
+			) : null}
 		</div>
 	);
 }
