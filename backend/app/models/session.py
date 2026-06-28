@@ -49,6 +49,11 @@ class AgentEnvironment(Base, TimestampMixin):
     agent_version: Mapped[str | None] = mapped_column(String(50))
     os: Mapped[str] = mapped_column(String(50), nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # User-facing identity overrides. Runtime registration keeps
+    # machine_name/agent_type accurate; dashboard preferences live here.
+    display_name: Mapped[str | None] = mapped_column(String(120))
+    avatar_asset_key: Mapped[str | None] = mapped_column(String(512))
+    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
 
     # `clawdi daemon` observability. last_seen_at is the
     # legacy "anything happened on this env" timestamp; sync_*

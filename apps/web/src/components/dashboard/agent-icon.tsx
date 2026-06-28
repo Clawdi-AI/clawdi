@@ -2,22 +2,8 @@ import { Laptop } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Per-agent brand-mark icon. Use the `size` prop — DON'T pass
- * `size-N` / `rounded-N` through `className`, those are the very
- * inconsistencies this component now controls.
- *
- * Product surfaces share one corner radius (`rounded-md`) so an agent
- * reads identically across the dashboard tile, the agent detail
- * hero, the picker dropdown, the sessions table row, and the
- * agent-target picker. Without that, screenshots from different
- * pages look like they're showing different products.
- *
- * The Discord-style sidebar rail uses `rail`: same brand art, but tuned
- * to sit inside a larger 44px hit target without visually filling it.
- *
- * Chat-bubble avatars (sessions transcript) want a circular crop
- * to match the user avatar; that one usage opts out via
- * `shape="circle"`. Everything else uses the default rounded-md.
+ * Per-agent brand-mark icon. Product surfaces share one corner radius by
+ * default; transcript bubbles can opt into a circular crop.
  */
 
 const KNOWN: ReadonlySet<string> = new Set(["claude_code", "codex", "hermes", "openclaw"]);
@@ -33,12 +19,21 @@ const SIZE_CLASS: Record<AgentIconSize, string> = {
 	xl: "size-12",
 };
 
+const SIZE_PX: Record<AgentIconSize, number> = {
+	xs: 16,
+	sm: 20,
+	md: 24,
+	lg: 32,
+	rail: 36,
+	xl: 48,
+};
+
 const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
 	xs: "size-2.5",
 	sm: "size-3",
 	md: "size-3.5",
 	lg: "size-4",
-	rail: "size-4",
+	rail: "size-4.5",
 	xl: "size-6",
 };
 
@@ -50,20 +45,38 @@ export function AgentIcon({
 	agent,
 	size = "md",
 	shape = "rounded",
+	avatarUrl,
 	className,
 }: {
 	agent: string | null | undefined;
 	size?: AgentIconSize;
 	shape?: "rounded" | "circle";
+	avatarUrl?: string | null;
 	className?: string;
 }) {
-	const radius =
-		shape === "circle" ? "rounded-full" : size === "rail" ? "rounded-2xl" : "rounded-md";
+	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
+	const customAvatar = avatarUrl?.trim();
+	const pixelSize = SIZE_PX[size];
+	if (customAvatar) {
+		return (
+			<img
+				src={customAvatar}
+				alt=""
+				width={pixelSize}
+				height={pixelSize}
+				draggable={false}
+				className={cn(SIZE_CLASS[size], "shrink-0 bg-muted object-cover", radius, className)}
+			/>
+		);
+	}
 	if (agent && KNOWN.has(agent)) {
 		return (
 			<img
 				src={imageFile(agent)}
 				alt=""
+				width={pixelSize}
+				height={pixelSize}
+				draggable={false}
 				className={cn(SIZE_CLASS[size], "shrink-0 object-cover", radius, className)}
 			/>
 		);

@@ -4,7 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	AgentLabel,
+	AgentSourceBadgeForEnvironment,
+	agentTextLabel,
+	compareAgentEnvironments,
+} from "@/components/dashboard/agent-label";
 import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +38,7 @@ import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type Environment = components["schemas"]["EnvironmentResponse"];
 
 /* The #1 job of this dashboard: move skills from one agent/project to
  * another — one at a time from the card hover, or a whole batch from
@@ -79,15 +85,16 @@ export function SendSkillDialog({
 	// are skipped at send time).
 	const agentTargets = useMemo(
 		() =>
-			(envs ?? [])
+			[...(envs ?? [])]
+				.sort(compareAgentEnvironments)
 				.filter(
 					(e) =>
 						e.default_project_id && !skills.every((s) => s.project_id === e.default_project_id),
 				)
 				.map((e) => ({
 					value: e.default_project_id as string,
-					label: `${cleanMachineName(e.machine_name)} (${agentTypeLabel(e.agent_type)})`,
-					emoji: identityFor(e.machine_name).emoji,
+					label: agentTextLabel(e),
+					env: e,
 				})),
 		[envs, skills],
 	);
@@ -225,11 +232,8 @@ export function SendSkillDialog({
 									<SelectGroup>
 										<SelectLabel>Agents</SelectLabel>
 										{agentTargets.map((t) => (
-											<SelectItem key={`a-${t.value}`} value={t.value}>
-												<span aria-hidden className="select-none">
-													{t.emoji}
-												</span>
-												{t.label}
+											<SelectItem key={`a-${t.value}`} value={t.value} textValue={t.label}>
+												<AgentTargetOption env={t.env} />
 											</SelectItem>
 										))}
 									</SelectGroup>
@@ -238,7 +242,7 @@ export function SendSkillDialog({
 									<SelectGroup>
 										<SelectLabel>Projects</SelectLabel>
 										{projectTargets.map((t) => (
-											<SelectItem key={`p-${t.value}`} value={t.value}>
+											<SelectItem key={`p-${t.value}`} value={t.value} textValue={t.label}>
 												<span aria-hidden className="select-none">
 													{t.emoji}
 												</span>
@@ -271,5 +275,18 @@ export function SendSkillDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function AgentTargetOption({ env }: { env: Environment }) {
+	return (
+		<AgentLabel
+			machineName={env.machine_name}
+			displayName={env.display_name}
+			type={env.agent_type}
+			avatarUrl={env.avatar_url}
+			size="sm"
+			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+		/>
 	);
 }

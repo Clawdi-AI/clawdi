@@ -93,7 +93,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "billing-plan",
 		label: "Compute",
-		description: "Plans and billing",
+		description: "Plans and new agents",
 		icon: CreditCard,
 		v2Only: true,
 	},

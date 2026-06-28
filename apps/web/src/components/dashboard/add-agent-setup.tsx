@@ -5,7 +5,7 @@ import { Check, ChevronDown, Copy } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AgentLabel } from "@/components/dashboard/agent-label";
+import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
@@ -176,8 +176,11 @@ export function AddAgentSetup() {
 							<div key={env.id} className="flex items-center justify-between gap-3">
 								<AgentLabel
 									machineName={env.machine_name}
+									displayName={env.display_name}
 									type={env.agent_type}
+									avatarUrl={env.avatar_url}
 									size="sm"
+									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 									className="min-w-0 flex-1"
 								/>
 								<Button asChild size="sm" variant="outline">

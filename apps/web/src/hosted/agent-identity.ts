@@ -23,6 +23,6 @@ export function isCloudEnvId(value: string): boolean {
  */
 export function deploymentDisplayName(name: string): string {
 	const trimmed = name.trim();
-	if (!trimmed) return "Hosted Agent";
+	if (!trimmed) return "Clawdi Cloud agent";
 	return trimmed.replace(/^(openclaw|hermes)-/i, "") || trimmed;
 }

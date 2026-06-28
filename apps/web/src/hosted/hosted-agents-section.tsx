@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { Cloud } from "lucide-react";
+import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
 	type AgentTile,
@@ -185,8 +185,8 @@ export function HostedAgentsByCompute({
 			{groups.map((group) => (
 				<section key={group.key} className="space-y-2">
 					<div className="flex items-center gap-2 px-0.5">
-						<Cloud className="size-3.5 text-muted-foreground" />
 						<span className="text-sm font-medium">{group.name}</span>
+						<AgentSourceBadge source="hosted" compact />
 						<span className="text-xs text-muted-foreground">
 							{group.tiles.length} runtime{group.tiles.length === 1 ? "" : "s"}
 						</span>
@@ -197,7 +197,9 @@ export function HostedAgentsByCompute({
 
 			{dedupedSelfManaged.length > 0 ? (
 				<section className="space-y-2">
-					<div className="px-0.5 text-sm font-medium">Connected agents</div>
+					<div className="flex items-center gap-2 px-0.5">
+						<span className="text-sm font-medium">Other agents</span>
+					</div>
 					<AgentTileGrid tiles={dedupedSelfManaged} />
 				</section>
 			) : null}

@@ -16,7 +16,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
-import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -79,6 +79,11 @@ export function PlanComparison({
 
 	const pointsPerUsd = performance?.points_per_usd ?? free?.points_per_usd ?? 1000;
 	const creditsPerDollar = pointsPerUsd.toLocaleString();
+	const signupGrantCredits = Math.max(
+		0,
+		free?.signup_grant_credits ?? performance?.signup_grant_credits ?? 0,
+	);
+	const subscriptionGrantCredits = Math.max(0, performance?.subscription_grant_credits ?? 0);
 	const performanceOffers = performance ? planOffers(performance) : [];
 	const annualOffer = performanceOffers.find((o) => o.billing_term_months === 12);
 
@@ -116,7 +121,11 @@ export function PlanComparison({
 							<FeatureRow>One active Free agent per user</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>$0 with BYOK — bring your own provider key</FeatureRow>
-							<FeatureRow>$5 in AI Credits on signup</FeatureRow>
+							{signupGrantCredits > 0 ? (
+								<FeatureRow>
+									{creditsToUsd(signupGrantCredits, pointsPerUsd)} in AI Credits on signup
+								</FeatureRow>
+							) : null}
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -175,7 +184,12 @@ export function PlanComparison({
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
 							</FeatureRow>
-							<FeatureRow>$5 in AI Credits each month</FeatureRow>
+							{subscriptionGrantCredits > 0 ? (
+								<FeatureRow>
+									{creditsToUsd(subscriptionGrantCredits, pointsPerUsd)} in AI Credits added to
+									Wallet; credits do not expire
+								</FeatureRow>
+							) : null}
 						</ul>
 					</CardContent>
 					<CardFooter>

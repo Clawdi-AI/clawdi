@@ -1,20 +1,20 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { AlertCircle, ArrowUpRight, Cloud } from "lucide-react";
+import { AlertCircle, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import {
-	agentSourceKindLabel,
-	agentSourceLabel,
+	AgentLabel,
+	AgentSourceBadge,
+	agentDisplayName,
 	cleanMachineName,
-	displayMachineName,
+	compareAgentEnvironments,
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, EntityMeta } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
+import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
@@ -62,7 +62,10 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		.map((env) => ({
 			id: env.id,
 			source: "self-managed" as const,
-			name: env.machine_name,
+			name: agentDisplayName(env),
+			displayName: env.display_name,
+			avatarUrl: env.avatar_url,
+			sortOrder: env.sort_order,
 			agentType: env.agent_type,
 			runtimeLabel: formatRuntime(env.agent_type),
 			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
@@ -83,6 +86,9 @@ export interface AgentTile {
 	id: string;
 	source: "self-managed" | "on-clawdi";
 	name: string;
+	displayName?: string | null;
+	avatarUrl?: string | null;
+	sortOrder?: number | null;
 	agentType: string | null;
 	/** "OpenClaw", "Claude Code", etc. — agent name only, no jargon suffix. */
 	runtimeLabel: string;
@@ -98,12 +104,10 @@ export interface AgentTile {
 	 * been registered yet. `external` reflects whichever applies. */
 	href: string;
 	external?: boolean;
-	/** Secondary click target rendered as a small "Manage" button on
-	 * hosted tiles only. Points at the in-app hosted agent Compute tab,
-	 * where lifecycle ops (Restart / Stop / Delete) live. Self-managed
-	 * tiles leave this undefined.
-	 * Stretched-link pattern means this button needs `relative z-10`
-	 * so it captures clicks above the inset-0 primary link overlay. */
+	/** Optional hosted remediation target passed into DaemonStatusBadge.
+	 * Points at the in-app hosted agent settings page, where lifecycle ops
+	 * (Restart / Stop / Delete) live. Self-managed tiles leave this
+	 * undefined. */
 	manageHref?: string;
 	/** Counted in the "N active now" header line; no per-tile indicator rendered. */
 	active?: boolean;
@@ -136,16 +140,9 @@ export function AgentsCard({
 }) {
 	const [showAll, setShowAll] = useState(false);
 	const total = agents.length;
-	// Active agents first, then most recently seen — and cap the wall at 6
-	// so the fleet reads as a glance, not a directory (taste audit #3).
-	const ordered = [...agents].sort((a, b) => {
-		if (!!a.active !== !!b.active) return a.active ? -1 : 1;
-		return (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "");
-	});
+	const ordered = [...agents].sort(compareAgentTiles);
 	const visible = showAll ? ordered : ordered.slice(0, 6);
 	const hiddenCount = ordered.length - visible.length;
-	const hasHosted = agents.some((agent) => agent.source === "on-clawdi");
-	const hasSelfManaged = agents.some((agent) => agent.source === "self-managed");
 
 	// No section header: the greeting directly above already carries the
 	// fleet summary ("N agents connected · last active …"), and a bare
@@ -165,12 +162,7 @@ export function AgentsCard({
 					<>
 						<div className="grid gap-2 sm:grid-cols-2">
 							{visible.map((tile) => (
-								<AgentTileView
-									key={`${tile.source}:${tile.id}`}
-									tile={tile}
-									showSourceBadge
-									showConnectedBadge={hasHosted && hasSelfManaged}
-								/>
+								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 							))}
 							{hostedStatus?.isLoading ? <TileSkeleton /> : null}
 						</div>
@@ -209,7 +201,9 @@ export function HostedUnavailableBanner() {
 	return (
 		<div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
 			<AlertCircle className="size-3.5 shrink-0 text-destructive" />
-			<span>Hosted agents are unavailable right now. Your other agents are listed above.</span>
+			<span>
+				Clawdi Cloud agents are unavailable right now. Other agents can still appear here.
+			</span>
 		</div>
 	);
 }
@@ -227,15 +221,7 @@ export function AgentTileGrid({ tiles }: { tiles: AgentTile[] }) {
 	);
 }
 
-function AgentTileView({
-	tile,
-	showSourceBadge = false,
-	showConnectedBadge = false,
-}: {
-	tile: AgentTile;
-	showSourceBadge?: boolean;
-	showConnectedBadge?: boolean;
-}) {
+function AgentTileView({ tile }: { tile: AgentTile }) {
 	const onClawdi = tile.source === "on-clawdi";
 	// Source pill is an identity adornment, not metadata — it sits
 	// next to the title so it stays glued to the agent name no matter
@@ -244,21 +230,7 @@ function AgentTileView({
 	// in a future release, so the surface stays consistent today and
 	// the data reflects reality once that lands.
 	const source = onClawdi ? "hosted" : "connected";
-	const sourcePill =
-		showSourceBadge && (onClawdi || showConnectedBadge) ? (
-			<span
-				title={agentSourceKindLabel(source)}
-				className={cn(
-					"inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold",
-					onClawdi
-						? "border-primary/30 bg-primary/10 text-primary"
-						: "border-border bg-secondary text-secondary-foreground",
-				)}
-			>
-				{onClawdi ? <Cloud className="size-2.5" /> : null}
-				{agentSourceLabel(source)}
-			</span>
-		) : null;
+	const sourcePill = onClawdi ? <AgentSourceBadge source={source} /> : null;
 	// `tile.env` adds a sync badge that renders a `<button>`
 	// (clicks open a status dialog). It MUST live in the meta
 	// line under the agent name — same row as `statusLabel` so
@@ -294,41 +266,9 @@ function AgentTileView({
 		);
 	}
 
-	// Trailing-edge slot. Hosted tiles with a distinct `manageHref` get a
-	// dedicated in-app Compute-tab affordance. Tiles that truly leave the
-	// app (`external`) get the ArrowUpRight glyph.
-	const manageHrefIsExternal = tile.manageHref ? /^https?:\/\//i.test(tile.manageHref) : false;
-	const manageClassName =
-		"relative z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary";
-	const trailing =
-		tile.manageHref && tile.manageHref !== tile.href ? (
-			manageHrefIsExternal ? (
-				<a
-					href={tile.manageHref}
-					target="_blank"
-					rel="noopener noreferrer"
-					onClick={(e) => e.stopPropagation()}
-					title="Manage"
-					className={manageClassName}
-				>
-					<Cloud className="size-3" />
-					Manage
-					<ArrowUpRight className="size-2.5" />
-				</a>
-			) : (
-				<Link
-					href={tile.manageHref}
-					onClick={(e) => e.stopPropagation()}
-					title="Manage"
-					className={manageClassName}
-				>
-					<Cloud className="size-3" />
-					Manage
-				</Link>
-			)
-		) : tile.external ? (
-			<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-		) : null;
+	const trailing = tile.external ? (
+		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+	) : null;
 
 	// Strip mDNS suffixes (`.local`/`.lan`) and middle-truncate generated deployment
 	// names so the distinguishing tail survives; the full name stays on hover.
@@ -340,16 +280,16 @@ function AgentTileView({
 				"flex h-full items-center gap-3 bg-card transition-colors group-hover:bg-muted/50",
 			)}
 		>
-			<EntityIcon kind="framework" id={tile.agentType ?? ""} label={cleanedName} size="md" />
-			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium" title={cleanedName}>
-						{displayMachineName(cleanedName)}
-					</span>
-					{sourcePill}
-				</div>
-				<EntityMeta items={meta} />
-			</div>
+			<AgentLabel
+				machineName={cleanedName}
+				displayName={tile.displayName}
+				type={tile.agentType}
+				avatarUrl={tile.avatarUrl}
+				size="lg"
+				meta={meta}
+				titleAdornment={sourcePill}
+				className="min-w-0 flex-1"
+			/>
 			{trailing}
 		</div>
 	);
@@ -361,13 +301,13 @@ function AgentTileView({
 		// `z-0` is load-bearing: without an explicit z-index on this
 		// `relative` wrapper the browser doesn't create a new stacking
 		// context, so the `relative z-10` children inside `card`
-		// (DaemonStatusBadge button + the "Manage" trailing link) and
-		// the absolute `linkClassName` overlay all compete in the
+		// (DaemonStatusBadge button) and the absolute `linkClassName`
+		// overlay all compete in the
 		// PARENT stacking context. Paint order then depends on DOM
 		// sibling order: the overlay link is rendered AFTER the card,
 		// so in the parent context it paints on top of the card's
-		// interactive children — clicks on the badge / Manage button
-		// silently go to the primary link instead. Adding `z-0`
+		// interactive children — clicks on the badge silently go to
+		// the primary link instead. Adding `z-0`
 		// promotes this wrapper to its own stacking context, isolating
 		// the link overlay (z-auto inside this context) below the
 		// `z-10` children. Standard stretched-link defense.
@@ -384,6 +324,16 @@ function AgentTileView({
 			)}
 		</div>
 	);
+}
+
+function compareAgentTiles(a: AgentTile, b: AgentTile): number {
+	if (a.env && b.env) return compareAgentEnvironments(a.env, b.env);
+	const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+	const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+	if (aOrder !== bOrder) return aOrder - bOrder;
+	const name = a.name.localeCompare(b.name);
+	if (name !== 0) return name;
+	return a.id.localeCompare(b.id);
 }
 
 function TileSkeleton() {

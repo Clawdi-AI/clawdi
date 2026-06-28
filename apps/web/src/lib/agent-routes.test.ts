@@ -19,6 +19,7 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
+		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
 		expect(agentSessionDetailHref("agent 1", "session 1")).toBe(
 			"/agents/agent%201/sessions/session%201",
 		);
@@ -29,8 +30,8 @@ describe("agent routes", () => {
 	});
 
 	it("drops unsupported tab query params when building section links", () => {
-		expect(agentSectionHref("agent 1", "compute", "tab=compute&settings=billing-plan")).toBe(
-			"/agents/agent%201/compute?settings=billing-plan",
+		expect(agentSectionHref("agent 1", "settings", "tab=settings&settings=billing-plan")).toBe(
+			"/agents/agent%201/settings?settings=billing-plan",
 		);
 		expect(
 			agentSectionHref("agent 1", "sessions", {
@@ -46,9 +47,11 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("project-access")).toBe("projects");
 		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
 		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
+		expect(parseAgentSectionSegment("settings")).toBe("settings");
 		expect(parseAgentSectionSegment("projects")).toBeNull();
 		expect(parseAgentSectionSegment("ai")).toBeNull();
 		expect(parseAgentSectionSegment("channels")).toBeNull();
+		expect(parseAgentSectionSegment("compute")).toBeNull();
 		expect(parseAgentSectionSegment("bad")).toBeNull();
 	});
 
@@ -56,17 +59,18 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("projects")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
+		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
 	});
 
 	it("detects and removes tab params without changing the canonical section", () => {
-		expect(hasAgentTabQuery({ tab: "compute" })).toBe(true);
+		expect(hasAgentTabQuery({ tab: "settings" })).toBe(true);
 		expect(hasAgentTabQuery({ settings: "billing-plan" })).toBe(false);
-		expect(agentRouteQueryString({ tab: "compute", settings: "billing-plan" })).toBe(
+		expect(agentRouteQueryString({ tab: "settings", settings: "billing-plan" })).toBe(
 			"settings=billing-plan",
 		);
 		expect(agentSectionHref("agent 1", "overview", { tab: "sessions" })).toBe("/agents/agent%201");
-		expect(agentSectionHref("agent 1", "projects", { tab: "compute" })).toBe(
+		expect(agentSectionHref("agent 1", "projects", { tab: "settings" })).toBe(
 			"/agents/agent%201/project-access",
 		);
 	});
@@ -104,5 +108,6 @@ describe("agent routes", () => {
 			skillKey: "team/foo",
 		});
 		expect(parseAgentPathname("/agents/agent%201/projects")).toBeNull();
+		expect(parseAgentPathname("/agents/agent%201/compute")).toBeNull();
 	});
 });

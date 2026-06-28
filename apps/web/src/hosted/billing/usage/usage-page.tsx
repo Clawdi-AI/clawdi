@@ -5,16 +5,14 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
-import { UsageMeter } from "@/hosted/billing/components/usage-meter";
 import { formatCredits } from "@/hosted/billing/format";
-import { useSubscription, useUsage } from "@/hosted/billing/hooks";
+import { useUsage } from "@/hosted/billing/hooks";
 import { shortDate } from "@/hosted/billing/subscription/subscription-utils";
 
-const DESCRIPTION = "AI Credit consumption across your agents this period.";
+const DESCRIPTION = "AI Credit consumption across your agents. Wallet credits do not reset.";
 
 export function UsagePage() {
 	const usage = useUsage();
-	const subscription = useSubscription();
 
 	if (usage.isLoading) {
 		return (
@@ -36,8 +34,6 @@ export function UsagePage() {
 	}
 
 	const u = usage.data;
-	const sub = subscription.data ?? null;
-	const showAllowance = !!sub && sub.budget_credits_total > 0;
 	const maxDay = Math.max(1, ...u.by_day.map((d) => d.credits));
 	const maxModel = Math.max(1, ...u.by_model.map((m) => m.credits));
 
@@ -58,16 +54,8 @@ export function UsagePage() {
 		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Usage"
-				description={`${shortDate(u.period_start)} – ${shortDate(u.period_end)}`}
+				description={`${shortDate(u.period_start)} – ${shortDate(u.period_end)} reporting window. Wallet credits do not reset.`}
 			/>
-
-			{subscription.error ? (
-				<BillingError
-					error={subscription.error}
-					onRetry={() => subscription.refetch()}
-					title="Couldn’t load Performance allowance"
-				/>
-			) : null}
 
 			{/* Totals */}
 			<div className="grid gap-3 sm:grid-cols-2">
@@ -88,29 +76,6 @@ export function UsagePage() {
 					</CardContent>
 				</Card>
 			</div>
-
-			{/* Monthly allowance meter (Performance plans) */}
-			{showAllowance && sub ? (
-				<Card data-hosted="true">
-					<CardHeader>
-						<CardTitle className="text-base">Monthly AI Credits</CardTitle>
-					</CardHeader>
-					<CardContent className="space-y-1.5">
-						<div className="flex items-center justify-between text-sm">
-							<span className="text-muted-foreground">Performance allowance</span>
-							<span className="tabular-nums">
-								{formatCredits(sub.budget_credits_used ?? 0)} of{" "}
-								{formatCredits(sub.budget_credits_total)} used
-							</span>
-						</div>
-						<UsageMeter
-							used={sub.budget_credits_used ?? 0}
-							total={sub.budget_credits_total}
-							label="Monthly AI Credits used"
-						/>
-					</CardContent>
-				</Card>
-			) : null}
 
 			{/* Daily consumption */}
 			<Card data-hosted="true">

@@ -144,20 +144,20 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		// depth, status badge) from cloud-api, and the primary click
 		// target points at the in-app env detail page — same UX as a
 		// self-managed agent. Lifecycle ops (Restart/Stop/Delete) live
-		// in that detail page's Compute tab.
+		// in that detail page's Settings section.
 		//
 		// If there is no registered env yet, route by deployment id.
 		// `AgentHome` resolves deployment ids without pretending they are
 		// cloud-api environment ids, so the tile still has a useful
-		// in-app place to click.
+		// in-app place to click. Lifecycle operations live in Settings.
 		const envId = cloudEnvIds[runtime];
 		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 		const detailHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
 			: agentSectionHref(d.id);
-		const computeHref = matchedEnv
-			? agentSectionHref(matchedEnv.id, "compute", "source=on-clawdi")
-			: agentSectionHref(d.id, "compute");
+		const settingsHref = matchedEnv
+			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
+			: agentSectionHref(d.id, "settings");
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
@@ -165,7 +165,10 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			// AgentIcon already brands it and one deployment fans out to
 			// multiple tiles — using `d.name` here would print
 			// "openclaw-b5451f9c" on a Hermes tile.
-			name: runtimeDisplayName(runtime),
+			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
+			displayName: matchedEnv?.display_name ?? null,
+			avatarUrl: matchedEnv?.avatar_url ?? null,
+			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
 			// Deployment slug as the secondary line lets users disambiguate
 			// when they have more than one hosted deployment. Mode info ("Daemon") is
@@ -181,7 +184,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			// self-managed badge.
 			href: detailHref,
 			external: false,
-			manageHref: computeHref,
+			manageHref: settingsHref,
 			active,
 			env: matchedEnv ?? null,
 			// Group sibling runtime-agents under their shared compute on /agents.

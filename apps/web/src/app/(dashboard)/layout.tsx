@@ -55,7 +55,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 			style={
 				{
 					"--sidebar-width": "calc(var(--spacing) * 64)",
-					"--clawdi-rail-width": "calc(var(--spacing) * 16)",
+					"--clawdi-rail-width": "calc(var(--spacing) * 20)",
 					"--header-height": "calc(var(--spacing) * 12)",
 				} as React.CSSProperties
 			}

@@ -1,11 +1,28 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import {
+	closestCenter,
+	DndContext,
+	type DragEndEvent,
+	type DragOverEvent,
+	PointerSensor,
+	TouchSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import {
+	arrayMove,
+	SortableContext,
+	useSortable,
+	verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	BookOpen,
 	CircleHelp,
-	Cpu,
+	Cloud,
 	ExternalLink,
 	Layers,
 	LayoutDashboard,
@@ -25,12 +42,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
+	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
+	agentSourceKindLabel,
+	agentTextLabel,
 	agentTypeLabel,
-	cleanMachineName,
+	compareAgentEnvironments,
 	displayMachineName,
 	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
@@ -84,7 +106,7 @@ import {
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
 } from "@/lib/settings-routes";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
 /** Tinted chip around a nav icon — the identity-palette hue carries the
@@ -109,7 +131,7 @@ function RailIconChip({ tint, children }: { tint: string; children: React.ReactN
 	return (
 		<span
 			className={cn(
-				"flex size-9 shrink-0 items-center justify-center rounded-xl [&>svg]:size-4.5",
+				"flex size-8 shrink-0 items-center justify-center rounded-md [&>svg]:size-4",
 				tint,
 			)}
 		>
@@ -142,6 +164,11 @@ const CONNECTED_AGENT_SECTIONS: {
 		id: "projects",
 		icon: Layers,
 		tooltip: "Agent Project and added Projects",
+	},
+	{
+		id: "settings",
+		icon: Settings,
+		tooltip: "Name and avatar for this agent",
 	},
 ];
 
@@ -176,9 +203,9 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Channels linked to this runtime",
 	},
 	{
-		id: "compute",
-		icon: Cpu,
-		tooltip: "Deployment compute and lifecycle",
+		id: "settings",
+		icon: Settings,
+		tooltip: "Profile, compute, and lifecycle",
 	},
 ];
 
@@ -190,7 +217,7 @@ const AGENT_SECTION_TINTS = {
 	console: "bg-identity-6-bg text-identity-6-fg",
 	ai: "bg-identity-2-bg text-identity-2-fg",
 	channels: "bg-identity-5-bg text-identity-5-fg",
-	compute: "bg-identity-8-bg text-identity-8-fg",
+	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
 type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
@@ -211,8 +238,29 @@ type AgentSectionDefinition = {
 	tooltip: string;
 };
 
-function agentDisplayName(agent: SidebarEnvironment): string {
-	return cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type);
+function reorderEnvironmentsForCache(
+	current: SidebarEnvironment[],
+	orderedIds: string[],
+): SidebarEnvironment[] {
+	const byId = new Map(current.map((env) => [env.id, env]));
+	const requested = new Set(orderedIds);
+	const reordered = orderedIds
+		.map((id) => byId.get(id))
+		.filter((env): env is SidebarEnvironment => Boolean(env));
+	reordered.push(...current.filter((env) => !requested.has(env.id)));
+	return reordered.map((env, index) => ({ ...env, sort_order: index }));
+}
+
+function reorderEnvironmentsByIndex(
+	current: SidebarEnvironment[],
+	from: number,
+	to: number,
+): SidebarEnvironment[] {
+	return arrayMove(current, from, to).map((env, index) => ({ ...env, sort_order: index }));
+}
+
+function sameOrder(a: string[], b: string[]): boolean {
+	return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 function SidebarNavSection({
@@ -577,40 +625,76 @@ function FocusNavigationPane({
 function RailFocusButton({
 	href,
 	label,
+	caption,
 	active,
 	onNavigate,
+	onPointerDown,
+	onTouchStart,
 	showTooltip = true,
 	children,
 }: {
 	href: string;
 	label: string;
+	caption?: string;
 	active: boolean;
-	onNavigate?: () => void;
+	onNavigate?: React.MouseEventHandler<HTMLAnchorElement>;
+	onPointerDown?: React.PointerEventHandler<HTMLAnchorElement>;
+	onTouchStart?: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip?: boolean;
 	children: React.ReactNode;
 }) {
+	const hasCaption = Boolean(caption);
 	const button = (
 		<SidebarMenuButton
 			asChild
 			size="lg"
 			isActive={active}
 			aria-label={label}
-			className="size-11 justify-center rounded-2xl p-0"
+			className={cn(
+				hasCaption
+					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
+					: "size-11 justify-center rounded-lg p-0",
+			)}
 		>
-			<Link href={href} onClick={onNavigate}>
+			<Link
+				href={href}
+				draggable={false}
+				onClick={onNavigate}
+				onPointerDown={onPointerDown}
+				onTouchStart={onTouchStart}
+				className="cursor-default"
+			>
 				{children}
+				{caption ? (
+					<span
+						className={cn(
+							"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-[11px] leading-[13px] font-medium break-words",
+							active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
+						)}
+						title={label}
+					>
+						{caption}
+					</span>
+				) : null}
 				<span className="sr-only">{label}</span>
 			</Link>
 		</SidebarMenuButton>
 	);
 	return (
-		<div className="group/rail-focus relative flex size-11 items-center justify-center">
+		<div
+			className={cn(
+				"group/rail-focus relative flex items-center justify-center",
+				hasCaption ? "h-[4.5rem] w-full" : "size-11",
+			)}
+		>
 			<span
 				aria-hidden="true"
 				className={cn(
 					"absolute -left-2.5 w-1 rounded-r-full bg-sidebar-foreground/70 opacity-0 transition-[height,opacity] duration-200 ease-out",
 					active
-						? "h-8 opacity-100"
+						? hasCaption
+							? "h-11 opacity-100"
+							: "h-8 opacity-100"
 						: "h-2 group-hover/rail-focus:h-4 group-hover/rail-focus:opacity-50",
 				)}
 			/>
@@ -625,6 +709,69 @@ function RailFocusButton({
 				button
 			)}
 		</div>
+	);
+}
+
+function SortableAgentRailItem({
+	agent,
+	active,
+	onNavigate,
+	showTooltip,
+}: {
+	agent: SidebarEnvironment;
+	active: boolean;
+	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
+	showTooltip: boolean;
+}) {
+	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+		id: agent.id,
+	});
+	const hosted = isHostedAgentEnvironment(agent);
+	const label = agentTextLabel(agent);
+	const caption = displayMachineName(agentDisplayName(agent));
+	const href = agentSectionHref(agent.id);
+	const style: React.CSSProperties = {
+		transform: CSS.Transform.toString(transform),
+		transition: isDragging ? undefined : transition,
+		zIndex: isDragging ? 20 : undefined,
+	};
+	const dragPointerDown: React.PointerEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onPointerDown ? (event) => listeners.onPointerDown?.(event) : undefined;
+	const dragTouchStart: React.TouchEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onTouchStart ? (event) => listeners.onTouchStart?.(event) : undefined;
+
+	return (
+		<SidebarMenuItem
+			ref={setNodeRef}
+			style={style}
+			className={cn(
+				"group/agent-rail-item relative w-full touch-pan-y will-change-transform",
+				isDragging && "opacity-80",
+			)}
+		>
+			<RailFocusButton
+				href={href}
+				label={label}
+				caption={caption}
+				active={active}
+				onNavigate={onNavigate}
+				onPointerDown={dragPointerDown}
+				onTouchStart={dragTouchStart}
+				showTooltip={showTooltip}
+			>
+				<span className="relative inline-flex rounded-md">
+					<AgentIcon agent={agent.agent_type} size="rail" avatarUrl={agent.avatar_url} />
+					{hosted ? (
+						<span
+							title="Clawdi Cloud agent"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-sidebar dark:bg-sky-400 dark:text-sky-950"
+						>
+							<Cloud aria-hidden="true" className="size-2.5" />
+						</span>
+					) : null}
+				</span>
+			</RailFocusButton>
+		</SidebarMenuItem>
 	);
 }
 
@@ -647,6 +794,104 @@ function FocusRailContent({
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const suppressNextRailClick = useRef(false);
+	const draggingRailItem = useRef(false);
+	const [railAgents, setRailAgents] = useState<SidebarEnvironment[]>(() =>
+		[...agents].sort(compareAgentEnvironments),
+	);
+	const railAgentsRef = useRef(railAgents);
+	const dragStartRailAgents = useRef<SidebarEnvironment[] | null>(null);
+	const setRailAgentsOrder = (next: SidebarEnvironment[]) => {
+		railAgentsRef.current = next;
+		setRailAgents(next);
+	};
+	const sensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
+		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+	);
+	useEffect(() => {
+		if (!draggingRailItem.current) {
+			setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+		}
+	}, [agents]);
+	const orderedAgents = railAgents;
+	const orderedAgentIds = orderedAgents.map((agent) => agent.id);
+	const reorderAgents = useMutation({
+		mutationFn: async (environmentIds: string[]) =>
+			unwrap(
+				await api.PATCH("/api/environments/order", { body: { environment_ids: environmentIds } }),
+			),
+		onMutate: async (environmentIds) => {
+			await queryClient.cancelQueries({ queryKey: ["environments"] });
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["environments"]);
+			queryClient.setQueryData<SidebarEnvironment[]>(["environments"], (current) =>
+				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
+			);
+			return { previous };
+		},
+		onError: (error, _environmentIds, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(["environments"], context.previous);
+				setRailAgentsOrder([...context.previous].sort(compareAgentEnvironments));
+			}
+			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
+		},
+		onSuccess: (data) => {
+			queryClient.setQueryData(["environments"], data);
+			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
+		},
+	});
+	const onDragEnd = (event: DragEndEvent) => {
+		const { active, over } = event;
+		draggingRailItem.current = false;
+		const initialAgents = dragStartRailAgents.current;
+		dragStartRailAgents.current = null;
+		if (!over) {
+			if (initialAgents) setRailAgentsOrder(initialAgents);
+			return;
+		}
+		let finalAgents = railAgentsRef.current;
+		const initialIds = (initialAgents ?? orderedAgents).map((agent) => agent.id);
+		let finalIds = finalAgents.map((agent) => agent.id);
+		if (sameOrder(initialIds, finalIds) && active.id !== over.id) {
+			const from = finalIds.indexOf(String(active.id));
+			const to = finalIds.indexOf(String(over.id));
+			if (from >= 0 && to >= 0) {
+				finalAgents = reorderEnvironmentsByIndex(finalAgents, from, to);
+				setRailAgentsOrder(finalAgents);
+				finalIds = finalAgents.map((agent) => agent.id);
+			}
+		}
+		if (sameOrder(initialIds, finalIds)) return;
+		reorderAgents.mutate(finalIds);
+	};
+	const onDragOver = (event: DragOverEvent) => {
+		const { active, over } = event;
+		if (!over || active.id === over.id) return;
+		const current = railAgentsRef.current;
+		const activeId = String(active.id);
+		const overId = String(over.id);
+		const from = current.findIndex((agent) => agent.id === activeId);
+		const to = current.findIndex((agent) => agent.id === overId);
+		if (from < 0 || to < 0 || from === to) return;
+		setRailAgentsOrder(reorderEnvironmentsByIndex(current, from, to));
+	};
+	const releaseRailClickSuppression = () => {
+		window.setTimeout(() => {
+			suppressNextRailClick.current = false;
+		}, 0);
+	};
+	const onRailAgentNavigate: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+		if (suppressNextRailClick.current) {
+			event.preventDefault();
+			suppressNextRailClick.current = false;
+			return;
+		}
+		onNavigate?.();
+	};
+
 	return (
 		<>
 			<SidebarHeader className="h-(--clawdi-rail-width) items-center justify-center p-0">
@@ -657,12 +902,12 @@ function FocusRailContent({
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Open Clawdi homepage"
-							className="flex size-11 items-center justify-center rounded-2xl transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							className="flex size-11 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<img
 								src="/clawdi-logo-transparent.png"
 								alt=""
-								className="size-9 shrink-0 rounded-xl"
+								className="size-9 shrink-0 rounded-md"
 							/>
 							<span className="sr-only">Clawdi</span>
 						</a>
@@ -672,12 +917,13 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2.5 px-2.5 py-2.5">
+			<SidebarContent className="items-center gap-2 px-2.5 py-2.5">
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<RailFocusButton
 							href="/"
 							label="Console"
+							caption="Console"
 							active={!activeAgentId}
 							onNavigate={onNavigate}
 							showTooltip={showTooltips}
@@ -691,24 +937,43 @@ function FocusRailContent({
 
 				<SidebarSeparator className="mx-auto w-8" />
 
-				<SidebarMenu className="items-center">
-					{agents.map((agent) => {
-						const name = agentDisplayName(agent);
-						const label = `${displayMachineName(name)} · ${agentTypeLabel(agent.agent_type)}`;
-						return (
-							<SidebarMenuItem key={agent.id}>
-								<RailFocusButton
-									href={agentSectionHref(agent.id)}
-									label={label}
+				<SidebarMenu className="w-full items-center gap-1">
+					<DndContext
+						sensors={sensors}
+						collisionDetection={closestCenter}
+						onDragStart={() => {
+							draggingRailItem.current = true;
+							dragStartRailAgents.current = railAgentsRef.current;
+							suppressNextRailClick.current = true;
+						}}
+						onDragCancel={() => {
+							draggingRailItem.current = false;
+							if (dragStartRailAgents.current) {
+								setRailAgentsOrder(dragStartRailAgents.current);
+							} else {
+								setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+							}
+							dragStartRailAgents.current = null;
+							releaseRailClickSuppression();
+						}}
+						onDragOver={onDragOver}
+						onDragEnd={(event) => {
+							onDragEnd(event);
+							releaseRailClickSuppression();
+						}}
+					>
+						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
+							{orderedAgents.map((agent) => (
+								<SortableAgentRailItem
+									key={agent.id}
+									agent={agent}
 									active={activeAgentId === agent.id}
-									onNavigate={onNavigate}
+									onNavigate={onRailAgentNavigate}
 									showTooltip={showTooltips}
-								>
-									<AgentIcon agent={agent.agent_type} size="rail" />
-								</RailFocusButton>
-							</SidebarMenuItem>
-						);
-					})}
+								/>
+							))}
+						</SortableContext>
+					</DndContext>
 					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
 				</SidebarMenu>
 			</SidebarContent>
@@ -740,18 +1005,16 @@ function agentHeaderMeta(
 	detailLabel: string;
 	activityLabel: string;
 } {
-	const source = hosted ? "Hosted" : "Connected";
+	const sourceDetail = hosted ? agentSourceKindLabel("hosted") : null;
 	const typeLabel = agentTypeLabel(agent.agent_type);
 	const version = agentVersionLabel(agent.agent_version);
 	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
 	const activityLabel = relativeSeen ? `last seen ${relativeSeen}` : "never seen";
-	const visible = [
-		source,
-		hosted ? `${typeLabel} runtime` : typeLabel,
-		agent.os?.trim() || null,
-	].filter((item): item is string => Boolean(item));
+	const visible = [hosted ? `${typeLabel} runtime` : typeLabel, agent.os?.trim() || null].filter(
+		(item): item is string => Boolean(item),
+	);
 	const detail = [
-		source,
+		sourceDetail,
 		hosted ? `${typeLabel} runtime` : typeLabel,
 		version,
 		agent.os?.trim() || null,
@@ -783,7 +1046,7 @@ function FocusHeader({
 		return (
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold leading-5">
-					{showV2Features ? "Hosted Agent" : "Agent"}
+					{showV2Features ? "Clawdi Cloud agent" : "Agent"}
 				</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
 					{activeAgentId ? activeAgentId.slice(0, 8) : "Loading navigation"}
@@ -799,8 +1062,9 @@ function FocusHeader({
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
 	return (
 		<div className="min-w-0 text-left">
-			<div className="truncate text-sm font-semibold leading-5" title={title}>
-				{displayName}
+			<div className="flex min-w-0 items-center gap-2" title={title}>
+				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
+				<AgentSourceBadgeForEnvironment env={activeAgent} compact />
 			</div>
 			{meta.visibleLabel ? (
 				<div
@@ -814,7 +1078,7 @@ function FocusHeader({
 				<DaemonStatusBadge
 					env={activeAgent}
 					source={hosted ? "on-clawdi" : "self-managed"}
-					manageHref={hosted ? agentSectionHref(activeAgent.id, "compute") : undefined}
+					manageHref={hosted ? agentSectionHref(activeAgent.id, "settings") : undefined}
 					compact
 					tooltipDetail={meta.detailLabel}
 				/>
@@ -929,7 +1193,7 @@ function GlobalControlButton({
 			size="icon-lg"
 			onClick={onClick}
 			aria-label={label}
-			className="rounded-2xl"
+			className="rounded-lg"
 		>
 			{children}
 		</Button>
@@ -946,13 +1210,7 @@ function GlobalControlButton({
 function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 	const trigger = (
 		<DropdownMenuTrigger asChild>
-			<Button
-				type="button"
-				variant="ghost"
-				size="icon-lg"
-				aria-label="Help"
-				className="rounded-2xl"
-			>
+			<Button type="button" variant="ghost" size="icon-lg" aria-label="Help" className="rounded-lg">
 				<CircleHelp />
 			</Button>
 		</DropdownMenuTrigger>
@@ -988,12 +1246,12 @@ function UserControl({
 				type="button"
 				variant="ghost"
 				size="icon-lg"
-				className="rounded-2xl"
+				className="rounded-lg"
 				aria-label="User menu"
 			>
-				<Avatar className="size-8 rounded-2xl">
+				<Avatar className="size-8 rounded-md">
 					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-					<AvatarFallback className="rounded-2xl">{initial}</AvatarFallback>
+					<AvatarFallback className="rounded-md">{initial}</AvatarFallback>
 				</Avatar>
 			</Button>
 		</DropdownMenuTrigger>
@@ -1079,8 +1337,9 @@ export function AppSidebar({
 		queryFn: async () => unwrap(await api.GET("/api/environments")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
-	const agentsLoaded = environments !== undefined;
-	const agents = environments ?? [];
+	const hydratedEnvironments = mounted ? environments : undefined;
+	const agentsLoaded = hydratedEnvironments !== undefined;
+	const agents = hydratedEnvironments ?? [];
 	const activeAgent = activeAgentId ? agents.find((env) => env.id === activeAgentId) : null;
 	const activeSection = agentRoute?.section ?? "overview";
 	const [settingsSection, setSettingsSection] = useQueryState(

@@ -113,6 +113,18 @@ mount the same persistent path at `/data/files`. If the file store is moved to
 object storage later, this shared host-path requirement can be removed with the
 file-store implementation change.
 
+S3/R2 file-store rollout should be staged:
+
+1. Add the `FILE_STORE_S3_*` shared env rows with empty values while keeping
+   `FILE_STORE_TYPE=local`.
+2. Deploy an image that contains the S3-backed `FileStore` implementation.
+3. Copy existing `/data/files` objects to the target bucket.
+4. Set the S3 shared env values, switch `FILE_STORE_TYPE=s3`, then redeploy both
+   runtime Applications.
+
+The audit treats the S3 keys as part of the env contract, but only requires
+their values to be non-empty when `FILE_STORE_TYPE=s3`.
+
 The backend image runs as the non-root `app` user with uid/gid `1000`. For
 Coolify host-path storage, create the host directories before deployment and
 make them writable by uid/gid `1000`; named Docker volumes in the self-host

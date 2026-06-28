@@ -8,17 +8,24 @@ import {
 	Layers,
 	MessageSquare,
 	Plus,
+	Settings,
 	Sparkles,
 	Trash2,
-	Unplug,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import {
+	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
+	agentTypeLabel,
+	cleanMachineName,
+} from "@/components/dashboard/agent-label";
+import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	isCustomProject,
 	isProjectOwner,
@@ -45,10 +52,10 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type AgentTab = "overview" | "sessions" | "skills" | "projects";
+type AgentTab = "overview" | "sessions" | "skills" | "projects" | "settings";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
@@ -69,6 +76,10 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 	projects: {
 		icon: Layers,
 		description: "Agent Project, added Projects, and read order.",
+	},
+	settings: {
+		icon: Settings,
+		description: "Name and avatar used across the dashboard.",
 	},
 };
 
@@ -199,54 +210,20 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
+	const contentWidthClass = connectedAgentContentWidthClass(activeTab);
 	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
 	const scopedSkillHref = (skill: SkillSummary) =>
 		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
 
-	const agentTitle = agent
-		? cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)
-		: null;
+	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
-	const disconnect = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.DELETE("/api/environments/{environment_id}", {
-					params: { path: { environment_id: id } },
-				}),
-			),
-		onSuccess: () => {
-			toast.success("Agent disconnected", {
-				description:
-					sessionTotal > 0
-						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (agent label dropped).`
-						: undefined,
-			});
-			// Invalidate every query that may render this environment — the
-			// dashboard agents card, sessions list (which joins agent labels),
-			// and the per-agent session lookup. Use predicate-form so we catch
-			// query keys with extra params like ["sessions", { page, q }].
-			queryClient.invalidateQueries({
-				predicate: (q) => {
-					const k = q.queryKey[0];
-					return k === "environments" || k === "sessions" || k === "agent";
-				},
-			});
-			router.push("/");
-		},
-		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
-	});
-
-	const onDisconnect = () => {
-		disconnect.mutate();
-	};
-
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-6 px-4 lg:px-6">
 			{error ? (
 				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<div className="space-y-3 py-2">
+				<div className="flex flex-col gap-3 py-2">
 					<Skeleton className="h-6 w-48" />
 					<Skeleton className="h-4 w-64" />
 				</div>
@@ -256,7 +233,7 @@ export function ConnectedAgentDetail({
 						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
 					</h1>
 
-					<section className="space-y-4">
+					<section className={cn("flex flex-col gap-4", contentWidthClass)}>
 						<div className="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<div className="flex items-center gap-2">
@@ -264,47 +241,20 @@ export function ConnectedAgentDetail({
 										<ActiveTabIcon className="size-4 text-muted-foreground" />
 									) : null}
 									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
+									<AgentSourceBadgeForEnvironment env={agent} compact />
 								</div>
 								{activeTabMeta.description ? (
 									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
 								) : null}
 							</div>
-							<div className="flex flex-wrap items-center gap-2">
-								{activeTab === "skills" ? (
-									<Button asChild variant="outline" size="sm">
-										<Link
-											href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
-										>
-											<Plus />
-											Install skills
-										</Link>
-									</Button>
-								) : null}
-								<ConfirmAction
-									title="Disconnect this agent?"
-									description={
-										<>
-											<p>Sessions and skills stay in your account.</p>
-											<p>
-												This agent will stop syncing and sessions will no longer be tagged with it.
-												Reconnect from that agent to resume.
-											</p>
-										</>
-									}
-									confirmLabel="Disconnect agent"
-									onConfirm={onDisconnect}
-								>
-									<Button
-										variant="outline"
-										size="sm"
-										disabled={disconnect.isPending}
-										className="shrink-0"
-									>
-										<Unplug className="text-warning" />
-										Disconnect
-									</Button>
-								</ConfirmAction>
-							</div>
+							{activeTab === "skills" ? (
+								<Button asChild variant="outline" size="sm">
+									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
+										<Plus />
+										Install skills
+									</Link>
+								</Button>
+							) : null}
 						</div>
 
 						{activeTab === "overview" ? (
@@ -319,27 +269,23 @@ export function ConnectedAgentDetail({
 						) : null}
 
 						{activeTab === "overview" ? (
-							<div className="max-w-4xl">
-								<SessionFeed
-									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									showAgent={false}
-									sessionHref={(session) => scopedSessionHref(session.id)}
-								/>
-							</div>
+							<SessionFeed
+								sessions={(sessionsPage?.items ?? []).slice(0, 5)}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionHref={(session) => scopedSessionHref(session.id)}
+							/>
 						) : null}
 
 						{activeTab === "sessions" ? (
-							<div className="max-w-4xl">
-								<SessionFeed
-									sessions={sessionsPage?.items ?? []}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									showAgent={false}
-									sessionHref={(session) => scopedSessionHref(session.id)}
-								/>
-							</div>
+							<SessionFeed
+								sessions={sessionsPage?.items ?? []}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionHref={(session) => scopedSessionHref(session.id)}
+							/>
 						) : null}
 
 						{activeTab === "skills" ? (
@@ -372,6 +318,8 @@ export function ConnectedAgentDetail({
 								}}
 							/>
 						) : null}
+
+						{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
 					</section>
 				</>
 			) : null}
@@ -383,6 +331,12 @@ function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
 	if (value === "overview") return "overview";
 	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
+}
+
+function connectedAgentContentWidthClass(tab: AgentTab): string {
+	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
+	if (tab === "skills") return CENTERED_PAGE_WIDTH_CLASS.wide;
+	return CENTERED_PAGE_WIDTH_CLASS.detail;
 }
 
 function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {

@@ -31,7 +31,7 @@ const OPERATION_LABELS: Record<string, string> = {
 	invoice: "Top-up",
 	x402: "On-chain top-up",
 	grant_signup: "Signup grant",
-	grant_subscription: "Monthly grant",
+	grant_subscription: "Performance grant",
 	grant_redemption: "Redeemed credits",
 	grant_referral: "Referral grant",
 	admin_adjust: "Adjustment",

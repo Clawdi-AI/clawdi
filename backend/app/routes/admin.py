@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -605,6 +605,7 @@ async def admin_register_environment(
             agent_version=body.agent_version,
             os=body.os_name,
             last_seen_at=datetime.now(UTC),
+            sort_order=await _next_environment_sort_order(db, target.id),
             default_project_id=project.id,
         )
         db.add(env)
@@ -632,6 +633,17 @@ async def admin_register_environment(
         body.machine_id,
     )
     return EnvironmentCreatedResponse(id=str(env.id))
+
+
+async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
+    value = (
+        await db.execute(
+            select(func.coalesce(func.max(AgentEnvironment.sort_order), -1) + 1).where(
+                AgentEnvironment.user_id == user_id
+            )
+        )
+    ).scalar_one()
+    return int(value)
 
 
 @router.put(
