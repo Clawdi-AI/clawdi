@@ -6,6 +6,7 @@ import {
 	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
+	type Modifier,
 	PointerSensor,
 	TouchSensor,
 	useSensor,
@@ -237,6 +238,15 @@ type AgentSectionDefinition = {
 	icon: LucideIcon;
 	tooltip: string;
 };
+
+const RAIL_DRAG_CLICK_GUARD_MS = 500;
+
+const restrictRailDragToVerticalAxis: Modifier = ({ transform }) => ({
+	...transform,
+	x: 0,
+});
+
+const RAIL_DND_MODIFIERS = [restrictRailDragToVerticalAxis];
 
 function reorderEnvironmentsForCache(
 	current: SidebarEnvironment[],
@@ -628,6 +638,7 @@ function RailFocusButton({
 	caption,
 	active,
 	onNavigate,
+	onClickCapture,
 	onPointerDown,
 	onTouchStart,
 	showTooltip = true,
@@ -638,6 +649,7 @@ function RailFocusButton({
 	caption?: string;
 	active: boolean;
 	onNavigate?: React.MouseEventHandler<HTMLAnchorElement>;
+	onClickCapture?: React.MouseEventHandler<HTMLAnchorElement>;
 	onPointerDown?: React.PointerEventHandler<HTMLAnchorElement>;
 	onTouchStart?: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip?: boolean;
@@ -659,6 +671,7 @@ function RailFocusButton({
 			<Link
 				href={href}
 				draggable={false}
+				onClickCapture={onClickCapture}
 				onClick={onNavigate}
 				onPointerDown={onPointerDown}
 				onTouchStart={onTouchStart}
@@ -716,11 +729,13 @@ function SortableAgentRailItem({
 	agent,
 	active,
 	onNavigate,
+	onClickCapture,
 	showTooltip,
 }: {
 	agent: SidebarEnvironment;
 	active: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
+	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
 	showTooltip: boolean;
 }) {
 	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -755,6 +770,7 @@ function SortableAgentRailItem({
 				caption={caption}
 				active={active}
 				onNavigate={onNavigate}
+				onClickCapture={onClickCapture}
 				onPointerDown={dragPointerDown}
 				onTouchStart={dragTouchStart}
 				showTooltip={showTooltip}
@@ -796,8 +812,8 @@ function FocusRailContent({
 }) {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const suppressNextRailClick = useRef(false);
 	const draggingRailItem = useRef(false);
+	const suppressRailClickUntil = useRef(0);
 	const [railAgents, setRailAgents] = useState<SidebarEnvironment[]>(() =>
 		[...agents].sort(compareAgentEnvironments),
 	);
@@ -878,18 +894,37 @@ function FocusRailContent({
 		if (from < 0 || to < 0 || from === to) return;
 		setRailAgentsOrder(reorderEnvironmentsByIndex(current, from, to));
 	};
-	const releaseRailClickSuppression = () => {
+	const beginRailDragGesture = () => {
+		draggingRailItem.current = true;
+		dragStartRailAgents.current = railAgentsRef.current;
+		suppressRailClickUntil.current = Number.POSITIVE_INFINITY;
+	};
+	const endRailDragGesture = () => {
+		suppressRailClickUntil.current = performance.now() + RAIL_DRAG_CLICK_GUARD_MS;
 		window.setTimeout(() => {
-			suppressNextRailClick.current = false;
-		}, 0);
+			if (performance.now() >= suppressRailClickUntil.current) {
+				suppressRailClickUntil.current = 0;
+			}
+		}, RAIL_DRAG_CLICK_GUARD_MS);
+	};
+	const shouldSuppressRailClick = () =>
+		draggingRailItem.current || performance.now() < suppressRailClickUntil.current;
+	const suppressRailNavigation = (event: React.MouseEvent<HTMLAnchorElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+	};
+	const onRailAgentClickCapture: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+		if (shouldSuppressRailClick()) {
+			suppressRailNavigation(event);
+		}
 	};
 	const onRailAgentNavigate: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
-		if (suppressNextRailClick.current) {
-			event.preventDefault();
-			suppressNextRailClick.current = false;
-			return;
+		if (event.defaultPrevented) return;
+		if (shouldSuppressRailClick()) {
+			suppressRailNavigation(event);
+		} else {
+			onNavigate?.();
 		}
-		onNavigate?.();
 	};
 
 	return (
@@ -917,7 +952,7 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2 px-2.5 py-2.5">
+			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<RailFocusButton
@@ -941,11 +976,8 @@ function FocusRailContent({
 					<DndContext
 						sensors={sensors}
 						collisionDetection={closestCenter}
-						onDragStart={() => {
-							draggingRailItem.current = true;
-							dragStartRailAgents.current = railAgentsRef.current;
-							suppressNextRailClick.current = true;
-						}}
+						modifiers={RAIL_DND_MODIFIERS}
+						onDragStart={beginRailDragGesture}
 						onDragCancel={() => {
 							draggingRailItem.current = false;
 							if (dragStartRailAgents.current) {
@@ -954,12 +986,12 @@ function FocusRailContent({
 								setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
 							}
 							dragStartRailAgents.current = null;
-							releaseRailClickSuppression();
+							endRailDragGesture();
 						}}
 						onDragOver={onDragOver}
 						onDragEnd={(event) => {
 							onDragEnd(event);
-							releaseRailClickSuppression();
+							endRailDragGesture();
 						}}
 					>
 						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
@@ -969,6 +1001,7 @@ function FocusRailContent({
 									agent={agent}
 									active={activeAgentId === agent.id}
 									onNavigate={onRailAgentNavigate}
+									onClickCapture={onRailAgentClickCapture}
 									showTooltip={showTooltips}
 								/>
 							))}
