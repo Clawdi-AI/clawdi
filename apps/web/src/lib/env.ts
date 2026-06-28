@@ -41,11 +41,6 @@ export const env = createEnv({
 		// profile calls in hosted builds.
 		NEXT_PUBLIC_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
-		// Product-owned preset avatar asset base. When set, the dashboard
-		// renders `${base}/{preset-id}.webp` for the fixed preset ids. Users
-		// never enter arbitrary avatar URLs; uploads go through cloud-api.
-		NEXT_PUBLIC_AGENT_AVATAR_PRESET_BASE_URL: httpsOrHttp().optional(),
-
 		// Clerk publishable key. Local `next dev` auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: isLocalDevAuthBypass
@@ -91,7 +86,6 @@ export const env = createEnv({
 		VERCEL_ENV: process.env.VERCEL_ENV,
 		NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
 		NEXT_PUBLIC_DEPLOY_API_URL: process.env.NEXT_PUBLIC_DEPLOY_API_URL,
-		NEXT_PUBLIC_AGENT_AVATAR_PRESET_BASE_URL: process.env.NEXT_PUBLIC_AGENT_AVATAR_PRESET_BASE_URL,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CLAWDI_HOSTED: process.env.NEXT_PUBLIC_CLAWDI_HOSTED,
 		NEXT_PUBLIC_DEV_AUTH_BYPASS: process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS,

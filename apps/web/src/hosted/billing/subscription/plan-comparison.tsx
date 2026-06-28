@@ -175,7 +175,7 @@ export function PlanComparison({
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
 							</FeatureRow>
-							<FeatureRow>$5 in AI Credits each month</FeatureRow>
+							<FeatureRow>$5 in AI Credits added to Wallet; credits do not expire</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>

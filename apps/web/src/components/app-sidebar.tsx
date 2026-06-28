@@ -755,24 +755,29 @@ function SortableAgentRailItem({
 				onNavigate={onNavigate}
 				showTooltip={showTooltip}
 			>
-				<span className="relative inline-flex">
+				<span
+					className={cn(
+						"relative inline-flex rounded-md",
+						hosted &&
+							"bg-sky-50 p-0.5 ring-1 ring-sky-300/80 dark:bg-sky-500/10 dark:ring-sky-400/50",
+					)}
+				>
 					<AgentIcon
 						agent={agent.agent_type}
 						size="rail"
 						identitySeed={agentIdentitySeed(agent)}
 						avatarUrl={agent.avatar_url}
-						avatarPreset={agent.avatar_preset}
 					/>
+					{hosted ? (
+						<span
+							title="Clawdi Cloud agent"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex h-3.5 min-w-3.5 items-center justify-center rounded-[4px] border border-sky-300 bg-sky-50 px-0.5 text-sky-700 shadow-sm dark:border-sky-500/40 dark:bg-sky-950 dark:text-sky-300"
+						>
+							<Cloud aria-hidden="true" className="size-2.5" />
+						</span>
+					) : null}
 				</span>
 			</RailFocusButton>
-			{hosted ? (
-				<span
-					title="Clawdi Cloud agent"
-					className="pointer-events-none absolute top-2 right-2 z-20 flex size-4 items-center justify-center rounded-full bg-info text-info-foreground shadow-sm ring-2 ring-sidebar"
-				>
-					<Cloud aria-hidden="true" className="size-2.5" />
-				</span>
-			) : null}
 			<button
 				type="button"
 				tabIndex={-1}

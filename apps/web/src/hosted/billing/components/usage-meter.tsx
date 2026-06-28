@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
  * Progress primitive, and a one-off bar keeps this isolated under hosted/).
  * Track = `bg-muted`, fill = `bg-primary`, flipping to `bg-warning` once usage
  * crosses `warnAt`. Exposes the ARIA `progressbar` role so screen readers
- * announce the remaining allowance.
+ * announce used credits against the included total.
  */
 export function UsageMeter({
 	used,

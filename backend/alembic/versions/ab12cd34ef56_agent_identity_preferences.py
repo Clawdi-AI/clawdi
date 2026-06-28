@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column("agent_environments", sa.Column("display_name", sa.String(length=120)))
     op.add_column("agent_environments", sa.Column("avatar_asset_key", sa.String(length=512)))
-    op.add_column("agent_environments", sa.Column("avatar_preset", sa.String(length=40)))
     op.add_column(
         "agent_environments",
         sa.Column("sort_order", sa.Integer(), server_default="0", nullable=False),
@@ -58,6 +57,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_agent_environments_user_sort_order", table_name="agent_environments")
     op.drop_column("agent_environments", "sort_order")
-    op.drop_column("agent_environments", "avatar_preset")
     op.drop_column("agent_environments", "avatar_asset_key")
     op.drop_column("agent_environments", "display_name")

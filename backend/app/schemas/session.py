@@ -158,14 +158,10 @@ class EnvironmentCreatedResponse(BaseModel):
     id: str
 
 
-AgentAvatarPreset = Literal["aurora", "ember", "forest", "glacier", "mono", "sunrise"]
-
-
 class EnvironmentUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_name: str | None = Field(default=None, max_length=120)
-    avatar_preset: AgentAvatarPreset | None = None
 
     @field_validator("display_name", mode="after")
     @classmethod
@@ -187,7 +183,6 @@ class EnvironmentResponse(BaseModel):
     machine_name: str
     display_name: str | None = None
     avatar_url: str | None = None
-    avatar_preset: AgentAvatarPreset | None = None
     sort_order: int = 0
     agent_type: str
     agent_version: str | None

@@ -1,5 +1,4 @@
 import { Laptop } from "lucide-react";
-import { agentAvatarPresetSrc } from "@/lib/agent-avatar-presets";
 import { cn } from "@/lib/utils";
 
 /**
@@ -52,7 +51,6 @@ export function AgentIcon({
 	size = "md",
 	shape = "rounded",
 	avatarUrl,
-	avatarPreset,
 	className,
 }: {
 	agent: string | null | undefined;
@@ -63,11 +61,10 @@ export function AgentIcon({
 	 * border colors. */
 	identitySeed?: string | null;
 	avatarUrl?: string | null;
-	avatarPreset?: string | null;
 	className?: string;
 }) {
 	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
-	const customAvatar = agentAvatarPresetSrc(avatarPreset) || avatarUrl?.trim();
+	const customAvatar = avatarUrl?.trim();
 	if (customAvatar) {
 		return (
 			<img

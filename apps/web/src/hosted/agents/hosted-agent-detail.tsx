@@ -77,6 +77,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
+import { cn } from "@/lib/utils";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
 import { aiProviderRuntimeId, buildAiProviderBootstrap } from "@/v2/ai-providers/runtime-bootstrap";
@@ -253,6 +254,7 @@ export function HostedAgentDetail({
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const isConsoleTab = activeTab === "console";
+	const isSettingsTab = activeTab === "settings";
 
 	return (
 		<div
@@ -263,7 +265,12 @@ export function HostedAgentDetail({
 					: "space-y-6 px-4 lg:px-6"
 			}
 		>
-			<section className={isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
+			<section
+				className={cn(
+					isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "space-y-4",
+					isSettingsTab && "mx-auto w-full max-w-2xl",
+				)}
+			>
 				{isConsoleTab ? null : (
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>

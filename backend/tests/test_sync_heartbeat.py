@@ -76,25 +76,22 @@ async def test_environment_identity_update_round_trips(client: httpx.AsyncClient
 
     updated = await client.patch(
         f"/api/environments/{env_id}",
-        json={"display_name": "Build runner", "avatar_preset": "aurora"},
+        json={"display_name": "Build runner"},
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["display_name"] == "Build runner"
-    assert updated.json()["avatar_preset"] == "aurora"
     assert updated.json()["avatar_url"] is None
 
     detail = await client.get(f"/api/environments/{env_id}")
     assert detail.status_code == 200, detail.text
     assert detail.json()["display_name"] == "Build runner"
-    assert detail.json()["avatar_preset"] == "aurora"
 
     cleared = await client.patch(
         f"/api/environments/{env_id}",
-        json={"display_name": "", "avatar_preset": None},
+        json={"display_name": ""},
     )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["display_name"] is None
-    assert cleared.json()["avatar_preset"] is None
 
 
 @pytest.mark.asyncio
@@ -109,12 +106,12 @@ async def test_environment_update_rejects_avatar_url_field(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_environment_update_rejects_unknown_avatar_preset(client: httpx.AsyncClient):
+async def test_environment_update_rejects_avatar_preset_field(client: httpx.AsyncClient):
     env_id = await _create_env(client)
 
     response = await client.patch(
         f"/api/environments/{env_id}",
-        json={"avatar_preset": "external-url"},
+        json={"avatar_preset": "aurora"},
     )
     assert response.status_code == 422, response.text
 
@@ -130,7 +127,6 @@ async def test_environment_avatar_upload_stores_public_asset(client: httpx.Async
     )
     assert response.status_code == 200, response.text
     avatar_url = response.json()["avatar_url"]
-    assert response.json()["avatar_preset"] is None
     assert "/api/assets/agent-avatars/" in avatar_url
     assert avatar_url.endswith(".png")
 
@@ -143,7 +139,6 @@ async def test_environment_avatar_upload_stores_public_asset(client: httpx.Async
     cleared = await client.delete(f"/api/environments/{env_id}/avatar")
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["avatar_url"] is None
-    assert cleared.json()["avatar_preset"] is None
 
 
 @pytest.mark.asyncio
@@ -228,51 +223,6 @@ async def test_environment_avatar_failed_reupload_keeps_existing_asset(
     old_asset = await client.get(first_path)
     assert old_asset.status_code == 200
     assert old_asset.content == first_png
-
-
-@pytest.mark.asyncio
-async def test_environment_avatar_preset_replaces_uploaded_asset(client: httpx.AsyncClient):
-    env_id = await _create_env(client)
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-
-    uploaded = await client.post(
-        f"/api/environments/{env_id}/avatar",
-        files={"file": ("agent.png", png, "image/png")},
-    )
-    assert uploaded.status_code == 200, uploaded.text
-    old_path = urlparse(uploaded.json()["avatar_url"]).path
-
-    updated = await client.patch(
-        f"/api/environments/{env_id}",
-        json={"avatar_preset": "forest"},
-    )
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["avatar_url"] is None
-    assert updated.json()["avatar_preset"] == "forest"
-
-    deleted_asset = await client.get(old_path)
-    assert deleted_asset.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_environment_avatar_upload_replaces_preset(client: httpx.AsyncClient):
-    env_id = await _create_env(client)
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-
-    preset = await client.patch(
-        f"/api/environments/{env_id}",
-        json={"avatar_preset": "ember"},
-    )
-    assert preset.status_code == 200, preset.text
-    assert preset.json()["avatar_preset"] == "ember"
-
-    uploaded = await client.post(
-        f"/api/environments/{env_id}/avatar",
-        files={"file": ("agent.png", png, "image/png")},
-    )
-    assert uploaded.status_code == 200, uploaded.text
-    assert uploaded.json()["avatar_url"] is not None
-    assert uploaded.json()["avatar_preset"] is None
 
 
 @pytest.mark.asyncio

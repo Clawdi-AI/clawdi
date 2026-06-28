@@ -53,7 +53,6 @@ class AgentEnvironment(Base, TimestampMixin):
     # machine_name/agent_type accurate; dashboard preferences live here.
     display_name: Mapped[str | None] = mapped_column(String(120))
     avatar_asset_key: Mapped[str | None] = mapped_column(String(512))
-    avatar_preset: Mapped[str | None] = mapped_column(String(40))
     sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
 
     # `clawdi daemon` observability. last_seen_at is the

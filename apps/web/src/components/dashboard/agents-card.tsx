@@ -66,7 +66,6 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 			name: agentDisplayName(env),
 			displayName: env.display_name,
 			avatarUrl: env.avatar_url,
-			avatarPreset: env.avatar_preset,
 			sortOrder: env.sort_order,
 			agentType: env.agent_type,
 			runtimeLabel: formatRuntime(env.agent_type),
@@ -90,7 +89,6 @@ export interface AgentTile {
 	name: string;
 	displayName?: string | null;
 	avatarUrl?: string | null;
-	avatarPreset?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
 	/** "OpenClaw", "Claude Code", etc. — agent name only, no jargon suffix. */
@@ -288,7 +286,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				displayName={tile.displayName}
 				type={tile.agentType}
 				avatarUrl={tile.avatarUrl}
-				avatarPreset={tile.avatarPreset}
 				identitySeed={tile.env ? agentIdentitySeed(tile.env) : tile.id}
 				size="lg"
 				meta={meta}

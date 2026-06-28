@@ -564,14 +564,8 @@ async def update_environment(
 
     if "display_name" in body.model_fields_set:
         env.display_name = body.display_name
-    old_avatar_key = None
-    if "avatar_preset" in body.model_fields_set:
-        old_avatar_key = env.avatar_asset_key
-        env.avatar_asset_key = None
-        env.avatar_preset = body.avatar_preset
     await db.commit()
     await db.refresh(env)
-    await _delete_managed_avatar_key_best_effort(old_avatar_key)
 
     state = (
         await db.execute(
@@ -601,7 +595,6 @@ async def clear_environment_avatar(
 
     old_avatar_key = env.avatar_asset_key
     env.avatar_asset_key = None
-    env.avatar_preset = None
     await db.commit()
     await db.refresh(env)
     await _delete_managed_avatar_key_best_effort(old_avatar_key)
@@ -648,7 +641,6 @@ async def upload_environment_avatar(
     old_avatar_key = env.avatar_asset_key
     await file_store.put(key, data, content_type=content_type)
     env.avatar_asset_key = key
-    env.avatar_preset = None
     try:
         await db.commit()
     except Exception:
@@ -735,7 +727,6 @@ def _env_to_response(
         machine_name=env.machine_name,
         display_name=env.display_name,
         avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
-        avatar_preset=env.avatar_preset,
         sort_order=env.sort_order,
         agent_type=env.agent_type,
         agent_version=env.agent_version,

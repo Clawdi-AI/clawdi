@@ -3692,8 +3692,6 @@ export interface components {
             display_name?: string | null;
             /** Avatar Url */
             avatar_url?: string | null;
-            /** Avatar Preset */
-            avatar_preset?: ("aurora" | "ember" | "forest" | "glacier" | "mono" | "sunrise") | null;
             /**
              * Sort Order
              * @default 0
@@ -3742,8 +3740,6 @@ export interface components {
         EnvironmentUpdate: {
             /** Display Name */
             display_name?: string | null;
-            /** Avatar Preset */
-            avatar_preset?: ("aurora" | "ember" | "forest" | "glacier" | "mono" | "sunrise") | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

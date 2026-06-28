@@ -12,9 +12,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { HostedAgentControls } from "@/hosted/billing/agents/hosted-agent-controls";
 import { BillingError, SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
-import { UsageMeter } from "@/hosted/billing/components/usage-meter";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermLabel, formatCentsCompact, formatCredits } from "@/hosted/billing/format";
+import { billingTermLabel, formatCentsCompact } from "@/hosted/billing/format";
 import { usePlans, usePortal, useSubscription } from "@/hosted/billing/hooks";
 import { ActivationCard } from "@/hosted/billing/subscription/activation-card";
 import { ActivationRequirementCard } from "@/hosted/billing/subscription/activation-requirement-card";
@@ -97,7 +96,6 @@ export function SubscriptionPage() {
 
 	const ending = !!sub && (sub.cancel_at_period_end || !!sub.pending_downgrade_plan_slug);
 	const pending = portal.isPending;
-	const showUsage = !!sub && sub.budget_credits_total > 0;
 	const summaryTitle = sub ? "Performance subscription" : "Free compute";
 
 	return (
@@ -185,24 +183,10 @@ export function SubscriptionPage() {
 						</dl>
 					) : null}
 
-					{/* Monthly AI Credits allowance with usage meter. */}
-					{showUsage && sub ? (
-						<div className="space-y-1.5">
-							<div className="flex items-center justify-between text-sm">
-								<span className="text-muted-foreground">Monthly AI Credits</span>
-								<span className="tabular-nums">
-									{formatCredits(sub.budget_credits_used ?? 0)} of{" "}
-									{formatCredits(sub.budget_credits_total)} used
-								</span>
-							</div>
-							<UsageMeter
-								used={sub.budget_credits_used ?? 0}
-								total={sub.budget_credits_total}
-								label="Monthly AI Credits used"
-							/>
-							<p className="text-xs text-muted-foreground">
-								Resets {shortDate(sub.next_allowance_reset_at ?? sub.current_period_end)}.
-							</p>
+					{isPerformance ? (
+						<div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+							Performance AI Credits are added to your Wallet and do not expire. Managed AI usage
+							draws from the same Wallet balance as top-ups.
 						</div>
 					) : null}
 

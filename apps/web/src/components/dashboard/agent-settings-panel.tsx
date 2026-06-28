@@ -2,7 +2,8 @@
 
 import type { components } from "@clawdi/shared/api";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -11,22 +12,15 @@ import {
 	agentDisplayName,
 	agentIdentitySeed,
 	agentTypeLabel,
+	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-	Popover,
-	PopoverContent,
-	PopoverDescription,
-	PopoverHeader,
-	PopoverTitle,
-	PopoverTrigger,
-} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { AGENT_AVATAR_PRESETS } from "@/lib/agent-avatar-presets";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -47,17 +41,24 @@ function SettingsSection({
 	title,
 	description,
 	children,
+	className,
 }: {
 	title: string;
 	description?: string;
 	children: React.ReactNode;
+	className?: string;
 }) {
 	return (
-		<section className="grid gap-4 border-t px-5 py-4 md:grid-cols-[180px_minmax(0,1fr)]">
-			<div>
+		<section
+			className={cn(
+				"grid gap-4 px-6 py-5 md:grid-cols-[170px_minmax(0,1fr)] md:items-start",
+				className,
+			)}
+		>
+			<div className="space-y-1">
 				<div className="text-sm font-medium">{title}</div>
 				{description ? (
-					<p className="mt-1 max-w-48 text-xs leading-5 text-muted-foreground">{description}</p>
+					<p className="max-w-52 text-xs leading-5 text-muted-foreground">{description}</p>
 				) : null}
 			</div>
 			<div className="min-w-0">{children}</div>
@@ -67,11 +68,11 @@ function SettingsSection({
 
 export function AgentSettingsPanel({ environmentId }: { environmentId: string }) {
 	const api = useApi();
+	const router = useRouter();
 	const queryClient = useQueryClient();
 	const uploadAvatar = useAgentAvatarUploader();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const [draftName, setDraftName] = useState("");
-	const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
 	const {
 		data: agent,
 		isLoading,
@@ -110,7 +111,6 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 		mutationFn: async (file: File) => uploadAvatar(environmentId, file),
 		onSuccess: (data) => {
 			updateEnvironmentCaches(queryClient, data);
-			setAvatarPickerOpen(false);
 			toast.success("Avatar uploaded");
 		},
 		onError: (e) => toast.error("Couldn't upload avatar", { description: errorMessage(e) }),
@@ -125,10 +125,31 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 			),
 		onSuccess: (data) => {
 			updateEnvironmentCaches(queryClient, data);
-			setAvatarPickerOpen(false);
-			toast.success("Avatar cleared");
+			toast.success("Avatar removed");
 		},
-		onError: (e) => toast.error("Couldn't clear avatar", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't remove avatar", { description: errorMessage(e) }),
+	});
+
+	const disconnect = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.DELETE("/api/environments/{environment_id}", {
+					params: { path: { environment_id: environmentId } },
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Agent disconnected", {
+				description: "Sessions and skills stay in your account.",
+			});
+			queryClient.invalidateQueries({
+				predicate: (q) => {
+					const key = q.queryKey[0];
+					return key === "environments" || key === "sessions" || key === "agent";
+				},
+			});
+			router.push("/");
+		},
+		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
 	});
 
 	const onUploadChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,15 +173,15 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 
 	if (isLoading) {
 		return (
-			<div className="max-w-4xl">
-				<Skeleton className="h-[360px] w-full rounded-lg" />
+			<div className="w-full">
+				<Skeleton className="h-[420px] w-full rounded-lg" />
 			</div>
 		);
 	}
 
 	if (error || !agent) {
 		return (
-			<Card>
+			<Card className="w-full">
 				<CardHeader>
 					<CardTitle>Settings unavailable</CardTitle>
 					<CardDescription>{errorMessage(error ?? "Agent not found")}</CardDescription>
@@ -172,24 +193,20 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 	const normalizedDraftName = draftName.trim() || null;
 	const currentCustomName = agent.display_name ?? null;
 	const nameChanged = normalizedDraftName !== currentCustomName;
-	const selectedPreset = agent.avatar_preset ?? null;
-	const hasCustomAvatar = Boolean(agent.avatar_url && !selectedPreset);
-	const isBusy = updateIdentity.isPending || uploadMutation.isPending || clearAvatar.isPending;
-	const hasAvatarPresets = AGENT_AVATAR_PRESETS.length > 0;
+	const hasCustomAvatar = Boolean(agent.avatar_url);
+	const isHosted = isHostedAgentEnvironment(agent);
+	const isBusy =
+		updateIdentity.isPending ||
+		uploadMutation.isPending ||
+		clearAvatar.isPending ||
+		disconnect.isPending;
 	const displayName = agentDisplayName(agent);
 	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
-	const selectedPresetLabel =
-		AGENT_AVATAR_PRESETS.find((preset) => preset.id === selectedPreset)?.label ?? null;
-	const currentAvatarLabel = selectedPresetLabel
-		? `${selectedPresetLabel} preset`
-		: hasCustomAvatar
-			? "Custom upload"
-			: `${runtimeLabel} default`;
-	const hasCustomIdentity = Boolean(agent.avatar_url || agent.avatar_preset);
+	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 
 	return (
-		<div className="max-w-4xl">
+		<div className="w-full">
 			<input
 				ref={fileInputRef}
 				type="file"
@@ -198,123 +215,25 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 				onChange={onUploadChange}
 			/>
 			<Card className="gap-0 overflow-hidden py-0">
-				<CardHeader className="py-5">
-					<Popover open={avatarPickerOpen} onOpenChange={setAvatarPickerOpen}>
-						<div className="flex min-w-0 items-center gap-4">
-							<PopoverTrigger asChild>
-								<button
-									type="button"
-									className="group relative size-12 shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									aria-label="Change agent avatar"
-								>
-									<AgentIcon
-										agent={agent.agent_type}
-										size="xl"
-										identitySeed={agentIdentitySeed(agent)}
-										avatarUrl={agent.avatar_url}
-										avatarPreset={agent.avatar_preset}
-									/>
-									<span className="absolute inset-0 flex items-center justify-center rounded-md bg-foreground/45 text-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-										<Camera aria-hidden="true" className="size-4" />
-									</span>
-								</button>
-							</PopoverTrigger>
-							<div className="min-w-0">
-								<div className="flex min-w-0 items-center gap-2">
-									<CardTitle className="truncate">{displayName}</CardTitle>
-									<AgentSourceBadgeForEnvironment
-										env={agent}
-										compact
-										showConnected
-										className="text-muted-foreground"
-									/>
-								</div>
-								<CardDescription className="mt-1 truncate">{runtimeLabel}</CardDescription>
-							</div>
+				<CardHeader className="border-b bg-muted/20 px-6 py-6">
+					<div className="mx-auto flex max-w-full flex-col items-center gap-3 text-center">
+						<AgentIcon
+							agent={agent.agent_type}
+							size="xl"
+							identitySeed={agentIdentitySeed(agent)}
+							avatarUrl={agent.avatar_url}
+						/>
+						<div className="min-w-0 space-y-1">
+							<CardTitle className="max-w-full truncate">{displayName}</CardTitle>
+							<CardDescription className="flex flex-wrap items-center justify-center gap-2">
+								<span>{runtimeLabel}</span>
+								<AgentSourceBadgeForEnvironment env={agent} compact showConnected />
+							</CardDescription>
 						</div>
-						<PopoverContent align="start" className="w-80">
-							<PopoverHeader>
-								<PopoverTitle>Change avatar</PopoverTitle>
-								<PopoverDescription>
-									Choose a preset or upload a PNG, JPEG, or WebP image up to 2 MB.
-								</PopoverDescription>
-							</PopoverHeader>
-							<div className="mt-4 flex flex-col gap-3">
-								{hasCustomAvatar || hasAvatarPresets ? (
-									<div className="grid grid-cols-3 gap-2">
-										{hasCustomAvatar ? (
-											<div className="flex flex-col items-center gap-1 rounded-md border border-primary bg-primary/5 p-2 text-xs ring-1 ring-primary/25">
-												<AgentIcon
-													agent={agent.agent_type}
-													size="lg"
-													identitySeed={agentIdentitySeed(agent)}
-													avatarUrl={agent.avatar_url}
-												/>
-												<span className="max-w-full truncate">Custom</span>
-											</div>
-										) : null}
-										{AGENT_AVATAR_PRESETS.map((preset) => (
-											<button
-												key={preset.id}
-												type="button"
-												disabled={isBusy}
-												onClick={() =>
-													updateIdentity.mutate(
-														{ avatar_preset: preset.id },
-														{ onSuccess: () => setAvatarPickerOpen(false) },
-													)
-												}
-												className={cn(
-													"flex flex-col items-center gap-1 rounded-md border bg-background p-2 text-xs transition-colors hover:border-foreground/20 hover:bg-accent/60 disabled:pointer-events-none disabled:opacity-50",
-													selectedPreset === preset.id &&
-														"border-primary bg-primary/5 text-foreground ring-1 ring-primary/25",
-												)}
-												aria-pressed={selectedPreset === preset.id}
-												aria-label={`Use ${preset.label} avatar`}
-											>
-												<img src={preset.src} alt="" className="size-8 rounded-md object-cover" />
-												<span className="max-w-full truncate">{preset.label}</span>
-											</button>
-										))}
-									</div>
-								) : null}
-								<div className="flex flex-wrap gap-2">
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										disabled={isBusy}
-										onClick={() => fileInputRef.current?.click()}
-									>
-										{uploadMutation.isPending ? (
-											<Spinner data-icon="inline-start" />
-										) : (
-											<Upload data-icon="inline-start" />
-										)}
-										Upload image
-									</Button>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										disabled={isBusy || !hasCustomIdentity}
-										onClick={() => clearAvatar.mutate()}
-										className="text-muted-foreground"
-									>
-										{clearAvatar.isPending ? (
-											<Spinner data-icon="inline-start" />
-										) : (
-											<Trash2 data-icon="inline-start" />
-										)}
-										Remove
-									</Button>
-								</div>
-							</div>
-						</PopoverContent>
-					</Popover>
+					</div>
 				</CardHeader>
 
-				<CardContent className="px-0">
+				<CardContent className="divide-y px-0">
 					<SettingsSection
 						title="Display name"
 						description="Use a short name that distinguishes this agent from others."
@@ -375,13 +294,10 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 									size="lg"
 									identitySeed={agentIdentitySeed(agent)}
 									avatarUrl={agent.avatar_url}
-									avatarPreset={agent.avatar_preset}
 								/>
 								<div className="min-w-0">
 									<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
-									<div className="truncate text-xs text-muted-foreground">
-										PNG, JPEG, or WebP. Max 2 MB.
-									</div>
+									<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>
 								</div>
 							</div>
 							<div className="flex flex-wrap gap-2">
@@ -390,16 +306,20 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 									variant="outline"
 									size="sm"
 									disabled={isBusy}
-									onClick={() => setAvatarPickerOpen(true)}
+									onClick={() => fileInputRef.current?.click()}
 								>
-									<Camera data-icon="inline-start" />
-									Change avatar
+									{uploadMutation.isPending ? (
+										<Spinner data-icon="inline-start" />
+									) : (
+										<Upload data-icon="inline-start" />
+									)}
+									Upload image
 								</Button>
 								<Button
 									type="button"
 									variant="ghost"
 									size="sm"
-									disabled={isBusy || !hasCustomIdentity}
+									disabled={isBusy || !hasCustomAvatar}
 									onClick={() => clearAvatar.mutate()}
 									className="text-muted-foreground"
 								>
@@ -413,6 +333,50 @@ export function AgentSettingsPanel({ environmentId }: { environmentId: string })
 							</div>
 						</div>
 					</SettingsSection>
+
+					{!isHosted ? (
+						<SettingsSection
+							title="Disconnect"
+							description="Remove this connected agent from your dashboard."
+						>
+							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<p className="max-w-md text-sm text-muted-foreground">
+									The agent stops syncing here. Existing sessions, skills, and Projects stay in your
+									account.
+								</p>
+								<ConfirmAction
+									title="Disconnect this agent?"
+									description={
+										<>
+											<p>Sessions and skills stay in your account.</p>
+											<p>
+												This agent will stop syncing and sessions will no longer be tagged with it.
+												Reconnect from that agent to resume.
+											</p>
+										</>
+									}
+									confirmLabel="Disconnect agent"
+									destructive
+									onConfirm={() => disconnect.mutateAsync()}
+								>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										disabled={disconnect.isPending}
+										className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+									>
+										{disconnect.isPending ? (
+											<Spinner data-icon="inline-start" />
+										) : (
+											<Unplug data-icon="inline-start" />
+										)}
+										Disconnect agent
+									</Button>
+								</ConfirmAction>
+							</div>
+						</SettingsSection>
+					) : null}
 				</CardContent>
 			</Card>
 		</div>

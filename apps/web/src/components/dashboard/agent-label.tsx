@@ -150,10 +150,15 @@ export function AgentSourceBadge({
 		<span
 			title={title}
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap font-semibold leading-none",
-				iconOnly ? "size-4 justify-center p-0" : "px-0 py-[3px]",
-				compact ? "gap-1 text-[11px]" : "gap-1.5 text-[11px]",
-				source === "hosted" ? "text-sky-700 dark:text-sky-300" : "text-identity-7-fg",
+				"inline-flex shrink-0 items-center whitespace-nowrap border font-medium leading-none",
+				iconOnly
+					? "size-4 justify-center rounded-full p-0"
+					: compact
+						? "h-5 gap-1 rounded-full px-1.5 text-[11px]"
+						: "h-5 gap-1.5 rounded-full px-2 text-[11px]",
+				source === "hosted"
+					? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
+					: "border-border bg-muted/50 text-muted-foreground",
 				className,
 			)}
 		>
@@ -289,7 +294,6 @@ export function AgentLabel({
 	displayName,
 	type,
 	avatarUrl,
-	avatarPreset,
 	identitySeed,
 	size = "sm",
 	primary = "machine",
@@ -301,7 +305,6 @@ export function AgentLabel({
 	displayName?: string | null | undefined;
 	type: string | null | undefined;
 	avatarUrl?: string | null | undefined;
-	avatarPreset?: string | null | undefined;
 	identitySeed?: string | null | undefined;
 	size?: AgentIconSize;
 	/** Which field is the H1 line. Defaults to "machine" — the
@@ -348,7 +351,6 @@ export function AgentLabel({
 				size={size}
 				identitySeed={identitySeed ?? (cleanedDisplayName || cleanedMachine || typeLabel)}
 				avatarUrl={avatarUrl}
-				avatarPreset={avatarPreset}
 			/>
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">

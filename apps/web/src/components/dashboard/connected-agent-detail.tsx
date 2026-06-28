@@ -11,7 +11,6 @@ import {
 	Settings,
 	Sparkles,
 	Trash2,
-	Unplug,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -52,7 +51,7 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type AgentTab = "overview" | "sessions" | "skills" | "projects" | "settings";
@@ -210,45 +209,13 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
+	const isSettingsTab = activeTab === "settings";
 	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
 	const scopedSkillHref = (skill: SkillSummary) =>
 		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
 
 	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
-
-	const disconnect = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.DELETE("/api/environments/{environment_id}", {
-					params: { path: { environment_id: id } },
-				}),
-			),
-		onSuccess: () => {
-			toast.success("Agent disconnected", {
-				description:
-					sessionTotal > 0
-						? `${sessionTotal} session${sessionTotal === 1 ? "" : "s"} kept (agent label dropped).`
-						: undefined,
-			});
-			// Invalidate every query that may render this environment — the
-			// dashboard agents card, sessions list (which joins agent labels),
-			// and the per-agent session lookup. Use predicate-form so we catch
-			// query keys with extra params like ["sessions", { page, q }].
-			queryClient.invalidateQueries({
-				predicate: (q) => {
-					const k = q.queryKey[0];
-					return k === "environments" || k === "sessions" || k === "agent";
-				},
-			});
-			router.push("/");
-		},
-		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
-	});
-
-	const onDisconnect = () => {
-		disconnect.mutate();
-	};
 
 	return (
 		<div className="space-y-6 px-4 lg:px-6">
@@ -265,7 +232,7 @@ export function ConnectedAgentDetail({
 						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
 					</h1>
 
-					<section className="space-y-4">
+					<section className={cn("space-y-4", isSettingsTab && "mx-auto w-full max-w-2xl")}>
 						<div className="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<div className="flex items-center gap-2">
@@ -279,42 +246,14 @@ export function ConnectedAgentDetail({
 									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
 								) : null}
 							</div>
-							<div className="flex flex-wrap items-center gap-2">
-								{activeTab === "skills" ? (
-									<Button asChild variant="outline" size="sm">
-										<Link
-											href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}
-										>
-											<Plus />
-											Install skills
-										</Link>
-									</Button>
-								) : null}
-								<ConfirmAction
-									title="Disconnect this agent?"
-									description={
-										<>
-											<p>Sessions and skills stay in your account.</p>
-											<p>
-												This agent will stop syncing and sessions will no longer be tagged with it.
-												Reconnect from that agent to resume.
-											</p>
-										</>
-									}
-									confirmLabel="Disconnect agent"
-									onConfirm={onDisconnect}
-								>
-									<Button
-										variant="outline"
-										size="sm"
-										disabled={disconnect.isPending}
-										className="shrink-0"
-									>
-										<Unplug className="text-warning" />
-										Disconnect
-									</Button>
-								</ConfirmAction>
-							</div>
+							{activeTab === "skills" ? (
+								<Button asChild variant="outline" size="sm">
+									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
+										<Plus />
+										Install skills
+									</Link>
+								</Button>
+							) : null}
 						</div>
 
 						{activeTab === "overview" ? (

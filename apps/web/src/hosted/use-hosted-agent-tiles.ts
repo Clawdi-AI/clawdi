@@ -168,7 +168,6 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
 			displayName: matchedEnv?.display_name ?? null,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
-			avatarPreset: matchedEnv?.avatar_preset ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
 			// Deployment slug as the secondary line lets users disambiguate
