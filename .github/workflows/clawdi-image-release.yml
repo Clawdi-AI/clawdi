@@ -274,6 +274,7 @@ jobs:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.build.outputs.image_tag }}
           CLAWDI_DEPLOY_SCOPE: ${{ needs.build.outputs.deploy_scope }}
+          CLAWDI_EXPECT_FILE_STORE_TYPE: ${{ vars.CLAWDI_COOLIFY_FILE_STORE_TYPE }}
         run: |
           if [ "$CLAWDI_DEPLOY_SCOPE" = "api-only" ]; then
             phase=api-only
@@ -299,6 +300,7 @@ jobs:
         env:
           COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          CLAWDI_EXPECT_FILE_STORE_TYPE: ${{ vars.CLAWDI_COOLIFY_FILE_STORE_TYPE }}
         run: |
           if [ -z "$COOLIFY_API_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
             echo "COOLIFY_API_URL and COOLIFY_TOKEN secrets are required for automated Coolify audit." >&2
