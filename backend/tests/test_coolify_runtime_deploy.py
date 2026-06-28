@@ -346,6 +346,82 @@ def test_audit_env_rejects_permanently_pending_shared_file_store_resolution(monk
     ]
 
 
+def test_audit_env_accepts_hidden_shared_file_store_type_from_manifest(monkeypatch):
+    module = _load_audit_module()
+    calls = 0
+
+    def fake_load_env_rows(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return [
+            {
+                "key": "FILE_STORE_TYPE",
+                "value": None,
+                "real_value": None,
+                "is_preview": False,
+                "is_shared": True,
+                "is_runtime": True,
+                "is_buildtime": False,
+            },
+            {
+                "key": "FILE_STORE_LOCAL_PATH",
+                "value": None,
+                "real_value": None,
+                "is_preview": False,
+                "is_shared": True,
+                "is_runtime": True,
+                "is_buildtime": False,
+            },
+        ]
+
+    monkeypatch.setattr(module, "load_env_rows", fake_load_env_rows)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE", "FILE_STORE_LOCAL_PATH"},
+        expected_application_env={},
+        expected_env_values={"FILE_STORE_TYPE": "local"},
+        env_resolution_attempts=2,
+    )
+
+    assert calls == 1
+    assert errors == []
+
+
+def test_audit_env_rejects_file_store_type_conflicting_with_manifest(monkeypatch):
+    module = _load_audit_module()
+
+    def fake_load_env_rows(**_kwargs):
+        return [
+            {
+                "key": "FILE_STORE_TYPE",
+                "value": "{{environment.FILE_STORE_TYPE}}",
+                "real_value": "s3",
+                "is_preview": False,
+                "is_shared": True,
+                "is_runtime": True,
+                "is_buildtime": False,
+            }
+        ]
+
+    monkeypatch.setattr(module, "load_env_rows", fake_load_env_rows)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE"},
+        expected_application_env={},
+        expected_env_values={"FILE_STORE_TYPE": "local"},
+    )
+
+    assert errors == ["clawdi-backend: FILE_STORE_TYPE expected 'local', got 's3'"]
+
+
 def test_audit_env_requires_s3_values_when_file_store_is_s3(monkeypatch):
     module = _load_audit_module()
     rows = [
