@@ -63,9 +63,7 @@ def test_application_patch_payload_reconciles_manifest_fields_without_placeholde
         "health_check_interval": 5,
         "health_check_retries": 12,
         "health_check_start_period": 20,
-        "custom_docker_run_options": (
-            "--init --add-host=host.docker.internal:host-gateway"
-        ),
+        "custom_docker_run_options": ("--init --add-host=host.docker.internal:host-gateway"),
         "docker_registry_image_name": "ghcr.io/clawdi-ai/clawdi-backend",
         "docker_registry_image_tag": "1370164c7b837280be9918ca3eb65b084cb32376",
     }
@@ -242,6 +240,110 @@ def test_audit_env_allows_empty_s3_values_while_file_store_is_local(monkeypatch)
     )
 
     assert errors == []
+
+
+def test_audit_env_retries_pending_shared_file_store_resolution(monkeypatch):
+    module = _load_audit_module()
+    calls = 0
+
+    pending_rows = [
+        {
+            "key": "FILE_STORE_TYPE",
+            "value": "{{environment.FILE_STORE_TYPE}}",
+            "real_value": None,
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_LOCAL_PATH",
+            "value": "{{environment.FILE_STORE_LOCAL_PATH}}",
+            "real_value": None,
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+    ]
+    resolved_rows = [
+        {
+            "key": "FILE_STORE_TYPE",
+            "value": "{{environment.FILE_STORE_TYPE}}",
+            "real_value": "local",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+        {
+            "key": "FILE_STORE_LOCAL_PATH",
+            "value": "{{environment.FILE_STORE_LOCAL_PATH}}",
+            "real_value": "/data/files",
+            "is_preview": False,
+            "is_shared": True,
+            "is_runtime": True,
+            "is_buildtime": False,
+        },
+    ]
+
+    def fake_load_env_rows(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return pending_rows if calls == 1 else resolved_rows
+
+    monkeypatch.setattr(module, "load_env_rows", fake_load_env_rows)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE", "FILE_STORE_LOCAL_PATH"},
+        expected_application_env={},
+        env_resolution_attempts=2,
+    )
+
+    assert calls == 2
+    assert errors == []
+
+
+def test_audit_env_rejects_permanently_pending_shared_file_store_resolution(monkeypatch):
+    module = _load_audit_module()
+    calls = 0
+
+    def fake_load_env_rows(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return [
+            {
+                "key": "FILE_STORE_TYPE",
+                "value": "{{environment.FILE_STORE_TYPE}}",
+                "real_value": None,
+                "is_preview": False,
+                "is_shared": True,
+                "is_runtime": True,
+                "is_buildtime": False,
+            }
+        ]
+
+    monkeypatch.setattr(module, "load_env_rows", fake_load_env_rows)
+
+    errors, _digests = module.audit_env(
+        api_url="https://coolify.example.com",
+        token="token",
+        app_name="clawdi-backend",
+        app_uuid="app-uuid",
+        expected_shared_keys={"FILE_STORE_TYPE"},
+        expected_application_env={},
+        env_resolution_attempts=2,
+    )
+
+    assert calls == 2
+    assert errors == [
+        "clawdi-backend: FILE_STORE_TYPE must resolve to 'local' or 's3', got "
+        "'{{environment.FILE_STORE_TYPE}}'",
+    ]
 
 
 def test_audit_env_requires_s3_values_when_file_store_is_s3(monkeypatch):
