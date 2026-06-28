@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,6 +54,8 @@ S3_REQUIRED_NON_EMPTY_KEYS = {
     "FILE_STORE_S3_SECRET_ACCESS_KEY",
 }
 REQUIRED_MANIFEST_KEYS = BASE_REQUIRED_NON_EMPTY_KEYS | FILE_STORE_MANIFEST_KEYS
+ENV_RESOLUTION_ATTEMPTS = 4
+ENV_RESOLUTION_RETRY_DELAY_SECONDS = 3.0
 
 
 def parse_env_manifest(path: Path) -> set[str]:
@@ -121,6 +124,60 @@ def row_resolved_value(row: dict[str, Any]) -> object:
     if row.get("real_value") is not None:
         return row.get("real_value")
     return row.get("value")
+
+
+def shared_value_is_pending(row: dict[str, Any]) -> bool:
+    if row.get("is_shared") is not True:
+        return False
+    real_value = row.get("real_value")
+    if real_value is not None:
+        return isinstance(real_value, str) and looks_like_unresolved_shared_ref(real_value)
+    value = row.get("value")
+    return value is None or (isinstance(value, str) and looks_like_unresolved_shared_ref(value))
+
+
+def env_resolution_pending(by_key: dict[str, dict[str, Any]]) -> bool:
+    file_store_type = by_key.get("FILE_STORE_TYPE")
+    if file_store_type and shared_value_is_pending(file_store_type):
+        return True
+
+    kind_value = row_resolved_value(file_store_type) if file_store_type else None
+    kind = str(kind_value or "").strip().lower()
+    keys = set(BASE_REQUIRED_NON_EMPTY_KEYS)
+    if kind == "local":
+        keys.add("FILE_STORE_LOCAL_PATH")
+    elif kind == "s3":
+        keys.update(S3_REQUIRED_NON_EMPTY_KEYS)
+
+    return any(
+        (row := by_key.get(key)) is not None and shared_value_is_pending(row) for key in keys
+    )
+
+
+def load_env_rows(
+    *,
+    api_url: str,
+    token: str,
+    app_uuid: str,
+) -> list[dict[str, Any]]:
+    payload = request_json(
+        api_url=api_url,
+        token=token,
+        method="GET",
+        path=f"/api/v1/applications/{app_uuid}/envs",
+    )
+    return [row for row in get_payload_list(payload, "data") if row.get("is_preview") is not True]
+
+
+def env_rows_by_key(rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for row in rows:
+        key = str(row.get("key", ""))
+        if key in by_key:
+            errors.append(f"duplicate env key {key}")
+        by_key[key] = row
+    return by_key, errors
 
 
 def file_store_required_non_empty_keys(
@@ -450,22 +507,25 @@ def audit_env(
     app_uuid: str,
     expected_shared_keys: set[str],
     expected_application_env: dict[str, str],
+    env_resolution_attempts: int = 1,
+    env_resolution_retry_delay_seconds: float = 0.0,
 ) -> tuple[list[str], dict[str, str]]:
-    payload = request_json(
-        api_url=api_url,
-        token=token,
-        method="GET",
-        path=f"/api/v1/applications/{app_uuid}/envs",
-    )
-    rows = [row for row in get_payload_list(payload, "data") if row.get("is_preview") is not True]
+    attempts = max(env_resolution_attempts, 1)
+    rows: list[dict[str, Any]] = []
     by_key: dict[str, dict[str, Any]] = {}
+    duplicate_errors: list[str] = []
+    for attempt in range(attempts):
+        rows = load_env_rows(api_url=api_url, token=token, app_uuid=app_uuid)
+        by_key, duplicate_errors = env_rows_by_key(rows)
+        if not env_resolution_pending(by_key):
+            break
+        if attempt + 1 < attempts and env_resolution_retry_delay_seconds > 0:
+            time.sleep(env_resolution_retry_delay_seconds)
+
     errors: list[str] = []
 
-    for row in rows:
-        key = str(row.get("key", ""))
-        if key in by_key:
-            errors.append(f"{app_name}: duplicate env key {key}")
-        by_key[key] = row
+    for error in duplicate_errors:
+        errors.append(f"{app_name}: {error}")
 
     keys = set(by_key)
     expected_application_keys = set(expected_application_env)
@@ -524,9 +584,7 @@ def audit_env(
             errors.append(f"{app_name}: {key} has an unexpected value")
 
     digests = {
-        key: value_digest(
-            row_resolved_value(by_key[key])
-        )
+        key: value_digest(row_resolved_value(by_key[key]))
         for key in sorted(expected_shared_keys & keys)
     }
     shared_refs = sum(1 for row in rows if row.get("is_shared") is True)
@@ -697,6 +755,8 @@ def main() -> int:
             app_uuid=app_uuid,
             expected_shared_keys=expected_keys,
             expected_application_env=application_env(expected),
+            env_resolution_attempts=ENV_RESOLUTION_ATTEMPTS,
+            env_resolution_retry_delay_seconds=ENV_RESOLUTION_RETRY_DELAY_SECONDS,
         )
         all_errors.extend(env_errors)
         app_digests[app_name] = digests
