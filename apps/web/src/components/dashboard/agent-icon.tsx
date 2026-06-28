@@ -67,7 +67,7 @@ export function AgentIcon({
 	className?: string;
 }) {
 	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
-	const customAvatar = avatarUrl?.trim() || agentAvatarPresetSrc(avatarPreset);
+	const customAvatar = agentAvatarPresetSrc(avatarPreset) || avatarUrl?.trim();
 	if (customAvatar) {
 		return (
 			<img

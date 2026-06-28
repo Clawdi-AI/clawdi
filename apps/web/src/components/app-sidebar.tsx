@@ -5,6 +5,7 @@ import {
 	closestCenter,
 	DndContext,
 	type DragEndEvent,
+	type DragOverEvent,
 	KeyboardSensor,
 	PointerSensor,
 	TouchSensor,
@@ -765,16 +766,18 @@ function SortableAgentRailItem({
 				</span>
 			</RailFocusButton>
 			{hosted ? (
-				<Cloud
-					aria-hidden="true"
-					className="pointer-events-none absolute top-1.5 right-1.5 z-20 size-3 text-sky-600 dark:text-sky-300"
-				/>
+				<span
+					title="Clawdi Cloud agent"
+					className="pointer-events-none absolute top-2 right-2 z-20 flex size-4 items-center justify-center rounded-full bg-info text-info-foreground shadow-sm ring-2 ring-sidebar"
+				>
+					<Cloud aria-hidden="true" className="size-2.5" />
+				</span>
 			) : null}
 			<button
 				type="button"
 				tabIndex={-1}
 				aria-hidden="true"
-				className="absolute inset-0 z-10 cursor-default rounded-lg bg-transparent"
+				className="absolute inset-0 z-10 cursor-default rounded-lg bg-transparent transition-colors hover:bg-sidebar-accent/70 active:bg-sidebar-accent"
 				onClick={() => onPointerNavigate(href)}
 				{...listeners}
 			/>
@@ -885,6 +888,17 @@ function FocusRailContent({
 		if (sameOrder(initialIds, finalIds)) return;
 		reorderAgents.mutate(finalIds);
 	};
+	const onDragOver = (event: DragOverEvent) => {
+		const { active, over } = event;
+		if (!over || active.id === over.id) return;
+		const current = railAgentsRef.current;
+		const activeId = String(active.id);
+		const overId = String(over.id);
+		const from = current.findIndex((agent) => agent.id === activeId);
+		const to = current.findIndex((agent) => agent.id === overId);
+		if (from < 0 || to < 0 || from === to) return;
+		setRailAgentsOrder(reorderEnvironmentsByIndex(current, from, to));
+	};
 	const releaseRailClickSuppression = () => {
 		window.setTimeout(() => {
 			suppressNextRailClick.current = false;
@@ -963,6 +977,7 @@ function FocusRailContent({
 							dragStartRailAgents.current = null;
 							releaseRailClickSuppression();
 						}}
+						onDragOver={onDragOver}
 						onDragEnd={(event) => {
 							onDragEnd(event);
 							releaseRailClickSuppression();
