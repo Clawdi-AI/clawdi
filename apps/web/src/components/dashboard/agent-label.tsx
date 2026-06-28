@@ -151,15 +151,15 @@ export function AgentSourceBadge({
 			title={title}
 			className={cn(
 				"inline-flex shrink-0 items-center whitespace-nowrap border font-semibold leading-none",
-				iconOnly ? "size-4 justify-center rounded-full p-0" : "rounded-md px-1.5 py-0.5",
-				compact ? "gap-1 text-[10px]" : "gap-1.5 text-[10px]",
+				iconOnly ? "size-4 justify-center rounded-full p-0" : "rounded-md px-1.5 py-[3px]",
+				compact ? "gap-1 text-[11px]" : "gap-1.5 text-[11px]",
 				source === "hosted"
-					? "border-primary/30 bg-primary/10 text-primary"
+					? "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-500/50 dark:bg-sky-950/70 dark:text-sky-200"
 					: "border-identity-7-fg/20 bg-identity-7-bg text-identity-7-fg",
 				className,
 			)}
 		>
-			<Icon className="size-2.5" />
+			<Icon className={iconOnly ? "size-2.5" : "size-3.5"} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
 		</span>
 	);

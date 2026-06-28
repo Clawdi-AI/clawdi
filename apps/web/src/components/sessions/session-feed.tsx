@@ -48,7 +48,7 @@ export function SessionFeed({
 		return (
 			<div className="space-y-3">
 				{Array.from({ length: 5 }).map((_, index) => (
-					<div key={index} className="rounded-xl border bg-card p-4">
+					<div key={index} className="rounded-lg border bg-card p-4">
 						<Skeleton className="h-4 w-4/5" />
 						<Skeleton className="mt-3 h-3 w-1/2" />
 					</div>
@@ -59,7 +59,7 @@ export function SessionFeed({
 
 	if (sessions.length === 0) {
 		return (
-			<div className="rounded-xl border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
+			<div className="rounded-lg border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
 				{emptyMessage}
 			</div>
 		);
@@ -135,13 +135,13 @@ function SessionFeedCard({
 	return (
 		<article
 			className={cn(
-				"group relative z-0 rounded-xl border bg-card transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
+				"group relative z-0 rounded-lg border bg-card transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
 				isAutomated ? "border-transparent bg-muted/40 p-3" : "p-4",
 			)}
 		>
 			<Link
 				href={href}
-				className="absolute inset-0 z-10 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				<span className="sr-only">Open session {session.local_session_id}</span>
 			</Link>

@@ -70,7 +70,7 @@ export function NewAgentButton({
 			className={cn(
 				"duration-200 ease-linear",
 				compact &&
-					"size-11 justify-center rounded-2xl border border-sidebar-border bg-sidebar-accent/70 p-0 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground [&>svg]:size-4.5",
+					"size-11 justify-center rounded-lg bg-sidebar-accent/70 p-0 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground [&>svg]:size-4.5",
 			)}
 		>
 			<CirclePlus />

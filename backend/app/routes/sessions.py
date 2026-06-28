@@ -380,7 +380,7 @@ async def list_environments(
         for e in envs
     ]
     etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=10, must-revalidate"}
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     response.headers.update(headers)

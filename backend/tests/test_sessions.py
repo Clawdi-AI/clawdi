@@ -43,7 +43,7 @@ async def test_environments_support_conditional_get(client: httpx.AsyncClient):
     assert first.status_code == 200, first.text
     etag = first.headers.get("ETag")
     assert etag
-    assert first.headers.get("Cache-Control") == "private, max-age=10, must-revalidate"
+    assert first.headers.get("Cache-Control") == "private, no-cache"
 
     not_modified = await client.get("/api/environments", headers={"If-None-Match": etag})
     assert not_modified.status_code == 304, not_modified.text

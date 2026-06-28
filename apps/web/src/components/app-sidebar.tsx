@@ -5,6 +5,7 @@ import {
 	closestCenter,
 	DndContext,
 	type DragEndEvent,
+	type DragOverEvent,
 	KeyboardSensor,
 	PointerSensor,
 	TouchSensor,
@@ -135,7 +136,7 @@ function RailIconChip({ tint, children }: { tint: string; children: React.ReactN
 	return (
 		<span
 			className={cn(
-				"flex size-8 shrink-0 items-center justify-center rounded-md border border-sidebar-border/70 [&>svg]:size-4",
+				"flex size-8 shrink-0 items-center justify-center rounded-md [&>svg]:size-4",
 				tint,
 			)}
 		>
@@ -259,6 +260,18 @@ function reorderEnvironmentsForCache(
 		.filter((env): env is SidebarEnvironment => Boolean(env));
 	reordered.push(...current.filter((env) => !requested.has(env.id)));
 	return reordered.map((env, index) => ({ ...env, sort_order: index }));
+}
+
+function reorderEnvironmentsByIndex(
+	current: SidebarEnvironment[],
+	from: number,
+	to: number,
+): SidebarEnvironment[] {
+	return arrayMove(current, from, to).map((env, index) => ({ ...env, sort_order: index }));
+}
+
+function sameOrder(a: string[], b: string[]): boolean {
+	return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 function SidebarNavSection({
@@ -646,8 +659,8 @@ function RailFocusButton({
 			aria-label={label}
 			className={cn(
 				hasCaption
-					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-xl px-1 py-1"
-					: "size-11 justify-center rounded-2xl p-0",
+					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
+					: "size-11 justify-center rounded-lg p-0",
 			)}
 		>
 			<Link href={href} draggable={false} onClick={onNavigate}>
@@ -721,7 +734,8 @@ function SortableAgentRailItem({
 	const href = agentSectionHref(agent.id);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
-		transition,
+		transition: isDragging ? undefined : transition,
+		zIndex: isDragging ? 20 : undefined,
 	};
 
 	return (
@@ -729,8 +743,8 @@ function SortableAgentRailItem({
 			ref={setNodeRef}
 			style={style}
 			className={cn(
-				"group/agent-rail-item relative w-full touch-pan-y",
-				isDragging && "opacity-75",
+				"group/agent-rail-item relative w-full touch-pan-y will-change-transform",
+				isDragging && "opacity-80",
 			)}
 		>
 			<RailFocusButton
@@ -753,7 +767,7 @@ function SortableAgentRailItem({
 						<AgentSourceBadge
 							source="hosted"
 							iconOnly
-							className="absolute -top-1 -right-1 size-3.5 border-sidebar-border bg-sidebar p-0 text-primary shadow-sm ring-1 ring-sidebar [&>svg]:size-2"
+							className="absolute -top-1 -right-1 size-4 border-sidebar bg-sky-500 p-0 text-white shadow-sm ring-2 ring-sidebar [&>svg]:size-2.5"
 						/>
 					) : null}
 				</span>
@@ -762,7 +776,7 @@ function SortableAgentRailItem({
 				type="button"
 				tabIndex={-1}
 				aria-hidden="true"
-				className="absolute inset-0 z-10 cursor-grab rounded-xl bg-transparent active:cursor-grabbing"
+				className="absolute inset-0 z-10 cursor-grab rounded-lg bg-transparent active:cursor-grabbing"
 				onClick={() => onPointerNavigate(href)}
 				{...listeners}
 			/>
@@ -802,12 +816,27 @@ function FocusRailContent({
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const suppressNextRailClick = useRef(false);
+	const draggingRailItem = useRef(false);
+	const [railAgents, setRailAgents] = useState<SidebarEnvironment[]>(() =>
+		[...agents].sort(compareAgentEnvironments),
+	);
+	const railAgentsRef = useRef(railAgents);
+	const dragStartRailAgents = useRef<SidebarEnvironment[] | null>(null);
+	const setRailAgentsOrder = (next: SidebarEnvironment[]) => {
+		railAgentsRef.current = next;
+		setRailAgents(next);
+	};
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
 		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
 		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
 	);
-	const orderedAgents = [...agents].sort(compareAgentEnvironments);
+	useEffect(() => {
+		if (!draggingRailItem.current) {
+			setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+		}
+	}, [agents]);
+	const orderedAgents = railAgents;
 	const orderedAgentIds = orderedAgents.map((agent) => agent.id);
 	const reorderAgents = useMutation({
 		mutationFn: async (environmentIds: string[]) =>
@@ -825,21 +854,52 @@ function FocusRailContent({
 		onError: (error, _environmentIds, context) => {
 			if (context?.previous) {
 				queryClient.setQueryData(["environments"], context.previous);
+				setRailAgentsOrder([...context.previous].sort(compareAgentEnvironments));
 			}
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
 			queryClient.setQueryData(["environments"], data);
+			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
 		},
 	});
-	const onDragEnd = (event: DragEndEvent) => {
+	const onDragOver = (event: DragOverEvent) => {
 		const { active, over } = event;
 		if (!over || active.id === over.id) return;
-		const from = orderedAgentIds.indexOf(String(active.id));
-		const to = orderedAgentIds.indexOf(String(over.id));
-		if (from < 0 || to < 0) return;
-		const next = arrayMove(orderedAgentIds, from, to);
-		reorderAgents.mutate(next);
+		const activeId = String(active.id);
+		const overId = String(over.id);
+		setRailAgents((current) => {
+			const from = current.findIndex((agent) => agent.id === activeId);
+			const to = current.findIndex((agent) => agent.id === overId);
+			if (from < 0 || to < 0 || from === to) return current;
+			const next = reorderEnvironmentsByIndex(current, from, to);
+			railAgentsRef.current = next;
+			return next;
+		});
+	};
+	const onDragEnd = (event: DragEndEvent) => {
+		const { active, over } = event;
+		draggingRailItem.current = false;
+		const initialAgents = dragStartRailAgents.current;
+		dragStartRailAgents.current = null;
+		if (!over) {
+			if (initialAgents) setRailAgentsOrder(initialAgents);
+			return;
+		}
+		let finalAgents = railAgentsRef.current;
+		const initialIds = (initialAgents ?? orderedAgents).map((agent) => agent.id);
+		let finalIds = finalAgents.map((agent) => agent.id);
+		if (sameOrder(initialIds, finalIds) && active.id !== over.id) {
+			const from = finalIds.indexOf(String(active.id));
+			const to = finalIds.indexOf(String(over.id));
+			if (from >= 0 && to >= 0) {
+				finalAgents = reorderEnvironmentsByIndex(finalAgents, from, to);
+				setRailAgentsOrder(finalAgents);
+				finalIds = finalAgents.map((agent) => agent.id);
+			}
+		}
+		if (sameOrder(initialIds, finalIds)) return;
+		reorderAgents.mutate(finalIds);
 	};
 	const releaseRailClickSuppression = () => {
 		window.setTimeout(() => {
@@ -865,12 +925,12 @@ function FocusRailContent({
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Open Clawdi homepage"
-							className="flex size-11 items-center justify-center rounded-2xl transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							className="flex size-11 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<img
 								src="/clawdi-logo-transparent.png"
 								alt=""
-								className="size-9 shrink-0 rounded-xl"
+								className="size-9 shrink-0 rounded-md"
 							/>
 							<span className="sr-only">Clawdi</span>
 						</a>
@@ -905,9 +965,21 @@ function FocusRailContent({
 						sensors={sensors}
 						collisionDetection={closestCenter}
 						onDragStart={() => {
+							draggingRailItem.current = true;
+							dragStartRailAgents.current = railAgentsRef.current;
 							suppressNextRailClick.current = true;
 						}}
-						onDragCancel={releaseRailClickSuppression}
+						onDragOver={onDragOver}
+						onDragCancel={() => {
+							draggingRailItem.current = false;
+							if (dragStartRailAgents.current) {
+								setRailAgentsOrder(dragStartRailAgents.current);
+							} else {
+								setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+							}
+							dragStartRailAgents.current = null;
+							releaseRailClickSuppression();
+						}}
 						onDragEnd={(event) => {
 							onDragEnd(event);
 							releaseRailClickSuppression();
@@ -1145,7 +1217,7 @@ function GlobalControlButton({
 			size="icon-lg"
 			onClick={onClick}
 			aria-label={label}
-			className="rounded-2xl"
+			className="rounded-lg"
 		>
 			{children}
 		</Button>
@@ -1162,13 +1234,7 @@ function GlobalControlButton({
 function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 	const trigger = (
 		<DropdownMenuTrigger asChild>
-			<Button
-				type="button"
-				variant="ghost"
-				size="icon-lg"
-				aria-label="Help"
-				className="rounded-2xl"
-			>
+			<Button type="button" variant="ghost" size="icon-lg" aria-label="Help" className="rounded-lg">
 				<CircleHelp />
 			</Button>
 		</DropdownMenuTrigger>
@@ -1204,12 +1270,12 @@ function UserControl({
 				type="button"
 				variant="ghost"
 				size="icon-lg"
-				className="rounded-2xl"
+				className="rounded-lg"
 				aria-label="User menu"
 			>
-				<Avatar className="size-8 rounded-2xl">
+				<Avatar className="size-8 rounded-md">
 					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-					<AvatarFallback className="rounded-2xl">{initial}</AvatarFallback>
+					<AvatarFallback className="rounded-md">{initial}</AvatarFallback>
 				</Avatar>
 			</Button>
 		</DropdownMenuTrigger>
