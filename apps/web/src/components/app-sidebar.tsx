@@ -5,7 +5,6 @@ import {
 	closestCenter,
 	DndContext,
 	type DragEndEvent,
-	type DragOverEvent,
 	KeyboardSensor,
 	PointerSensor,
 	TouchSensor,
@@ -24,6 +23,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	BookOpen,
 	CircleHelp,
+	Cloud,
 	Cpu,
 	ExternalLink,
 	GripVertical,
@@ -50,7 +50,6 @@ import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
-	AgentSourceBadge,
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 	agentIdentitySeed,
@@ -755,7 +754,7 @@ function SortableAgentRailItem({
 				onNavigate={onNavigate}
 				showTooltip={showTooltip}
 			>
-				<span className="relative inline-flex cursor-grab active:cursor-grabbing">
+				<span className="relative inline-flex">
 					<AgentIcon
 						agent={agent.agent_type}
 						size="rail"
@@ -763,20 +762,19 @@ function SortableAgentRailItem({
 						avatarUrl={agent.avatar_url}
 						avatarPreset={agent.avatar_preset}
 					/>
-					{hosted ? (
-						<AgentSourceBadge
-							source="hosted"
-							iconOnly
-							className="absolute -top-1 -right-1 size-4 border-sidebar bg-sky-500 p-0 text-white shadow-sm ring-2 ring-sidebar [&>svg]:size-2.5"
-						/>
-					) : null}
 				</span>
 			</RailFocusButton>
+			{hosted ? (
+				<Cloud
+					aria-hidden="true"
+					className="pointer-events-none absolute top-1.5 right-1.5 z-20 size-3 text-sky-600 dark:text-sky-300"
+				/>
+			) : null}
 			<button
 				type="button"
 				tabIndex={-1}
 				aria-hidden="true"
-				className="absolute inset-0 z-10 cursor-grab rounded-lg bg-transparent active:cursor-grabbing"
+				className="absolute inset-0 z-10 cursor-default rounded-lg bg-transparent"
 				onClick={() => onPointerNavigate(href)}
 				{...listeners}
 			/>
@@ -863,20 +861,6 @@ function FocusRailContent({
 			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
 		},
 	});
-	const onDragOver = (event: DragOverEvent) => {
-		const { active, over } = event;
-		if (!over || active.id === over.id) return;
-		const activeId = String(active.id);
-		const overId = String(over.id);
-		setRailAgents((current) => {
-			const from = current.findIndex((agent) => agent.id === activeId);
-			const to = current.findIndex((agent) => agent.id === overId);
-			if (from < 0 || to < 0 || from === to) return current;
-			const next = reorderEnvironmentsByIndex(current, from, to);
-			railAgentsRef.current = next;
-			return next;
-		});
-	};
 	const onDragEnd = (event: DragEndEvent) => {
 		const { active, over } = event;
 		draggingRailItem.current = false;
@@ -969,7 +953,6 @@ function FocusRailContent({
 							dragStartRailAgents.current = railAgentsRef.current;
 							suppressNextRailClick.current = true;
 						}}
-						onDragOver={onDragOver}
 						onDragCancel={() => {
 							draggingRailItem.current = false;
 							if (dragStartRailAgents.current) {

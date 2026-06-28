@@ -150,12 +150,10 @@ export function AgentSourceBadge({
 		<span
 			title={title}
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap border font-semibold leading-none",
-				iconOnly ? "size-4 justify-center rounded-full p-0" : "rounded-md px-1.5 py-[3px]",
+				"inline-flex shrink-0 items-center whitespace-nowrap font-semibold leading-none",
+				iconOnly ? "size-4 justify-center p-0" : "px-0 py-[3px]",
 				compact ? "gap-1 text-[11px]" : "gap-1.5 text-[11px]",
-				source === "hosted"
-					? "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-500/50 dark:bg-sky-950/70 dark:text-sky-200"
-					: "border-identity-7-fg/20 bg-identity-7-bg text-identity-7-fg",
+				source === "hosted" ? "text-sky-700 dark:text-sky-300" : "text-identity-7-fg",
 				className,
 			)}
 		>
