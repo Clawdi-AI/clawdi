@@ -37,7 +37,7 @@ export function useAgentDeployment(environmentId: string) {
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const envs = match.deployment.config_info?.clawdi_cloud_environments ?? {};
-		return envs.openclaw || envs.hermes || envs.codex || Object.values(envs)[0] || environmentId;
+		return envs.codex || environmentId;
 	}, [match, environmentId]);
 
 	return {
@@ -96,6 +96,14 @@ export function useOnboardAgent() {
 			toast.success("Runtime added");
 		},
 		onError: toastBillingError("Couldn't add runtime"),
+	});
+}
+
+export function useCreateTerminalSession() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (vars: { id: string }) => client.createTerminalSession(vars.id),
+		onError: toastBillingError("Couldn't open terminal"),
 	});
 }
 

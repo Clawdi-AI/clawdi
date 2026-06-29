@@ -11,6 +11,7 @@ describe("deploymentDisplayName", () => {
 	});
 
 	test("keeps the existing runtime-prefix cleanup", () => {
+		expect(deploymentDisplayName("codex-research")).toBe("research");
 		expect(deploymentDisplayName("openclaw-research")).toBe("research");
 		expect(deploymentDisplayName("hermes-support")).toBe("support");
 	});

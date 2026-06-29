@@ -50,6 +50,12 @@ describe("hostedEnvironmentHref", () => {
 		);
 	});
 
+	test("prefers Codex when multiple hosted runtime environments exist", () => {
+		expect(
+			hostedEnvironmentHref(deployment({ openclaw: "env openclaw", codex: "env codex" })),
+		).toBe("/agents/env%20codex?source=on-clawdi");
+	});
+
 	test("does not treat the deployment id as an agent environment id", () => {
 		expect(hostedEnvironmentHref(deployment(null))).toBeNull();
 		expect(hostedEnvironmentHref(deployment({}))).toBeNull();

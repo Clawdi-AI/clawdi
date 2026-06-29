@@ -42,6 +42,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},
     "/v2/deployments/{deployment_id}/agents/{agent_type}": {"patch"},
     "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {"patch"},
+    "/v2/deployments/{deployment_id}/terminal": {"post"},
     "/v2/deployments/{deployment_id}/onboard-agent": {"post"},
     "/v2/deployments/{deployment_id}/restart": {"post"},
     "/v2/deployments/{deployment_id}/start": {"post"},

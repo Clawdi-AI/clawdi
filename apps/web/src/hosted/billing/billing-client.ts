@@ -153,6 +153,12 @@ export function useBillingClient() {
 					}),
 				);
 			},
+			createTerminalSession: async (id: string) =>
+				unwrapDeploy(
+					await api.POST("/v2/deployments/{deployment_id}/terminal", {
+						params: { path: { deployment_id: id } },
+					}),
+				),
 			restartDeployment: async (id: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments/{deployment_id}/restart", {

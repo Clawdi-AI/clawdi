@@ -1,4 +1,4 @@
-import type { DeployComponents } from "@clawdi/shared/api";
+import type { DeployComponents, DeployPaths } from "@clawdi/shared/api";
 
 type Schemas = DeployComponents["schemas"];
 
@@ -20,7 +20,9 @@ export type Plan = Schemas["V2PlanResponse"];
 export type PortalRequest = Schemas["V2ComputePortalRequest"];
 export type PortalResult = Schemas["V2PortalResponse"];
 export type RebindAgentAiProviderRequest = Schemas["V2RebindAgentAiProviderRequest"];
-export type RuntimeAgentType = Schemas["V2OnboardAgentRequest"]["agent_type"];
+export type RuntimeAgentType =
+	DeployPaths["/v2/deployments/{deployment_id}/agents/{agent_type}"]["patch"]["parameters"]["path"]["agent_type"];
+export type TerminalSessionResponse = Schemas["V2DeploymentTerminalSessionResponse"];
 export type UsageDay = Schemas["V2HostedUsageDay"];
 export type UsageModelBreakdown = Schemas["V2HostedUsageModelBreakdown"];
 export type UsageSummary = Schemas["V2HostedUsageSummaryResponse"];

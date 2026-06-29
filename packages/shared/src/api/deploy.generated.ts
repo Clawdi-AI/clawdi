@@ -92,6 +92,23 @@ export interface paths {
         patch: operations["rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch"];
         trace?: never;
     };
+    "/v2/deployments/{deployment_id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create V2 Deployment Terminal Session */
+        post: operations["create_v2_deployment_terminal_session_v2_deployments__deployment_id__terminal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}/onboard-agent": {
         parameters: {
             query?: never;
@@ -518,6 +535,22 @@ export interface components {
             upgrade_task_id?: string | null;
             /** Upgrade Status */
             upgrade_status?: string | null;
+        };
+        /** V2DeploymentTerminalSessionResponse */
+        V2DeploymentTerminalSessionResponse: {
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+            /** Websocket Url */
+            websocket_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {
@@ -1264,6 +1297,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_deployment_terminal_session_v2_deployments__deployment_id__terminal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2DeploymentTerminalSessionResponse"];
                 };
             };
             /** @description Validation Error */

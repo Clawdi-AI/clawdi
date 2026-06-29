@@ -1,12 +1,18 @@
 "use client";
 
-import { Bot, ExternalLink, Sparkles } from "lucide-react";
+import { Bot, ExternalLink, Sparkles, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
+import {
+	deploymentRuntimes,
+	type HostedRuntime,
+	runtimeConsoleUrl,
+	runtimeDisplayName,
+} from "@/hosted/runtimes";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -28,17 +34,19 @@ function statusLabel(status: string): string {
 }
 
 function deploymentLabel(d: HostedDeployment): string {
-	return d.name.replace(/^(openclaw|hermes)-/i, "") || d.name;
+	return d.name.replace(/^(codex|openclaw|hermes)-/i, "") || d.name;
 }
 
-/** "OpenClaw + Hermes" — enabled runtime summary for a deployment. */
+/** "Codex + OpenClaw + Hermes" — runtime summary for a deployment. */
 function metaLine(d: HostedDeployment): string | null {
-	const info = d.config_info;
-	if (!info) return null;
-	const engines = [info.enable_openclaw && "OpenClaw", info.enable_hermes && "Hermes"]
-		.filter(Boolean)
-		.join(" + ");
+	const engines = deploymentRuntimes(d).map(runtimeDisplayName).join(" + ");
 	return engines || null;
+}
+
+function runtimeButtonIcon(runtime: HostedRuntime) {
+	if (runtime === "codex") return <TerminalSquare />;
+	if (runtime === "hermes") return <Sparkles />;
+	return <Bot />;
 }
 
 /**
@@ -83,10 +91,9 @@ export function HostedAgentControls() {
 			</CardHeader>
 			<CardContent className="space-y-3">
 				{items.map((d) => {
-					const openclaw = d.openclaw_ui_url;
-					const hermes = d.hermes_ui_url;
 					const meta = metaLine(d);
-					const provisioning = !openclaw && !hermes;
+					const runtimes = deploymentRuntimes(d);
+					const provisioning = runtimes.every((runtime) => !runtimeConsoleUrl(d, runtime));
 					return (
 						<div key={d.id} className="flex flex-col gap-2.5 rounded-lg border p-3">
 							<div className="flex items-center justify-between gap-2">
@@ -97,42 +104,33 @@ export function HostedAgentControls() {
 							</div>
 							{meta ? <p className="text-xs text-muted-foreground">{meta}</p> : null}
 							<div className="flex flex-wrap gap-2">
-								{openclaw ? (
-									<Button asChild size="sm" variant="outline">
-										<a href={openclaw} target="_blank" rel="noopener noreferrer">
-											<Bot /> Open OpenClaw <ExternalLink className="size-3.5" />
-										</a>
-									</Button>
-								) : (
-									<Button
-										size="sm"
-										variant="outline"
-										disabled
-										title={
-											provisioning ? "Available once the agent finishes provisioning" : undefined
-										}
-									>
-										<Bot /> OpenClaw
-									</Button>
-								)}
-								{hermes ? (
-									<Button asChild size="sm" variant="outline">
-										<a href={hermes} target="_blank" rel="noopener noreferrer">
-											<Sparkles /> Open Hermes <ExternalLink className="size-3.5" />
-										</a>
-									</Button>
-								) : (
-									<Button
-										size="sm"
-										variant="outline"
-										disabled
-										title={
-											provisioning ? "Available once the agent finishes provisioning" : undefined
-										}
-									>
-										<Sparkles /> Hermes
-									</Button>
-								)}
+								{runtimes.map((runtime) => {
+									const url = runtimeConsoleUrl(d, runtime);
+									const label = runtimeDisplayName(runtime);
+									if (url) {
+										return (
+											<Button key={runtime} asChild size="sm" variant="outline">
+												<a href={url} target="_blank" rel="noopener noreferrer">
+													{runtimeButtonIcon(runtime)} Open {label}
+													<ExternalLink className="size-3.5" />
+												</a>
+											</Button>
+										);
+									}
+									return (
+										<Button
+											key={runtime}
+											size="sm"
+											variant="outline"
+											disabled
+											title={
+												provisioning ? "Available once the agent finishes provisioning" : undefined
+											}
+										>
+											{runtimeButtonIcon(runtime)} {label}
+										</Button>
+									);
+								})}
 							</div>
 						</div>
 					);

@@ -724,7 +724,7 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
         "provider_id": "clawdi-managed",
         "runtimes": {
             "openclaw": {"enabled": True},
-            "codex": {"enabled": True},
+            "claude_code": {"enabled": True},
         },
     }
 
@@ -759,7 +759,7 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
             generation=7,
             provider_id="clawdi-managed",
             runtimes={
-                "codex": {"enabled": True},
+                "claude_code": {"enabled": True},
                 "openclaw": {"enabled": False},
             },
             system=None,
@@ -781,7 +781,7 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
     app.dependency_overrides.clear()
 
     assert response.status_code == 409, response.text
-    assert response.json() == {"detail": "unsupported enabled runtime: codex"}
+    assert response.json() == {"detail": "unsupported enabled runtime: claude_code"}
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1101,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
         user_id=seed_user.id,
         machine_id=f"runtime-codex-oauth-{uuid4().hex[:8]}",
         machine_name="Runtime Codex OAuth Provider",
-        agent_type="openclaw",
+        agent_type="codex",
     )
     db_session.add(
         AiProvider(
@@ -1123,11 +1123,12 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
         str(env.id),
         provider_id="openai-codex",
         runtimes={
-            "openclaw": {
+            "codex": {
                 "enabled": True,
                 "provider_id": "openai-codex",
                 "model": "gpt-5.5",
             },
+            "openclaw": {"enabled": False},
             "hermes": {"enabled": False},
         },
     )
@@ -1138,7 +1139,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["providers"]["openclaw"] == {
+    assert response.json()["manifest"]["providers"]["codex"] == {
         "kind": "openai-compatible",
         "type": "openai",
         "baseUrl": "https://api.openai.com/v1",

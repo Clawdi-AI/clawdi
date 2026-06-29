@@ -34,7 +34,7 @@ class _RuntimeProviderBinding:
     model: str | None
 
 
-_SUPPORTED_PROVIDER_RUNTIMES = {"hermes", "openclaw"}
+_SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
 
 
 @router.get("/manifest")

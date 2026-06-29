@@ -9,6 +9,7 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -108,35 +109,22 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	};
 }
 
-const KNOWN_RUNTIMES = ["openclaw", "hermes"] as const;
-type Runtime = (typeof KNOWN_RUNTIMES)[number];
-
-function isKnownRuntime(s: string): s is Runtime {
-	return (KNOWN_RUNTIMES as readonly string[]).includes(s);
-}
-
 /**
- * One deployment fans out to one tile per running runtime. OpenClaw
- * (:18789) and Hermes (:9119) are completely separate dashboard
- * surfaces in the hosted dashboard — different web servers and
- * capability sets — so the unified grid renders them as distinct agents.
+ * One deployment fans out to one tile per hosted runtime. Codex is the default
+ * always-on runtime; OpenClaw and Hermes are optional sibling runtimes.
  *
  * Runtime resolution priority (see `resolveRuntimes` below):
  *   1. `clawdi_cloud_environments` keys. Each key corresponds to a
  *      runtime with a live cloud-api env binding.
  *   2. `onboarded_agents`, when it names recognizable runtimes.
- *   3. `enable_hermes`, for deployments that expose only that field.
- *
- * We never synthesize a runtime that isn't surfaced by one of these
- * sources (the deployment doesn't have that process running).
+ *   3. Codex plus enabled legacy runtime flags for older payloads.
  */
 function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
-	const runtimes = resolveRuntimes(d);
+	const runtimes = deploymentRuntimes(d);
 	const slug = deploymentDisplayName(d.name);
 	const statusLabel = displayStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	const active = d.status === "running" || d.status === "ready";
-	const cloudEnvIds = d.config_info?.clawdi_cloud_environments ?? {};
 	return runtimes.map((runtime) => {
 		// Hosted env join: each hosted runtime registers a cloud-api env
 		// via the admin endpoint. Match by agent_type → environment_id
@@ -150,7 +138,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		// `AgentHome` resolves deployment ids without pretending they are
 		// cloud-api environment ids, so the tile still has a useful
 		// in-app place to click. Lifecycle operations live in Settings.
-		const envId = cloudEnvIds[runtime];
+		const envId = runtimeEnvironmentId(d.config_info, runtime);
 		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 		const detailHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
@@ -192,36 +180,6 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			computeName: slug,
 		};
 	});
-}
-
-function resolveRuntimes(d: HostedDeployment): Runtime[] {
-	// `clawdi_cloud_environments` is the authoritative source: every
-	// agent with a live-sync env on cloud-api is by definition a daemon
-	// running in the hosted deployment. If it's there, it's real.
-	const set = new Set<Runtime>();
-	for (const r of Object.keys(d.config_info?.clawdi_cloud_environments ?? {})) {
-		if (isKnownRuntime(r)) set.add(r);
-	}
-	// `onboarded_agents` is the next source: trust it only when it names
-	// recognizable runtimes. Empty arrays and arrays full of unknown
-	// strings mean the field is not authoritative, not that the
-	// deployment has zero running agents.
-	for (const r of d.config_info?.onboarded_agents ?? []) {
-		if (isKnownRuntime(r)) set.add(r);
-	}
-	if (set.size > 0) return Array.from(set);
-	// Final compatibility source for deployments that only expose
-	// `enable_hermes`.
-	return [d.config_info?.enable_hermes ? "hermes" : "openclaw"];
-}
-
-function runtimeDisplayName(runtime: Runtime): string {
-	switch (runtime) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-	}
 }
 
 function displayStatus(status: string): string {
