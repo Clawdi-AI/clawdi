@@ -21,7 +21,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_scope_short_session
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
 from app.core.project import (
     project_ids_visible_to,
     resolve_default_write_project,
@@ -230,7 +230,6 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
 @router.get("")
 async def list_skills(
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
-    db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, description="Search name / description / skill_key"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
@@ -247,6 +246,38 @@ async def list_skills(
         ),
     ),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+) -> Paginated[SkillSummaryResponse]:
+    fast_response = _bound_api_key_skills_304_response(
+        auth=auth,
+        selected_project_id=project_id,
+        if_none_match=if_none_match,
+    )
+    if fast_response is not None:
+        return fast_response
+
+    async with async_session_factory() as db:
+        return await _list_skills_with_db(
+            auth=auth,
+            db=db,
+            q=q,
+            page=page,
+            page_size=page_size,
+            include_content=include_content,
+            project_id=project_id,
+            if_none_match=if_none_match,
+        )
+
+
+async def _list_skills_with_db(
+    *,
+    auth: AuthContext,
+    db: AsyncSession,
+    q: str | None,
+    page: int,
+    page_size: int,
+    include_content: bool,
+    project_id: UUID | None,
+    if_none_match: str | None,
 ) -> Paginated[SkillSummaryResponse]:
     # Collection-level ETag short-circuit: when the daemon's
     # last-seen revision matches current, return 304 with no body
@@ -285,20 +316,17 @@ async def list_skills(
     else:
         # Unscoped read: full inventory across owned + shared projects.
         visible_project_ids = await project_ids_visible_to(db, auth)
-    project_tag = str(selected_project_id) if selected_project_id is not None else "all"
-    # Short fingerprint of the visible-project set (sorted for
-    # determinism). 16 hex chars = 64 bits of collision space —
-    # one in ~10^19, well past the realistic distinct-set count
-    # for any account.
-    visible_fingerprint = hashlib.sha256(
-        ":".join(sorted(str(s) for s in visible_project_ids)).encode()
-    ).hexdigest()[:16]
     visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
         db,
         auth,
         visible_project_ids,
     )
-    etag = f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
+    etag = _skills_collection_etag(
+        revision=revision,
+        selected_project_id=selected_project_id,
+        visible_project_ids=visible_project_ids,
+        visible_revision_fingerprint=visible_revision_fingerprint,
+    )
     if if_none_match is not None and if_none_match.strip() == etag:
         await db.commit()
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
@@ -438,6 +466,72 @@ async def list_skills(
     )
 
 
+def _bound_api_key_skills_304_response(
+    *,
+    auth: AuthContext,
+    selected_project_id: UUID | None,
+    if_none_match: str | None,
+) -> Response | None:
+    """Serve the hot daemon conditional-GET path without opening a DB session.
+
+    Env-bound API keys are already narrowed by the auth snapshot to exactly one
+    Agent Project (`auth.api_key_project_id`) and never see shared projects.
+    Their visible-owner revision is therefore the authenticated user's cached
+    `skills_revision`. That makes the 304 ETag fully derivable from the auth
+    context and query parameters.
+
+    Dashboard JWTs and unbound CLI keys still go through the DB-backed path so
+    shared-project owner revisions stay part of the ETag.
+    """
+    if if_none_match is None or auth.api_key_project_id is None:
+        return None
+
+    if selected_project_id is not None:
+        visible_project_ids = (
+            [selected_project_id] if selected_project_id == auth.api_key_project_id else []
+        )
+    else:
+        visible_project_ids = [auth.api_key_project_id]
+
+    visible_revision_fingerprint = (
+        _auth_user_skills_revision_fingerprint(auth) if visible_project_ids else "none"
+    )
+    etag = _skills_collection_etag(
+        revision=auth.skills_revision,
+        selected_project_id=selected_project_id,
+        visible_project_ids=visible_project_ids,
+        visible_revision_fingerprint=visible_revision_fingerprint,
+    )
+    if if_none_match.strip() != etag:
+        return None
+    return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+
+
+def _skills_collection_etag(
+    *,
+    revision: int,
+    selected_project_id: UUID | None,
+    visible_project_ids: list[UUID],
+    visible_revision_fingerprint: str,
+) -> str:
+    project_tag = str(selected_project_id) if selected_project_id is not None else "all"
+    visible_fingerprint = _visible_project_fingerprint(visible_project_ids)
+    return f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
+
+
+def _visible_project_fingerprint(visible_project_ids: list[UUID]) -> str:
+    # Short fingerprint of the visible-project set (sorted for determinism).
+    # 16 hex chars = 64 bits of collision space, well past the realistic
+    # distinct-set count for any account.
+    return hashlib.sha256(
+        ":".join(sorted(str(s) for s in visible_project_ids)).encode()
+    ).hexdigest()[:16]
+
+
+def _auth_user_skills_revision_fingerprint(auth: AuthContext) -> str:
+    return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
+
+
 async def _resolve_legacy_skill(
     db: AsyncSession,
     auth: AuthContext,
@@ -485,7 +579,7 @@ async def _visible_skills_revision_fingerprint(
     if auth.api_key_project_id is not None and set(visible_project_ids) == {
         auth.api_key_project_id
     }:
-        return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
+        return _auth_user_skills_revision_fingerprint(auth)
 
     from app.models.project import Project
     from app.models.user import User

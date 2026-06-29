@@ -80,6 +80,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // (dashboard install / delete) propagate to the machine; 60s is
 // the worst-case lag a user sees after acting on the dashboard.
 const RECONCILE_INTERVAL_MS = 60_000;
+const RECONCILE_JITTER_MS = 15_000;
 const LAUNCHD_DAEMON_LABEL = "ai.clawdi.serve";
 
 function removeLaunchdDaemonSupervision(agentType: string): void {
@@ -1876,7 +1877,7 @@ async function reconcileLoop(
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
 	while (!abort.aborted) {
-		await sleep(RECONCILE_INTERVAL_MS, abort);
+		await sleep(reconcileDelayMs(), abort);
 		if (abort.aborted) return;
 		try {
 			await reconcileFromCloud(
@@ -1903,6 +1904,11 @@ async function reconcileLoop(
 			log.warn("engine.reconcile_failed", { error: toErrorMessage(e) });
 		}
 	}
+}
+
+export function reconcileDelayMs(random: () => number = Math.random): number {
+	const offset = (random() - 0.5) * 2 * RECONCILE_JITTER_MS;
+	return Math.round(RECONCILE_INTERVAL_MS + offset);
 }
 
 async function reconcileFromCloud(

@@ -12,6 +12,7 @@ import {
 	isAuthFailure,
 	isOversizedUploadError,
 	lastSyncErrorForSseReconnect,
+	reconcileDelayMs,
 	releaseInFlight,
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
@@ -78,6 +79,14 @@ describe("live-sync transient failure classification", () => {
 		expect(classifyHeartbeatFailure(1)).toBe("transient");
 		expect(classifyHeartbeatFailure(3)).toBe("transient");
 		expect(classifyHeartbeatFailure(4)).toBe("sustained");
+	});
+});
+
+describe("reconcileDelayMs", () => {
+	it("spreads 60s reconcile polls across a bounded jitter window", () => {
+		expect(reconcileDelayMs(() => 0)).toBe(45_000);
+		expect(reconcileDelayMs(() => 0.5)).toBe(60_000);
+		expect(reconcileDelayMs(() => 1)).toBe(75_000);
 	});
 });
 
