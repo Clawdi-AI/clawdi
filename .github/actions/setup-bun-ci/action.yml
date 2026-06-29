@@ -17,15 +17,19 @@ runs:
       with:
         bun-version: ${{ inputs.bun-version }}
 
-    - name: Cache bun install
+    - name: Cache Bun package downloads
       uses: actions/cache@v5
       with:
-        path: |
-          ~/.bun/install/cache
-          node_modules
-        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
+        path: ~/.bun/install/cache
+        key: bun-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
         restore-keys: |
-          bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-
+          bun-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-
+
+    - name: Cache workspace install
+      uses: actions/cache@v5
+      with:
+        path: node_modules
+        key: bun-node-modules-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
 
     - name: Install dependencies
       shell: bash
