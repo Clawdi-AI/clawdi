@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import hashlib
 import hmac
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from uuid import UUID
 
 import httpx
@@ -35,6 +39,111 @@ API_KEY_PREFIX = "clawdi_"
 # long ago. Every authenticated CLI request used to write+commit the row,
 # which becomes write-lock contention on a hot key at scale.
 LAST_USED_THROTTLE = timedelta(minutes=1)
+API_KEY_AUTH_CACHE_TTL_SECONDS = 5.0
+API_KEY_AUTH_CACHE_MAX_SIZE = 4096
+
+
+@dataclass(frozen=True)
+class _CachedApiKeyAuth:
+    api_key_id: UUID
+    user_id: UUID
+    key_hash: str
+    key_prefix: str
+    label: str
+    scopes: tuple[str, ...] | None
+    environment_id: UUID | None
+    expires_at: datetime | None
+    user_clerk_id: str
+    user_email: str | None
+    user_name: str | None
+    user_avatar_url: str | None
+    skills_revision: int
+    api_key_project_id: UUID | None
+
+    def to_auth_context(self) -> AuthContext:
+        user = User(
+            id=self.user_id,
+            clerk_id=self.user_clerk_id,
+            email=self.user_email,
+            name=self.user_name,
+            avatar_url=self.user_avatar_url,
+            skills_revision=self.skills_revision,
+        )
+        api_key = ApiKey(
+            id=self.api_key_id,
+            user_id=self.user_id,
+            key_hash=self.key_hash,
+            key_prefix=self.key_prefix,
+            label=self.label,
+            scopes=list(self.scopes) if self.scopes is not None else None,
+            environment_id=self.environment_id,
+            expires_at=self.expires_at,
+            revoked_at=None,
+        )
+        return AuthContext(user=user, api_key=api_key, api_key_project_id=self.api_key_project_id)
+
+
+_api_key_auth_cache: dict[str, tuple[float, _CachedApiKeyAuth]] = {}
+
+
+def _get_cached_api_key_auth(key_hash: str) -> AuthContext | None:
+    cached = _api_key_auth_cache.get(key_hash)
+    if cached is None:
+        return None
+    expires_at, snapshot = cached
+    if expires_at <= monotonic():
+        _api_key_auth_cache.pop(key_hash, None)
+        return None
+    return snapshot.to_auth_context()
+
+
+def _cache_api_key_auth(
+    *,
+    key_hash: str,
+    api_key: ApiKey,
+    user: User,
+    api_key_project_id: UUID | None,
+    now: datetime,
+) -> None:
+    ttl_seconds = API_KEY_AUTH_CACHE_TTL_SECONDS
+    if api_key.expires_at is not None:
+        ttl_seconds = min(ttl_seconds, max(0.0, (api_key.expires_at - now).total_seconds()))
+    if ttl_seconds <= 0:
+        return
+
+    if len(_api_key_auth_cache) >= API_KEY_AUTH_CACHE_MAX_SIZE:
+        current = monotonic()
+        expired = [k for k, (expires_at, _) in _api_key_auth_cache.items() if expires_at <= current]
+        for k in expired:
+            _api_key_auth_cache.pop(k, None)
+        while len(_api_key_auth_cache) >= API_KEY_AUTH_CACHE_MAX_SIZE:
+            _api_key_auth_cache.pop(next(iter(_api_key_auth_cache)))
+
+    _api_key_auth_cache[key_hash] = (
+        monotonic() + ttl_seconds,
+        _CachedApiKeyAuth(
+            api_key_id=api_key.id,
+            user_id=user.id,
+            key_hash=api_key.key_hash,
+            key_prefix=api_key.key_prefix,
+            label=api_key.label,
+            scopes=tuple(api_key.scopes) if api_key.scopes is not None else None,
+            environment_id=api_key.environment_id,
+            expires_at=api_key.expires_at,
+            user_clerk_id=user.clerk_id,
+            user_email=user.email,
+            user_name=user.name,
+            user_avatar_url=user.avatar_url,
+            skills_revision=int(user.skills_revision or 0),
+            api_key_project_id=api_key_project_id,
+        ),
+    )
+
+
+def invalidate_api_key_auth_cache(api_key_id: UUID) -> None:
+    for key_hash, (_, snapshot) in list(_api_key_auth_cache.items()):
+        if snapshot.api_key_id == api_key_id:
+            _api_key_auth_cache.pop(key_hash, None)
 
 
 class AuthContext:
@@ -61,6 +170,10 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         return None
 
     key_hash = hashlib.sha256(token.encode()).hexdigest()
+    cached = _get_cached_api_key_auth(key_hash)
+    if cached is not None:
+        return cached
+
     result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
     api_key = result.scalar_one_or_none()
 
@@ -68,11 +181,11 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         return None
     if api_key.revoked_at:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
-    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
+    now = datetime.now(UTC)
+    if api_key.expires_at and api_key.expires_at < now:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
 
     # Throttle last_used_at writes: once per LAST_USED_THROTTLE per key.
-    now = datetime.now(UTC)
     last = api_key.last_used_at
     if last is None or (now - last) > LAST_USED_THROTTLE:
         api_key.last_used_at = now
@@ -96,6 +209,13 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
             )
         ).scalar_one_or_none()
 
+    _cache_api_key_auth(
+        key_hash=key_hash,
+        api_key=api_key,
+        user=user,
+        api_key_project_id=api_key_project_id,
+        now=now,
+    )
     return AuthContext(user=user, api_key=api_key, api_key_project_id=api_key_project_id)
 
 
