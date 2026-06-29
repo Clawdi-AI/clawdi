@@ -88,10 +88,10 @@ Inspect what's stored from the CLI anytime:
 $ clawdi memory list
 $ clawdi mem list                            # shorter alias
 
-$ clawdi memory search "package manager"     # semantic search (any language)
-$ clawdi mem search "我的偏好"                 # works in Chinese too
+$ clawdi memory search "package manager"     # semantic search
+$ clawdi mem search "my preferences"         # shorter alias
 
-$ clawdi memory add "我用 pnpm 不用 npm"      # add from CLI directly
+$ clawdi memory add "I use pnpm instead of npm" # add from CLI directly
 $ clawdi memory rm <memory-id>                # delete
 ```
 

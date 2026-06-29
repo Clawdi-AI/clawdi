@@ -195,7 +195,7 @@ Cursor:
          │                              │
          │ model calls                  │ tool calls
          ▼                              ▼
-   api.openai.com                 api.clawdi.ai/v1/
+   api.openai.com                 api.example.test/v1/
    (uses env key,                  connectors → Composio → GitHub/Notion/Linear
     or Clawdi Gateway)             memory → pgvector
 ```

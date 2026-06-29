@@ -55,7 +55,6 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
     "custom_openai_compatible": {
         "openai_chat",
         "openai_responses",
-        "codex_responses",
     },
 }
 
@@ -881,6 +880,10 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
+    if body.default_model and body.default_model.startswith("openai-codex/"):
+        errors.append(
+            "default_model must use the OpenAI model id without the legacy openai-codex prefix"
+        )
     allowed_modes = ALLOWED_API_MODES[body.type]
     if body.api_mode is not None and body.api_mode not in allowed_modes:
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")

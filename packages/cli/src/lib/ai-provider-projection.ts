@@ -71,21 +71,19 @@ interface ProjectionProvider {
 const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "openai-completions",
 	openai_responses: "openai-responses",
-	codex_responses: "openai-chatgpt-responses",
 	anthropic_messages: "anthropic-messages",
 	google_generate_content: "google-generative-ai",
 };
 
 const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "chat_completions",
+	// Hermes' current target-native label for the OpenAI Responses API.
+	// This is not a Clawdi provider api_mode and must not appear in provider input.
 	openai_responses: "codex_responses",
-	codex_responses: "codex_responses",
 	anthropic_messages: "anthropic_messages",
 };
 
 const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-const OPENCLAW_CODEX_PROVIDER_ID = "openai";
-
 export function buildAgentTargetProjection(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
@@ -157,6 +155,9 @@ function normalizeProjectionProvider(
 	if (!provider.default_model) {
 		return `Provider ${provider.id} skipped for ${target}: requires default_model before agent config apply.`;
 	}
+	if (hasLegacyOpenAiCodexModelPrefix(provider.default_model)) {
+		return `Provider ${provider.id} skipped for ${target}: default_model must use the OpenAI model id without the legacy openai-codex prefix.`;
+	}
 	if (provider.auth.type === "oauth_profile") {
 		return `Provider ${provider.id} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
 	}
@@ -221,7 +222,7 @@ function buildOpenClawProjection(
 				openClawProjectedProviderId(provider),
 				compactObject({
 					baseUrl: openClawBaseUrlForProvider(provider),
-					api: openClawApiLabelForProvider(provider, provider.api_mode),
+					api: openClawApiLabel(provider.api_mode),
 					apiKey: openClawApiKeyEnvForProvider(provider)
 						? { source: "env", provider: "default", id: openClawApiKeyEnvForProvider(provider) }
 						: undefined,
@@ -253,14 +254,11 @@ function buildOpenClawProjection(
 function openClawModels(provider: ProjectionProvider): Array<Record<string, unknown>> {
 	const models = (provider.models ?? [])
 		.map((model) => {
-			const api = openClawApiLabelForProvider(provider, model.api_mode ?? provider.api_mode);
+			const api = openClawApiLabel(model.api_mode ?? provider.api_mode);
 			return compactObject({
-				id: openClawModelId(provider, model.id),
-				name: usesOpenClawCodexResponsesRuntime(provider)
-					? openClawModelId(provider, model.id)
-					: (model.label ?? model.id),
+				id: model.id,
+				name: model.label ?? model.id,
 				api,
-				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "openclaw" } : undefined,
 				input: model.input_modalities,
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
@@ -270,42 +268,23 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 		.filter(
 			(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
 		);
-	const api = openClawApiLabelForProvider(provider, provider.api_mode);
-	const defaultModelId = openClawModelId(provider, provider.default_model);
+	const api = openClawApiLabel(provider.api_mode);
+	const defaultModelId = provider.default_model;
 	if (!models.some((model) => model.id === defaultModelId)) {
 		models.unshift(
 			compactObject({
 				id: defaultModelId,
 				name: defaultModelId,
 				api,
-				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "openclaw" } : undefined,
 			}),
 		);
 	}
 	return models;
 }
 
-function openClawApiLabelForProvider(
-	provider: ProjectionProvider,
-	apiMode: AiProviderApiMode,
-): string | undefined {
-	if (usesOpenClawCodexResponsesRuntime(provider) && isCodexResponsesApiMode(apiMode)) {
-		return "openai-chatgpt-responses";
-	}
-	return openClawApiLabel(apiMode);
-}
-
 function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
 	const label = OPENCLAW_API_LABELS[apiMode];
 	return label === "openai-completions" ? undefined : label;
-}
-
-function isCodexResponsesApiMode(apiMode: AiProviderApiMode): boolean {
-	return apiMode === "codex_responses";
-}
-
-function usesOpenClawCodexResponsesRuntime(provider: ProjectionProvider): boolean {
-	return provider.api_mode === "codex_responses";
 }
 
 function openClawProjectionSkipReason(provider: ProjectionProvider): string | undefined {
@@ -323,48 +302,19 @@ function openClawDefaultModelRef(provider: ProjectionProvider): string {
 	if (usesNativeCodexOpenAiProvider(provider)) {
 		return `openai/${codexNativeModelId(provider.default_model)}`;
 	}
-	return `${openClawProjectedProviderId(provider)}/${openClawModelId(provider, provider.default_model)}`;
+	return `${openClawProjectedProviderId(provider)}/${provider.default_model}`;
 }
 
 function openClawProjectedProviderId(provider: ProjectionProvider): string {
-	return usesOpenClawCodexResponsesRuntime(provider) ? OPENCLAW_CODEX_PROVIDER_ID : provider.id;
-}
-
-function openClawModelId(provider: ProjectionProvider, modelId: string): string {
-	return usesOpenClawCodexResponsesRuntime(provider) ? codexNativeModelId(modelId) : modelId;
+	return provider.id;
 }
 
 function openClawBaseUrlForProvider(provider: ProjectionProvider): string {
-	if (!usesOpenClawCodexResponsesRuntime(provider)) return provider.base_url;
-	return openClawCodexBaseUrl(provider.base_url);
+	return provider.base_url;
 }
 
 function openClawApiKeyEnvForProvider(provider: ProjectionProvider): string | undefined {
 	return provider.env_name;
-}
-
-function openClawCodexBaseUrl(input: string): string {
-	const normalized = input.trim().replace(/\/+$/, "");
-	if (!normalized) return input;
-	try {
-		const url = new URL(normalized);
-		const path = url.pathname.replace(/\/+$/, "");
-		if (path.endsWith("/backend-api") || path.endsWith("/backend-api/codex")) {
-			url.pathname = path;
-			url.search = "";
-			url.hash = "";
-			return url.toString().replace(/\/$/, "");
-		}
-		if (path.endsWith("/v1")) {
-			url.pathname = `${path.slice(0, -"/v1".length)}/backend-api`;
-			url.search = "";
-			url.hash = "";
-			return url.toString().replace(/\/$/, "");
-		}
-	} catch {
-		return normalized;
-	}
-	return normalized;
 }
 
 function positiveNumber(input: number | undefined): number | undefined {
@@ -476,7 +426,7 @@ function validateCodexProjectionProvider(provider: ProjectionProvider): void {
 }
 
 function codexProjectionSkipReason(provider: ProjectionProvider): string | undefined {
-	if (provider.api_mode !== "openai_responses" && provider.api_mode !== "codex_responses") {
+	if (provider.api_mode !== "openai_responses") {
 		return `Provider ${provider.id} skipped for codex: Codex provider config supports Responses-compatible providers only; got api_mode ${provider.api_mode}.`;
 	}
 	if (provider.auth.type === "oauth_profile") {
@@ -513,10 +463,13 @@ function usesCodexNativeAuth(provider: Pick<ProjectionProvider, "auth">): boolea
 }
 
 function codexNativeModelId(model: string): string {
-	for (const prefix of ["openai/", "openai-codex/"]) {
-		if (model.startsWith(prefix)) return model.slice(prefix.length);
-	}
+	const prefix = "openai/";
+	if (model.startsWith(prefix)) return model.slice(prefix.length);
 	return model;
+}
+
+function hasLegacyOpenAiCodexModelPrefix(model: string): boolean {
+	return model.startsWith("openai-codex/");
 }
 
 function normalizeUrl(input: string): string {

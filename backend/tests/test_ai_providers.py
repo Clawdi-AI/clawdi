@@ -103,21 +103,37 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert invalid_mode.status_code == 422, invalid_mode.text
     assert "incompatible" in invalid_mode.text
 
-    managed_wrong_mode = await client.post(
+    codex_responses_mode = await client.post(
         "/api/ai-providers",
         json={
-            "provider_id": "clawdi-managed",
+            "provider_id": "custom-openai",
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "default_model": "gpt-5.5",
+            "api_mode": "codex_responses",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "user",
+            "runtime_env_name": "CUSTOM_OPENAI_API_KEY",
+        },
+    )
+    assert codex_responses_mode.status_code == 422, codex_responses_mode.text
+    assert "codex_responses" in codex_responses_mode.text
+
+    legacy_model_prefix = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "legacy-model",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
             "default_model": "openai-codex/gpt-5.5",
-            "api_mode": "codex_responses",
+            "api_mode": "openai_responses",
             "auth": {"type": "api_key", "source": "managed"},
-            "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+            "managed_by": "user",
+            "runtime_env_name": "CUSTOM_OPENAI_API_KEY",
         },
     )
-    assert managed_wrong_mode.status_code == 422, managed_wrong_mode.text
-    assert "must use api_mode openai_chat" in managed_wrong_mode.text
+    assert legacy_model_prefix.status_code == 422, legacy_model_prefix.text
+    assert "legacy openai-codex prefix" in legacy_model_prefix.text
 
     managed = await client.post(
         "/api/ai-providers",

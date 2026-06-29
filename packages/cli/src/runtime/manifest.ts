@@ -668,7 +668,7 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
 	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
-	if (raw === "openai_chat" || raw === "openai_responses" || raw === "codex_responses") {
+	if (raw === "openai_chat" || raw === "openai_responses") {
 		return raw;
 	}
 	return "openai_chat";

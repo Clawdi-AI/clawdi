@@ -151,7 +151,7 @@ export function AddProviderDialog({
 			setLabel(editing.label ?? "");
 			setBaseUrl(editing.base_url);
 			setDefaultModel(editing.default_model ?? "");
-			setApiMode((editing.api_mode as ApiMode) ?? m.defaultApiMode);
+			setApiMode(editing.api_mode ?? m.defaultApiMode);
 			setRuntimeEnv(editing.runtime_env_name ?? m.defaultRuntimeEnv);
 			setAuthMethod(
 				editing.auth.type === "none"

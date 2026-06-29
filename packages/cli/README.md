@@ -326,29 +326,24 @@ Every command supports `--help`.
 
 ### Advanced Runtime Operators
 
-These commands are for controlled hosted or self-hosted runtime envelopes. They
-are not part of normal laptop onboarding.
+These commands are for controlled managed runtime environments. They are not
+part of normal laptop onboarding.
 
 | Command | What it does |
 | --- | --- |
-| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and hosted policy restrictions |
-| `clawdi runtime init --non-interactive [--json]` | Run one cloud-init-style hosted runtime convergence pass |
+| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
+| `clawdi runtime init --non-interactive [--json]` | Run one managed runtime convergence pass |
 | `clawdi runtime status [--json]` | Read the last runtime boot result from service-state files |
-| `clawdi runtime doctor [--json]` | Diagnose hosted policy, service state, HOME, tmpfs runtime state, and last boot status |
+| `clawdi runtime doctor [--json]` | Diagnose runtime policy, service state, HOME, temporary runtime state, and last boot status |
 
-Hosted runtime mode is detected from host policy or runtime credentials. In
-hosted mode, `/etc/clawdi/host-policy.json` can deny local-user commands such
-as `setup`, `teardown`, `update`, `config set`, and `auth login`, while keeping
+Runtime mode is detected from policy or runtime credentials. In managed mode,
+policy can deny local-user setup and mutation commands while keeping
 agent-facing commands such as `mcp`, `daemon run`, `read`, `inject`, and `run`
-available. Local self-update is skipped in hosted mode; hosted CLI updates are
-expected to be system-managed through the standard npm package installation.
-The target hosted shape is a read-only `/usr/local/bin/clawdi` launcher shim
-that installs/execs the npm-managed entrypoint at `/var/lib/clawdi/bin/clawdi`
-from the root-owned prefix `/var/lib/clawdi/npm`. The ordinary runtime user can
-execute the CLI but cannot modify the managed install or config.
+available. Local self-update can be skipped when updates are managed by the
+runtime environment.
 
-For the hosted runtime design, profile matrix, and runtime image contract, see
-[`docs/hosted-runtime.md`](https://github.com/Clawdi-AI/clawdi/blob/main/docs/hosted-runtime.md).
+For the public managed runtime CLI contract, see
+[`docs/managed-runtime.md`](https://github.com/Clawdi-AI/clawdi/blob/main/docs/managed-runtime.md).
 
 App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai) and surface inside agents automatically over MCP — there is no CLI command to manage them.
 

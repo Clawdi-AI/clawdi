@@ -198,14 +198,15 @@ async def _provider_projection(
         "kind": "openai-compatible",
         "baseUrl": provider.base_url,
     }
+    is_managed = _is_clawdi_managed_provider(provider)
+    api_mode = provider.api_mode
+    runtime_env_name = provider.runtime_env_name
+    if is_managed:
+        api_mode = MANAGED_AI_PROVIDER_API_MODE
+        runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     model = runtime_model or provider.default_model
     if model:
         projection["model"] = model
-    api_mode = provider.api_mode
-    runtime_env_name = provider.runtime_env_name
-    if _is_clawdi_managed_provider(provider):
-        api_mode = MANAGED_AI_PROVIDER_API_MODE
-        runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     if api_mode:
         projection["apiMode"] = api_mode
     if runtime_env_name:

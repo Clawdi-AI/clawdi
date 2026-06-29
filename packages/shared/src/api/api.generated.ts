@@ -2536,7 +2536,7 @@ export interface components {
             /** Default Model */
             default_model?: string | null;
             /** Api Mode */
-            api_mode?: ("openai_chat" | "openai_responses" | "codex_responses" | "anthropic_messages" | "google_generate_content") | null;
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth?: components["schemas"]["AiProviderAuth"] | null;
             /** Managed By */
             managed_by?: ("user" | "clawdi") | null;
@@ -2561,7 +2561,7 @@ export interface components {
             /** Default Model */
             default_model?: string | null;
             /** Api Mode */
-            api_mode?: ("openai_chat" | "openai_responses" | "codex_responses" | "anthropic_messages" | "google_generate_content") | null;
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By
@@ -2606,7 +2606,7 @@ export interface components {
             /** Default Model */
             default_model?: string | null;
             /** Api Mode */
-            api_mode?: ("openai_chat" | "openai_responses" | "codex_responses" | "anthropic_messages" | "google_generate_content") | null;
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By

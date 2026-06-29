@@ -228,7 +228,9 @@ Supported contract:
 Hermes Agent 0.13.0 through 0.17.0 with providers dict compatibility
 ```
 
-Hermes custom-provider transports supported by AI Provider apply:
+Hermes custom-provider output mapping. Users configure standard Clawdi
+`api_mode` values; the Hermes adapter writes Hermes' target-native transport
+labels in `config.yaml`:
 
 - `openai_chat` -> `chat_completions`
 - `openai_responses` -> `codex_responses`
@@ -285,10 +287,11 @@ directly. The patch uses `models.mode: "merge"`,
 `models.providers.<id>.apiKey` env refs, and
 `agents.defaults.model.primary`.
 
-For custom Codex Responses-compatible providers, Clawdi writes
-`openai-chatgpt-responses` model entries with `agentRuntime.id: "openclaw"` so
-OpenClaw uses its built-in runtime instead of the native Codex app-server
-harness.
+OpenAI-compatible API-key providers are projected directly. `openai_chat`
+uses OpenClaw's default OpenAI-compatible chat surface, and `openai_responses`
+uses `api: "openai-responses"` with the provider's configured base URL and
+env-backed key. Clawdi does not expose a separate custom Codex Responses mode
+for API-key providers.
 
 For Codex OAuth providers, OpenClaw apply uses the native subscription-backed
 route instead: it enables the bundled Codex plugin and sets

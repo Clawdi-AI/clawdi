@@ -12,7 +12,6 @@ export type AiProviderType = (typeof AI_PROVIDER_TYPES)[number];
 export const AI_PROVIDER_API_MODES = [
 	"openai_chat",
 	"openai_responses",
-	"codex_responses",
 	"anthropic_messages",
 	"google_generate_content",
 ] as const;
@@ -102,7 +101,7 @@ const COMPATIBLE_API_MODES: Record<AiProviderType, readonly AiProviderApiMode[]>
 	openrouter: ["openai_chat"],
 	gemini: ["google_generate_content"],
 	mistral: ["openai_chat"],
-	custom_openai_compatible: ["openai_chat", "openai_responses", "codex_responses"],
+	custom_openai_compatible: ["openai_chat", "openai_responses"],
 };
 
 const DEFAULT_API_MODE: Partial<Record<AiProviderType, AiProviderApiMode>> = {
@@ -227,6 +226,11 @@ function validateProvider(
 	}
 	if (!isHttpUrl(provider.base_url)) {
 		errors.push(`Provider ${prefix} has invalid base_url.`);
+	}
+	if (isLegacyOpenAiCodexModelRef(provider.default_model)) {
+		errors.push(
+			`Provider ${prefix} default_model must use the OpenAI model id without the legacy openai-codex prefix.`,
+		);
 	}
 	if (provider.api_mode !== undefined) {
 		if (!isAiProviderApiMode(provider.api_mode)) {
@@ -372,6 +376,11 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 		if (!id || ids.has(id)) {
 			errors.push(`Provider ${prefix} has invalid or duplicate model id.`);
 		}
+		if (isLegacyOpenAiCodexModelRef(id)) {
+			errors.push(
+				`Provider ${prefix} model ${id || "<missing>"} must use the OpenAI model id without the legacy openai-codex prefix.`,
+			);
+		}
 		ids.add(id);
 		if (
 			model.context_window !== undefined &&
@@ -392,6 +401,10 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid api_mode.`);
 		}
 	}
+}
+
+function isLegacyOpenAiCodexModelRef(input: unknown): boolean {
+	return typeof input === "string" && input.startsWith("openai-codex/");
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {

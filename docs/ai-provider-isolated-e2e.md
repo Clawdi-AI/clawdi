@@ -132,7 +132,7 @@ package caches:
   `$CODEX_HOME/clawdi-ai-provider.config.toml`.
 - Hermes: `hermes-agent==0.13.0`, `0.14.0`, `0.15.0`, `0.15.1`, and `0.15.2`
   each loaded a v12 `providers` dict from `config.yaml` and resolved
-  `custom:openai-main` with `codex_responses` transport and `key_env` auth.
+  `custom:openai-main` with Hermes' Responses transport and `key_env` auth.
 - OpenClaw: `openclaw@2026.5.12`, `2026.5.18`, `2026.5.27`, and
   `2026.5.28` each accepted the AI Provider patch shape through
   `openclaw config patch --stdin --dry-run --json`.
@@ -146,14 +146,13 @@ Latest source/package audit recorded on 2026-06-29:
   `model_providers`, `wire_api = "responses"`, `env_key`, and
   `requires_openai_auth`.
 - Hermes: `hermes-agent==0.17.0` still supports the v12 `providers` dict,
-  `custom:<provider-id>` resolution, `codex_responses`, `openai-codex`, and
-  `credential_pool.openai-codex`.
+  `custom:<provider-id>` resolution, the target-native Responses transport,
+  `openai-codex`, and `credential_pool.openai-codex`.
 - OpenClaw: `openclaw@2026.6.10` still supports
   `openclaw config patch --stdin`, `models.providers`, env SecretRefs, and
-  canonical `openai/<model>` routes. Clawdi now emits
-  `agentRuntime.id: "openclaw"` for custom Codex Responses-compatible provider
-  entries; upstream still accepts `pi` as an alias, but new config should use
-  the canonical id.
+  canonical `openai/<model>` routes. Clawdi projects API-key Responses
+  providers directly with `api: "openai-responses"` and reserves the native
+  `openai/<model>` route for Codex OAuth.
 
 ## Backend Docker Postgres Check
 

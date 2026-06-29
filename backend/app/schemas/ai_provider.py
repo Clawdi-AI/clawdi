@@ -15,7 +15,6 @@ ProviderType = Literal[
 ApiMode = Literal[
     "openai_chat",
     "openai_responses",
-    "codex_responses",
     "anthropic_messages",
     "google_generate_content",
 ]

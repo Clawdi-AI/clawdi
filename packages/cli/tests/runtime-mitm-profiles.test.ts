@@ -129,7 +129,7 @@ describe("runtime MITM profile schema", () => {
 			providers: {
 				default: {
 					baseUrl: "https://ai-gateway.example.test/v1",
-					apiMode: "codex_responses",
+					apiMode: "openai_responses",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},

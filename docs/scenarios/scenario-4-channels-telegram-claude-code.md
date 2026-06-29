@@ -55,7 +55,7 @@ clawdi channel rm my-telegram
 The simplest use case. Claude Code runs a bash command to send you a message.
 
 ```
-你: 跑完测试后在 Telegram 通知我
+You: Run the tests and notify me on Telegram when they finish.
 
 Claude Code:
   → runs: pdm test
@@ -118,27 +118,27 @@ Send reply to Telegram
 ```
 📱 Telegram:
 
-你: 最近 5 条 commit
-🤖: 01ab2e66 fix: increase gateway RPC timeout
+You: Show me the latest 5 commits.
+Bot: 01ab2e66 fix: increase gateway RPC timeout
     1e957426 fix: trust backend entitled flag
     e22b2bb0 feat: hermes composio MCP
     423e7ab5 chore: bump agent image
     9f3a21b8 fix: channel disconnect race condition
 
-你: backend/app/routes/config.py 有多少行
-🤖: 2,247 行
+You: How many lines are in backend/app/routes/config.py?
+Bot: 2,247 lines
 
-你: 有没有 channel 相关的 TODO
-🤖: 找到 3 处:
+You: Are there any channel-related TODOs?
+Bot: Found 3:
     config.py:892  # TODO: validate bot token format
     config.py:1034 # TODO: handle disconnect timeout
     channels.py:45 # TODO: add rate limiting
 
-你: 帮我跑一下 pdm lint
-🤖: ✅ Ruff lint passed, 0 errors
+You: Run pdm lint.
+Bot: Ruff lint passed, 0 errors
 
-你: /new
-🤖: ✓ 新会话已开始
+You: /new
+Bot: New session started
 ```
 
 ---
@@ -192,8 +192,8 @@ clawdi channel serve my-telegram --agent claude --session stateless
 Each message is an independent `claude -p` call:
 
 ```
-Message 1 → claude -p "最近 5 条 commit"          → no context
-Message 2 → claude -p "第三条是什么意思"           → doesn't know what "第三条" refers to
+Message 1 → claude -p "latest 5 commits"       → no context
+Message 2 → claude -p "what does the third one mean" → does not know what "third one" refers to
 ```
 
 - Pros: Simple, no state management, each request is isolated
@@ -208,15 +208,15 @@ clawdi channel serve my-telegram --agent claude --session persistent --session-t
 Uses `claude -p --resume` to maintain conversation context:
 
 ```
-Message 1 → claude -p "最近 5 条 commit"
+Message 1 → claude -p "latest 5 commits"
           → output + session_id = "abc123"
 
-Message 2 → claude -p "第三条是什么意思" --resume abc123
+Message 2 → claude -p "what does the third one mean" --resume abc123
           → has full context from message 1
 
 (10 min idle → session expires)
 
-Message 3 → claude -p "另一个问题"
+Message 3 → claude -p "another question"
           → new session_id = "def456"
 ```
 
@@ -314,14 +314,14 @@ clawdi channel serve my-telegram --agent claude --projects '{
 }'
 
 # In Telegram:
-你: /project clawdi
-🤖: ✓ Switched to clawdi (/Users/paco/workspace/clawdi)
+You: /project clawdi
+Bot: Switched to clawdi (/Users/paco/workspace/clawdi)
 
-你: 最近改了什么
-🤖: (shows clawdi recent changes)
+You: What changed recently?
+Bot: (shows clawdi recent changes)
 
-你: /project btc
-🤖: ✓ Switched to btc (/Users/paco/workspace/btc-pattern-search)
+You: /project btc
+Bot: Switched to btc (/Users/paco/workspace/btc-pattern-search)
 ```
 
 ---

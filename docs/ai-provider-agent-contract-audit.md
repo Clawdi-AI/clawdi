@@ -81,13 +81,13 @@ Verified sources:
   `providers.openai-codex.tokens`; the runtime also reads
   `credential_pool.openai-codex`.
 - `hermes-agent==0.17.0` package audit on 2026-06-29 verified the same
-  `providers` dict compatibility layer, `codex_responses` transport,
+  `providers` dict compatibility layer, the current Hermes Responses transport,
   `openai-codex` provider selector, `active_provider`, and
   `credential_pool.openai-codex` runtime credential paths.
 - Docker package audits passed for `hermes-agent==0.13.0`, `0.14.0`,
   `0.15.0`, `0.15.1`, and `0.15.2`. Each package loaded a v12 `providers`
-  dict from `config.yaml` and resolved `custom:openai-main` with
-  `codex_responses` transport and `key_env` auth.
+  dict from `config.yaml` and resolved `custom:openai-main` with Hermes'
+  Responses transport and `key_env` auth.
 
 Clawdi behavior:
 
@@ -96,7 +96,7 @@ Clawdi behavior:
 - The merge writes the verified v12 `providers` dict shape and sets
   `model.provider` to `custom:<provider-id>`.
 - Codex OAuth providers are projected through Hermes' native
-  `model.provider: openai-codex` selector and `codex_responses` runtime, not as
+  `model.provider: openai-codex` selector and Responses runtime, not as
   custom providers with `key_env`.
 - For Codex OAuth sources, non-dry-run apply writes Hermes' native
   `$HERMES_HOME/auth.json` with `providers.openai-codex.tokens`,
@@ -108,7 +108,8 @@ Clawdi behavior:
 - Dry-run prints only the generated patch, not the existing `config.yaml`, to
   avoid leaking user inline secrets.
 
-Supported transport mapping:
+Clawdi provider modes are standard API modes. The Hermes adapter translates
+those modes into Hermes' target-native transport labels only at config output:
 
 - `openai_chat` -> `chat_completions`
 - `openai_responses` -> `codex_responses`
@@ -151,10 +152,8 @@ Verified sources:
   `auth-profiles.json`.
 - `openclaw@2026.6.10` package audit on 2026-06-29 verified
   `openclaw config patch --stdin`, `models.providers`, `apiKey` SecretRefs,
-  canonical `openai/<model>` native Codex routes, and the current
-  `agentRuntime.id: "openclaw"` runtime policy for custom Codex
-  Responses-compatible provider entries. The legacy `pi` runtime id is still
-  accepted as an alias upstream, but Clawdi emits the canonical id.
+  canonical `openai/<model>` native Codex routes, and direct
+  `openai-responses` projection for OpenAI-compatible API-key providers.
 
 Clawdi behavior:
 
@@ -162,9 +161,10 @@ Clawdi behavior:
   `openclaw config patch --stdin`.
 - The patch uses `models.mode: "merge"`, `models.providers.<id>.apiKey` env
   SecretRefs, and `agents.defaults.model.primary`.
-- Custom Codex Responses-compatible providers use `openai-chatgpt-responses`
-  model entries with `agentRuntime.id: "openclaw"` so they do not accidentally
-  fall through to OpenClaw's native Codex app-server harness default.
+- OpenAI-compatible API-key providers project directly. `openai_chat` uses
+  OpenClaw's default OpenAI-compatible chat surface; `openai_responses` writes
+  `api: "openai-responses"` with the configured provider URL and env SecretRef.
+  Clawdi does not expose a separate custom Codex Responses provider mode.
 - Codex OAuth providers use OpenClaw's native OpenAI route:
   `plugins.entries.codex.enabled: true` and
   `agents.defaults.model.primary: openai/<model>`, without a

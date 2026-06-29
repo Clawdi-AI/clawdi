@@ -652,7 +652,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								default: {
 									kind: "openai-compatible",
 									baseUrl: "https://ai-gateway.example.test/v1",
-									model: "openai-codex/gpt-5.4-mini",
+									model: "gpt-5.4-mini",
 									apiMode: "openai_chat",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
@@ -672,7 +672,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			expect(loaded.manifest.projection?.providers.default).toMatchObject({
 				baseUrl: "https://ai-gateway.example.test/v1",
-				model: "openai-codex/gpt-5.4-mini",
+				model: "gpt-5.4-mini",
 				apiMode: "openai_chat",
 				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			});
@@ -720,8 +720,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								default: {
 									kind: "openai-compatible",
 									baseUrl: "https://ai-gateway.example.test/v1",
-									model: "openai-codex/gpt-5.4-mini",
-									apiMode: "codex_responses",
+									model: "gpt-5.4-mini",
+									apiMode: "openai_responses",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
@@ -810,7 +810,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						default: {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
-							model: "openai-codex/gpt-5.4-mini",
+							model: "gpt-5.4-mini",
 							apiMode: "openai_chat",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
@@ -829,16 +829,17 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			"config patch --stdin --replace-path models.providers",
 		);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("default/openai-codex/gpt-5.4-mini");
+		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
 		expect(patch.models.providers.default).toMatchObject({
 			baseUrl: "https://ai-gateway.example.test/v1",
-			api: "openai-completions",
 			apiKey: {
 				source: "env",
 				provider: "default",
 				id: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			},
 		});
+		expect(patch.models.providers.default.api).toBeUndefined();
+		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),

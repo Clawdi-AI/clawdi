@@ -113,7 +113,7 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toContain("Provider public-main uses no auth on a public URL.");
 	});
 
-	test("accepts Codex Responses mode for user custom OpenAI-compatible providers", () => {
+	test("rejects Codex Responses as a provider API mode", () => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
 			providers: [
@@ -121,7 +121,7 @@ describe("validateAiProviderCatalog", () => {
 					id: "custom-openai",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "openai-codex/gpt-5.5",
+					default_model: "gpt-5.5",
 					api_mode: "codex_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "user",
@@ -131,8 +131,38 @@ describe("validateAiProviderCatalog", () => {
 			defaults: { chat_provider_id: "custom-openai" },
 		});
 
-		expect(result.valid).toBe(true);
-		expect(result.errors).toEqual([]);
+		expect(result.valid).toBe(false);
+		expect(result.errors).toContain(
+			'Provider custom-openai has invalid api_mode "codex_responses".',
+		);
+	});
+
+	test("rejects legacy OpenAI Codex model refs", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "custom-openai",
+					type: "custom_openai_compatible",
+					base_url: "https://managed.example/v1",
+					default_model: "openai-codex/gpt-5.5",
+					api_mode: "openai_responses",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "user",
+					runtime_env_name: "CUSTOM_OPENAI_API_KEY",
+					models: [{ id: "openai-codex/gpt-5.5" }],
+				},
+			],
+			defaults: { chat_provider_id: "custom-openai" },
+		});
+
+		expect(result.valid).toBe(false);
+		expect(result.errors).toContain(
+			"Provider custom-openai default_model must use the OpenAI model id without the legacy openai-codex prefix.",
+		);
+		expect(result.errors).toContain(
+			"Provider custom-openai model openai-codex/gpt-5.5 must use the OpenAI model id without the legacy openai-codex prefix.",
+		);
 	});
 
 	test("accepts Clawdi-managed providers in OpenAI chat mode", () => {
