@@ -19,7 +19,7 @@ import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 import { isDeployApiConfigured } from "@/lib/hosted-api";
 
-const BASE_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
+const BASE_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
 
 const REQUEST_TIMEOUT_MS = 20_000;

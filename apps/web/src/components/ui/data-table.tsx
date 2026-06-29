@@ -1,5 +1,6 @@
 "use client";
 
+import { Link, type LinkProps } from "@tanstack/react-router";
 import {
 	type ColumnDef,
 	flexRender,
@@ -19,7 +20,6 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
-import Link from "@/lib/router-link";
 import { cn } from "@/lib/utils";
 
 const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => `row-${i}`);
@@ -40,9 +40,9 @@ interface DataTableProps<TData, TValue> {
 	 * opens a new tab and keyboard tab-order works. Use `onRowClick` only for non-nav side
 	 * effects (selection, expand-in-place, etc).
 	 */
-	getRowHref?: (row: TData) => string;
+	getRowLink?: (row: TData) => Pick<LinkProps, "to" | "params" | "search" | "hash">;
 	/** Used as the stretched link's aria-label so screen readers know
-	 * what activating the row does. Required when `getRowHref` is set. */
+	 * what activating the row does. Required when `getRowLink` is set. */
 	rowAriaLabel?: (row: TData) => string;
 	onRowClick?: (row: TData) => void;
 
@@ -76,7 +76,7 @@ export function DataTable<TData, TValue>({
 	data,
 	isLoading,
 	emptyMessage = "No results.",
-	getRowHref,
+	getRowLink,
 	rowAriaLabel,
 	onRowClick,
 	sorting,
@@ -174,8 +174,8 @@ export function DataTable<TData, TValue>({
 											prevKey = g.key;
 										}
 									}
-									const href = getRowHref?.(row.original);
-									const interactive = !!href || !!onRowClick;
+									const rowLink = getRowLink?.(row.original);
+									const interactive = !!rowLink || !!onRowClick;
 									out.push(
 										<TableRow
 											key={row.id}
@@ -183,11 +183,15 @@ export function DataTable<TData, TValue>({
 											// `group` lets cells do group-hover tricks (e.g. a delete
 											// icon that reveals only on row hover).
 											// `relative` hosts the stretched <Link> overlay below.
-											className={cn("group", interactive && "cursor-pointer", href && "relative")}
+											className={cn(
+												"group",
+												interactive && "cursor-pointer",
+												rowLink && "relative",
+											)}
 										>
 											{row.getVisibleCells().map((cell, idx) => (
 												<TableCell key={cell.id}>
-													{idx === 0 && href ? (
+													{idx === 0 && rowLink ? (
 														// Stretched-link pattern: an absolute anchor
 														// covers the whole row so middle-click opens a
 														// new tab while keeping the row target large.
@@ -196,7 +200,7 @@ export function DataTable<TData, TValue>({
 														// click. Interactive elements inside cells need
 														// `relative z-10` to escape the link's hit area.
 														<Link
-															href={href}
+															{...rowLink}
 															aria-label={rowAriaLabel?.(row.original) ?? "Open"}
 															className="absolute inset-0"
 														/>

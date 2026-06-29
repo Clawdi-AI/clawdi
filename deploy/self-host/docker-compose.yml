@@ -12,10 +12,10 @@ x-web-image: &web-image
     context: ../..
     dockerfile: apps/web/Dockerfile
     args:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
-      NEXT_PUBLIC_CLAWDI_HOSTED: ""
-      NEXT_PUBLIC_DEPLOY_API_URL: ${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}
+      VITE_CLAWDI_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+      VITE_CLAWDI_HOSTED: ""
+      VITE_CLAWDI_DEPLOY_API_URL: ${VITE_CLAWDI_DEPLOY_API_URL:-http://localhost:50021}
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-clawdi}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-clawdi}
@@ -121,10 +121,10 @@ services:
       api:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
-      NEXT_PUBLIC_CLAWDI_HOSTED: ""
-      NEXT_PUBLIC_DEPLOY_API_URL: ${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}
+      VITE_CLAWDI_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+      VITE_CLAWDI_HOSTED: ""
+      VITE_CLAWDI_DEPLOY_API_URL: ${VITE_CLAWDI_DEPLOY_API_URL:-http://localhost:50021}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
     ports:
       - "${WEB_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"

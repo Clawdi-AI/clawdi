@@ -2,9 +2,10 @@
 
 import type { ReactNode } from "react";
 import dynamic from "@/lib/dynamic";
-import { IS_HOSTED } from "@/lib/hosted";
 
-const HostedAnalyticsClient = IS_HOSTED
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const HostedAnalyticsClient = IS_HOSTED_BUILD
 	? dynamic(() =>
 			import("@/hosted/analytics-client").then((m) => ({
 				default: m.HostedAnalyticsClient,

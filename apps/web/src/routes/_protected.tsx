@@ -4,7 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "@/lib/env";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
-	if (env.NEXT_PUBLIC_DEV_AUTH_BYPASS) return { userId: "dev_browser" };
+	if (env.VITE_DEV_AUTH_BYPASS) return { userId: "dev_browser" };
 	const { userId } = await auth();
 	return { userId };
 });

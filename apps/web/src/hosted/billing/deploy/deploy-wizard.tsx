@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { CalendarClock, Cpu, Plus, Rocket, Sparkles, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -36,7 +37,6 @@ import {
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
@@ -318,7 +318,9 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
-			router.push(agentSectionHref(deployment.id, "overview", "source=on-clawdi"));
+			void router.navigate({
+				href: agentSectionHref(deployment.id, "overview", "source=on-clawdi"),
+			});
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {

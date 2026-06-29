@@ -2,13 +2,13 @@ import { ClerkProvider } from "@clerk/tanstack-react-start";
 import { shadcn } from "@clerk/themes";
 import { env } from "@/lib/env";
 
-const isDevAuthBypass = env.NEXT_PUBLIC_DEV_AUTH_BYPASS;
+const isDevAuthBypass = env.VITE_DEV_AUTH_BYPASS;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 	if (isDevAuthBypass) return <>{children}</>;
 
 	return (
-		<ClerkProvider appearance={shadcn} publishableKey={env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}>
+		<ClerkProvider appearance={shadcn} publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}>
 			{children}
 		</ClerkProvider>
 	);

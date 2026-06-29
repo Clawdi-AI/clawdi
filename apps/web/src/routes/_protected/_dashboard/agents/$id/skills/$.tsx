@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SkillDetailContent } from "@/app/(dashboard)/skills/[key]/page";
 import { decodeResourceRouteParam } from "@/lib/project-resource-model";
+import { SkillDetailContent } from "@/pages/dashboard/skills/[key]/page";
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/$")({
 	component: AgentSkillDetailRoute,

@@ -23,7 +23,6 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import dynamic from "@/lib/dynamic";
-import { IS_HOSTED } from "@/lib/hosted";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
@@ -32,14 +31,16 @@ import {
 import { cn } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
-const WalletPage = IS_HOSTED
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const WalletPage = IS_HOSTED_BUILD
 	? dynamic(
 			() => import("@/hosted/billing/wallet/wallet-page").then((m) => ({ default: m.WalletPage })),
 			{ loading: HostedRouteSkeleton },
 		)
 	: null;
 
-const SubscriptionPage = IS_HOSTED
+const SubscriptionPage = IS_HOSTED_BUILD
 	? dynamic(
 			() =>
 				import("@/hosted/billing/subscription/subscription-page").then((m) => ({
@@ -49,7 +50,7 @@ const SubscriptionPage = IS_HOSTED
 		)
 	: null;
 
-const UsagePage = IS_HOSTED
+const UsagePage = IS_HOSTED_BUILD
 	? dynamic(
 			() => import("@/hosted/billing/usage/usage-page").then((m) => ({ default: m.UsagePage })),
 			{ loading: HostedRouteSkeleton },
@@ -123,7 +124,7 @@ export function SettingsDialog({
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showBilling = mounted && IS_HOSTED && v2Access.canUseV2;
+	const showBilling = mounted && IS_HOSTED_BUILD && v2Access.canUseV2;
 	const items = SETTINGS_NAV.filter((item) => !item.v2Only || showBilling);
 	const activeSection = items.some((item) => item.id === section)
 		? section

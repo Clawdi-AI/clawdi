@@ -119,7 +119,7 @@ export function StripePaymentForm({
 	onComplete: (status: PaymentOutcome) => void;
 	onCancel: () => void;
 }) {
-	const key = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+	const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 	// undefined = loading, null = load failed, Stripe = ready.
 	const [stripe, setStripe] = useState<Stripe | null | undefined>(undefined);
 	const [attempt, setAttempt] = useState(0);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { CreditCard, Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,7 +15,6 @@ import { usePlans, usePortal } from "@/hosted/billing/hooks";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
@@ -88,7 +88,7 @@ export function SubscriptionPage() {
 						Settings page. Wallet balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
-						<Button onClick={() => router.push("/deploy")}>
+						<Button onClick={() => void router.navigate({ href: "/deploy" })}>
 							<Rocket /> Deploy hosted agent
 						</Button>
 						<Button

@@ -1,6 +1,6 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import { AgentDetailClient } from "@/app/(dashboard)/agents/[id]/agent-detail-client";
 import { agentSectionHref, hasAgentTabQuery, parseAgentSectionSegment } from "@/lib/agent-routes";
+import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 function safeDecodeURIComponent(value: string): string {
 	try {

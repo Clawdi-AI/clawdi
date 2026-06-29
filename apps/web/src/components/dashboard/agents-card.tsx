@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
@@ -17,7 +18,6 @@ import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
-import Link from "@/lib/router-link";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -318,7 +318,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					<span className="sr-only">{tile.name}</span>
 				</a>
 			) : (
-				<Link href={tile.href} className={linkClassName}>
+				<Link to={tile.href} className={linkClassName}>
 					<span className="sr-only">{tile.name}</span>
 				</Link>
 			)}

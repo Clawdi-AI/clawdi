@@ -24,7 +24,6 @@ export const SKILL_TAR_EXCLUDE = new Set([
 	"node_modules",
 	".git",
 	".turbo",
-	".next",
 	".cache",
 	"dist",
 	"build",

@@ -1,5 +1,6 @@
 "use client";
 
+import { Link, useLocation } from "@tanstack/react-router";
 import { useBreadcrumbSegmentTitles, useBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	Breadcrumb,
@@ -10,8 +11,6 @@ import {
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { agentSectionLabelFromSegment } from "@/lib/agent-routes";
-import Link from "@/lib/router-link";
-import { usePathname } from "@/lib/router-navigation";
 
 /**
  * Route-derived header label. Top-level segments map to friendly names
@@ -60,7 +59,7 @@ function segmentLabel(
 }
 
 export function AppBreadcrumb() {
-	const pathname = usePathname();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const segments = pathname.split("/").filter(Boolean);
 	const overrideTitle = useBreadcrumbTitle();
 	const segmentTitles = useBreadcrumbSegmentTitles();
@@ -107,7 +106,7 @@ export function AppBreadcrumb() {
 										// asChild lets us pass our own router-aware link while
 										// preserving shadcn's breadcrumb anchor semantics.
 										<BreadcrumbLink asChild>
-											<Link href={href}>{label}</Link>
+											<Link to={href}>{label}</Link>
 										</BreadcrumbLink>
 									)}
 								</BreadcrumbItem>

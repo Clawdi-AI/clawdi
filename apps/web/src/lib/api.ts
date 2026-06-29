@@ -12,7 +12,7 @@ import { env } from "@/lib/env";
 // existing `@/lib/api` import sites keep working.
 export { ApiError, toastApiError } from "@/lib/api-errors";
 
-const API_URL = env.NEXT_PUBLIC_API_URL;
+const API_URL = env.VITE_CLAWDI_API_URL;
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
 type EnvironmentResponse = components["schemas"]["EnvironmentResponse"];
 

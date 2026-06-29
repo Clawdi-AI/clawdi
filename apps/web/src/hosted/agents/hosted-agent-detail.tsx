@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowUpRight,
 	Cpu,
@@ -97,14 +98,11 @@ import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
-	agentSessionDetailHref,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
-import Link from "@/lib/router-link";
-import { useRouter, useSearchParams } from "@/lib/router-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
@@ -274,13 +272,19 @@ export function HostedAgentDetail({
 
 	const isPerformance = ci?.compute_plan_slug === "compute_performance";
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
-	const searchParams = useSearchParams();
-	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(environmentId, sessionId);
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const scopedSessionLink = (sessionId: string) => ({
+		to: "/agents/$id/sessions/$sessionId" as const,
+		params: { id: environmentId, sessionId },
+	});
 
 	useEffect(() => {
 		if (parseHostedAgentTab(section)) return;
-		router.replace(agentSectionHref(environmentId, "overview", searchParams.toString()));
-	}, [environmentId, router, searchParams, section]);
+		void router.navigate({
+			href: agentSectionHref(environmentId, "overview", searchStr),
+			replace: true,
+		});
+	}, [environmentId, router, searchStr, section]);
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
@@ -340,7 +344,7 @@ export function HostedAgentDetail({
 						sessionsLoading={sessions.isLoading}
 						sessionsError={sessions.error}
 						onRetrySessions={() => sessions.refetch()}
-						sessionHref={(session) => scopedSessionHref(session.id)}
+						sessionLink={(session) => scopedSessionLink(session.id)}
 					/>
 				) : null}
 				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
@@ -358,7 +362,7 @@ export function HostedAgentDetail({
 							isLoading={sessions.isLoading}
 							emptyMessage="No sessions from this agent yet."
 							showAgent={false}
-							sessionHref={(session) => scopedSessionHref(session.id)}
+							sessionLink={(session) => scopedSessionLink(session.id)}
 						/>
 					)
 				) : null}
@@ -396,7 +400,7 @@ function OverviewTab({
 	sessionsLoading,
 	sessionsError,
 	onRetrySessions,
-	sessionHref,
+	sessionLink,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
@@ -405,7 +409,10 @@ function OverviewTab({
 	sessionsLoading: boolean;
 	sessionsError: unknown;
 	onRetrySessions: () => void;
-	sessionHref: (session: SessionListItem) => string;
+	sessionLink: (session: SessionListItem) => {
+		to: "/agents/$id/sessions/$sessionId";
+		params: { id: string; sessionId: string };
+	};
 }) {
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
@@ -435,7 +442,7 @@ function OverviewTab({
 						isLoading={sessionsLoading}
 						emptyMessage="No sessions from this agent yet."
 						showAgent={false}
-						sessionHref={sessionHref}
+						sessionLink={sessionLink}
 					/>
 				)}
 			</div>
@@ -482,7 +489,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 					<span>
 						This {label} runtime is running but hasn&apos;t published its Control UI endpoint. Reach
 						it by linking a channel from{" "}
-						<Link href="/channels" className="underline">
+						<Link to="/channels" className="underline">
 							Channels
 						</Link>
 						.
@@ -911,7 +918,7 @@ function AiProviderTab({
 					</button>
 				))}
 				<Button asChild variant="ghost" size="sm" className="justify-start text-muted-foreground">
-					<Link href="/ai-providers">
+					<Link to="/ai-providers">
 						<Plus className="size-3.5" />
 						Add a provider
 					</Link>
@@ -949,7 +956,7 @@ function AiProviderTab({
 
 			<p className="text-xs text-muted-foreground">
 				Add, validate, or remove providers on{" "}
-				<Link href="/ai-providers" className="underline">
+				<Link to="/ai-providers" className="underline">
 					Model Providers
 				</Link>
 				.
@@ -1115,7 +1122,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 
 			<p className="text-xs text-muted-foreground">
 				Health, activity, and command sync for each channel live on{" "}
-				<Link href="/channels" className="underline">
+				<Link to="/channels" className="underline">
 					Channels
 				</Link>
 				.
@@ -1400,7 +1407,11 @@ function ComputeSettingsSections({
 										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
 											{!isCurrent && enabled && siblingEnv ? (
 												<Button asChild variant="ghost" size="sm">
-													<Link href={agentSectionHref(siblingEnv, "overview", "source=on-clawdi")}>
+													<Link
+														to="/agents/$id"
+														params={{ id: siblingEnv }}
+														search={{ source: "on-clawdi" }}
+													>
 														Open
 														<ArrowUpRight className="size-3.5" />
 													</Link>
@@ -1638,7 +1649,9 @@ function ComputeSettingsSections({
 						}
 						confirmLabel="Delete compute"
 						destructive
-						onConfirm={() => del.mutate(deployment.id, { onSuccess: () => router.push("/") })}
+						onConfirm={() =>
+							del.mutate(deployment.id, { onSuccess: () => void router.navigate({ href: "/" }) })
+						}
 					>
 						<Button
 							variant="outline"

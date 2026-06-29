@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import PublicSharePage from "@/app/s/[id]/page";
+import PublicSharePage from "@/pages/public-share/session-page";
 
 export const Route = createFileRoute("/s/$id")({
 	component: PublicShareRoute,
@@ -7,5 +7,5 @@ export const Route = createFileRoute("/s/$id")({
 
 function PublicShareRoute() {
 	const { id } = Route.useParams();
-	return <PublicSharePage params={Promise.resolve({ id })} />;
+	return <PublicSharePage id={id} />;
 }

@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # Externally reachable URL for the WEB DASHBOARD. The CLI device-flow
     # `verification_uri` resolves through this — backend hands the CLI a URL
-    # the user opens in a browser. Dev default is the Next.js dev server; in
+    # the user opens in a browser. Dev default is the Vite dev server; in
     # prod set to e.g. https://cloud.clawdi.example.
     web_origin: str = "http://localhost:3000"
 

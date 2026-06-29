@@ -1,7 +1,7 @@
 # `apps/web/src/hosted/`
 
 Components and helpers for the hosted agent service and hosted billing surfaces.
-They render only in the hosted build (`NEXT_PUBLIC_CLAWDI_HOSTED=true`).
+They render only in the hosted build (`VITE_CLAWDI_HOSTED=true`).
 
 OSS users running their own Clawdi instance see none of this UI.
 
@@ -9,7 +9,7 @@ OSS users running their own Clawdi instance see none of this UI.
 
 1. **Side-effect-free at module top level.**
    No top-level `new ApiClient()`, no top-level
-   `process.env.NEXT_PUBLIC_DEPLOY_API_URL!` reads that throw.
+   `VITE_CLAWDI_DEPLOY_API_URL!` reads that throw.
    Initialize lazily inside hooks / event handlers / queries.
 
 2. **Every component sets `data-hosted="true"` on its root element.**
@@ -20,12 +20,13 @@ OSS users running their own Clawdi instance see none of this UI.
    anything carrying `data-hosted="true"` in OSS DevTools is a leak.
 
 3. **Imports from outside `hosted/` go through `@/lib/dynamic`,
-   gated on `IS_HOSTED` at the construction site.**
+   gated on a local `IS_HOSTED_BUILD` constant at the construction site.**
    ```tsx
    import dynamic from "@/lib/dynamic";
-   import { IS_HOSTED } from "@/lib/hosted";
 
-   const DeployWizard = IS_HOSTED
+   const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+   const DeployWizard = IS_HOSTED_BUILD
      ? dynamic(() =>
          import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
            default: m.DeployWizard,
@@ -38,15 +39,13 @@ OSS users running their own Clawdi instance see none of this UI.
    {DeployWizard ? <DeployWizard /> : null}
    ```
    Why this shape: Vite folds `IS_HOSTED ? … : null` at build time
-   using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS builds the
-   conditional collapses to `null`; the `clawdi-oss-hosted-boundary`
-   Vite plugin then strips any gated hosted/v2/PostHog chunks that
-   Rollup still created during graph construction. A bare
-   `dynamic(() => import(…))` at module top level would still
-   register the chunk in OSS builds — that's why the ternary matters.
-   `oss-clean.test.ts` fails the build if anyone reintroduces a
-   static `import … from "@/hosted/…"` outside the hosted/
-   directory.
+   using the `VITE_CLAWDI_HOSTED` constant. In OSS builds the
+   conditional collapses to `null`, so the dynamic import site is not
+   part of the client graph. A bare `dynamic(() => import(…))` at
+   module top level would still register the chunk in OSS builds —
+   that's why the ternary matters. `oss-clean.test.ts` fails the build
+   if anyone reintroduces a static `import … from "@/hosted/…"` outside
+   the hosted/ directory.
 
 ## What lives here today
 
@@ -58,7 +57,7 @@ OSS users running their own Clawdi instance see none of this UI.
 - `analytics-client.tsx` — Hosted-only analytics identity bridge.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
-  gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).
+  gate (`VITE_CLAWDI_HOSTED === "true"`) plus dynamic import).
 
 Connector UI does not live here. Hosted and connected sessions both
 read connectors from the shared `/api/connectors` route.

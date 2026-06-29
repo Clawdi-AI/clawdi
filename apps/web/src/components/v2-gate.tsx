@@ -1,9 +1,9 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useRouter } from "@/lib/router-navigation";
 import { useV2Access } from "@/lib/v2-access";
 
 export function V2Gate({
@@ -19,7 +19,7 @@ export function V2Gate({
 	const denied = !access.isLoading && !allowed;
 
 	useEffect(() => {
-		if (denied) router.replace(fallbackHref);
+		if (denied) void router.navigate({ href: fallbackHref, replace: true });
 	}, [denied, fallbackHref, router]);
 
 	if (access.isLoading) return <HostedRouteSkeleton />;

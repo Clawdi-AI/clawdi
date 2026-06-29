@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"build:oss": "NEXT_PUBLIC_CLAWDI_HOSTED=false vite build",
+		"build:oss": "VITE_CLAWDI_HOSTED=false VITE_CLERK_PUBLISHABLE_KEY=pk_test_dummy vite build",
 		"start": "node .output/server/index.mjs",
 		"typecheck": "tsr generate && tsc --noEmit --incremental false",
 		"lint": "biome ci --linter-enabled=true --formatter-enabled=false src",
@@ -54,7 +54,6 @@
 		"@tailwindcss/postcss": "catalog:",
 		"@tailwindcss/vite": "catalog:",
 		"@tanstack/router-cli": "^1.167.17",
-		"@tanstack/router-plugin": "^1.168.18",
 		"@types/bun": "^1.3.14",
 		"@types/node": "^26.0.1",
 		"@types/react": "catalog:",

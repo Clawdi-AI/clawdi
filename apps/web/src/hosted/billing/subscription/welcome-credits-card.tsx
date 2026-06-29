@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { Gift, PartyPopper, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,7 +8,6 @@ import { Spinner } from "@/components/ui/spinner";
 import type { Plan } from "@/hosted/billing/contracts";
 import { creditsToUsd } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
-import { useRouter } from "@/lib/router-navigation";
 
 /**
  * Pure-$0 welcome + signup-grant feedback.
@@ -71,7 +71,7 @@ export function WelcomeCreditsCard() {
 				</div>
 				<div className="flex items-center gap-2">
 					{grantPending ? <Spinner className="size-4 text-muted-foreground" /> : null}
-					<Button onClick={() => router.push("/deploy")}>
+					<Button onClick={() => void router.navigate({ href: "/deploy" })}>
 						<Rocket /> Deploy an agent
 					</Button>
 				</div>

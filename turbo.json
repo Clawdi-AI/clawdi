@@ -14,15 +14,7 @@
 		},
 		"build": {
 			"dependsOn": ["^build"],
-			"env": [
-				"NODE_ENV",
-				"NEXT_PUBLIC_*",
-				"VITE_*",
-				"CLERK_*",
-				"CLAWDI_*",
-				"VERCEL_*",
-				"SKIP_ENV_VALIDATION"
-			],
+			"env": ["NODE_ENV", "VITE_*", "CLERK_*", "CLAWDI_*", "VERCEL_*", "SKIP_ENV_VALIDATION"],
 			"outputs": [".output/**", "dist/**"]
 		},
 		"typecheck": {

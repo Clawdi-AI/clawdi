@@ -77,7 +77,7 @@ python3 -m venv /tmp/hermes-venv
 
 step "copying repository and installing CLI workspace dependencies"
 mkdir -p /tmp/repo
-tar --exclude=node_modules --exclude=.git --exclude=.next --exclude=.turbo \
+tar --exclude=node_modules --exclude=.git --exclude=.turbo \
   -cf - -C /repo . | tar -xf - -C /tmp/repo
 cd /tmp/repo
 git init >/tmp/git-init.log 2>&1

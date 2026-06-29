@@ -1,5 +1,6 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import { CheckCircle2 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
@@ -14,12 +15,12 @@ import {
 	PROJECT_RESOURCE_GROUPS,
 	PROJECT_RESOURCE_NAV_IDS,
 	type ProjectResourceDefinition,
+	type ProjectResourceId,
 	projectResourceCount,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
-import Link from "@/lib/router-link";
 import { cn, formatNumber } from "@/lib/utils";
 
 type Resource = {
@@ -35,6 +36,14 @@ export type ProjectTypeCounts = {
 };
 
 const FIRST_PATH_STEPS = ["Create Project", "Add Skills or Vaults"];
+const RESOURCE_ROUTES = {
+	projects: "/projects",
+	skills: "/skills",
+	vaults: "/vault",
+	sessions: "/sessions",
+	memories: "/memories",
+	connectors: "/connectors",
+} as const satisfies Record<ProjectResourceId, string>;
 
 function formatProjectTypeCounts(counts: ProjectTypeCounts) {
 	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
@@ -210,7 +219,7 @@ function ResourceRow({
 		);
 	return (
 		<Link
-			href={definition.href}
+			to={RESOURCE_ROUTES[definition.id]}
 			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
 		>
 			{/* Same identity hue as this resource's sidebar chip — the rail

@@ -23,5 +23,5 @@ bun run --cwd apps/web build:oss
 `typecheck` runs `tsr generate` first so TanStack Router's route tree stays in
 sync with `src/routes/`.
 
-`build:oss` forces `NEXT_PUBLIC_CLAWDI_HOSTED=false` and verifies the
+`build:oss` forces `VITE_CLAWDI_HOSTED=false` and verifies the
 self-hosted bundle path without local hosted `.env.local` values.

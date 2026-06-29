@@ -1,14 +1,14 @@
 import { env } from "@/lib/env";
 import { hostedApiBaseUrl } from "@/lib/hosted-url";
 
-export const DEPLOY_API_URL = env.NEXT_PUBLIC_DEPLOY_API_URL;
+export const DEPLOY_API_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 
 export { hostedApiBaseUrl };
 
 /**
  * Whether the hosted backend can possibly be reached from this origin.
  *
- * `NEXT_PUBLIC_DEPLOY_API_URL` defaults to the local hosted backend port. On a
+ * `VITE_CLAWDI_DEPLOY_API_URL` defaults to the local hosted backend port. On a
  * non-localhost deployment that forgot to set it, every hosted fetch would be
  * dead on arrival; callers should skip hosted queries entirely.
  */

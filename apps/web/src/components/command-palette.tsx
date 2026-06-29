@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import {
 	Brain,
 	Key,
@@ -32,7 +33,6 @@ import {
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
-import { useRouter } from "@/lib/router-navigation";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	normalizeSettingsSection,
@@ -197,10 +197,12 @@ function CommandPalette({
 				const section =
 					normalizeSettingsSection(new URLSearchParams(href).get("settings")) ??
 					DEFAULT_SETTINGS_SECTION;
-				router.push(settingsQueryHref(section, new URLSearchParams(window.location.search)));
+				void router.navigate({
+					href: settingsQueryHref(section, new URLSearchParams(window.location.search)),
+				});
 				return;
 			}
-			router.push(href);
+			void router.navigate({ href });
 		},
 		[router, onOpenChange],
 	);

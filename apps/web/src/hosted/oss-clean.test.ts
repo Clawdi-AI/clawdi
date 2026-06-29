@@ -8,20 +8,20 @@ import { dirname, join, relative } from "node:path";
  *
  * The hosted/ and v2/ directories must stay quarantined: hosted components set
  * `data-hosted="true"`, v2 components set `data-v2="true"`, and every
- * consumer outside those quarantines is gated by `IS_HOSTED` somewhere in the
+ * consumer outside those quarantines is gated by the hosted build flag somewhere in the
  * same file.
  *
  * Static regex / file-walk checks instead of React render tests —
  * apps/web has no jsdom / @testing-library setup and adding it for
  * one invariant would be overkill. The static gates catch the
  * failure modes that matter: forgetting DOM markers, forgetting
- * the IS_HOSTED guard when importing gated modules.
+ * the hosted build guard when importing gated modules.
  */
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const V2_DIR = join(SRC_DIR, "v2");
-const APP_DIR = join(SRC_DIR, "app");
+const PAGES_DIR = join(SRC_DIR, "pages");
 const GATED_ROUTE_DYNAMIC_IMPORT =
 	/\bimport\s*\(\s*["'](@\/(?:v2\/|hosted\/billing\/)[^"']+)["']\s*\)/g;
 
@@ -62,7 +62,7 @@ function nearestV2GateFile(routeFile: string): string | null {
 	if (hasV2Gate(routeFile)) return routeFile;
 
 	let dir = dirname(routeFile);
-	while (dir.startsWith(APP_DIR)) {
+	while (dir.startsWith(PAGES_DIR)) {
 		const layoutFile = join(dir, "layout.tsx");
 		if (layoutFile !== routeFile && existsSync(layoutFile) && hasV2Gate(layoutFile)) {
 			return layoutFile;
@@ -93,7 +93,7 @@ function discoverV2OnlyRouteFiles(): string[] {
 	const gateFiles = new Set<string>();
 	const ungatedRouteFiles: string[] = [];
 
-	for (const file of listTsx(APP_DIR)) {
+	for (const file of listTsx(PAGES_DIR)) {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
 		const src = readFileSync(file, "utf8");
 		if (!routeUsesV2OnlyModule(src)) continue;
@@ -119,8 +119,8 @@ function discoverV2OnlyRouteFiles(): string[] {
 describe("IS_HOSTED flag", () => {
 	test("defaults to false when env var is unset", () => {
 		const env = { ...process.env };
-		delete env.NEXT_PUBLIC_CLAWDI_HOSTED;
-		env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??= "pk_test_dummy_for_unit_tests";
+		delete env.VITE_CLAWDI_HOSTED;
+		env.VITE_CLERK_PUBLISHABLE_KEY ??= "pk_test_dummy_for_unit_tests";
 
 		const result = spawnSync(
 			process.execPath,
@@ -248,7 +248,7 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 		// would pull the hosted chunk into the OSS main bundle even
 		// when the runtime usage is gated by `IS_HOSTED`. The fix is
 		// always `dynamic(() => import("@/hosted/…"))` constructed
-		// inside an `IS_HOSTED ? … : null` ternary so the OSS bundler
+		// inside an `IS_HOSTED_BUILD ? … : null` ternary so the OSS bundler
 		// statically eliminates the import() site. This test fails if
 		// anyone re-introduces a static `from "@/hosted/…"` import.
 		const offenders: string[] = [];
@@ -285,22 +285,22 @@ describe("no static @/v2/* imports outside v2/ or hosted/", () => {
 	});
 });
 
-describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
-	test('every `dynamic(import("@/hosted/…"))` or `dynamic(import("@/v2/…"))` is constructed inside `IS_HOSTED ? … : null`', () => {
+describe("dynamic gated-module imports are gated by the Vite hosted flag", () => {
+	test('every `dynamic(import("@/hosted/…"))` or `dynamic(import("@/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
 		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
 		// or `dynamic(() => import("@/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
-		// client build graph even though `IS_HOSTED &&
+		// client build graph even though `IS_HOSTED_BUILD &&
 		// <Component />` keeps it from rendering. The runtime bundler
 		// only eliminates the import() call when the surrounding
-		// expression is provably unreachable — `IS_HOSTED ? dynamic(…)
+		// expression is provably unreachable — `IS_HOSTED_BUILD ? dynamic(…)
 		// : null` collapses to `null` at build time once
-		// `NEXT_PUBLIC_CLAWDI_HOSTED` is folded in, taking the entire
+		// `VITE_CLAWDI_HOSTED` is folded in, taking the entire
 		// import() with it.
 		const offenders: string[] = [];
 		// Anchor on each `dynamic(() => import("@/hosted/…"))` call,
 		// then walk backwards to the most recent `const ` keyword. The
-		// snippet between the two must contain `IS_HOSTED ?` — that's
+		// snippet between the two must contain `IS_HOSTED_BUILD ?` — that's
 		// the gate the bundler folds at build time.
 		const gatedDynamic =
 			/dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
@@ -311,14 +311,14 @@ describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
 				const lastConst = src.lastIndexOf("\nconst ", idx);
 				const start = lastConst >= 0 ? lastConst : 0;
 				const snippet = src.slice(start, idx);
-				if (!/\bIS_HOSTED\s*\?/.test(snippet)) {
+				if (!/\bIS_HOSTED_BUILD\s*\?/.test(snippet)) {
 					offenders.push(`${relative(SRC_DIR, file)} — ${match[0].slice(0, 80)}…`);
 				}
 			}
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated dynamic imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
+				`Ungated dynamic imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? dynamic(…) : null\`.`,
 			);
 		}
 	});
@@ -349,13 +349,13 @@ describe("v2 route exposure", () => {
 
 	test("the unified new-agent entrypoint opens the in-app v2 wizard", () => {
 		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
-		expect(src).toContain('router.push("/deploy")');
+		expect(src).toContain('router.navigate({ href: "/deploy" })');
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
 	});
 
 	test("v2-off agent index copy stays neutral", () => {
-		const agentsIndex = readFileSync(join(SRC_DIR, "app/(dashboard)/agents/page.tsx"), "utf8");
+		const agentsIndex = readFileSync(join(SRC_DIR, "pages/dashboard/agents/page.tsx"), "utf8");
 		const agentsCard = readFileSync(join(SRC_DIR, "components/dashboard/agents-card.tsx"), "utf8");
 		expect(agentsIndex).not.toContain("hosted on your account");
 		expect(agentsCard).not.toContain("deploy a hosted one");
@@ -397,7 +397,7 @@ describe("instrumentation-client hosted imports", () => {
 		const src = readFileSync(instrumentationClient, "utf8");
 		const offenders: string[] = [];
 		const hostedDynamic = /import\s*\(\s*["']@\/hosted\/[^"']+["']\s*\)/g;
-		const compileTimeHostedGate = /\bprocess\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/;
+		const compileTimeHostedGate = /\bimport\.meta\.env\.VITE_CLAWDI_HOSTED\s*===\s*["']true["']/;
 
 		for (const match of src.matchAll(hostedDynamic)) {
 			const idx = match.index ?? 0;
@@ -409,20 +409,21 @@ describe("instrumentation-client hosted imports", () => {
 
 		if (offenders.length > 0) {
 			throw new Error(
-				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
+				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or import.meta.env.VITE_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
 			);
 		}
 	});
 });
 
-describe("OSS build boundary", () => {
-	test("Vite strips gated hosted/v2/PostHog chunks from non-hosted builds", () => {
+describe("Vite hosted flag boundary", () => {
+	test("hosted gating uses Vite-native env replacement without custom build plugins", () => {
 		const viteConfig = readFileSync(join(SRC_DIR, "..", "vite.config.ts"), "utf8");
+		const hostedFlag = readFileSync(join(SRC_DIR, "lib/hosted.ts"), "utf8");
 
-		expect(viteConfig).toContain("clawdi-oss-hosted-boundary");
-		expect(viteConfig).toContain('"/src/hosted/"');
-		expect(viteConfig).toContain('"/src/v2/"');
-		expect(viteConfig).toContain('"/node_modules/posthog-js/"');
+		expect(viteConfig).not.toContain("clawdi-oss-hosted-boundary");
+		expect(viteConfig).not.toContain("envPrefix");
+		expect(viteConfig).not.toContain("define:");
+		expect(hostedFlag).toContain("import.meta.env.VITE_CLAWDI_HOSTED");
 	});
 });
 

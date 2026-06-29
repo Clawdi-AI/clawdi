@@ -16,7 +16,6 @@
 			"!**/*.generated.*",
 			"!**/routeTree.gen.ts",
 			"!**/dist",
-			"!**/.next",
 			"!**/node_modules"
 		]
 	},

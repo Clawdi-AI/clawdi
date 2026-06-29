@@ -287,7 +287,7 @@ PY
 
 web_source_env="$(first_existing "$ROOT/apps/web/.env.local" "$ROOT/apps/web/.env" || true)"
 web_overrides="$(cat <<EOF
-NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}
+VITE_CLAWDI_API_URL=${API_PUBLIC_URL}
 EOF
 )"
 write_env_file "$web_source_env" apps/web/.env.example apps/web/.env.local "$web_overrides"

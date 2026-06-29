@@ -1,7 +1,7 @@
 "use client";
 
 import { SignInButton } from "@clerk/tanstack-react-start";
-import Link from "@/lib/router-link";
+import { Link } from "@tanstack/react-router";
 
 /**
  * Auth gate page for private session URLs accessed by anonymous visitors.
@@ -37,7 +37,7 @@ export function SignInToView({ shareUrl }: { shareUrl: string }) {
 						Sign in
 					</button>
 				</SignInButton>
-				<Link href="/" className="font-medium underline-offset-4 hover:underline">
+				<Link to="/" className="font-medium underline-offset-4 hover:underline">
 					Go to Clawdi
 				</Link>
 			</div>

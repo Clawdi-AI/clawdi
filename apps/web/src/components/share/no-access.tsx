@@ -1,4 +1,4 @@
-import Link from "@/lib/router-link";
+import { Link } from "@tanstack/react-router";
 
 /**
  * Forbidden page for share URLs the visitor isn't allowed to view.
@@ -19,7 +19,7 @@ export function NoAccess() {
 				The owner hasn't granted your account permission to view this Clawdi session. Ask them to
 				share the link with you, or to invite you directly.
 			</p>
-			<Link href="/" className="mt-6 text-sm font-medium underline-offset-4 hover:underline">
+			<Link to="/" className="mt-6 text-sm font-medium underline-offset-4 hover:underline">
 				Go to Clawdi
 			</Link>
 		</div>

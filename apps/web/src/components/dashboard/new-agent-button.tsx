@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
@@ -14,7 +15,6 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
@@ -58,7 +58,7 @@ export function NewAgentButton({
 		if (!canDeployManagedAgent) return;
 		setChooserOpen(false);
 		onNavigate?.();
-		router.push("/deploy");
+		void router.navigate({ href: "/deploy" });
 	}
 
 	const trigger = (

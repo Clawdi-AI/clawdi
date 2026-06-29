@@ -1,5 +1,6 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -21,7 +22,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import Link from "@/lib/router-link";
 import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
@@ -162,7 +162,9 @@ export function ConnectBotDialog({
 								Close
 							</Button>
 							<Button asChild>
-								<Link href={`/channels/${created.id}`}>Open channel</Link>
+								<Link to="/channels/$id" params={{ id: created.id }}>
+									Open channel
+								</Link>
 							</Button>
 						</DialogFooter>
 					</>

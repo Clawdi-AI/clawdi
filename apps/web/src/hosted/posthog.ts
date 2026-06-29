@@ -2,8 +2,8 @@ import posthog from "posthog-js";
 
 const POSTHOG_PROXY_PATH = "/_cdi/px";
 const POSTHOG_PROPERTY_DENYLIST = ["auth", "cookie", "password", "secret"];
-const HOSTED_BUILD_FLAG = import.meta.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true";
-const DEFAULT_POSTHOG_TOKEN = import.meta.env.NEXT_PUBLIC_POSTHOG_TOKEN;
+const HOSTED_BUILD_FLAG = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const DEFAULT_POSTHOG_TOKEN = import.meta.env.VITE_POSTHOG_TOKEN;
 
 type PostHogClient = typeof posthog & { __loaded?: boolean };
 type HostedPostHogOptions = {

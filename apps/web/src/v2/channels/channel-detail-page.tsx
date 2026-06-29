@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
 	ArrowUpRight,
@@ -37,7 +38,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useParams, useRouter } from "@/lib/router-navigation";
 import { providerMeta } from "@/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,
@@ -112,9 +112,7 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 	);
 }
 
-export function ChannelDetailPage() {
-	const params = useParams<{ id: string }>();
-	const id = params.id;
+export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const channel = useChannel(id);
 	const health = useChannelHealth();
 	const router = useRouter();
@@ -156,7 +154,7 @@ export function ChannelDetailPage() {
 					title="Channel not found"
 					description="This channel may have been removed."
 					action={
-						<Button variant="outline" onClick={() => router.push("/channels")}>
+						<Button variant="outline" onClick={() => void router.navigate({ href: "/channels" })}>
 							Back to Channels
 						</Button>
 					}
@@ -183,7 +181,9 @@ export function ChannelDetailPage() {
 						}
 						confirmLabel="Remove channel"
 						destructive
-						onConfirm={() => del.mutate(id, { onSuccess: () => router.push("/channels") })}
+						onConfirm={() =>
+							del.mutate(id, { onSuccess: () => void router.navigate({ href: "/channels" }) })
+						}
 					>
 						<Button variant="outline" className="text-muted-foreground hover:text-destructive">
 							<Trash2 className="size-4" />

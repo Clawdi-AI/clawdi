@@ -12,10 +12,10 @@ const csrfMiddleware = createCsrfMiddleware({
 
 const requestMiddleware: AnyRequestMiddleware[] = [csrfMiddleware];
 
-if (!env.NEXT_PUBLIC_DEV_AUTH_BYPASS) {
+if (!env.VITE_DEV_AUTH_BYPASS) {
 	requestMiddleware.unshift(
 		clerkMiddleware({
-			publishableKey: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+			publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY,
 			signInUrl: "/sign-in",
 			signUpUrl: "/sign-up",
 		}),

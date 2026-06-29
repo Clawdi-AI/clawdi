@@ -34,14 +34,14 @@ on:
         type: boolean
         default: false
       web_public_api_url:
-        description: "NEXT_PUBLIC_API_URL baked into the web image."
+        description: "VITE_CLAWDI_API_URL baked into the web image."
         required: false
         default: "http://localhost:8000"
       web_clerk_publishable_key:
-        description: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY baked into the web image."
+        description: "VITE_CLERK_PUBLISHABLE_KEY baked into the web image."
         required: false
       web_public_deploy_api_url:
-        description: "NEXT_PUBLIC_DEPLOY_API_URL baked into the web image."
+        description: "VITE_CLAWDI_DEPLOY_API_URL baked into the web image."
         required: false
         default: "http://localhost:50021"
 
@@ -201,10 +201,10 @@ jobs:
           push: true
           tags: ${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}
           build-args: |
-            NEXT_PUBLIC_API_URL=${{ inputs.web_public_api_url }}
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ inputs.web_clerk_publishable_key }}
-            NEXT_PUBLIC_CLAWDI_HOSTED=
-            NEXT_PUBLIC_DEPLOY_API_URL=${{ inputs.web_public_deploy_api_url }}
+            VITE_CLAWDI_API_URL=${{ inputs.web_public_api_url }}
+            VITE_CLERK_PUBLISHABLE_KEY=${{ inputs.web_clerk_publishable_key }}
+            VITE_CLAWDI_HOSTED=
+            VITE_CLAWDI_DEPLOY_API_URL=${{ inputs.web_public_deploy_api_url }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}

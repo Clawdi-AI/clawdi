@@ -9,7 +9,7 @@ instructions.
 ## Project Structure
 
 ```
-apps/web/          Next.js 15 dashboard (Clerk auth, shadcn/ui, Tailwind v4)
+apps/web/          TanStack Start dashboard (Clerk auth, shadcn/ui, Tailwind v4)
 packages/cli/      CLI tool (TypeScript, Bun)
 packages/shared/   Shared types, constants, utilities
 backend/           Python FastAPI backend (async PostgreSQL, Clerk JWT)
@@ -38,7 +38,7 @@ docs/              Documentation, plans, scenarios
 
 ```bash
 bun install              # Install all dependencies
-bun run dev              # Start web app dev server (Turbopack)
+bun run dev              # Start workspace dev servers
 bun run build            # Build all workspaces
 bun run typecheck        # Type-check all workspaces
 ```
@@ -86,7 +86,7 @@ lives in `CHANGELOG.md`.
 
 ## Tech Stack
 
-- **Web**: Next.js 15, React 19, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand, Clerk
+- **Web**: TanStack Start, TanStack Router, React 19, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand, Clerk
 - **CLI**: TypeScript, Bun, Commander
 - **Backend**: FastAPI, SQLAlchemy 2.0 async, asyncpg, Alembic, Pydantic Settings
 - **Database**: PostgreSQL with `pgvector` (embeddings) and `pg_trgm` (fuzzy search)

@@ -3,10 +3,10 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import "../../instrumentation-client";
-import RootError from "@/app/error";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
-import "@/app/globals.css";
+import RootError from "@/components/root-error";
+import "@/styles/globals.css";
 
 const DESCRIPTION =
 	"Cloud control plane for AI agents - manage sessions, skills, memories, and secrets across the machines you connect.";

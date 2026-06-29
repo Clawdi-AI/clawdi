@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocation } from "@tanstack/react-router";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isCloudEnvId } from "@/hosted/agent-identity";
@@ -8,7 +9,6 @@ import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import type { AgentSectionId } from "@/lib/agent-routes";
-import { useSearchParams } from "@/lib/router-navigation";
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
@@ -24,7 +24,8 @@ export function AgentHome({
 	environmentId: string;
 	section: AgentSectionId;
 }) {
-	const searchParams = useSearchParams();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const searchParams = new URLSearchParams(searchStr);
 	const {
 		deployment,
 		environmentId: resolvedEnvId,

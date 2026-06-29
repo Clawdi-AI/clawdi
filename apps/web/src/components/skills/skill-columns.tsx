@@ -1,13 +1,12 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { skillDetailHref } from "@/lib/project-resource-model";
-import Link from "@/lib/router-link";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -59,7 +58,6 @@ export function makeSkillColumns(
 			cell: ({ row }) => {
 				const s = row.original;
 				const sourceProjectName = s.project_name ?? null;
-				const href = skillDetailHref(s.skill_key, s.project_id);
 				const access = resolveSkillProjectAccess(s, options);
 				return (
 					<div className="flex min-w-0 items-start gap-2">
@@ -67,7 +65,9 @@ export function makeSkillColumns(
 						<div className="min-w-0 flex-1 space-y-0.5">
 							<div className="flex min-w-0 items-center gap-2">
 								<Link
-									href={href}
+									to="/skills/$key"
+									params={{ key: s.skill_key }}
+									search={s.project_id ? { project: s.project_id } : undefined}
 									onClick={(e) => e.stopPropagation()}
 									className="truncate text-sm font-medium hover:underline"
 								>

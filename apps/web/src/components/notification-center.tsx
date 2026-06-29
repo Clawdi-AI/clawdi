@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useRouter } from "@tanstack/react-router";
 import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -19,8 +20,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
-import Link from "@/lib/router-link";
-import { useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
@@ -74,7 +73,7 @@ export function NotificationCenter() {
 				description: copy.description,
 				action: {
 					label: "Open Project",
-					onClick: () => router.push(projectDetailHref(result.project_id)),
+					onClick: () => void router.navigate({ href: projectDetailHref(result.project_id) }),
 				},
 			});
 		},
@@ -158,7 +157,7 @@ export function NotificationCenter() {
 						Accepted invites appear under Shared Projects.
 					</p>
 					<Button asChild variant="ghost" size="sm" onClick={() => setOpen(false)}>
-						<Link href="/projects">View Accepted Invites</Link>
+						<Link to="/projects">View Accepted Invites</Link>
 					</Button>
 				</div>
 			</PopoverContent>

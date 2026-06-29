@@ -2,6 +2,7 @@
 
 import type { components } from "@clawdi/shared/api";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -21,7 +22,6 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
-import { useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["EnvironmentResponse"];
@@ -126,7 +126,7 @@ export function AgentSettingsPanel({
 					return key === "environments" || key === "sessions" || key === "agent";
 				},
 			});
-			router.push("/");
+			void router.navigate({ href: "/" });
 		},
 		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
 	});
