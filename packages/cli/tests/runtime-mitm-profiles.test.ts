@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	directProviderPassthroughProfile,
+	directProviderPassthroughProfiles,
 	hostedManifestMitmProfiles,
 } from "../src/runtime/hosted-mitm-profiles";
 import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
@@ -129,7 +130,7 @@ describe("runtime MITM profile schema", () => {
 			providers: {
 				default: {
 					baseUrl: "https://ai-gateway.example.test/v1",
-					apiMode: "codex_responses",
+					apiMode: "openai_responses",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},
@@ -163,6 +164,32 @@ describe("runtime MITM profile schema", () => {
 			priority: 240,
 			owner: "provider-projection",
 		});
+	});
+
+	it("builds direct provider allowlists for runtime-scoped providers", () => {
+		const direct = directProviderPassthroughProfiles({
+			providers: {
+				openclaw: {
+					baseUrl: "https://openclaw-provider.example.test/v1",
+					apiMode: "openai_chat",
+					apiKeySecretRef: "provider.openclaw.apiKey",
+				},
+				hermes: {
+					baseUrl: "https://hermes-provider.example.test/v1",
+					apiMode: "openai_responses",
+					apiKeySecretRef: "provider.hermes.apiKey",
+				},
+			},
+		});
+
+		expect(direct.map((profile) => profile.id)).toEqual([
+			"direct-provider-passthrough-hermes",
+			"direct-provider-passthrough-openclaw",
+		]);
+		expect(direct.map((profile) => profile.match.host)).toEqual([
+			"hermes-provider.example.test",
+			"openclaw-provider.example.test",
+		]);
 	});
 
 	it("does not derive provider MITM profiles without explicit manifest profiles", () => {

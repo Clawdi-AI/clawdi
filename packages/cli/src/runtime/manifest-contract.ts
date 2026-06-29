@@ -130,6 +130,14 @@ const hostedRuntimeEntrySchema = z
 	})
 	.passthrough();
 
+const hostedProviderAuthSchema = z
+	.object({
+		type: z.literal("agent_profile"),
+		tool: z.literal("codex"),
+		profile: z.string().min(1),
+	})
+	.strict();
+
 export const hostedRuntimeManifestSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
@@ -167,11 +175,13 @@ export const hostedRuntimeManifestSchema = z
 				z
 					.object({
 						kind: z.string().min(1).optional(),
+						type: z.string().min(1).optional(),
 						baseUrl: z.string().url().optional(),
 						model: z.string().min(1).optional(),
 						apiMode: z.string().min(1).optional(),
 						runtimeEnvName: z.string().min(1).optional(),
 						apiKeySecretRef: z.string().min(1).nullable().optional(),
+						auth: hostedProviderAuthSchema.optional(),
 					})
 					.passthrough(),
 			)

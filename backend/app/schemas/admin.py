@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
+_SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
 
 
 class AdminEnvironmentCreate(BaseModel):
@@ -88,6 +89,9 @@ class AdminRuntimeStateUpsert(BaseModel):
             raise ValueError("runtimes cannot be empty")
         if "channels" in value:
             raise ValueError("channels are not runtime desired state")
+        unknown = sorted(set(value) - _SUPPORTED_HOSTED_RUNTIMES)
+        if unknown:
+            raise ValueError(f"unsupported runtime desired state: {', '.join(unknown)}")
         return value
 
     @field_validator("control_plane")

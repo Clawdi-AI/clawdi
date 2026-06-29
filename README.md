@@ -328,24 +328,23 @@ Every command supports `--help`.
 
 ### Advanced Runtime Operators
 
-These commands are for controlled hosted or self-hosted runtime envelopes. They
-are not part of normal laptop onboarding.
+These commands are for controlled managed runtime environments. They are not
+part of normal laptop onboarding.
 
 | Command | What it does |
 | --- | --- |
-| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and hosted policy restrictions |
-| `clawdi runtime init/watch/ui-bridge/status/doctor` | Converge, watch, expose the UI bridge, inspect, and diagnose hosted runtime state |
+| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
+| `clawdi runtime init/watch/ui-bridge/status/doctor` | Converge, watch, expose the UI bridge, inspect, and diagnose runtime state |
 | `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
 
-Hosted runtime mode is detected from host policy or runtime credentials. In
-hosted mode, `/etc/clawdi/host-policy.json` can deny local-user commands such
-as `setup`, `teardown`, `update`, `config set`, and `auth login`, while keeping
+Runtime mode is detected from policy or runtime credentials. In managed mode,
+policy can deny local-user setup and mutation commands while keeping
 agent-facing commands such as `mcp`, `daemon run`, `read`, `inject`, and `run`
-available. Local self-update is skipped in hosted mode; hosted CLI updates are
-expected to be system-managed through the standard npm package installation.
+available. Local self-update can be skipped when updates are managed by the
+runtime environment.
 
-For the hosted runtime design, profile matrix, and runtime image contract, see
-[`docs/hosted-runtime.md`](docs/hosted-runtime.md).
+For the public managed runtime CLI contract, see
+[`docs/managed-runtime.md`](docs/managed-runtime.md).
 
 App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai) and surface inside agents automatically over MCP — there is no CLI command to manage them.
 

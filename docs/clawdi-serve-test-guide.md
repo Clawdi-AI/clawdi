@@ -290,7 +290,7 @@ only conduit.
 | `CLAWDI_AUTH_TOKEN` | Deploy key. Bypasses `~/.clawdi/auth.json` so no interactive login is needed. |
 | `CLAWDI_AGENT_TYPE` | Agent adapter to load when the container has no `~/.clawdi/environments/*.json` registry. |
 | `CLAWDI_ENVIRONMENT_ID` | The env this single-agent pod represents. Bypasses `~/.clawdi/environments/*.json`. |
-| `CLAWDI_API_URL` | Cloud backend (e.g. `https://cloud-api.clawdi.ai`). |
+| `CLAWDI_API_URL` | Cloud backend (for example, `https://api.example.test`). |
 | `CLAWDI_SERVE_MODE=container` | Forces poll mode (overlay-fs doesn't fire fs.watch reliably). |
 | `CLAWDI_DAEMON_RPC_HOST` | HTTP host for the daemon control RPC. Defaults to `127.0.0.1`. |
 | `CLAWDI_DAEMON_RPC_PORT` | HTTP port for the daemon control RPC. Defaults to `17654`. Requests still require bearer token auth. |

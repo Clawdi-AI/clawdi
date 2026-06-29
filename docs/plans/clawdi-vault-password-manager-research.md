@@ -123,7 +123,7 @@ credential.
 
 The later agent-runtime promise is:
 
-> For controlled hosted runtimes, Clawdi can convert selected credentials from
+> For controlled managed runtimes, Clawdi can convert selected credentials from
 > plaintext strings into scoped outbound capabilities, so agents use APIs
 > without receiving long-lived credential values.
 
@@ -142,7 +142,7 @@ The later agent-runtime promise is:
      and visible access.
    - Cares about revoking a member or Agent without rotating everything by
      hand.
-3. **Operator running hosted or remote agents**
+3. **Operator running managed or remote agents**
    - Wants agents to use GitHub, Anthropic, Stripe, or internal APIs without
      exposing broad long-lived tokens to the agent process.
    - Cares about audit, TTL, kill switch, and eventually proxy-mode isolation.
@@ -160,7 +160,7 @@ The later agent-runtime promise is:
    - Sharing answers who may access a Project.
    - Agent Project and attachments answer which Projects a runtime may use.
 3. **Runtime delivery is explicit**
-   - `read`, `run`, `inject`, hosted runtime leases, and future proxy mode are
+   - `read`, `run`, `inject`, managed runtime leases, and future proxy mode are
      different delivery choices with different risk levels.
 4. **Every resolved secret has provenance**
    - Users must be able to see which Project, vault, section, field, and Agent
@@ -181,7 +181,7 @@ The later agent-runtime promise is:
      API keys.
 8. **Name the custody model**
    - "Clawdi cannot decrypt" is valid only for client-managed vault items.
-     Server-managed connected accounts, proxy bindings, and hosted runtime
+     Server-managed connected accounts, proxy bindings, and managed runtime
      credentials require different claims: scoped, audited, expirable, and
      revocable.
 
@@ -417,7 +417,7 @@ Implication for Clawdi:
 - "Return a secret value" and "use a credential on behalf of the caller" are
   different product modes. Clawdi should name them separately.
 - Credential injection is stronger than brokering when Clawdi controls the
-  worker or hosted runtime. For local unmanaged processes, it is mostly a
+  worker or managed runtime. For local unmanaged processes, it is mostly a
   convenience layer unless network egress is controlled.
 - Workload identity is the best answer whenever an upstream supports it. Clawdi
   Vault should eventually prefer short-lived identity federation over storing
@@ -556,7 +556,7 @@ credential-and-capability layer, not only a secret-string store.
 6. **Move toward a client-managed trust model**
    - For ordinary user vault items, the target state is server-stored
      ciphertext with client-held or client-unwrapped keys.
-7. **Reserve proxy/TEE for controlled hosted runtimes**
+7. **Reserve proxy/TEE for controlled managed runtimes**
    - Agent Vault-style proxying remains a strategic track, but only where
      Clawdi can enforce network/proxy behavior.
 8. **Keep key-management infrastructure behind adapters**
@@ -1196,7 +1196,7 @@ security claim:
 
 - `client_managed`: Clawdi stores ciphertext and cannot decrypt ordinary values.
 - `server_managed`: Clawdi can use/decrypt the credential under policy, usually
-  for OAuth refresh, hosted runtime delivery, or legacy server-side vault data.
+  for OAuth refresh, managed runtime delivery, or legacy server-side vault data.
 - `tee_managed`: Clawdi service orchestration can request an operation, but the
   key use happens inside an attested runtime.
 - `external_provider`: Clawdi stores a binding or trust relationship and asks
@@ -1596,11 +1596,11 @@ Security statement:
 
 - "For client-managed vaults, Clawdi servers cannot decrypt item values."
 - This statement does not cover explicitly server-managed connected accounts,
-  proxy bindings, hosted runtime credentials, or external-provider workload
+  proxy bindings, managed runtime credentials, or external-provider workload
   identity bindings. Those credentials need their own `custody_model` label and
   product copy.
 
-### Phase 4: Hosted-Agent Proxy / Tool Gateway PoC
+### Phase 4: Managed-Agent Proxy / Tool Gateway PoC
 
 Goal: evaluate Agent Vault-style credential brokering only where Clawdi controls
 the runtime enough to enforce it.
@@ -1612,7 +1612,7 @@ Deliver:
 - Dummy credential substitution.
 - Strict deny for unmatched hosts by default in controlled sandboxes.
 - Scoped proxy sessions minted by Clawdi runtime.
-- CA/proxy bootstrap for the supported hosted runtime only.
+- CA/proxy bootstrap for controlled runtimes only.
 - Request/response audit controls.
 - Human approval flow for new service access.
 - Explicit bypass analysis: what network paths can avoid the proxy?
@@ -1623,7 +1623,7 @@ Deliver:
 
 Security statement:
 
-- "In controlled hosted runtime proxy mode, agents do not receive long-lived
+- "In controlled managed runtime proxy mode, agents do not receive long-lived
   credentials for supported HTTP(S) services."
 - Do not promise this for local `clawdi run` or unmanaged machines.
 

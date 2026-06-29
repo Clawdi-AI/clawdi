@@ -1,6 +1,6 @@
 # AI Provider Agent Contract Audit
 
-Date: 2026-06-04
+Date: 2026-06-29
 
 This audit pins the agent configuration contracts used by AI Provider apply and
 auth flows. AI Provider adapters must be updated only against verified agent
@@ -10,9 +10,9 @@ source or official docs.
 
 | Agent | Verified version/source | AI Provider status | Config method |
 | --- | --- | --- | --- |
-| Codex | `@openai/codex@0.134.0`, `0.135.0`, `0.136.0`; official Codex manual profile contract | Enabled | `$CODEX_HOME/clawdi-ai-provider.config.toml`, selected with `codex --profile clawdi-ai-provider` |
-| Hermes | `hermes-agent==0.13.0`, `0.14.0`, `0.15.0`, `0.15.1`, `0.15.2` package audit | Enabled | Structured merge into `$HERMES_HOME/config.yaml` |
-| OpenClaw | `openclaw@2026.5.12`, `2026.5.18`, `2026.5.27`, `2026.5.28`, `2026.6.1` package/source audit | Enabled | `openclaw config patch --stdin` |
+| Codex | `@openai/codex@0.134.0` through `0.142.4`; official Codex manual profile contract | Enabled | `$CODEX_HOME/clawdi-ai-provider.config.toml`, selected with `codex --profile clawdi-ai-provider` |
+| Hermes | `hermes-agent==0.13.0` through `0.17.0` package audit | Enabled | Structured merge into `$HERMES_HOME/config.yaml` |
+| OpenClaw | `openclaw@2026.5.12` through `2026.6.10` package/source audit | Enabled | `openclaw config patch --stdin` |
 | Claude Code | Not pinned for AI Provider v1 | Not supported | None |
 
 ## Codex
@@ -31,6 +31,9 @@ Verified sources:
 - `codex-rs/login/src/token_data.rs` and
   `codex-rs/app-server-protocol/src/protocol/common.rs`: `auth.json` accepts
   `auth_mode: "chatgpt"` and serializes `id_token` as the original JWT string.
+- `@openai/codex@0.142.4` source audit on 2026-06-29 verified the same
+  profile-v2 file path, `model_providers`, `wire_api`, `env_key`, and
+  `requires_openai_auth` contract.
 
 Clawdi behavior:
 
@@ -52,7 +55,7 @@ Clawdi behavior:
   `app_EMoamEEZ73f0CkXaXp7hrann`, scopes
   `openid profile email offline_access api.connectors.read api.connectors.invoke`,
   and originator `codex_cli_rs`.
-- The verified range is `@openai/codex 0.134.0` through `0.136.0`.
+- The verified range is `@openai/codex 0.134.0` through `0.142.4`.
   Versions before `0.134.0` use older profile semantics and are not supported
   by AI Provider apply. Newer versions should be re-audited before broadening
   this range.
@@ -77,10 +80,14 @@ Verified sources:
   are stored in `$HERMES_HOME/auth.json` under
   `providers.openai-codex.tokens`; the runtime also reads
   `credential_pool.openai-codex`.
+- `hermes-agent==0.17.0` package audit on 2026-06-29 verified the same
+  `providers` dict compatibility layer, the current Hermes Responses transport,
+  `openai-codex` provider selector, `active_provider`, and
+  `credential_pool.openai-codex` runtime credential paths.
 - Docker package audits passed for `hermes-agent==0.13.0`, `0.14.0`,
   `0.15.0`, `0.15.1`, and `0.15.2`. Each package loaded a v12 `providers`
-  dict from `config.yaml` and resolved `custom:openai-main` with
-  `codex_responses` transport and `key_env` auth.
+  dict from `config.yaml` and resolved `custom:openai-main` with Hermes'
+  Responses transport and `key_env` auth.
 
 Clawdi behavior:
 
@@ -89,7 +96,7 @@ Clawdi behavior:
 - The merge writes the verified v12 `providers` dict shape and sets
   `model.provider` to `custom:<provider-id>`.
 - Codex OAuth providers are projected through Hermes' native
-  `model.provider: openai-codex` selector and `codex_responses` runtime, not as
+  `model.provider: openai-codex` selector and Responses runtime, not as
   custom providers with `key_env`.
 - For Codex OAuth sources, non-dry-run apply writes Hermes' native
   `$HERMES_HOME/auth.json` with `providers.openai-codex.tokens`,
@@ -101,7 +108,8 @@ Clawdi behavior:
 - Dry-run prints only the generated patch, not the existing `config.yaml`, to
   avoid leaking user inline secrets.
 
-Supported transport mapping:
+Clawdi provider modes are standard API modes. The Hermes adapter translates
+those modes into Hermes' target-native transport labels only at config output:
 
 - `openai_chat` -> `chat_completions`
 - `openai_responses` -> `codex_responses`
@@ -142,6 +150,10 @@ Verified sources:
 - `openclaw@2026.6.1` source audit verified the same config patch contract and
   the canonical `openai:<profile>` auth profile store under the active agent's
   `auth-profiles.json`.
+- `openclaw@2026.6.10` package audit on 2026-06-29 verified
+  `openclaw config patch --stdin`, `models.providers`, `apiKey` SecretRefs,
+  canonical `openai/<model>` native Codex routes, and direct
+  `openai-responses` projection for OpenAI-compatible API-key providers.
 
 Clawdi behavior:
 
@@ -149,6 +161,10 @@ Clawdi behavior:
   `openclaw config patch --stdin`.
 - The patch uses `models.mode: "merge"`, `models.providers.<id>.apiKey` env
   SecretRefs, and `agents.defaults.model.primary`.
+- OpenAI-compatible API-key providers project directly. `openai_chat` uses
+  OpenClaw's default OpenAI-compatible chat surface; `openai_responses` writes
+  `api: "openai-responses"` with the configured provider URL and env SecretRef.
+  Clawdi does not expose a separate custom Codex Responses provider mode.
 - Codex OAuth providers use OpenClaw's native OpenAI route:
   `plugins.entries.codex.enabled: true` and
   `agents.defaults.model.primary: openai/<model>`, without a

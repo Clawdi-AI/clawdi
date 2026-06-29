@@ -278,10 +278,50 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
     if agent_type not in {"openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
     config = deployment["config_info"]
+    bindings = dict(config.get("ai_provider_bindings") or {})
+    explicit_provider = any(
+        body.get(key)
+        for key in ("ai_provider_auth_kind", "ai_provider_id", "ai_provider_bootstrap")
+    )
+    if agent_type not in bindings:
+        source = next(
+            (
+                bindings.get(runtime)
+                for runtime in ("openclaw", "hermes")
+                if runtime != agent_type and isinstance(bindings.get(runtime), dict)
+            ),
+            None,
+        )
+        if explicit_provider or source is None:
+            binding = {
+                "provider_id": body.get("ai_provider_id") or "managed",
+                "auth_kind": body.get("ai_provider_auth_kind") or "managed",
+                "primary_model": body.get("primary_model") or config.get("primary_model"),
+            }
+            bootstrap = body.get("ai_provider_bootstrap")
+        else:
+            binding = {
+                "provider_id": source.get("provider_id") or "managed",
+                "auth_kind": source.get("auth_kind") or "managed",
+                "primary_model": body.get("primary_model")
+                or source.get("primary_model")
+                or config.get("primary_model"),
+            }
+            bootstrap = source.get("bootstrap")
+        if isinstance(bootstrap, dict):
+            binding["bootstrap"] = bootstrap
+        bindings[agent_type] = binding
+        config["ai_provider_bindings"] = bindings
+        config["ai_provider_id"] = binding["provider_id"]
+        config["ai_provider_auth_kind"] = binding["auth_kind"]
+        config["primary_model"] = binding["primary_model"]
     config[f"enable_{agent_type}"] = True
     onboarded = set(config.get("onboarded_agents") or [])
     onboarded.add(agent_type)
     config["onboarded_agents"] = sorted(onboarded)
+    configured = set(config.get("configured_agents") or [])
+    configured.add(agent_type)
+    config["configured_agents"] = sorted(configured)
     return deployment
 
 

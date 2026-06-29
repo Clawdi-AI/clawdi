@@ -145,7 +145,7 @@ outputs:
 3. List caller-owned private channels through `GET /api/channels` when the
    manifest needs to create or reuse a private bot.
 4. For provider selection UX, optionally read `GET /api/channels/bot-pool` so
-   the user or hosted runtime can choose among owned private and public bots
+   the user or managed runtime can choose among owned private and public bots
    without hardcoding ids. Selection should use `capabilities` instead of
    inferring permissions from `visibility`.
 5. For `account.id`, fetch and validate the channel account.
@@ -204,29 +204,29 @@ Telegram:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<agent-sdk-token>
-TELEGRAM_BOT_API_BASE_URL=https://cloud-api.clawdi.ai/api/channels/telegram
+TELEGRAM_BOT_API_BASE_URL=https://channels.example.test/api/channels/telegram
 ```
 
 Discord:
 
 ```dotenv
 DISCORD_BOT_TOKEN=<agent-sdk-token>
-DISCORD_BOT_API_BASE_URL=https://cloud-api.clawdi.ai/api/channels/discord
-DISCORD_GATEWAY_URL=wss://cloud-api.clawdi.ai/api/channels/discord/gateway
+DISCORD_BOT_API_BASE_URL=https://channels.example.test/api/channels/discord
+DISCORD_GATEWAY_URL=wss://channels.example.test/api/channels/discord/gateway
 ```
 
 WhatsApp Graph-compatible runtime:
 
 ```dotenv
 WHATSAPP_ACCESS_TOKEN=<agent-sdk-token>
-WHATSAPP_GRAPH_API_BASE_URL=https://cloud-api.clawdi.ai/api/channels/whatsapp/graph
+WHATSAPP_GRAPH_API_BASE_URL=https://channels.example.test/api/channels/whatsapp/graph
 ```
 
 iMessage / BlueBubbles-compatible runtime:
 
 ```dotenv
-BLUEBUBBLES_SERVER_URL=https://cloud-api.clawdi.ai/api/channels/imessage/bluebubbles
-BLUEBUBBLES_API_BASE_URL=https://cloud-api.clawdi.ai/api/channels/imessage/bluebubbles/v1
+BLUEBUBBLES_SERVER_URL=https://channels.example.test/api/channels/imessage/bluebubbles
+BLUEBUBBLES_API_BASE_URL=https://channels.example.test/api/channels/imessage/bluebubbles/v1
 BLUEBUBBLES_PASSWORD=<agent-sdk-token>
 ```
 
@@ -283,8 +283,8 @@ platforms:
     enabled: true
     token: "${TELEGRAM_BOT_TOKEN}"
     extra:
-      base_url: "https://cloud-api.clawdi.ai/api/channels/telegram/bot"
-      base_file_url: "https://cloud-api.clawdi.ai/api/channels/telegram/file/bot"
+      base_url: "https://channels.example.test/api/channels/telegram/bot"
+      base_file_url: "https://channels.example.test/api/channels/telegram/file/bot"
 ```
 
 This Hermes Telegram shape assumes the provider-prefixed `/bot<token>` alias
@@ -300,8 +300,8 @@ platforms:
     enabled: true
     token: "${DISCORD_BOT_TOKEN}"
     extra:
-      base_url: "https://cloud-api.clawdi.ai/api/channels/discord/v10"
-      gateway_url: "wss://cloud-api.clawdi.ai/api/channels/discord/gateway"
+      base_url: "https://channels.example.test/api/channels/discord/v10"
+      gateway_url: "wss://channels.example.test/api/channels/discord/gateway"
 ```
 
 Hermes currently supports one profile per platform in the old integration
@@ -340,7 +340,7 @@ It should write the Baileys auth state into the requested credential directory
 with private permissions and emit:
 
 ```dotenv
-WA_WEBSOCKET_URL=wss://cloud-api.clawdi.ai/api/channels/whatsapp/<account-id>/baileys
+WA_WEBSOCKET_URL=wss://channels.example.test/api/channels/whatsapp/<account-id>/baileys
 CLAWDI_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
 ```
 

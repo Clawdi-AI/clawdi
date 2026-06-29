@@ -16,7 +16,6 @@ export type ProviderTypeId = (typeof PROVIDER_TYPES)[number];
 export type ApiMode =
 	| "openai_chat"
 	| "openai_responses"
-	| "codex_responses"
 	| "anthropic_messages"
 	| "google_generate_content";
 
@@ -92,7 +91,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		label: "Custom (OpenAI-compatible)",
 		tint: "bg-identity-6-bg text-identity-6-fg",
 		defaultBaseUrl: "",
-		apiModes: ["openai_chat", "openai_responses", "codex_responses"],
+		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: "openai_chat",
 		defaultRuntimeEnv: "CUSTOM_API_KEY",
 		modelPlaceholder: "model name",
@@ -103,7 +102,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 export const API_MODE_LABEL: Record<ApiMode, string> = {
 	openai_chat: "OpenAI Chat",
 	openai_responses: "OpenAI Responses",
-	codex_responses: "Codex Responses",
 	anthropic_messages: "Anthropic Messages",
 	google_generate_content: "Google GenerateContent",
 };

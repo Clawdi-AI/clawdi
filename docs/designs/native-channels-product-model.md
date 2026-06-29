@@ -165,7 +165,7 @@ Bot pool:
   cannot create new links, pair codes, tokens, sends, or runtime credentials.
 - Active public bots appear for every authenticated user.
 - Each item includes `access` and `capabilities`. The current access values are
-  `owner` and `public`. UI and hosted runtime code should prefer capabilities
+  `owner` and `public`. UI and managed runtime code should prefer capabilities
   over inferring behavior from `visibility`.
 - Each item includes `link_count`, optional `max_links`, and `available`.
   `max_links` comes from account config and caps active bot-agent links for a
@@ -363,11 +363,11 @@ Repository and service ownership:
 | Owner | Responsibility |
 | --- | --- |
 | `clawdi` repo | Native channel tables, user/admin channel APIs, provider webhooks, pair/unpair state machine, visible command replies, provider protocol adapters, workers, agent SDK emulation, and CLI/runtime channel materialization. |
-| Hosted service / monorepo | Deployment profile selection, feature flags, hosted runtime orchestration, and calls into `clawdi` native channel APIs to create or reuse accounts, links, pair codes, and runtime manifests. |
+| Managed runtime control plane | Deployment profile selection, feature flags, and calls into `clawdi` native channel APIs to create or reuse accounts, links, pair codes, and runtime manifests. |
 
-The hosted service must not duplicate channel bindings, pair-code claiming,
+The managed runtime control plane must not duplicate channel bindings, pair-code claiming,
 provider webhook handlers, provider protocol state, or `/bot_pair` behavior.
-Those are product-state concerns owned by `clawdi` native Channels. Hosted
+Those are product-state concerns owned by `clawdi` native Channels. Managed
 deployment code may pass a Clawdi auth token and selected channel intent into a
 runtime, or call user-facing channel APIs before launch, but the canonical
 channel state remains in the native channel backend.
