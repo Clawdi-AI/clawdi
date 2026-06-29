@@ -211,7 +211,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.rev.outputs.sha }}
             org.opencontainers.image.created=${{ steps.labels.outputs.created }}
             org.opencontainers.image.title=Clawdi Web
-            org.opencontainers.image.description=Open-source Clawdi Next.js dashboard image for self-hosted deployments.
+            org.opencontainers.image.description=Open-source Clawdi dashboard image for self-hosted deployments.
           provenance: false
           cache-from: type=gha,scope=clawdi-web-image
           cache-to: type=gha,mode=max,scope=clawdi-web-image

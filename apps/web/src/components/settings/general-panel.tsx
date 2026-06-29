@@ -1,7 +1,7 @@
 "use client";
 
-import { useTheme } from "next-themes";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
+import { useTheme } from "@/components/theme-provider";
 import { Label } from "@/components/ui/label";
 import {
 	Select,

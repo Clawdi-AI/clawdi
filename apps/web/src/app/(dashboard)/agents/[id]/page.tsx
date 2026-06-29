@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation";
 import { AgentDetailClient } from "@/app/(dashboard)/agents/[id]/agent-detail-client";
 import { agentSectionHref, hasAgentTabQuery } from "@/lib/agent-routes";
+import { redirect } from "@/lib/router-navigation";
 
 type AgentPageProps = {
 	params: Promise<{ id: string }>;

@@ -140,7 +140,7 @@ jobs:
       - if: steps.guard.outputs.run == 'true'
         name: Typecheck
         env:
-          # Required for `next typegen` — CI doesn't need real values
+          # Required for web typecheck/build — CI doesn't need real values
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: bunx turbo typecheck --filter=${{ matrix.filter }}

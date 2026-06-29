@@ -19,10 +19,10 @@ OSS users running their own Clawdi instance see none of this UI.
    invariant would be overkill). Tightens runtime debugging too:
    anything carrying `data-hosted="true"` in OSS DevTools is a leak.
 
-3. **Imports from outside `hosted/` go through `next/dynamic`,
+3. **Imports from outside `hosted/` go through `@/lib/dynamic`,
    gated on `IS_HOSTED` at the construction site.**
    ```tsx
-   import dynamic from "next/dynamic";
+   import dynamic from "@/lib/dynamic";
    import { IS_HOSTED } from "@/lib/hosted";
 
    const DeployWizard = IS_HOSTED
@@ -37,13 +37,13 @@ OSS users running their own Clawdi instance see none of this UI.
 
    {DeployWizard ? <DeployWizard /> : null}
    ```
-   Why this shape: the bundler folds `IS_HOSTED ? … : null` at
-   build time using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS
-   builds the conditional collapses to `null`, the `dynamic(…)` call
-   is unreachable, the `import()` site is eliminated, and the
-   hosted chunk never ships. A bare `dynamic(() => import(…))` at
-   module top level would still register the chunk in OSS builds —
-   that's why the ternary matters.
+   Why this shape: Vite folds `IS_HOSTED ? … : null` at build time
+   using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS builds the
+   conditional collapses to `null`; the `clawdi-oss-hosted-boundary`
+   Vite plugin then strips any gated hosted/v2/PostHog chunks that
+   Rollup still created during graph construction. A bare
+   `dynamic(() => import(…))` at module top level would still
+   register the chunk in OSS builds — that's why the ternary matters.
    `oss-clean.test.ts` fails the build if anyone reintroduces a
    static `import … from "@/hosted/…"` outside the hosted/
    directory.
@@ -55,6 +55,7 @@ OSS users running their own Clawdi instance see none of this UI.
   state.
 - `agents/` — Hosted agent detail, runtime controls, and AI-provider configuration.
 - `billing/` — Wallet, subscription, usage, and managed agent deployment.
+- `analytics-client.tsx` — Hosted-only analytics identity bridge.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).

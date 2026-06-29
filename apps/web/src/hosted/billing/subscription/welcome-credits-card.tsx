@@ -1,13 +1,13 @@
 "use client";
 
 import { Gift, PartyPopper, Rocket } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import type { Plan } from "@/hosted/billing/contracts";
 import { creditsToUsd } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { useRouter } from "@/lib/router-navigation";
 
 /**
  * Pure-$0 welcome + signup-grant feedback.

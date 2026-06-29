@@ -1,12 +1,12 @@
 "use client";
 
 import { MessageSquare, Zap } from "lucide-react";
-import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Stat } from "@/components/meta/stat";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import {
 	cn,
 	formatAbsoluteTooltip,

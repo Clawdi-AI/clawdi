@@ -1,8 +1,8 @@
 "use client";
 
 import { Check, ChevronRight } from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
+import Link from "@/lib/router-link";
 import { cn } from "@/lib/utils";
 
 /**

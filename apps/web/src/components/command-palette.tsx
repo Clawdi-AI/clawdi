@@ -11,7 +11,6 @@ import {
 	Settings,
 	Sparkles,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
@@ -33,6 +32,7 @@ import {
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
+import { useRouter } from "@/lib/router-navigation";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	normalizeSettingsSection,

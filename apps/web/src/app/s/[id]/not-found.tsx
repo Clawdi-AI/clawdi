@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/lib/router-link";
 
 /**
  * 404 for share URLs that don't resolve to anything.

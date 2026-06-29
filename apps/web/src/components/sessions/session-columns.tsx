@@ -1,11 +1,11 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 const summaryColumn: ColumnDef<SessionListItem> = {

@@ -1,7 +1,6 @@
 "use client";
 
 import { ChevronRight, Terminal } from "lucide-react";
-import Image from "next/image";
 import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
@@ -9,6 +8,7 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
 import type { SessionMessage } from "@/lib/api-schemas";
+import Image from "@/lib/image";
 import { cn, formatAbsoluteTooltip } from "@/lib/utils";
 
 /**

@@ -2,7 +2,6 @@
 
 import type { LucideIcon } from "lucide-react";
 import { CheckCircle2 } from "lucide-react";
-import Link from "next/link";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +19,7 @@ import {
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
+import Link from "@/lib/router-link";
 import { cn, formatNumber } from "@/lib/utils";
 
 type Resource = {

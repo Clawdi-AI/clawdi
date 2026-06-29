@@ -1,6 +1,6 @@
-import { notFound, redirect } from "next/navigation";
 import { AgentDetailClient } from "@/app/(dashboard)/agents/[id]/agent-detail-client";
 import { agentSectionHref, hasAgentTabQuery, parseAgentSectionSegment } from "@/lib/agent-routes";
+import { notFound, redirect } from "@/lib/router-navigation";
 
 type AgentSectionPageProps = {
 	params: Promise<{ id: string; section: string }>;

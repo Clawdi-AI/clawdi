@@ -3,7 +3,6 @@
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -39,6 +38,7 @@ import { unwrap, useApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { getProjectResourceDefinition, memoryDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 

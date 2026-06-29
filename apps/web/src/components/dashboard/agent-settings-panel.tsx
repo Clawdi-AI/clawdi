@@ -3,7 +3,6 @@
 import type { components } from "@clawdi/shared/api";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -22,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
+import { useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["EnvironmentResponse"];

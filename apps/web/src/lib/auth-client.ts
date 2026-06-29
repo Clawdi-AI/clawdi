@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth, useClerk, useUser } from "@clerk/nextjs";
+import { useAuth, useClerk, useUser } from "@clerk/tanstack-react-start";
 import { env } from "@/lib/env";
 
 const DEV_AUTH_BEARER = env.NEXT_PUBLIC_DEV_AUTH_TOKEN;

@@ -1,12 +1,14 @@
-import type { Viewport } from "next";
 import { Toaster } from "@/components/ui/sonner";
 
+type Viewport = {
+	width: string;
+	initialScale: number;
+};
+
 /**
- * Explicit viewport for the public share routes. Next.js 15 doesn't
- * inject a viewport meta by default — without `initial-scale=1`, iOS
- * Safari can apply its own zoom-fit heuristics, which throws off the
- * Tailwind breakpoints we rely on for the mobile layout under `/s/*`
- * (and the `[format]` export sub-route).
+ * Explicit viewport for the public share routes. Without `initial-scale=1`,
+ * iOS Safari can apply its own zoom-fit heuristics, which throws off the
+ * Tailwind breakpoints we rely on for the mobile layout under `/s/*`.
  */
 export const viewport: Viewport = {
 	width: "device-width",

@@ -1,7 +1,7 @@
 "use client";
 
-import { SignInButton } from "@clerk/nextjs";
-import Link from "next/link";
+import { SignInButton } from "@clerk/tanstack-react-start";
+import Link from "@/lib/router-link";
 
 /**
  * Auth gate page for private session URLs accessed by anonymous visitors.

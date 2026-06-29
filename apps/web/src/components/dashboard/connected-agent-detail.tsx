@@ -12,8 +12,6 @@ import {
 	Sparkles,
 	Trash2,
 } from "lucide-react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -51,6 +49,8 @@ import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { projectResourceHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useRouter, useSearchParams } from "@/lib/router-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
 

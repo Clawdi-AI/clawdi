@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/lib/router-link";
 
 /**
  * Forbidden page for share URLs the visitor isn't allowed to view.

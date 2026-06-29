@@ -2,8 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
-import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import {
@@ -21,8 +19,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
+import dynamic from "@/lib/dynamic";
 import { IS_HOSTED } from "@/lib/hosted";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";

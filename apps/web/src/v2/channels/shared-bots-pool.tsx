@@ -1,13 +1,13 @@
 "use client";
 
 import { ArrowUpRight, Link2, Users } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import Link from "@/lib/router-link";
 import { cn } from "@/lib/utils";
 import { CHANNEL_PROVIDERS, providerMeta } from "@/v2/channels/channel-providers";
 import type { ChannelBotPoolItem } from "@/v2/channels/channel-types";

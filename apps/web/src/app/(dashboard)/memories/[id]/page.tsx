@@ -2,8 +2,6 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Brain, Laptop, Trash2 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
@@ -15,6 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref, sessionDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useParams, useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage() {

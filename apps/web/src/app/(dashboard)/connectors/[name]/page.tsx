@@ -1,7 +1,6 @@
 "use client";
 
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
-import { useParams } from "next/navigation";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -26,6 +25,7 @@ import {
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
+import { useParams } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
@@ -38,10 +38,8 @@ function formatName(raw: string): string {
 
 /**
  * Same Suspense pattern as `connectors/page.tsx`: nuqs's
- * `useQueryStates` reads `useSearchParams` under the hood, which
- * makes Next.js bail out of static generation. Wrapping the body
- * keeps the page renderable in App Router static-shell mode and
- * defers only the URL-state-dependent code to the client.
+ * `useQueryStates` reads URL state under the hood. Wrapping the body keeps
+ * the shell renderable and defers only the URL-state-dependent code.
  */
 export default function ConnectorDetailPage() {
 	return (

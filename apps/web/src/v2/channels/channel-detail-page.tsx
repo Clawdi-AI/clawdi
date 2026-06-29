@@ -14,7 +14,6 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -38,6 +37,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useParams, useRouter } from "@/lib/router-navigation";
 import { providerMeta } from "@/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,

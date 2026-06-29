@@ -12,8 +12,6 @@ import {
 	Share2,
 	Trash2,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -50,6 +48,8 @@ import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vaul
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import Link from "@/lib/router-link";
+import { useParams, useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];

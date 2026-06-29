@@ -1,9 +1,9 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AgentSectionId } from "@/lib/agent-routes";
+import dynamic from "@/lib/dynamic";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useV2Access } from "@/lib/v2-access";
 

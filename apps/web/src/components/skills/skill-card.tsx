@@ -1,7 +1,6 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import Link from "next/link";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { skillDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { cn, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];

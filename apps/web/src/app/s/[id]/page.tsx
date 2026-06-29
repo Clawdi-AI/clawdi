@@ -1,10 +1,6 @@
 import type { components, paths } from "@clawdi/shared/api";
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@clerk/tanstack-react-start/server";
 import { Clock, Hash, MessageSquare, Zap } from "lucide-react";
-import type { Metadata } from "next";
-import Image from "next/image";
-import Link from "next/link";
-import { notFound } from "next/navigation";
 import createClient from "openapi-fetch";
 import { cache } from "react";
 import { AgentInline } from "@/components/dashboard/agent-label";
@@ -19,12 +15,23 @@ import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
+import Image from "@/lib/image";
+import Link from "@/lib/router-link";
+import { notFound } from "@/lib/router-navigation";
 import {
 	formatAbsoluteTooltip,
 	formatNumber,
 	formatSessionSummary,
 	relativeTime,
 } from "@/lib/utils";
+
+type Metadata = {
+	title?: string;
+	description?: string;
+	robots?: { index: boolean; follow: boolean };
+	openGraph?: { title: string; description?: string };
+	twitter?: { card: "summary"; title: string; description?: string };
+};
 
 /**
  * Public share page for a Clawdi session.

@@ -1,5 +1,8 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
+# Web Agent Notes
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
+The web app uses TanStack Start with TanStack Router, Vite, Clerk, shadcn/ui,
+and Tailwind CSS. Routes live under `src/routes/`; shared dashboard UI and
+legacy page components still live under `src/app/` during the migration.
+
+Run `bun run --cwd apps/web typecheck` after route changes so
+`src/routeTree.gen.ts` is regenerated before TypeScript checks.

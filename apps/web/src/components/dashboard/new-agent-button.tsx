@@ -1,7 +1,6 @@
 "use client";
 
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 

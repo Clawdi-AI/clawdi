@@ -1,11 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { unwrap, useApi } from "@/lib/api";
+import dynamic from "@/lib/dynamic";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useV2Access } from "@/lib/v2-access";
 

@@ -9,7 +9,6 @@ import {
 	User,
 	WalletCards,
 } from "lucide-react";
-import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
@@ -23,6 +22,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import dynamic from "@/lib/dynamic";
 import { IS_HOSTED } from "@/lib/hosted";
 import {
 	DEFAULT_SETTINGS_SECTION,

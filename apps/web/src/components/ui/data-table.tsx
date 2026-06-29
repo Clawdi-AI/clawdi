@@ -9,7 +9,6 @@ import {
 	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table";
-import Link from "next/link";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -20,6 +19,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import Link from "@/lib/router-link";
 import { cn } from "@/lib/utils";
 
 const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => `row-${i}`);
@@ -36,9 +36,8 @@ interface DataTableProps<TData, TValue> {
 	emptyMessage?: React.ReactNode;
 	/**
 	 * Make every row clickable and navigable. Preferred over `onRowClick`
-	 * for *navigation* — the row gets a stretched Next.js `<Link>` overlay
-	 * so middle-click opens a new tab, hover triggers prefetch, and
-	 * keyboard tab-order works. Use `onRowClick` only for non-nav side
+	 * for *navigation* — the row gets a stretched link overlay so middle-click
+	 * opens a new tab and keyboard tab-order works. Use `onRowClick` only for non-nav side
 	 * effects (selection, expand-in-place, etc).
 	 */
 	getRowHref?: (row: TData) => string;
@@ -191,7 +190,7 @@ export function DataTable<TData, TValue>({
 													{idx === 0 && href ? (
 														// Stretched-link pattern: an absolute anchor
 														// covers the whole row so middle-click opens a
-														// new tab and hover triggers Next.js prefetch.
+														// new tab while keeping the row target large.
 														// Sits behind cell content; cells are static-
 														// positioned so their text doesn't intercept the
 														// click. Interactive elements inside cells need

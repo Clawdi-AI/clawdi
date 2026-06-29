@@ -29,7 +29,7 @@
 
 > Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.
 
-The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, Next.js dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
+The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
 ## Quickstart
 
@@ -262,7 +262,7 @@ See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`]
 ## What Is In This Repo
 
 ```text
-apps/web/          Next.js 16 dashboard with Clerk auth, shadcn/ui, Tailwind v4
+apps/web/          TanStack Start dashboard with Clerk auth, shadcn/ui, Tailwind v4
 packages/cli/      Published `clawdi` CLI, agent adapters, and MCP server
 packages/shared/   Shared API types, schemas, and constants
 backend/           FastAPI backend, SQLAlchemy models, Alembic migrations

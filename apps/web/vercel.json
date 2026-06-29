@@ -1,0 +1,22 @@
+{
+	"rewrites": [
+		{
+			"source": "/_cdi/px/static/:path*",
+			"destination": "https://us-assets.i.posthog.com/static/:path*"
+		},
+		{
+			"source": "/_cdi/px/:path*",
+			"destination": "https://us.i.posthog.com/:path*"
+		}
+	],
+	"redirects": [
+		{ "source": "/wallet", "destination": "/?settings=billing-wallet", "permanent": false },
+		{ "source": "/subscription", "destination": "/?settings=billing-plan", "permanent": false },
+		{ "source": "/pricing", "destination": "/?settings=billing-plan", "permanent": false },
+		{
+			"source": "/settings/billing/pricing",
+			"destination": "/?settings=billing-plan",
+			"permanent": false
+		}
+	]
+}

@@ -5,20 +5,18 @@ import { env } from "@/lib/env";
 /**
  * Agent-friendly format proxies for shared sessions.
  *
- * Visitor-facing URL is `/s/{id}.md` (and `.json`); `next.config.ts`
- * rewrites those to `/s/{id}/{format}`, which is what this handler
- * serves. URL bar still shows the `.ext` form.
+ * Visitor-facing URL is `/s/{id}.md` (and `.json`); TanStack Start routes
+ * those extension paths directly to this handler.
  *
  * `id` is always a session UUID — matches the backend's canonical
  * `/api/public/sessions/{session_id}` route.
  *
- * **Anonymous-only proxy**: no Clerk auth forwarded. The middleware
- * matcher in `proxy.ts` excludes `.md` / `.json` extensions to keep
- * static-file requests cheap, which means clerkMiddleware never runs
- * on this route and `auth()` would throw. The target consumer is
- * unauthenticated agents (ChatGPT / Claude WebFetch / curl); the
- * owner-private "export my session" path goes through the dashboard's
- * owner-auth `/api/sessions/{id}/export.md` instead.
+ * **Anonymous-only proxy**: no Clerk token is forwarded to the backend.
+ * TanStack Start may still run Clerk request middleware for browser state,
+ * but this handler intentionally avoids `auth()`. The target consumer is
+ * unauthenticated agents (ChatGPT / Claude WebFetch / curl); the owner-private
+ * "export my session" path goes through the dashboard's owner-auth
+ * `/api/sessions/{id}/export.md` instead.
  *
  * Behavior: 200 when the session has an active `kind='link'` permission,
  * 401 otherwise (backend status passed through verbatim).

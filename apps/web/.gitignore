@@ -13,9 +13,12 @@
 # testing
 /coverage
 
-# next.js
-/.next/
-/out/
+# TanStack Start / Nitro
+/.output/
+/.tanstack/
+/.nitro/
+/.vite/
+/.vite-temp/
 
 # production
 /build
@@ -39,4 +42,3 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts

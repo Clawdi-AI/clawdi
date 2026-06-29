@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useBreadcrumbSegmentTitles, useBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	Breadcrumb,
@@ -12,6 +10,8 @@ import {
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { agentSectionLabelFromSegment } from "@/lib/agent-routes";
+import Link from "@/lib/router-link";
+import { usePathname } from "@/lib/router-navigation";
 
 /**
  * Route-derived header label. Top-level segments map to friendly names
@@ -104,10 +104,8 @@ export function AppBreadcrumb() {
 											{label}
 										</BreadcrumbPage>
 									) : (
-										// asChild + next/link: shadcn's default BreadcrumbLink is
-										// a raw <a> which forces a full page reload + drops
-										// prefetch. asChild lets us pass our own anchor — Next's
-										// Link gives SPA navigation and hover-prefetch.
+										// asChild lets us pass our own router-aware link while
+										// preserving shadcn's breadcrumb anchor semantics.
 										<BreadcrumbLink asChild>
 											<Link href={href}>{label}</Link>
 										</BreadcrumbLink>

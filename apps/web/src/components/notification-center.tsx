@@ -2,8 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +19,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,

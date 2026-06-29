@@ -1,9 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useRouter } from "@/lib/router-navigation";
 import { useV2Access } from "@/lib/v2-access";
 
 export function V2Gate({

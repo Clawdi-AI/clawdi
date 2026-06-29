@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
-import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import Link from "@/lib/router-link";
 
 interface DeviceLookup {
 	user_code: string;
@@ -18,10 +18,7 @@ interface DeviceLookup {
 	expires_at: string;
 }
 
-// `useSearchParams()` must sit under a Suspense boundary so Next.js can bail
-// out of static prerender for this page (the URL `?code=…` only exists at
-// request time). Without the boundary, `next build` errors out with
-// "useSearchParams() should be wrapped in a suspense boundary".
+// Keep the URL-state body under Suspense and preserve the existing loading shell.
 export default function CliAuthorizePage() {
 	return (
 		<Suspense

@@ -2,8 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Key, Plus, Share2, Sparkles } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -36,6 +34,8 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useRouter } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];

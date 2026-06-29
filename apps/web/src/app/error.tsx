@@ -4,10 +4,14 @@ import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 
+const isDevelopment =
+	(import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.MODE !==
+	"production";
+
 /**
  * Root error boundary for the whole app.
  *
- * Next.js catches any unhandled render/data error and mounts this component
+ * The router catches any unhandled render/data error and mounts this component
  * with the error + a `reset()` to retry. Keeping it minimal: user sees a
  * clear message + a retry button + a dev-only error detail, nothing more.
  */
@@ -33,7 +37,7 @@ export default function RootError({
 						and backend logs for the request ID.
 					</p>
 				</div>
-				{process.env.NODE_ENV !== "production" && (
+				{isDevelopment && (
 					<pre className="text-left text-xs bg-muted text-muted-foreground rounded-md p-3 overflow-auto max-h-40">
 						{error.message}
 						{error.digest ? `\n\ndigest: ${error.digest}` : ""}

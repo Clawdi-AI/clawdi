@@ -1,6 +1,5 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isCloudEnvId } from "@/hosted/agent-identity";
@@ -9,6 +8,7 @@ import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import type { AgentSectionId } from "@/lib/agent-routes";
+import { useSearchParams } from "@/lib/router-navigation";
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders

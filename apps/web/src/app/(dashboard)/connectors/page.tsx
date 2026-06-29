@@ -44,14 +44,9 @@ const parseAsPositivePage = createParser({
 });
 
 /**
- * Wrap the nuqs-using body in a Suspense boundary because Next.js
- * App Router bails out of static generation when a page calls
- * `useSearchParams` (which nuqs uses under the hood). The bailout
- * surface is `<Suspense>` rather than `dynamic = "force-dynamic"`
- * because Next's docs explicitly recommend it — keeps the static
- * shell renderable, defers only the URL-state-dependent body to
- * client. Fallback mirrors the loading skeleton the body renders
- * once mounted.
+ * Wrap the nuqs-using body in a Suspense boundary so the static shell stays
+ * renderable while the URL-state-dependent body mounts. Fallback mirrors the
+ * loading skeleton the body renders once mounted.
  */
 export default function ConnectorsPage() {
 	return (

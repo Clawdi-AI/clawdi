@@ -1,7 +1,6 @@
 "use client";
 
 import { CalendarClock, Cpu, Plus, Rocket, Sparkles, Zap } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -37,6 +36,7 @@ import {
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { agentSectionHref } from "@/lib/agent-routes";
+import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";

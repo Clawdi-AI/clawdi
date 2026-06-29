@@ -11,8 +11,6 @@ import {
 	ShieldCheck,
 	Sparkles,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +22,8 @@ import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 import { projectDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useParams, useRouter } from "@/lib/router-navigation";
 
 /**
  * Public project-share landing page.

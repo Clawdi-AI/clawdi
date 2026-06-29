@@ -10,7 +10,6 @@ import {
 	MessageSquare,
 	Zap,
 } from "lucide-react";
-import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
@@ -28,6 +27,7 @@ import { ApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
+import { useParams } from "@/lib/router-navigation";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,

@@ -1,6 +1,18 @@
-import type { Metadata } from "next";
+export type PageMetadata = {
+	title: string;
+	description: string;
+	openGraph: {
+		title: string;
+		description: string;
+	};
+	twitter: {
+		card: "summary";
+		title: string;
+		description: string;
+	};
+};
 
-export function pageMetadata(title: string, description: string): Metadata {
+export function pageMetadata(title: string, description: string): PageMetadata {
 	return {
 		title,
 		description,

@@ -1,8 +1,8 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { V2Gate } from "@/components/v2-gate";
+import dynamic from "@/lib/dynamic";
 import { IS_HOSTED } from "@/lib/hosted";
 
 const ChannelDetailPage = IS_HOSTED

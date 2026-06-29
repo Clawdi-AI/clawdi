@@ -2,13 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
+import Link from "@/lib/router-link";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the

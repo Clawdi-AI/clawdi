@@ -175,90 +175,6 @@ function stripComments(src: string): string {
 	return out;
 }
 
-function findMatchingBrace(src: string, openBraceIndex: number): number {
-	let depth = 0;
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let inTemplate = false;
-	let inLineComment = false;
-	let inBlockComment = false;
-
-	for (let i = openBraceIndex; i < src.length; i++) {
-		const c = src[i];
-		const n = src[i + 1];
-
-		if (inLineComment) {
-			if (c === "\n") inLineComment = false;
-			continue;
-		}
-		if (inBlockComment) {
-			if (c === "*" && n === "/") {
-				inBlockComment = false;
-				i++;
-			}
-			continue;
-		}
-		if (inSingleQuote) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === "'") inSingleQuote = false;
-			continue;
-		}
-		if (inDoubleQuote) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === '"') inDoubleQuote = false;
-			continue;
-		}
-		if (inTemplate) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === "`") inTemplate = false;
-			continue;
-		}
-
-		if (c === "/" && n === "/") {
-			inLineComment = true;
-			i++;
-			continue;
-		}
-		if (c === "/" && n === "*") {
-			inBlockComment = true;
-			i++;
-			continue;
-		}
-		if (c === "'") {
-			inSingleQuote = true;
-			continue;
-		}
-		if (c === '"') {
-			inDoubleQuote = true;
-			continue;
-		}
-		if (c === "`") {
-			inTemplate = true;
-			continue;
-		}
-
-		if (c === "{") {
-			depth++;
-			continue;
-		}
-		if (c === "}") {
-			depth--;
-			if (depth === 0) return i;
-		}
-	}
-
-	return -1;
-}
-
 describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
 		const files = listTsx(HOSTED_DIR);
@@ -374,7 +290,7 @@ describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
 		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
 		// or `dynamic(() => import("@/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
-		// build's webpack/turbopack manifest even though `IS_HOSTED &&
+		// client build graph even though `IS_HOSTED &&
 		// <Component />` keeps it from rendering. The runtime bundler
 		// only eliminates the import() call when the surrounding
 		// expression is provably unreachable — `IS_HOSTED ? dynamic(…)
@@ -499,59 +415,32 @@ describe("instrumentation-client hosted imports", () => {
 	});
 });
 
-describe("PostHog proxy route boundaries", () => {
-	test("next.config.ts gates PostHog rewrites behind hosted builds", () => {
-		const nextConfig = join(SRC_DIR, "..", "next.config.ts");
-		if (!existsSync(nextConfig)) return;
+describe("OSS build boundary", () => {
+	test("Vite strips gated hosted/v2/PostHog chunks from non-hosted builds", () => {
+		const viteConfig = readFileSync(join(SRC_DIR, "..", "vite.config.ts"), "utf8");
 
-		const src = readFileSync(nextConfig, "utf8");
-		expect(src).toMatch(
-			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
-		);
-		expect(src).toMatch(/source:\s*["']\/s\/:id\.md["']\s*,\s*destination:\s*["']\/s\/:id\/md["']/);
-		expect(src).toMatch(
-			/source:\s*["']\/s\/:id\.json["']\s*,\s*destination:\s*["']\/s\/:id\/json["']/,
-		);
-
-		const hostedIfMatch = /\bif\s*\(\s*isHostedBuild\s*\)\s*\{/.exec(src);
-		expect(hostedIfMatch).not.toBeNull();
-		if (!hostedIfMatch) return;
-
-		const hostedIfOpenBrace = src.indexOf("{", hostedIfMatch.index);
-		expect(hostedIfOpenBrace).toBeGreaterThanOrEqual(0);
-		if (hostedIfOpenBrace < 0) return;
-
-		const hostedIfCloseBrace = findMatchingBrace(src, hostedIfOpenBrace);
-		expect(hostedIfCloseBrace).toBeGreaterThan(hostedIfOpenBrace);
-		if (hostedIfCloseBrace <= hostedIfOpenBrace) return;
-
-		const hostedPosthogBlock = src.slice(hostedIfOpenBrace + 1, hostedIfCloseBrace);
-		expect(hostedPosthogBlock).toMatch(/rewrites\.push\s*\(/);
-		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/static\/:path\*`/);
-		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/:path\*`/);
-
-		const posthogRewriteSources = [
-			...src.matchAll(/source:\s*`\$\{posthogProxyPath\}\/(?:static\/)?:path\*`/g),
-		];
-		expect(posthogRewriteSources.length).toBe(2);
-		for (const sourceMatch of posthogRewriteSources) {
-			const sourceIndex = sourceMatch.index ?? -1;
-			expect(sourceIndex).toBeGreaterThanOrEqual(hostedIfOpenBrace + 1);
-			expect(sourceIndex).toBeLessThan(hostedIfCloseBrace);
-		}
+		expect(viteConfig).toContain("clawdi-oss-hosted-boundary");
+		expect(viteConfig).toContain('"/src/hosted/"');
+		expect(viteConfig).toContain('"/src/v2/"');
+		expect(viteConfig).toContain('"/node_modules/posthog-js/"');
 	});
+});
 
-	test("proxy.ts only exposes /_cdi/px as public in hosted builds", () => {
-		const proxyFile = join(SRC_DIR, "proxy.ts");
-		if (!existsSync(proxyFile)) return;
+describe("PostHog proxy route boundaries", () => {
+	test("vercel.json keeps PostHog first-party proxy rewrites explicit", () => {
+		const vercelConfig = join(SRC_DIR, "..", "vercel.json");
+		expect(existsSync(vercelConfig)).toBe(true);
 
-		const src = readFileSync(proxyFile, "utf8");
-		expect(src).toMatch(
-			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
-		);
-		expect(src).toMatch(
-			/if\s*\(\s*isHostedBuild\s*\)\s*\{[\s\S]*publicRoutes\.push\(\s*["']\/_cdi\/px\(\.\*\)["']\s*\)/,
-		);
-		expect(src).not.toMatch(/createRouteMatcher\s*\(\s*\[[\s\S]*["']\/_cdi\/px\(\.\*\)["']/);
+		const config = JSON.parse(readFileSync(vercelConfig, "utf8")) as {
+			rewrites?: Array<{ source: string; destination: string }>;
+		};
+		expect(config.rewrites).toContainEqual({
+			source: "/_cdi/px/static/:path*",
+			destination: "https://us-assets.i.posthog.com/static/:path*",
+		});
+		expect(config.rewrites).toContainEqual({
+			source: "/_cdi/px/:path*",
+			destination: "https://us.i.posthog.com/:path*",
+		});
 	});
 });

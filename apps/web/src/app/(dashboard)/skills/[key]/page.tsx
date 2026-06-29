@@ -14,7 +14,6 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -39,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
+import { useParams, useRouter } from "@/lib/router-navigation";
 import { errorMessage, relativeTime } from "@/lib/utils";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
@@ -50,10 +50,7 @@ function stripFrontmatter(raw: string): string {
 	return m ? (m[1] ?? "") : raw;
 }
 
-// Next 16 prerender bails out unless `useSearchParams()` lives
-// inside a Suspense boundary. Wrap the inner client tree so the
-// static shell prerenders cleanly while the param-aware part
-// hydrates client-side. Mirrors the same pattern in
+// Wrap the inner URL-state tree in Suspense. Mirrors the same pattern in
 // /skills/page.tsx and /cli-authorize.
 export default function SkillDetailPage() {
 	return (

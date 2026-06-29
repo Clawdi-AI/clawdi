@@ -1,7 +1,8 @@
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod/v3";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 
@@ -27,9 +28,50 @@ export interface McpTool {
 }
 
 type ConnectorToolCaller = (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+type NativeToolInputShape = Record<string, z.ZodTypeAny>;
+type NativeToolHandler = (
+	params: Record<string, unknown>,
+) => CallToolResult | Promise<CallToolResult>;
+interface NativeToolRegistrar {
+	registerTool(
+		name: string,
+		config: { description?: string; inputSchema?: NativeToolInputShape },
+		handler: (params: Record<string, unknown>) => CallToolResult | Promise<CallToolResult>,
+	): unknown;
+}
+
+const MEMORY_CATEGORIES = ["fact", "preference", "pattern", "decision", "context"] as const;
+type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalNumberParam(params: Record<string, unknown>, key: string): number | undefined {
+	const value = params[key];
+	return typeof value === "number" ? value : undefined;
+}
+
+function requiredStringParam(params: Record<string, unknown>, key: string): string | null {
+	const value = params[key];
+	return typeof value === "string" ? value : null;
+}
+
+function isMemoryCategory(value: unknown): value is MemoryCategory {
+	return typeof value === "string" && (MEMORY_CATEGORIES as readonly string[]).includes(value);
+}
+
+function registerNativeTool(
+	server: McpServer,
+	name: string,
+	description: string,
+	inputSchema: NativeToolInputShape,
+	handler: NativeToolHandler,
+) {
+	const registerTool = server.registerTool.bind(server) as NativeToolRegistrar["registerTool"];
+	registerTool(name, { description, inputSchema }, (params) =>
+		handler(isRecord(params) ? params : {}),
+	);
 }
 
 export function normalizeMcpUrl(rawUrl: string, apiUrl: string): string {
@@ -104,12 +146,18 @@ function jsonSchemaPropertyToZod(
 	return jsonSchemaAllowsNull(schema) ? field.nullable() : field;
 }
 
-function jsonSchemaObjectToZod(schema: JsonSchemaObject): z.ZodTypeAny {
-	const shape: Record<string, z.ZodTypeAny> = {};
+function jsonSchemaObjectToZodShape(schema: JsonSchemaObject): NativeToolInputShape {
+	const shape: NativeToolInputShape = {};
 	for (const [key, prop] of Object.entries(schema.properties ?? {})) {
 		const field = jsonSchemaPropertyToZod(prop, key);
 		shape[key] = schema.required?.includes(key) ? field : field.optional();
 	}
+
+	return shape;
+}
+
+function jsonSchemaObjectToZod(schema: JsonSchemaObject): z.ZodTypeAny {
+	const shape = jsonSchemaObjectToZodShape(schema);
 
 	if (schema.properties) {
 		const objectSchema = z.object(shape);
@@ -135,27 +183,30 @@ function jsonSchemaObjectToZod(schema: JsonSchemaObject): z.ZodTypeAny {
 
 function buildConnectorToolSchema(tool: McpTool): {
 	inputSchema: z.ZodTypeAny;
+	inputShape: NativeToolInputShape;
 	hasSchema: boolean;
 } {
 	const inputSchema = tool.inputSchema ?? tool.parameters;
 	const hasSchema = Boolean(inputSchema?.properties || inputSchema?.type || inputSchema?.items);
+	const fallbackShape: NativeToolInputShape = {
+		arguments: z.string().optional().describe("JSON string of tool arguments"),
+	};
+
 	return {
 		hasSchema,
-		inputSchema: hasSchema
-			? jsonSchemaObjectToZod(inputSchema ?? {})
-			: z.object({
-					arguments: z.string().optional().describe("JSON string of tool arguments"),
-				}),
+		inputSchema: hasSchema ? jsonSchemaObjectToZod(inputSchema ?? {}) : z.object(fallbackShape),
+		inputShape: inputSchema?.properties ? jsonSchemaObjectToZodShape(inputSchema) : fallbackShape,
 	};
 }
 
 export function createConnectorToolDefinition(tool: McpTool) {
-	const { inputSchema, hasSchema } = buildConnectorToolSchema(tool);
+	const { inputSchema, inputShape, hasSchema } = buildConnectorToolSchema(tool);
 
 	return {
 		name: tool.name,
 		description: tool.description || tool.name,
 		inputSchema,
+		inputShape,
 		execute: async (params: Record<string, unknown>, callTool: ConnectorToolCaller) => {
 			let args: Record<string, unknown>;
 			if (hasSchema) {
@@ -278,7 +329,8 @@ export async function startMcpServer() {
 
 	// --- Clawdi native tools ---
 
-	server.tool(
+	registerNativeTool(
+		server,
 		"memory_search",
 		'ALWAYS call this BEFORE answering any question that references the user\'s own context — their preferences, projects, past decisions, named entities, or work history. A missed hit costs the user\'s trust every subsequent turn; a call that returns empty costs ~100ms. Bias toward calling. Works in any language — pass the user\'s query through as-is.\n\nMUST call when the user\'s message contains ANY of these signals (in English, Chinese, or any other language):\n- First-person self-reference in a question about themselves: possessives like "my", verbs of habit like "I usually", "I prefer", "I always"\n- Preference / habit questions, even phrased abstractly: "what do I usually use for X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger even when no specific entity is named\n- Callbacks to past context: "like last time", "as I mentioned", "you know the one", "we discussed before", "what was that X"\n- Named entities specific to this user: their project / repo / service / team / tool name, or a person by name\n- Any reference to a past bug, decision, investigation, meeting, or design choice\n\nExample queries to pass (choose whichever phrasing fits; language does not matter): "user\'s name", "coding style preference", "command-line tools the user uses", "how we fixed the login bug", "Clerk auth decision reasoning", "project architecture".\n\nDo NOT call for pure textbook / generic programming questions with zero user-specific signal (e.g. "how does async/await work", "what is the time complexity of quicksort").\n\nWhen in doubt, CALL IT. Zero results is cheap; a missed memory makes you look amnesic.',
 		{
@@ -289,7 +341,12 @@ export async function startMcpServer() {
 				),
 			limit: z.number().optional().describe("Max results (default 10)."),
 		},
-		async ({ query, limit }) => {
+		async (params) => {
+			const query = requiredStringParam(params, "query");
+			if (!query) {
+				return { content: [{ type: "text" as const, text: "Error: query is required." }] };
+			}
+			const limit = optionalNumberParam(params, "limit");
 			try {
 				const { items: results } = unwrap(
 					await api.GET("/api/memories", {
@@ -315,7 +372,8 @@ export async function startMcpServer() {
 		},
 	);
 
-	server.tool(
+	registerNativeTool(
+		server,
 		"memory_add",
 		'Store a durable memory so future agent sessions (same agent, or a different one) can retrieve this context. Call this when you learn something non-obvious about the user or their project that a future session would benefit from knowing.\n\nMUST call when:\n- The user explicitly asks you to remember something ("remember this", "save this", or equivalent in any language) — always honor the request\n- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n- You and the user made an architecture decision together — save the decision AND the reasoning (why this option over alternatives)\n- The user expressed a coding / workflow preference you had to ask about — save it so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n- The user shared personal info (their name, their project name, their team, who they work with) that future context would need\n\nDo NOT save:\n- Trivia that any agent can discover by reading the current code\n- Generic programming knowledge (how APIs work, language features)\n- Ephemeral conversation details ("the user asked about X today")\n- Plaintext tokens, API keys, bearer credentials, or private keys; use Vault and save a clawdi:// reference instead\n\nWrite the content as a standalone sentence with full context — include proper nouns, not pronouns. A future session will read it without today\'s conversation. Content language should match the user\'s primary language for that context.',
 		{
@@ -331,7 +389,12 @@ export async function startMcpServer() {
 					"fact — technical facts, API details, config values. preference — user preferences, coding style, workflow choices. pattern — recurring patterns, pitfalls, team conventions. decision — architecture decisions and their reasoning. context — project context, deadlines, ongoing work. Default: fact.",
 				),
 		},
-		async ({ content, category }) => {
+		async (params) => {
+			const content = requiredStringParam(params, "content");
+			if (!content) {
+				return { content: [{ type: "text" as const, text: "Error: content is required." }] };
+			}
+			const category = isMemoryCategory(params.category) ? params.category : undefined;
 			try {
 				const finding = findLikelySecret(content);
 				if (finding) {
@@ -363,11 +426,12 @@ export async function startMcpServer() {
 		},
 	);
 
-	server.tool(
+	registerNativeTool(
+		server,
 		"memory_extract",
 		"Propose durable long-term memories from the CURRENT conversation, list them to the user, and save only what they approve. Call this when the user asks to 'extract memories', 'save what we discussed', 'remember this conversation', or any equivalent phrasing (in any language). The tool returns instructions — follow them exactly: list up to 5 candidates first, wait for the user's confirmation, then call memory_add on the approved ones. Do not narrate your internal workflow. This tool inspects your active conversation context — it does NOT read any external file or database.",
 		{},
-		async () => ({
+		() => ({
 			content: [{ type: "text" as const, text: MEMORY_EXTRACT_INSTRUCTIONS }],
 		}),
 	);
@@ -395,7 +459,8 @@ export async function startMcpServer() {
 	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 	const SHARE_URL_RE = /\/s\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
 
-	server.tool(
+	registerNativeTool(
+		server,
 		"session_read",
 		"Read a Clawdi session and return its content as Markdown so you can ingest the conversation as context. Use this when the user references a Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles owned + shared sessions uniformly — you don't need to know which one. Returns the same Markdown shape as a WebFetch of the .md URL: a YAML front-matter block (source/agent/model/project/messages) followed by `## User` / `## Assistant` turn headings.",
 		{
@@ -405,7 +470,11 @@ export async function startMcpServer() {
 					"Either a full Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or a bare session UUID. URLs route to the public share endpoint (anonymous access when the link permission is on); bare UUIDs route to the owner endpoint via the CLI API key.",
 				),
 		},
-		async ({ reference }) => {
+		async (params) => {
+			const reference = requiredStringParam(params, "reference");
+			if (!reference) {
+				return { content: [{ type: "text" as const, text: "Error: reference is required." }] };
+			}
 			const ref = reference.trim();
 			let url: string;
 
@@ -475,7 +544,8 @@ export async function startMcpServer() {
 			})
 			.join("\n");
 
-	server.tool(
+	registerNativeTool(
+		server,
 		"session_search",
 		"Search the user's past Clawdi sessions by keyword. Use when the user asks about prior work (e.g. 'find the auth migration session'). Returns up to N matching sessions with summary, agent, model, project, started_at, and message count. The session UUID in each result can be passed back to session_read to fetch the full conversation.",
 		{
@@ -492,7 +562,12 @@ export async function startMcpServer() {
 				.optional()
 				.describe("Max results to return (default 10, max 20)."),
 		},
-		async ({ query, limit }) => {
+		async (params) => {
+			const query = requiredStringParam(params, "query");
+			if (!query) {
+				return { content: [{ type: "text" as const, text: "Error: query is required." }] };
+			}
+			const limit = optionalNumberParam(params, "limit");
 			const cap = limit ?? 10;
 			try {
 				const { items } = unwrap(
@@ -556,15 +631,14 @@ export async function startMcpServer() {
 		for (const tool of remoteTools) {
 			const definition = createConnectorToolDefinition(tool);
 
-			server.registerTool(
+			registerNativeTool(
+				server,
 				definition.name,
-				{
-					description: definition.description,
-					inputSchema: definition.inputSchema,
-				},
+				definition.description,
+				definition.inputShape,
 				async (params) => {
 					try {
-						const result = await definition.execute(isRecord(params) ? params : {}, callTool);
+						const result = await definition.execute(params, callTool);
 						return {
 							content: [
 								{

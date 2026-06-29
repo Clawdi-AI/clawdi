@@ -1,8 +1,8 @@
-import { SignUp } from "@clerk/nextjs";
+import { SignUp } from "@clerk/tanstack-react-start";
+import { env } from "@/lib/env";
 import { DevAuthBypassPage } from "../../dev-auth-bypass-page";
 
-const isDevAuthBypass =
-	process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true" && process.env.NODE_ENV !== "production";
+const isDevAuthBypass = env.NEXT_PUBLIC_DEV_AUTH_BYPASS;
 
 export default function SignUpPage() {
 	if (isDevAuthBypass) return <DevAuthBypassPage mode="sign-up" />;

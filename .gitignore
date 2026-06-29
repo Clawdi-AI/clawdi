@@ -1,5 +1,9 @@
 node_modules/
-.next/
+.output/
+.tanstack/
+.nitro/
+.vite/
+.vite-temp/
 dist/
 dist-bin/
 packages/cli/dist-release/

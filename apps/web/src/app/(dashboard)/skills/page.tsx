@@ -16,7 +16,6 @@ import {
 	Send as SendIcon,
 	Trash2,
 } from "lucide-react";
-import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -51,6 +50,7 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, skillDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -63,10 +63,8 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 const FALLBACK_TARGET_LABEL = "Active agent";
 const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
-// Next 16 prerender bails out unless `useSearchParams()` lives
-// inside a Suspense boundary. Wrap the whole page so static
-// export still produces a stable HTML shell while the param-aware
-// inner client tree hydrates.
+// Wrap the URL-state body in Suspense so the shell remains stable while the
+// param-aware inner client tree hydrates.
 export default function SkillsPage() {
 	return (
 		<Suspense fallback={null}>

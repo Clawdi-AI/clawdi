@@ -1,7 +1,6 @@
 "use client";
 
 import { CreditCard, Rocket } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -15,6 +14,7 @@ import { usePlans, usePortal } from "@/hosted/billing/hooks";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { useRouter } from "@/lib/router-navigation";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =

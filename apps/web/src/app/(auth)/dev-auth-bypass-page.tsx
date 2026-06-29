@@ -1,6 +1,6 @@
 import { ArrowRight, ShieldCheck } from "lucide-react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import Link from "@/lib/router-link";
 
 export function DevAuthBypassPage({ mode }: { mode: "sign-in" | "sign-up" }) {
 	const title = mode === "sign-in" ? "Local Dev Sign In" : "Local Dev Sign Up";

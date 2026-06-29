@@ -40,8 +40,6 @@ import {
 	TerminalSquare,
 	Zap,
 } from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
 import { useEffect, useRef, useState } from "react";
@@ -102,6 +100,8 @@ import {
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
+import Link from "@/lib/router-link";
+import { usePathname } from "@/lib/router-navigation";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_QUERY_KEY,

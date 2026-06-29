@@ -2,7 +2,6 @@
 
 import type { components } from "@clawdi/shared/api";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
-import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import {
 	AgentLabel,
@@ -18,6 +17,7 @@ import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
+import Link from "@/lib/router-link";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["EnvironmentResponse"];

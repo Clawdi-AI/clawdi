@@ -20,8 +20,6 @@ import {
 	Trash2,
 	Zap,
 } from "lucide-react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -105,6 +103,8 @@ import {
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
+import Link from "@/lib/router-link";
+import { useRouter, useSearchParams } from "@/lib/router-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";

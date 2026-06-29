@@ -58,10 +58,8 @@ const parseAsPositiveInt = createParser({
 });
 
 /**
- * Wrap the body in `<Suspense>` because nuqs's `useQueryStates`
- * reads `useSearchParams` under the hood, and Next.js App Router
- * bails out of static generation when a page calls that. Pattern
- * mirrors `connectors/page.tsx`.
+ * Wrap the body in `<Suspense>` because nuqs reads URL state under the hood.
+ * Pattern mirrors `connectors/page.tsx`.
  */
 export default function SessionsPage() {
 	return (

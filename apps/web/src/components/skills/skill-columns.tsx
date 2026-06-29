@@ -3,11 +3,11 @@
 import type { components } from "@clawdi/shared/api";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Sparkles, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { skillDetailHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];

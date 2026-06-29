@@ -1,20 +1,7 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import { env } from "@/lib/env";
-import { cn } from "@/lib/utils";
 import "./globals.css";
-
-const fontSans = Geist({
-	variable: "--font-sans",
-	subsets: ["latin"],
-});
-
-const fontMono = Geist_Mono({
-	variable: "--font-mono",
-	subsets: ["latin"],
-});
 
 // Resolve the canonical site URL per deployment env so OG/canonical tags
 // point at the actual host serving the page:
@@ -37,7 +24,7 @@ const SITE_URL = resolveSiteUrl();
 const DESCRIPTION =
 	"Cloud control plane for AI agents — manage sessions, skills, memories, and secrets across the machines you connect.";
 
-export const metadata: Metadata = {
+export const metadata = {
 	metadataBase: new URL(SITE_URL),
 	// Per-page layouts/pages can override `title` with a plain string and
 	// this template will suffix " · Clawdi" automatically.
@@ -83,9 +70,7 @@ export default function RootLayout({
 }>) {
 	return (
 		<html lang="en" className="h-full" suppressHydrationWarning>
-			<body
-				className={cn(fontSans.variable, fontMono.variable, "flex min-h-full flex-col antialiased")}
-			>
+			<body className="flex min-h-full flex-col antialiased">
 				<AuthProvider>
 					<Providers>{children}</Providers>
 				</AuthProvider>

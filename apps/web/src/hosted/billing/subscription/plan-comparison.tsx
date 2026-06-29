@@ -1,7 +1,6 @@
 "use client";
 
 import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +19,7 @@ import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/bi
 import { usePlans } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { useRouter, useSearchParams } from "@/lib/router-navigation";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { free?: Plan; performance?: Plan } {

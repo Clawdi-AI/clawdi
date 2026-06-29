@@ -12,8 +12,6 @@ import {
 	Plus,
 	Share2,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -76,6 +74,8 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
+import Link from "@/lib/router-link";
+import { useParams, useRouter, useSearchParams } from "@/lib/router-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
