@@ -140,6 +140,21 @@ package caches:
   through the real `openclaw config patch --stdin` path and used the canonical
   `openai:default` auth profile for Codex OAuth target-native apply.
 
+Latest source/package audit recorded on 2026-06-29:
+
+- Codex: `@openai/codex@0.142.4` still exposes profile-v2 config files,
+  `model_providers`, `wire_api = "responses"`, `env_key`, and
+  `requires_openai_auth`.
+- Hermes: `hermes-agent==0.17.0` still supports the v12 `providers` dict,
+  `custom:<provider-id>` resolution, `codex_responses`, `openai-codex`, and
+  `credential_pool.openai-codex`.
+- OpenClaw: `openclaw@2026.6.10` still supports
+  `openclaw config patch --stdin`, `models.providers`, env SecretRefs, and
+  canonical `openai/<model>` routes. Clawdi now emits
+  `agentRuntime.id: "openclaw"` for custom Codex Responses-compatible provider
+  entries; upstream still accepts `pi` as an alias, but new config should use
+  the canonical id.
+
 ## Backend Docker Postgres Check
 
 Recorded on 2026-06-04:

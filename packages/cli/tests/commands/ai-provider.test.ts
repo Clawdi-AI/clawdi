@@ -1073,7 +1073,7 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
-		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.137.0");
+		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.142.4");
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": false');
 		expect(output()).toContain("codex --profile clawdi-ai-provider");
@@ -1790,7 +1790,7 @@ describe("ai-provider commands", () => {
 		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
 	});
 
-	it("projects user BYOK Codex Responses providers to the OpenClaw PI route", async () => {
+	it("projects user BYOK Codex Responses providers to the OpenClaw runtime route", async () => {
 		const catalog = {
 			schema_version: 1,
 			providers: [
@@ -1827,7 +1827,7 @@ describe("ai-provider commands", () => {
 			id: "gpt-5.5",
 			name: "gpt-5.5",
 			api: "openai-chatgpt-responses",
-			agentRuntime: { id: "pi" },
+			agentRuntime: { id: "openclaw" },
 		});
 	});
 

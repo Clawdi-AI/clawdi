@@ -383,6 +383,9 @@ defaults OpenAI API-key mode to `https://api.openai.com/v1`, supports native
 `model_providers.*.base_url`, `wire_api = "responses"`, and `env_key`, and
 honors custom CA through `CODEX_CA_CERTIFICATE` / `SSL_CERT_FILE`.
 
+Latest source check on 2026-06-29 verified the same provider-config contract in
+`@openai/codex@0.142.4`.
+
 Product decision:
 
 - Hosted-managed Codex can use MITM so the child still sees official

@@ -25,18 +25,18 @@ export const AGENT_TARGET_CONTRACTS: Record<
 	codex: {
 		settingMethod: "$CODEX_HOME/clawdi-ai-provider.config.toml selected with codex --profile",
 		supportedVersionRange:
-			"@openai/codex 0.134.0 through 0.137.0 with profile config, model_providers, and responses wire_api support",
+			"@openai/codex 0.134.0 through 0.142.4 with profile config, model_providers, and responses wire_api support",
 		status: "enabled",
 	},
 	hermes: {
 		settingMethod: "structured merge into $HERMES_HOME/config.yaml providers dict",
-		supportedVersionRange: "Hermes Agent 0.13.0 through 0.15.2 with providers dict compatibility",
+		supportedVersionRange: "Hermes Agent 0.13.0 through 0.17.0 with providers dict compatibility",
 		status: "enabled",
 	},
 	openclaw: {
 		settingMethod: "openclaw config patch --stdin",
 		supportedVersionRange:
-			"openclaw 2026.5.12 through 2026.6.1 config patch contract and canonical openai auth-profiles",
+			"openclaw 2026.5.12 through 2026.6.10 config patch contract and canonical openai auth-profiles",
 		status: "enabled",
 	},
 };
@@ -260,7 +260,7 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 					? openClawModelId(provider, model.id)
 					: (model.label ?? model.id),
 				api,
-				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
+				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "openclaw" } : undefined,
 				input: model.input_modalities,
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
@@ -278,7 +278,7 @@ function openClawModels(provider: ProjectionProvider): Array<Record<string, unkn
 				id: defaultModelId,
 				name: defaultModelId,
 				api,
-				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "pi" } : undefined,
+				agentRuntime: usesOpenClawCodexResponsesRuntime(provider) ? { id: "openclaw" } : undefined,
 			}),
 		);
 	}

@@ -195,7 +195,7 @@ codex --profile clawdi-ai-provider
 Supported contract:
 
 ```text
-@openai/codex 0.134.0 through 0.136.0 with profile config, model_providers, and responses wire_api support
+@openai/codex 0.134.0 through 0.142.4 with profile config, model_providers, and responses wire_api support
 ```
 
 Codex apply requires Responses-compatible providers. Chat-only providers cannot
@@ -225,7 +225,7 @@ generated provider patch.
 Supported contract:
 
 ```text
-Hermes Agent 0.13.0 through 0.15.2 with providers dict compatibility
+Hermes Agent 0.13.0 through 0.17.0 with providers dict compatibility
 ```
 
 Hermes custom-provider transports supported by AI Provider apply:
@@ -277,13 +277,18 @@ clawdi ai-provider apply openai-main --target openclaw
 Supported contract:
 
 ```text
-openclaw 2026.5.12 through 2026.6.1 config patch contract and canonical openai auth-profiles
+openclaw 2026.5.12 through 2026.6.10 config patch contract and canonical openai auth-profiles
 ```
 
 Clawdi sends a patch over stdin instead of editing OpenClaw config files
 directly. The patch uses `models.mode: "merge"`,
 `models.providers.<id>.apiKey` env refs, and
 `agents.defaults.model.primary`.
+
+For custom Codex Responses-compatible providers, Clawdi writes
+`openai-chatgpt-responses` model entries with `agentRuntime.id: "openclaw"` so
+OpenClaw uses its built-in runtime instead of the native Codex app-server
+harness.
 
 For Codex OAuth providers, OpenClaw apply uses the native subscription-backed
 route instead: it enables the bundled Codex plugin and sets
