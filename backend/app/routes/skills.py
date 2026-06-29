@@ -17,7 +17,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_scope_short_session
@@ -309,18 +309,38 @@ async def _list_skills_with_db(
             visible_project_ids = (
                 [selected_project_id] if selected_project_id == auth.api_key_project_id else []
             )
+            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
+                db,
+                auth,
+                visible_project_ids,
+            )
+        elif auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+            bound_project_id = await resolve_default_write_project(db, auth)
+            visible_project_ids = (
+                [selected_project_id] if selected_project_id == bound_project_id else []
+            )
+            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
+                db,
+                auth,
+                visible_project_ids,
+            )
         else:
-            from app.core.project import resolve_for_parent
-
-            visible_project_ids = list(await resolve_for_parent(db, auth, selected_project_id))
+            (
+                visible_project_ids,
+                visible_revision_fingerprint,
+            ) = await _selected_project_visibility_and_revision_fingerprint(
+                db,
+                auth,
+                selected_project_id,
+            )
     else:
         # Unscoped read: full inventory across owned + shared projects.
         visible_project_ids = await project_ids_visible_to(db, auth)
-    visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-        db,
-        auth,
-        visible_project_ids,
-    )
+        visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
+            db,
+            auth,
+            visible_project_ids,
+        )
     etag = _skills_collection_etag(
         revision=revision,
         selected_project_id=selected_project_id,
@@ -532,6 +552,56 @@ def _auth_user_skills_revision_fingerprint(auth: AuthContext) -> str:
     return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
 
 
+async def _selected_project_visibility_and_revision_fingerprint(
+    db: AsyncSession,
+    auth: AuthContext,
+    selected_project_id: UUID,
+) -> tuple[list[UUID], str]:
+    """Validate one selected project and fetch its owner revision in one query.
+
+    The daemon always calls `/api/skills?project_id=<env-project>`. For unbound
+    CLI keys and dashboard JWTs, the old path loaded the caller's full visible
+    project set and then ran a second owner-revision query even though the
+    representation is scoped to one project. This keeps the same read policy
+    (owned OR shared membership) but collapses the hot conditional-GET path to
+    one indexed lookup.
+    """
+    from app.models.project import Project
+    from app.models.project_membership import ProjectMembership
+    from app.models.user import User
+
+    row = (
+        await db.execute(
+            select(Project.user_id, User.skills_revision)
+            .join(User, User.id == Project.user_id)
+            .outerjoin(
+                ProjectMembership,
+                and_(
+                    ProjectMembership.project_id == Project.id,
+                    ProjectMembership.member_user_id == auth.user_id,
+                ),
+            )
+            .where(
+                Project.id == selected_project_id,
+                or_(
+                    Project.user_id == auth.user_id,
+                    ProjectMembership.member_user_id.is_not(None),
+                ),
+            )
+        )
+    ).first()
+    if row is None:
+        return [], "none"
+    return [selected_project_id], _owner_skills_revision_fingerprint(
+        row.user_id,
+        row.skills_revision,
+    )
+
+
+def _owner_skills_revision_fingerprint(owner_id: UUID, skills_revision: int | None) -> str:
+    return hashlib.sha256(f"{owner_id}:{int(skills_revision or 0)}".encode()).hexdigest()[:16]
+
+
 async def _resolve_legacy_skill(
     db: AsyncSession,
     auth: AuthContext,
@@ -591,7 +661,7 @@ async def _visible_skills_revision_fingerprint(
             .where(Project.id.in_(visible_project_ids))
         )
     ).all()
-    parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in rows)
+    parts = sorted(f"{owner_id}:{int(revision or 0)}" for owner_id, revision in rows)
     return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
 
 
