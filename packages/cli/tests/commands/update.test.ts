@@ -258,13 +258,13 @@ describe("daemonAutoUpdateOnce", () => {
 				path: "/clawdi",
 				response: () =>
 					jsonResponse({
-						"dist-tags": { latest: "0.12.9", beta: "0.12.10-beta.26" },
+						"dist-tags": { latest: "0.12.9", beta: "0.12.10-beta.27" },
 					}),
 			},
 		]);
 		try {
 			const result = await daemonAutoUpdateOnce({
-				currentVersion: "0.12.10-beta.25",
+				currentVersion: "0.12.10-beta.26",
 				installer: "npm",
 				installRunner: async (installer, args) => {
 					calls.push({ installer, args });
