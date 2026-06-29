@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import logging
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import httpx
 import jwt
@@ -37,14 +38,22 @@ LAST_USED_THROTTLE = timedelta(minutes=1)
 
 
 class AuthContext:
-    def __init__(self, user: User, api_key: ApiKey | None = None):
+    def __init__(
+        self,
+        user: User,
+        api_key: ApiKey | None = None,
+        api_key_project_id: UUID | None = None,
+    ):
         self.user = user
         self.api_key = api_key
         self.is_cli = api_key is not None
+        self.api_key_project_id = api_key_project_id
+        self._user_id = user.id
+        self.skills_revision = int(user.skills_revision or 0)
 
     @property
     def user_id(self):
-        return self.user.id
+        return self._user_id
 
 
 async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
@@ -74,7 +83,20 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
 
-    return AuthContext(user=user, api_key=api_key)
+    api_key_project_id = None
+    if api_key.environment_id is not None:
+        from app.models.session import AgentEnvironment
+
+        api_key_project_id = (
+            await db.execute(
+                select(AgentEnvironment.default_project_id).where(
+                    AgentEnvironment.id == api_key.environment_id,
+                    AgentEnvironment.user_id == api_key.user_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    return AuthContext(user=user, api_key=api_key, api_key_project_id=api_key_project_id)
 
 
 async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | None:
