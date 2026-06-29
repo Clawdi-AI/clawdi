@@ -1747,13 +1747,13 @@ describe("ai-provider commands", () => {
 		expect(patch.models.providers["clawdi-managed"].baseUrl).toBe(
 			"https://sub2api.example.test/v1",
 		);
-		expect(patch.models.providers["clawdi-managed"].api).toBe("openai-completions");
+		expect(patch.models.providers["clawdi-managed"].api).toBeUndefined();
 		expect(patch.models.providers["clawdi-managed"].agentRuntime).toBeUndefined();
 		expect(patch.models.providers["clawdi-managed"].models[0]).toMatchObject({
 			id: "gpt-5.5",
 			name: "gpt-5.5",
-			api: "openai-completions",
 		});
+		expect(patch.models.providers["clawdi-managed"].models[0].api).toBeUndefined();
 		expect(patch.models.providers["clawdi-managed"].apiKey).toEqual({
 			source: "env",
 			provider: "default",

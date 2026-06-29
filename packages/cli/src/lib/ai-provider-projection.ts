@@ -296,7 +296,8 @@ function openClawApiLabelForProvider(
 }
 
 function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
-	return OPENCLAW_API_LABELS[apiMode];
+	const label = OPENCLAW_API_LABELS[apiMode];
+	return label === "openai-completions" ? undefined : label;
 }
 
 function isCodexResponsesApiMode(apiMode: AiProviderApiMode): boolean {
