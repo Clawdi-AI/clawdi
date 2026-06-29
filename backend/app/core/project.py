@@ -96,6 +96,9 @@ async def resolve_default_write_project(
     (never None) — callers can treat the column as required.
     """
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        if auth.api_key_project_id is not None:
+            return auth.api_key_project_id
+
         bound_env_id = auth.api_key.environment_id
         result = await db.execute(
             select(AgentEnvironment.default_project_id).where(

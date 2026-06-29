@@ -49,7 +49,7 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
-from app.services.sync_events import bump_skills_revision, get_skills_revision
+from app.services.sync_events import bump_skills_revision
 from app.services.tar_utils import (
     TarValidationError,
     extract_skill_md,
@@ -271,12 +271,17 @@ async def list_skills(
     # it can't write to). When the caller pins `project_id`,
     # intersect with what they're allowed to see — an ID
     # outside that set yields a deliberately-empty listing.
-    revision = await get_skills_revision(db, auth.user_id)
+    revision = auth.skills_revision
     selected_project_id = project_id
     if selected_project_id is not None:
-        from app.core.project import resolve_for_parent
+        if auth.api_key_project_id is not None:
+            visible_project_ids = (
+                [selected_project_id] if selected_project_id == auth.api_key_project_id else []
+            )
+        else:
+            from app.core.project import resolve_for_parent
 
-        visible_project_ids = list(await resolve_for_parent(db, auth, selected_project_id))
+            visible_project_ids = list(await resolve_for_parent(db, auth, selected_project_id))
     else:
         # Unscoped read: full inventory across owned + shared projects.
         visible_project_ids = await project_ids_visible_to(db, auth)
@@ -290,6 +295,7 @@ async def list_skills(
     ).hexdigest()[:16]
     visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
         db,
+        auth,
         visible_project_ids,
     )
     etag = f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
@@ -460,6 +466,7 @@ async def _resolve_legacy_skill(
 
 async def _visible_skills_revision_fingerprint(
     db: AsyncSession,
+    auth: AuthContext,
     visible_project_ids: list,
 ) -> str:
     """Fingerprint skill revisions for every owner represented in
@@ -474,6 +481,11 @@ async def _visible_skills_revision_fingerprint(
     """
     if not visible_project_ids:
         return "none"
+
+    if auth.api_key_project_id is not None and set(visible_project_ids) == {
+        auth.api_key_project_id
+    }:
+        return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
 
     from app.models.project import Project
     from app.models.user import User
