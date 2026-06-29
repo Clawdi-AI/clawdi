@@ -9,9 +9,11 @@ import {
 	classifyHeartbeatFailure,
 	consumePendingSkillUploadEcho,
 	filterValidSkillKeysForSync,
+	heartbeatDelayMs,
 	isAuthFailure,
 	isOversizedUploadError,
 	lastSyncErrorForSseReconnect,
+	projectRefreshDelayMs,
 	reconcileDelayMs,
 	releaseInFlight,
 	rememberPendingSkillUploadEcho,
@@ -83,10 +85,24 @@ describe("live-sync transient failure classification", () => {
 });
 
 describe("reconcileDelayMs", () => {
-	it("spreads 60s reconcile polls across a bounded jitter window", () => {
-		expect(reconcileDelayMs(() => 0)).toBe(45_000);
-		expect(reconcileDelayMs(() => 0.5)).toBe(60_000);
-		expect(reconcileDelayMs(() => 1)).toBe(75_000);
+	it("keeps cloud reconcile on the safety-net cadence", () => {
+		expect(reconcileDelayMs(() => 0)).toBe(240_000);
+		expect(reconcileDelayMs(() => 0.5)).toBe(300_000);
+		expect(reconcileDelayMs(() => 1)).toBe(360_000);
+	});
+});
+
+describe("daemon control-plane cadences", () => {
+	it("keeps heartbeat jitter inside the dashboard freshness window", () => {
+		expect(heartbeatDelayMs(() => 0)).toBe(45_000);
+		expect(heartbeatDelayMs(() => 0.5)).toBe(60_000);
+		expect(heartbeatDelayMs(() => 1)).toBe(75_000);
+	});
+
+	it("keeps project refresh off the heartbeat cadence", () => {
+		expect(projectRefreshDelayMs(() => 0)).toBe(240_000);
+		expect(projectRefreshDelayMs(() => 0.5)).toBe(300_000);
+		expect(projectRefreshDelayMs(() => 1)).toBe(360_000);
 	});
 });
 

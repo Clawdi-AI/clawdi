@@ -75,12 +75,20 @@ import { watchSkills } from "./watcher";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
-// Reconcile cadence. The reconcile loop is how cloud-side changes
-// (dashboard install / delete) propagate to the machine; 60s is
-// the worst-case lag a user sees after acting on the dashboard.
-const RECONCILE_INTERVAL_MS = 60_000;
-const RECONCILE_JITTER_MS = 15_000;
+const HEARTBEAT_INTERVAL_MS = 60_000;
+const HEARTBEAT_JITTER_MS = 15_000;
+// Reconcile cadence. SSE is the primary path for cloud-side changes
+// (dashboard install / delete); this loop is a safety net for missed
+// events, stale local state, or a daemon that reconnects after a quiet
+// period. Keep it off the minute-level hot path so large fleets don't
+// turn no-op 304 checks into background load.
+const RECONCILE_INTERVAL_MS = 5 * 60_000;
+const RECONCILE_JITTER_MS = 60_000;
+// Project reassignment is an administrative control-plane change,
+// not a liveness signal. Keep it off the heartbeat cadence so a
+// large daemon fleet does not double its steady-state request load.
+const PROJECT_REFRESH_INTERVAL_MS = 5 * 60_000;
+const PROJECT_REFRESH_JITTER_MS = 60_000;
 const LAUNCHD_DAEMON_LABEL = "ai.clawdi.serve";
 
 function removeLaunchdDaemonSupervision(agentType: string): void {
@@ -420,10 +428,10 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 
 	// Periodically re-fetch the env's default_project_id so a
 	// runtime reassignment (rare in v1's 1:1 model, but possible
-	// after multi-project-per-env ships) converges within one
-	// heartbeat cycle. Without refresh, the daemon would keep
-	// the boot-time value forever and silently drop SSE events
-	// for the new project. Transient fetch errors keep the
+	// after multi-project-per-env ships) eventually converges.
+	// This is intentionally slower than heartbeat: liveness needs
+	// minute-level freshness, while project reassignment is rare
+	// administrative state. Transient fetch errors keep the
 	// last-known-good value but escalate to error-level logging
 	// after STALE_PROJECT_THRESHOLD consecutive failures so a
 	// long-running project-filter outage shows up in metrics.
@@ -431,7 +439,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const refreshDefaultProjectIdLoop = async (abort: AbortSignal): Promise<void> => {
 		let consecutiveFailures = 0;
 		while (!abort.aborted) {
-			await sleep(HEARTBEAT_INTERVAL_MS, abort);
+			await sleep(projectRefreshDelayMs(), abort);
 			if (abort.aborted) return;
 			try {
 				const fresh = await fetchDefaultProjectId();
@@ -1911,6 +1919,11 @@ export function reconcileDelayMs(random: () => number = Math.random): number {
 	return Math.round(RECONCILE_INTERVAL_MS + offset);
 }
 
+export function projectRefreshDelayMs(random: () => number = Math.random): number {
+	const offset = (random() - 0.5) * 2 * PROJECT_REFRESH_JITTER_MS;
+	return Math.round(PROJECT_REFRESH_INTERVAL_MS + offset);
+}
+
 async function reconcileFromCloud(
 	opts: EngineOpts,
 	api: ApiClient,
@@ -2257,16 +2270,19 @@ async function heartbeatLoop(
 	// happen on the normal interval.
 	await send();
 	while (!abort.aborted) {
-		// Per-cycle ±5s jitter so 10k daemons started by the same
-		// rollout don't all heartbeat in the same wall-clock
-		// second. Without jitter the backend sees a 30s sawtooth
-		// at every interval boundary; with jitter the load
-		// smooths into a flat ~33 writes/sec.
-		const jitter = (Math.random() - 0.5) * 10_000;
-		await sleep(HEARTBEAT_INTERVAL_MS + jitter, abort);
+		// Per-cycle jitter so daemons started by the same rollout
+		// don't all heartbeat in the same wall-clock second. The
+		// upper bound stays inside the dashboard's 90s freshness
+		// window after the eager first beat.
+		await sleep(heartbeatDelayMs(), abort);
 		if (abort.aborted) return;
 		await send();
 	}
+}
+
+export function heartbeatDelayMs(random: () => number = Math.random): number {
+	const offset = (random() - 0.5) * 2 * HEARTBEAT_JITTER_MS;
+	return Math.round(HEARTBEAT_INTERVAL_MS + offset);
 }
 
 async function touchHealthFile(agentType: string): Promise<void> {
