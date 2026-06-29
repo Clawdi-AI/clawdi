@@ -20,7 +20,7 @@ from fastapi.responses import Response
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_scope
+from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import get_session
 from app.core.project import (
     project_ids_visible_to,
@@ -229,7 +229,7 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
 
 @router.get("")
 async def list_skills(
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None, description="Search name / description / skill_key"),
     page: int = Query(default=1, ge=1),
@@ -294,6 +294,7 @@ async def list_skills(
     )
     etag = f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
     if if_none_match is not None and if_none_match.strip() == etag:
+        await db.commit()
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
 
     # Drop the `Skill.user_id == auth.user_id` filter that was here
@@ -364,25 +365,8 @@ async def list_skills(
             }
 
     items: list[SkillSummaryResponse] = []
+    content_fetches: list[tuple[int, UUID, str]] = []
     for s in skills:
-        content = None
-        if include_content and s.file_key:
-            try:
-                tar_bytes = await file_store.get(s.file_key)
-                content = extract_skill_md(tar_bytes)
-            except Exception as e:
-                # Don't fail the whole list on a single bad file_key —
-                # return content=None for this row. But log so a
-                # misconfigured S3 / rotated credentials / permission
-                # error doesn't disappear silently into 200 OKs with
-                # null content.
-                log.warning(
-                    "skill_list_content_fetch_failed user=%s file_key=%s error=%s",
-                    s.user_id,
-                    s.file_key,
-                    _sanitize_log(e),
-                )
-                content = None
         meta = project_meta.get(s.project_id) if s.project_id else None
         items.append(
             SkillSummaryResponse(
@@ -399,7 +383,7 @@ async def list_skills(
                 is_active=s.is_active,
                 created_at=s.created_at,
                 updated_at=s.updated_at,
-                content=content,
+                content=None,
                 project_id=str(s.project_id) if s.project_id else None,
                 project_name=meta["name"] if meta else None,
                 machine_name=meta["machine_name"] if meta else None,
@@ -408,6 +392,32 @@ async def list_skills(
                 else None,
             )
         )
+        if include_content and s.file_key:
+            content_fetches.append((len(items) - 1, s.user_id, s.file_key))
+
+    # Release the read transaction before response serialization or
+    # object-storage I/O. Daemon reconcile can ask for inline content; holding
+    # a DB connection while each S3/R2 GET runs turns slow storage into
+    # idle-in-transaction pool pressure.
+    await db.commit()
+
+    if content_fetches:
+        for item_index, user_id, file_key in content_fetches:
+            try:
+                tar_bytes = await file_store.get(file_key)
+                items[item_index].content = extract_skill_md(tar_bytes)
+            except Exception as e:
+                # Don't fail the whole list on a single bad file_key —
+                # return content=None for this row. But log so a
+                # misconfigured S3 / rotated credentials / permission
+                # error doesn't disappear silently into 200 OKs with
+                # null content.
+                log.warning(
+                    "skill_list_content_fetch_failed user=%s file_key=%s error=%s",
+                    user_id,
+                    file_key,
+                    _sanitize_log(e),
+                )
 
     response = Paginated[SkillSummaryResponse](
         items=items, total=total, page=page, page_size=page_size
@@ -480,39 +490,37 @@ async def _visible_skills_revision_fingerprint(
 
 
 async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:
-    content = None
-    if skill.file_key:
-        try:
-            tar_bytes = await file_store.get(skill.file_key)
-            content = extract_skill_md(tar_bytes)
-        except Exception as e:
-            # Detail page falls back to no-content rendering, but
-            # surface storage errors in logs so silent S3/permission
-            # issues are visible to the operator.
-            log.warning(
-                "skill_detail_content_fetch_failed user=%s file_key=%s error=%s",
-                skill.user_id,
-                skill.file_key,
-                _sanitize_log(e),
-            )
+    skill_id = str(skill.id)
+    skill_key = skill.skill_key
+    name = skill.name
+    description = skill.description
+    version = skill.version
+    source = skill.source
+    source_repo = skill.source_repo
+    file_count = skill.file_count
+    agent_types = skill.agent_types
+    created_at = skill.created_at
+    content_hash = skill.content_hash
+    updated_at = skill.updated_at
+    file_key = skill.file_key
+    user_id = skill.user_id
+    project_id = skill.project_id
 
     # Project + machine context. The dashboard editor uses project_id
     # to build the upload URL; multi-machine users see machine_name
     # in the page caption ("on my-mac") so they're sure which copy
     # they're editing.
-    project_id_str: str | None = str(skill.project_id) if skill.project_id else None
+    project_id_str: str | None = str(project_id) if project_id else None
     project_name: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
-    if db is not None and skill.project_id is not None:
+    if db is not None and project_id is not None:
         from app.models.project import Project
         from app.models.session import AgentEnvironment
 
         project_row = (
             await db.execute(
-                select(Project.name, Project.origin_environment_id).where(
-                    Project.id == skill.project_id
-                )
+                select(Project.name, Project.origin_environment_id).where(Project.id == project_id)
             )
         ).first()
         if project_row is not None:
@@ -529,20 +537,42 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
                 if env_row is not None:
                     machine_name = env_row.machine_name
 
+    if db is not None:
+        # Detail responses read S3/R2 content after metadata lookup. End the
+        # DB transaction first so storage latency or response serialization
+        # cannot pin a pool connection.
+        await db.commit()
+
+    content = None
+    if file_key:
+        try:
+            tar_bytes = await file_store.get(file_key)
+            content = extract_skill_md(tar_bytes)
+        except Exception as e:
+            # Detail page falls back to no-content rendering, but
+            # surface storage errors in logs so silent S3/permission
+            # issues are visible to the operator.
+            log.warning(
+                "skill_detail_content_fetch_failed user=%s file_key=%s error=%s",
+                user_id,
+                file_key,
+                _sanitize_log(e),
+            )
+
     return SkillDetailResponse(
-        id=str(skill.id),
-        skill_key=skill.skill_key,
-        name=skill.name,
-        description=skill.description,
-        version=skill.version,
-        source=skill.source,
-        source_repo=skill.source_repo,
-        file_count=skill.file_count,
+        id=skill_id,
+        skill_key=skill_key,
+        name=name,
+        description=description,
+        version=version,
+        source=source,
+        source_repo=source_repo,
+        file_count=file_count,
         content=content,
-        agent_types=skill.agent_types,
-        created_at=skill.created_at,
-        content_hash=skill.content_hash,
-        updated_at=skill.updated_at,
+        agent_types=agent_types,
+        created_at=created_at,
+        content_hash=content_hash,
+        updated_at=updated_at,
         project_id=project_id_str,
         project_name=project_name,
         machine_name=machine_name,
@@ -566,7 +596,7 @@ async def upload_skill_legacy(
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
     ),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     """Back-compat shim for pre-PR-66 CLI binaries. Resolves the
@@ -587,6 +617,7 @@ async def upload_skill_legacy(
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
     response.headers["Link"] = '</api/projects/{project_id}/skills/upload>; rel="successor-version"'
+    await db.commit()
 
     # Same chunked-read body bound as the project-explicit route —
     # the global BodySizeLimitMiddleware only catches requests
@@ -637,7 +668,7 @@ async def upload_skill_project(
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
     ),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     """Project-explicit tar.gz skill upload.
@@ -651,6 +682,7 @@ async def upload_skill_project(
     last-write-wins. SSE then fans out to subscribed daemons.
     """
     await validate_project_for_caller(db, auth, project_id)
+    await db.commit()
     # Stream the upload in bounded chunks, refusing once we cross
     # the cap. `await file.read()` would otherwise pull the whole
     # body into memory before any check fires — the global
@@ -693,7 +725,7 @@ async def update_skill_content(
     payload: SkillContentUpdateRequest,
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     """Edit a skill's SKILL.md from the dashboard.
@@ -716,6 +748,7 @@ async def update_skill_content(
     persist a hash that didn't match the bytes.
     """
     await validate_project_for_caller(db, auth, project_id)
+    await db.commit()
     data, _ = tar_from_content(skill_key, payload.content)
     if len(data) > _MAX_SKILL_TAR_BYTES:
         # `content` is already capped at 200 KB by the schema, so the
@@ -944,7 +977,7 @@ async def _do_upload_skill(
 @router.get("/{skill_key:path}/download")
 async def download_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
     """Phase-1 compat download — multi-project disambiguation by
@@ -952,14 +985,14 @@ async def download_skill_legacy(
     `/api/projects/{project_id}/skills/{skill_key}/download`."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
-    return await _build_skill_download(skill, skill_key)
+    return await _build_skill_download(skill, skill_key, db)
 
 
 @project_router.get("/{skill_key:path}/download")
 async def download_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
     """Phase-2 project-explicit download — exact (`project_id`, `skill_key`)
@@ -985,7 +1018,7 @@ async def download_skill_project(
 async def download_skill_scope_compat(
     scope_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
     return await _get_project_skill_download(
@@ -1006,7 +1039,7 @@ async def download_skill_scope_compat(
 @router.get("/{skill_key:path}")
 async def get_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDetailResponse:
     """Phase-1 compat detail — multi-project disambiguation by
@@ -1022,7 +1055,7 @@ async def get_skill_legacy(
 async def get_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDetailResponse:
     """Phase-2 project-explicit detail. Returns exactly the row at
@@ -1045,7 +1078,7 @@ async def get_skill_project(
 async def get_skill_scope_compat(
     scope_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:read")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDetailResponse:
     return await _get_project_skill_detail(
@@ -1069,7 +1102,7 @@ async def _get_project_skill_download(
         project_id=project_id,
         skill_key=skill_key,
     )
-    return await _build_skill_download(skill, skill_key)
+    return await _build_skill_download(skill, skill_key, db)
 
 
 async def _get_project_skill_detail(
@@ -1109,16 +1142,23 @@ async def _get_project_skill(
     return skill
 
 
-async def _build_skill_download(skill: Skill, skill_key: str) -> Response:
-    if not skill.file_key:
+async def _build_skill_download(
+    skill: Skill,
+    skill_key: str,
+    db: AsyncSession | None = None,
+) -> Response:
+    file_key = skill.file_key
+    if not file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+    if db is not None:
+        await db.commit()
     try:
-        data = await file_store.get(skill.file_key)
+        data = await file_store.get(file_key)
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill archive not found") from None
 
     # If stored as old .md format, wrap into tar.gz on the fly
-    if skill.file_key.endswith(".md"):
+    if file_key.endswith(".md"):
         content = data.decode("utf-8")
         data, _ = tar_from_content(skill_key, content)
 
@@ -1137,7 +1177,7 @@ async def _build_skill_download(skill: Skill, skill_key: str) -> Response:
 @router.delete("/{skill_key:path}")
 async def delete_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
     """Legacy delete by slug-only is gone in phase 2. Resolving
@@ -1174,7 +1214,7 @@ async def delete_skill_legacy(
 async def delete_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
     """Phase-2 project-explicit delete — only the named project's copy
@@ -1244,7 +1284,7 @@ async def _do_delete_skill(
 async def install_skill_legacy(
     body: SkillInstallRequest,
     response: Response,
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillInstallResponse:
     """Back-compat shim for pre-PR-66 CLI binaries. Resolves
@@ -1266,7 +1306,7 @@ async def install_skill_legacy(
 async def install_skill_project(
     body: SkillInstallRequest,
     project_id: UUID = Path(...),
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillInstallResponse:
     """Phase-2 project-explicit install — install lands in the
@@ -1284,6 +1324,10 @@ async def _do_install_skill(
     body: SkillInstallRequest,
 ) -> SkillInstallResponse:
     from app.services.skill_installer import fetch_skill_from_github
+
+    # Project resolution/validation happens before this helper. Do not keep
+    # that read transaction open while waiting on GitHub.
+    await db.commit()
 
     try:
         fetched = await fetch_skill_from_github(body.repo, body.path)

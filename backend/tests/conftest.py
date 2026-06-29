@@ -25,7 +25,7 @@ import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.auth import AuthContext, get_auth, optional_web_auth
+from app.core.auth import AuthContext, get_auth, get_auth_short_session, optional_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
@@ -309,6 +309,7 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
+    app.dependency_overrides[get_auth_short_session] = _override_get_auth
     app.dependency_overrides[optional_web_auth] = _override_optional_web_auth
     try:
         transport = ASGITransport(app=app)
@@ -367,6 +368,7 @@ async def cli_client(db_session: AsyncSession, seed_user: User) -> AsyncIterator
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
+    app.dependency_overrides[get_auth_short_session] = _override_get_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:

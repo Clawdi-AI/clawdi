@@ -375,11 +375,14 @@ async def get_auth_short_session(
 
     Long-lived endpoints (SSE) use this so each connected daemon
     doesn't pin one `AsyncSession` / DB connection for the entire
-    stream lifetime — FastAPI's yield-dependency contract finalises
-    `get_session` only after the streaming response ends, which would
-    exhaust the pool once a few hundred daemons connect. The handler
-    is responsible for opening its own short-lived sessions inside
-    the stream loop (see `routes/sync.py`).
+    stream lifetime. High-frequency routes that do their own DB work
+    also use it so auth does not keep a request-scoped transaction open
+    while the handler reads request bodies or object storage. FastAPI's
+    yield-dependency contract finalises `get_session` only after the
+    response ends, which would otherwise exhaust the pool under daemon
+    fan-out. The handler is responsible for opening its own short-lived
+    sessions inside the stream loop (see `routes/sync.py`) or releasing
+    read transactions before slow external I/O.
     """
     from app.core.database import async_session_factory
 
@@ -398,7 +401,8 @@ async def get_auth_short_session(
 def require_scope_short_session(*needed: str):
     """Same scope-check semantics as `require_scope`, paired with
     `get_auth_short_session` so the route doesn't pin a DB connection
-    for its entire lifetime. Used by `/api/sync/events`."""
+    for its entire lifetime. Used by `/api/sync/events` and high-frequency
+    daemon routes."""
 
     async def _check(auth: AuthContext = Depends(get_auth_short_session)) -> AuthContext:
         if not auth.is_cli or auth.api_key is None:
