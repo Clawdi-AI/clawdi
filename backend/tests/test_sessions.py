@@ -60,6 +60,32 @@ async def test_environments_support_conditional_get(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_environment_detail_supports_conditional_get(client: httpx.AsyncClient):
+    env_id = await _register_env(client, machine_id=f"detail-etag-{uuid.uuid4().hex}")
+
+    first = await client.get(f"/api/environments/{env_id}")
+    assert first.status_code == 200, first.text
+    etag = first.headers.get("ETag")
+    assert etag
+    assert first.headers.get("Cache-Control") == "private, no-cache"
+
+    not_modified = await client.get(
+        f"/api/environments/{env_id}",
+        headers={"If-None-Match": etag},
+    )
+    assert not_modified.status_code == 304, not_modified.text
+    assert not_modified.headers.get("ETag") == etag
+
+    heartbeat = await client.post(f"/api/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    changed = await client.get(f"/api/environments/{env_id}", headers={"If-None-Match": etag})
+    assert changed.status_code == 200, changed.text
+    assert changed.headers.get("ETag") != etag
+    assert changed.json()["queue_depth_high_water"] == 1
+
+
+@pytest.mark.asyncio
 async def test_environments_mark_hosted_runtime_siblings(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):

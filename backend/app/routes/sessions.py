@@ -83,6 +83,7 @@ _MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024
 _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
+_HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
 _LEGACY_HOSTED_MACHINE_NAME_RE = re.compile(r"^v2-hosted-[a-f0-9]{6,16}$")
 _MANUAL_SESSION_SUMMARY_FILTER = text(
@@ -511,12 +512,18 @@ async def reorder_environments(
     ]
 
 
-@router.get("/api/environments/{environment_id}", response_model=EnvironmentResponse)
+@router.get(
+    "/api/environments/{environment_id}",
+    response_model=EnvironmentResponse,
+    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
+)
 async def get_environment(
     environment_id: UUID,
+    request: Request,
+    response: Response,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> EnvironmentResponse:
+) -> EnvironmentResponse | Response:
     # Bound api_keys may only fetch their own env. Without this an
     # env-A deploy key could probe sibling envs by id and read their
     # `default_project_id` — the same boundary that list_environments
@@ -524,24 +531,32 @@ async def get_environment(
     bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    result = await db.execute(
-        select(AgentEnvironment).where(
-            AgentEnvironment.id == environment_id,
-            AgentEnvironment.user_id == auth.user_id,
-        )
-    )
-    env = result.scalar_one_or_none()
-    if not env:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    state = (
+    row = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(AgentEnvironment, HostedRuntimeState)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
         )
-    ).scalar_one_or_none()
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    env, state = row
     sibling_deployment_id = (
         None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
     )
-    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    payload = _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    etag = strong_json_etag(payload.model_dump(mode="json"))
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return payload
 
 
 @router.patch("/api/environments/{environment_id}", response_model=EnvironmentResponse)
@@ -1156,12 +1171,14 @@ async def sync_heartbeat(
         or not env.sync_enabled
         or observed_changed
     )
-    # Even with no state change, refresh last_sync_at if the
-    # previous value is older than 30s — the dashboard freshness
-    # cutoff is 90s, so a 30s refresh keeps the badge "live"
-    # without writing on every single heartbeat.
+    # Even with no state change, refresh last_sync_at on a bounded
+    # cadence. The dashboard freshness cutoff is 90s; 40s keeps new
+    # 60s clients live while preventing old 30s clients from writing
+    # on every heartbeat.
     last = env.last_sync_at
-    needs_freshness_refresh = last is None or (now - last).total_seconds() > 30
+    needs_freshness_refresh = (
+        last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
+    )
     if not has_state_change and not needs_freshness_refresh:
         return
     env.last_sync_at = now

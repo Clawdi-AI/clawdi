@@ -6771,6 +6771,13 @@ export interface operations {
                     "application/json": components["schemas"]["EnvironmentResponse"];
                 };
             };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
