@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import tarfile
+import uuid
 
 import httpx
 import pytest
@@ -674,6 +675,55 @@ async def test_list_skills_etag_binds_revision_and_project(
         f"/api/skills?project_id={project_b}", headers={"If-None-Match": forged}
     )
     assert r_forged.status_code == 200, r_forged.text
+
+
+@pytest.mark.asyncio
+async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
+    client: httpx.AsyncClient,
+    seed_user,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Hot daemon reconcile path: a matching bound-key ETag should not open
+    the list handler's DB session.
+
+    Auth has already resolved the env-bound API key to exactly one Agent
+    Project. For that caller shape the collection ETag is derivable from the
+    auth snapshot, so the 304 path should avoid the DB-backed project
+    visibility and listing work entirely.
+    """
+    from app.core.auth import AuthContext, get_auth_short_session
+    from app.main import app
+    from app.models.api_key import ApiKey
+    from app.routes import skills as skills_route
+
+    project_uuid = uuid.UUID(project_id)
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, environment_id=uuid.uuid4()),
+            api_key_project_id=project_uuid,
+        )
+
+    app.dependency_overrides[get_auth_short_session] = _override_get_auth
+
+    first = await client.get(f"/api/skills?project_id={project_id}")
+    assert first.status_code == 200, first.text
+    etag = first.headers.get("ETag")
+    assert etag
+
+    def _fail_session_factory():
+        raise AssertionError("matching bound-key skills ETag opened a DB session")
+
+    monkeypatch.setattr(skills_route, "async_session_factory", _fail_session_factory)
+
+    cached = await client.get(
+        f"/api/skills?project_id={project_id}",
+        headers={"If-None-Match": etag},
+    )
+    assert cached.status_code == 304, cached.text
+    assert cached.headers.get("ETag") == etag
 
 
 @pytest.mark.asyncio
