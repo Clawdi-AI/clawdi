@@ -7,6 +7,13 @@ import {
 const SKILL_KEY_RE = new RegExp(SKILL_KEY_PATTERN);
 const RESERVED_SUFFIXES = new Set<string>(RESERVED_SKILL_KEY_SUFFIXES);
 
+export class SkillKeyValidationError extends Error {
+	constructor(skillKey: string) {
+		super(`Invalid skill_key: ${JSON.stringify(skillKey)}`);
+		this.name = "SkillKeyValidationError";
+	}
+}
+
 function hasReservedSkillKeySuffix(skillKey: string): boolean {
 	const parts = skillKey.split("/");
 	return parts.length > 1 && RESERVED_SUFFIXES.has(parts[parts.length - 1] ?? "");
@@ -22,7 +29,7 @@ export function isValidSkillKey(skillKey: string): boolean {
 
 export function assertValidSkillKey(skillKey: string): void {
 	if (!isValidSkillKey(skillKey)) {
-		throw new Error(`Invalid skill_key: ${JSON.stringify(skillKey)}`);
+		throw new SkillKeyValidationError(skillKey);
 	}
 }
 

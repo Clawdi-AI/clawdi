@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
 import { getAuth, getConfig } from "./config";
+import { assertValidSkillKey } from "./skill-key";
 import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
@@ -249,6 +250,7 @@ export class ApiClient {
 		filename: string,
 		contentHash?: string,
 	): Promise<SkillUploadResponse> {
+		assertValidSkillKey(skillKey);
 		// `content_hash` is optional server-side (added 0.3.4). Omit the
 		// field entirely when the caller doesn't have one — server falls
 		// back to computing it from the uploaded tar.
