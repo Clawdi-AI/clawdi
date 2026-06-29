@@ -1,7 +1,7 @@
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
-  <strong>The best home for all your AI agents — Projects, sessions, memory, skills, cron jobs, and app connections.</strong>
+  <strong>The best home for all your AI agents — Projects, sessions, memory, skills, vault, model providers, and app connections.</strong>
 </p>
 
 <p align="center">
@@ -25,12 +25,6 @@
 
 <p align="center">
   <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
-</p>
-
-<p align="center">
-  <a href="https://www.star-history.com/#Clawdi-AI/clawdi&Date">
-    <img src="https://api.star-history.com/svg?repos=Clawdi-AI/clawdi&type=Date" alt="Clawdi star history chart">
-  </a>
 </p>
 
 > Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.
@@ -90,7 +84,7 @@ Clawdi is the shared layer underneath:
 In practice — teach one agent something:
 
 ```text
-remember that this repo uses Bun for TypeScript and PDM for backend scripts
+remember that this repo uses Bun for TypeScript, uv for Python dependencies, and PDM for backend scripts
 ```
 
 Later, in a different agent or a fresh session, ask "what package manager should I use here?" — it can call Clawdi memory search and answer from your actual context instead of guessing.
@@ -237,7 +231,7 @@ Then run the backend and dashboard locally:
 ```bash
 cd backend
 cp .env.example .env
-pdm install
+uv sync
 pdm migrate
 pdm dev
 ```
@@ -257,7 +251,7 @@ clawdi config set apiUrl http://localhost:8000
 Local self-hosting currently expects:
 
 - Node.js 22.5+ and Bun 1.3+
-- Python 3.12 with PDM
+- Python 3.12, uv for dependency sync, and PDM for backend scripts
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
 - Two generated encryption keys for vault data and MCP bridge JWTs
@@ -309,7 +303,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
 | `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rotate-token` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
-| `clawdi pull` | Download cloud skills into registered agents |
+| `clawdi pull` | Download cloud skills into registered agents and mirror cloud sessions to `~/.clawdi/sessions/` |
 | `clawdi session list/extract` | Inspect local agent sessions |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
@@ -317,13 +311,14 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
 | `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect/materialize-auth` for Codex provider auth |
-| `clawdi ai-provider list/add/edit/remove/validate/test/connect/import-auth/materialize-auth/apply/status/export/import` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, verified Codex/Hermes/OpenClaw agent config apply, and provider-only export/import |
+| `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/materialize-auth/apply/status/export/import` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, verified Codex/Hermes/OpenClaw agent config apply, and provider-only export/import |
+| `clawdi channel list/available/get/create/links/link/rotate-token/pair-code/send/bindings/sync-commands/delete` | Manage channel bots, bot-agent links, chat pairing, outbound messages, and provider slash-command sync |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
-| `clawdi vault set/list/import/attach/detach/rm` | Manage encrypted secrets, Project access, and copy exact references |
+| `clawdi vault set/list/import/attach/detach/rm/resolve` | Manage encrypted secrets, Project access, exact references, and dry-run/explicit secret resolution |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
-| `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
+| `clawdi doctor [ai-provider]` | Diagnose auth, agent paths, vault, MCP config, and AI Provider setup |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
 | `clawdi mcp` | Start the MCP stdio server used by agents |
 
@@ -339,9 +334,8 @@ are not part of normal laptop onboarding.
 | Command | What it does |
 | --- | --- |
 | `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and hosted policy restrictions |
-| `clawdi runtime init --non-interactive [--json]` | Run one cloud-init-style hosted runtime convergence pass |
-| `clawdi runtime status [--json]` | Read the last runtime boot result from service-state files |
-| `clawdi runtime doctor [--json]` | Diagnose hosted policy, service state, HOME, tmpfs runtime state, and last boot status |
+| `clawdi runtime init/watch/ui-bridge/status/doctor` | Converge, watch, expose the UI bridge, inspect, and diagnose hosted runtime state |
+| `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
 
 Hosted runtime mode is detected from host policy or runtime credentials. In
 hosted mode, `/etc/clawdi/host-policy.json` can deny local-user commands such
@@ -357,13 +351,20 @@ App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai
 
 ## Development
 
-Install dependencies:
+Install workspace dependencies from the repo root:
 
 ```bash
 bun install
 ```
 
-Run the web app and workspace dev tasks:
+Install backend dependencies:
+
+```bash
+cd backend
+uv sync
+```
+
+Run the web app and workspace dev tasks from the repo root:
 
 ```bash
 bun run dev
@@ -376,12 +377,16 @@ cd backend
 pdm dev
 ```
 
-Run checks:
+Run workspace checks from the repo root:
 
 ```bash
 bun run check
 bun run typecheck
+```
 
+Run backend checks:
+
+```bash
 cd backend
 pdm lint
 pdm test
@@ -421,3 +426,15 @@ Common issues:
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Star Trends
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=Clawdi-AI%2Fclawdi&type=date&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Clawdi-AI/clawdi&type=date&theme=dark&legend=top-left&transparent=true" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Clawdi-AI/clawdi&type=date&legend=top-left&transparent=true" />
+      <img alt="Clawdi star trends chart" src="https://api.star-history.com/chart?repos=Clawdi-AI/clawdi&type=date&legend=top-left&transparent=true" />
+    </picture>
+  </a>
+</p>
