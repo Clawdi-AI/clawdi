@@ -4,6 +4,10 @@ name: Setup Bun CI
 description: Install Bun and run `bun install --frozen-lockfile` with lockfile-scoped cache
 
 inputs:
+  node-version:
+    description: Node.js version used by package bin scripts during CI
+    required: false
+    default: "24.x"
   bun-version:
     description: Bun version to install (defaults to package.json engines or repo BUN_VERSION env)
     required: false
@@ -12,6 +16,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
     - name: Set up Bun
       uses: oven-sh/setup-bun@v2
       with:
@@ -29,7 +38,7 @@ runs:
       uses: actions/cache@v5
       with:
         path: node_modules
-        key: bun-node-modules-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
+        key: bun-node-modules-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.node-version }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
 
     - name: Install dependencies
       shell: bash
