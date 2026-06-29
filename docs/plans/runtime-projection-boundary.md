@@ -27,6 +27,31 @@ The wrapper prepares environment variables and local config, then executes the
 target command. Normal runtime startup should not require users to pass
 endpoint, token, or certificate flags manually.
 
+## Projection Flow
+
+```mermaid
+flowchart LR
+    ControlPlane[Control plane API] --> Manifest[Runtime manifest]
+    ControlPlane --> Channels[Runtime channel state]
+    Manifest --> CLI[clawdi runtime reconciler]
+    Channels --> CLI
+
+    subgraph Projection["Open-source projection layer"]
+        CLI --> Provider[Provider projection]
+        CLI --> Channel[Channel projection]
+        CLI --> Broker[Optional MITM profile projection]
+    end
+
+    Provider --> OpenClaw[OpenClaw config]
+    Provider --> Hermes[Hermes config]
+    Channel --> OpenClaw
+    Broker --> Runner[clawdi run environment]
+    Runner --> Target[Target agent process]
+```
+
+The diagram is intentionally limited to public contracts. It does not describe
+service-internal storage, deployment topology, or production routing.
+
 ## Provider Boundary
 
 Clawdi provider input uses standard API modes:
@@ -40,6 +65,13 @@ Target-native names are projection outputs, not Clawdi provider modes. For
 example, a target runtime may need a native transport string that differs from
 `openai_responses`; that name should be generated only in the target runtime's
 projection file.
+
+Hosted runtime manifests should scope provider projections by runtime name when
+agents can have different provider bindings. For example,
+`providers.openclaw` is the OpenClaw provider projection and `providers.hermes`
+is the Hermes provider projection. The CLI must select the runtime-scoped entry
+for the runtime it is configuring instead of relying on a global default. The
+legacy `providers.default` shape remains valid for single-provider fixtures.
 
 ## Channel Boundary
 

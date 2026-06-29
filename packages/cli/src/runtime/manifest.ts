@@ -17,7 +17,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AiProviderApiMode, AiProviderCatalog } from "@clawdi/shared";
+import type {
+	AiProviderApiMode,
+	AiProviderAuth,
+	AiProviderCatalog,
+	AiProviderType,
+} from "@clawdi/shared";
+import { isAiProviderType } from "@clawdi/shared";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	mergeHermesConfig,
@@ -630,10 +636,14 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 	};
 }
 
-function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog | null {
+function hostedAiProviderCatalog(
+	manifest: RuntimeManifest,
+	runtimeName?: string,
+): AiProviderCatalog | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
-	const entries = Object.entries(providers)
+	const rawEntries = hostedProviderEntries(providers, runtimeName);
+	const entries = rawEntries
 		.map(([id, raw]) => {
 			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
 			const input = raw as Record<string, unknown>;
@@ -644,16 +654,15 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
 			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
 			if (!baseUrl || !model) return null;
+			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
 			return {
 				id,
-				type: "custom_openai_compatible" as const,
+				type: hostedProviderType(input),
 				base_url: baseUrl,
 				default_model: model,
 				api_mode: apiMode,
-				auth: apiKeySecretRef
-					? { type: "api_key" as const, source: "managed" as const }
-					: { type: "none" as const },
-				runtime_env_name: apiKeySecretRef ? runtimeEnvName : undefined,
+				auth,
+				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
 				models: [{ id: model, api_mode: apiMode }],
 			};
 		})
@@ -666,12 +675,52 @@ function hostedAiProviderCatalog(manifest: RuntimeManifest): AiProviderCatalog |
 	};
 }
 
+function hostedProviderEntries(
+	providers: Record<string, unknown>,
+	runtimeName?: string,
+): Array<[string, unknown]> {
+	if (!runtimeName) {
+		return Object.entries(providers).sort(([left], [right]) => left.localeCompare(right));
+	}
+	if (Object.hasOwn(providers, runtimeName)) {
+		return [[runtimeName, providers[runtimeName]]];
+	}
+	if (Object.hasOwn(providers, "default")) {
+		return [["default", providers.default]];
+	}
+	return [];
+}
+
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
 	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
 	if (raw === "openai_chat" || raw === "openai_responses") {
 		return raw;
 	}
 	return "openai_chat";
+}
+
+function hostedProviderType(input: Record<string, unknown>): AiProviderType {
+	const type = stringValue(input.type);
+	return type && isAiProviderType(type) ? type : "custom_openai_compatible";
+}
+
+function hostedProviderAuth(
+	input: Record<string, unknown>,
+	hasApiKeySecretRef: boolean,
+): AiProviderAuth {
+	const auth = recordValue(input.auth);
+	if (auth) {
+		const type = stringValue(auth.type);
+		const tool = stringValue(auth.tool);
+		const profile = stringValue(auth.profile);
+		if (type === "agent_profile" && tool === "codex" && profile) {
+			return { type: "agent_profile", tool: "codex", profile };
+		}
+	}
+	if (hasApiKeySecretRef) {
+		return { type: "api_key", source: "managed" };
+	}
+	return { type: "none" };
 }
 
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
@@ -685,13 +734,14 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
-function hostedProviderSecretEnv(manifest: RuntimeManifest): Record<string, string> {
+function hostedProviderSecretEnv(
+	manifest: RuntimeManifest,
+	runtimeName?: string,
+): Record<string, string> {
 	const providers = recordValue(manifest.projection?.providers);
 	if (!providers) return {};
 	const env: Record<string, string> = {};
-	for (const [providerId, raw] of Object.entries(providers).sort(([a], [b]) =>
-		a.localeCompare(b),
-	)) {
+	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName)) {
 		const provider = recordValue(raw);
 		if (!provider) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
@@ -716,7 +766,7 @@ function applyHostedAiProviderProjection(
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return null;
 	}
-	const catalog = hostedAiProviderCatalog(manifest);
+	const catalog = hostedAiProviderCatalog(manifest, name);
 	if (!catalog) return null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
@@ -1699,7 +1749,7 @@ export function convergeRuntimeManifest(
 					mitmProfileBundlePath,
 					settings: runtime.run,
 					secretFilePath: mitmSecretFile,
-					secretEnv: hostedProviderSecretEnv(manifest),
+					secretEnv: hostedProviderSecretEnv(manifest, name),
 				}),
 				paths,
 			);

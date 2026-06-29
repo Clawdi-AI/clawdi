@@ -486,7 +486,7 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_rejects_conflicting_runtime_provider_ids(
+async def test_runtime_manifest_projects_per_runtime_provider_bindings(
     admin_client,
     db_session,
     seed_user,
@@ -498,13 +498,69 @@ async def test_runtime_manifest_rejects_conflicting_runtime_provider_ids(
         machine_name="Runtime provider conflict",
         agent_type="openclaw",
     )
+    openclaw_ciphertext, openclaw_nonce = encrypt("sk-openclaw-provider")
+    hermes_ciphertext, hermes_nonce = encrypt("sk-hermes-provider")
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-managed",
+                type="custom_openai_compatible",
+                base_url="https://openclaw-provider.test/v1",
+                default_model="gpt-5.5",
+                api_mode="openai_responses",
+                auth_type="api_key",
+                auth_metadata={"source": "managed"},
+                managed_by="user",
+                runtime_env_name="OPENCLAW_PROVIDER_API_KEY",
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id="openai-managed",
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=openclaw_ciphertext,
+                nonce=openclaw_nonce,
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="anthropic-managed",
+                type="custom_openai_compatible",
+                base_url="https://hermes-provider.test/v1",
+                default_model="claude-opus-4-6",
+                api_mode="openai_chat",
+                auth_type="api_key",
+                auth_metadata={"source": "managed"},
+                managed_by="user",
+                runtime_env_name="HERMES_PROVIDER_API_KEY",
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id="anthropic-managed",
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=hermes_ciphertext,
+                nonce=hermes_nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        provider_id="openai-managed",
         runtimes={
-            "openclaw": {"enabled": True, "provider_id": "openai-managed"},
-            "hermes": {"enabled": True, "providerId": "anthropic-managed"},
+            "openclaw": {
+                "enabled": True,
+                "provider_id": "openai-managed",
+                "model": "gpt-5.5",
+            },
+            "hermes": {
+                "enabled": True,
+                "providerId": "anthropic-managed",
+                "model": "claude-opus-4-6",
+            },
         },
     )
 
@@ -513,9 +569,29 @@ async def test_runtime_manifest_rejects_conflicting_runtime_provider_ids(
         response = await client.get("/api/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 409, response.text
-    assert response.json() == {"detail": "enabled runtimes must use a single provider id"}
-    assert "provider.default.apiKey" not in response.text
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "default" not in payload["manifest"]["providers"]
+    assert payload["manifest"]["providers"]["openclaw"] == {
+        "kind": "openai-compatible",
+        "baseUrl": "https://openclaw-provider.test/v1",
+        "model": "gpt-5.5",
+        "apiMode": "openai_responses",
+        "runtimeEnvName": "OPENCLAW_PROVIDER_API_KEY",
+        "apiKeySecretRef": "provider.openclaw.apiKey",
+    }
+    assert payload["manifest"]["providers"]["hermes"] == {
+        "kind": "openai-compatible",
+        "baseUrl": "https://hermes-provider.test/v1",
+        "model": "claude-opus-4-6",
+        "apiMode": "openai_chat",
+        "runtimeEnvName": "HERMES_PROVIDER_API_KEY",
+        "apiKeySecretRef": "provider.hermes.apiKey",
+    }
+    assert payload["secretValues"] == {
+        "provider.hermes.apiKey": "sk-hermes-provider",
+        "provider.openclaw.apiKey": "sk-openclaw-provider",
+    }
 
 
 @pytest.mark.asyncio
@@ -625,6 +701,87 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
     )
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_unknown_runtime_names(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"unknown-runtime-{uuid4().hex[:8]}",
+        machine_name="Runtime unknown name",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": f"dep_{uuid4().hex}",
+        "app_id": "app-test",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "provider_id": "clawdi-managed",
+        "runtimes": {
+            "openclaw": {"enabled": True},
+            "codex": {"enabled": True},
+        },
+    }
+
+    response = await admin_client.put(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "unsupported runtime desired state" in response.text
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"manifest-unknown-runtime-{uuid4().hex[:8]}",
+        machine_name="Manifest unknown runtime",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            app_id="app-test",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            provider_id="clawdi-managed",
+            runtimes={
+                "codex": {"enabled": True},
+                "openclaw": {"enabled": False},
+            },
+            system=None,
+            control_plane=None,
+            clawdi_cli=None,
+            live_sync=None,
+            recovery=None,
+            mitm_profiles=None,
+            mcp=None,
+            tools=None,
+            observed=None,
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "unsupported enabled runtime: codex"}
 
 
 @pytest.mark.asyncio
@@ -823,15 +980,15 @@ async def test_runtime_manifest_projects_provider_secret_values(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["default"] == {
+    assert payload["manifest"]["providers"]["openclaw"] == {
         "kind": "openai-compatible",
         "baseUrl": "https://sub2api.test/v1",
         "model": "gpt-5.5",
         "apiMode": "openai_chat",
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.default.apiKey",
+        "apiKeySecretRef": "provider.openclaw.apiKey",
     }
-    assert payload["secretValues"] == {"provider.default.apiKey": "sk-test-provider"}
+    assert payload["secretValues"] == {"provider.openclaw.apiKey": "sk-test-provider"}
     etag = response.headers["etag"]
 
     ciphertext, nonce = encrypt("sk-rotated-provider")
@@ -860,7 +1017,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
 
     assert rotated.status_code == 200, rotated.text
     assert rotated.headers["etag"] != etag
-    assert rotated.json()["secretValues"] == {"provider.default.apiKey": "sk-rotated-provider"}
+    assert rotated.json()["secretValues"] == {"provider.openclaw.apiKey": "sk-rotated-provider"}
 
 
 @pytest.mark.asyncio
@@ -923,11 +1080,74 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["providers"]["default"] == {
+    assert response.json()["manifest"]["providers"]["openclaw"] == {
         "kind": "openai-compatible",
         "baseUrl": "https://provider.test/v1",
         "model": "gpt-5.5",
         "apiMode": "openai_responses",
         "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.default.apiKey",
+        "apiKeySecretRef": "provider.openclaw.apiKey",
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_projects_codex_agent_profile_auth(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-codex-oauth-{uuid4().hex[:8]}",
+        machine_name="Runtime Codex OAuth Provider",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        AiProvider(
+            owner_user_id=seed_user.id,
+            provider_id="openai-codex",
+            type="openai",
+            base_url="https://api.openai.com/v1",
+            default_model="gpt-5.5",
+            api_mode="openai_responses",
+            auth_type="agent_profile",
+            auth_metadata={"tool": "codex", "profile": "default"},
+            managed_by="user",
+            runtime_env_name=None,
+        )
+    )
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        provider_id="openai-codex",
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "provider_id": "openai-codex",
+                "model": "gpt-5.5",
+            },
+            "hermes": {"enabled": False},
+        },
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["providers"]["openclaw"] == {
+        "kind": "openai-compatible",
+        "type": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-5.5",
+        "apiMode": "openai_responses",
+        "auth": {
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+        },
+    }
+    assert response.json()["secretValues"] == {}

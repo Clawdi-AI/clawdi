@@ -1,4 +1,4 @@
-import { directProviderPassthroughProfile } from "./hosted-mitm-profiles";
+import { directProviderPassthroughProfiles } from "./hosted-mitm-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeChannelAccount,
@@ -66,17 +66,17 @@ function applyRuntimeChannelProjection(
 ): RuntimeManifest {
 	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
 	const directProviderPassthrough =
-		managedProfiles.length > 0 ? directProviderPassthroughProfile(manifest.projection ?? {}) : null;
+		managedProfiles.length > 0 ? directProviderPassthroughProfiles(manifest.projection ?? {}) : [];
 	return {
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
 			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl),
 		},
-		mitmProfiles: mergeMitmProfiles(
-			manifest.mitmProfiles,
-			directProviderPassthrough ? [...managedProfiles, directProviderPassthrough] : managedProfiles,
-		),
+		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, [
+			...managedProfiles,
+			...directProviderPassthrough,
+		]),
 	};
 }
 
@@ -285,7 +285,12 @@ function mergeMitmProfiles(
 }
 
 function isChannelProjectionProfile(profile: MitmProfile): boolean {
-	return profile.owner === "clawdi-native-channels" || profile.id === "direct-provider-passthrough";
+	return (
+		profile.owner === "clawdi-native-channels" ||
+		profile.owner === "provider-projection" ||
+		profile.id === "direct-provider-passthrough" ||
+		profile.id.startsWith("direct-provider-passthrough-")
+	);
 }
 
 function channelSecretValues(links: ManagedChannelLink[]): Record<string, string> {
