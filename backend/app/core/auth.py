@@ -39,7 +39,11 @@ API_KEY_PREFIX = "clawdi_"
 # long ago. Every authenticated CLI request used to write+commit the row,
 # which becomes write-lock contention on a hot key at scale.
 LAST_USED_THROTTLE = timedelta(minutes=1)
-API_KEY_AUTH_CACHE_TTL_SECONDS = 5.0
+# Daemons reconcile skills on a 60s cadence. The cache needs to span that
+# interval to avoid turning every conditional GET into three auth DB reads.
+# Dashboard revocation calls `invalidate_api_key_auth_cache`, so user-initiated
+# revokes still take effect immediately in the single-process deployment model.
+API_KEY_AUTH_CACHE_TTL_SECONDS = 75.0
 API_KEY_AUTH_CACHE_MAX_SIZE = 4096
 
 
