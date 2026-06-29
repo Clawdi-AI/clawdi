@@ -56,7 +56,7 @@ import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
-import { isValidSkillKey } from "../lib/skill-key";
+import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
 	readSkillsLock,
@@ -930,6 +930,7 @@ export function classifyHeartbeatFailure(consecutiveFailures: number): FailureCl
  * retry queue's whole reason to exist.
  */
 function isPermanentUploadError(e: unknown): boolean {
+	if (e instanceof SkillKeyValidationError) return true;
 	if (e instanceof ApiError) {
 		if (e.status >= 400 && e.status < 500) {
 			// 408 = server-side request timeout; the daemon should
@@ -1607,8 +1608,9 @@ async function initialSync(
 	// real skill, no SKILL.md) and miss the actual nested skills.
 	// `listSkillKeys` returns the same shape the adapter's
 	// `collectSkills` would emit `skillKey` (relative paths,
-	// dotfile + bundled-`clawdi` filtering already applied).
-	const localKeys = await opts.adapter.listSkillKeys();
+	// flat or nested). The sync engine still validates the result
+	// against the backend `skill_key` contract before queueing.
+	const localKeys = filterValidSkillKeysForSync(await opts.adapter.listSkillKeys());
 	const localHashes = new Map<string, string>();
 	for (const key of localKeys) {
 		try {
@@ -1838,6 +1840,22 @@ async function initialSync(
 	}
 }
 
+export function filterValidSkillKeysForSync(
+	keys: Iterable<string>,
+	opts: { logSkipped?: boolean } = {},
+): string[] {
+	const logSkipped = opts.logSkipped ?? true;
+	const validKeys: string[] = [];
+	for (const key of keys) {
+		if (isValidSkillKey(key)) {
+			validKeys.push(key);
+		} else if (logSkipped) {
+			log.warn("engine.invalid_skill_key_skipped", { skill_key: key, origin: "adapter_list" });
+		}
+	}
+	return validKeys;
+}
+
 /** Periodic full reconciliation. Different from initialSync —
  * this runs after the daemon has already established what's in
  * the cloud, so it CAN sweep local skills the cloud has since
@@ -2060,7 +2078,7 @@ async function rescanLocalSkillsForChanges(
 	pullsInFlight: Map<string, number>,
 	getProjectId: () => string,
 ): Promise<void> {
-	const localKeys = await opts.adapter.listSkillKeys();
+	const localKeys = filterValidSkillKeysForSync(await opts.adapter.listSkillKeys());
 	for (const key of localKeys) {
 		if (pullsInFlight.has(key)) {
 			log.debug("engine.rescan_skipped_in_flight", { skill_key: key });

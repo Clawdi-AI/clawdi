@@ -8,6 +8,7 @@ import {
 	addInFlight,
 	classifyHeartbeatFailure,
 	consumePendingSkillUploadEcho,
+	filterValidSkillKeysForSync,
 	isAuthFailure,
 	isOversizedUploadError,
 	lastSyncErrorForSseReconnect,
@@ -222,6 +223,17 @@ describe("resolveOwningSkillKey — dotfile component rejection", () => {
 	it("returns null for a path with no SKILL.md ancestor", () => {
 		expect(resolveOwningSkillKey(tmp, "no-skill-here")).toBeNull();
 		expect(resolveOwningSkillKey(tmp, "deep/nested/no-skill")).toBeNull();
+	});
+});
+
+describe("filterValidSkillKeysForSync", () => {
+	it("drops adapter-listed keys the backend would reject", () => {
+		expect(
+			filterValidSkillKeysForSync(
+				["valid-skill", ".system", "category/nested", "category/.cache/sub", "team/download"],
+				{ logSkipped: false },
+			),
+		).toEqual(["valid-skill", "category/nested"]);
 	});
 });
 
