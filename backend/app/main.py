@@ -23,6 +23,7 @@ from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.request_timing import RequestTimingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.ai_providers import router as ai_providers_router
@@ -135,9 +136,11 @@ app = FastAPI(
 # subsequent `add_middleware` call around the previous stack, so the LAST
 # call becomes the OUTERMOST handler seeing the request first. We want:
 #
-#   request → SecurityHeaders → RequestID → RequestTiming → CORS → BodySizeLimit → route
-#                                                                                      ↓
-#   response ← SecurityHeaders ← RequestID ← RequestTiming ← CORS ← BodySizeLimit ← route
+#   request → SecurityHeaders → RequestID → RequestTiming → CORS
+#           → SkillUploadPreflight → BodySizeLimit → route
+#                                                        ↓
+#   response ← SecurityHeaders ← RequestID ← RequestTiming ← CORS
+#            ← SkillUploadPreflight ← BodySizeLimit ← route
 #
 # so security headers are a final response wrapper, a CORS-rejected preflight
 # still carries X-Request-ID on the way back out, RequestTiming can correlate
@@ -145,7 +148,9 @@ app = FastAPI(
 # (preflight is OPTIONS, which the limiter ignores anyway). The limiter sits
 # inside CORS so legitimate CORS responses still apply when we 413; otherwise
 # a browser upload over the cap would see an opaque network error instead of
-# "Request body too large".
+# "Request body too large". SkillUploadPreflight sits in front of the limiter
+# so invalid daemon upload metadata can be rejected before FastAPI's multipart
+# parser spools a doomed file part.
 
 # Global cap on declared body size for body-bearing methods.
 # Sized ABOVE the largest legitimate route-level cap so multipart
@@ -163,6 +168,7 @@ _MAX_SESSION_CONTENT_BYTES = 50 * 1024 * 1024  # mirror of sessions.py
 _MULTIPART_OVERHEAD_HEADROOM = 1 * 1024 * 1024  # 1 MB
 _MAX_REQUEST_BODY_BYTES = _MAX_SESSION_CONTENT_BYTES + _MULTIPART_OVERHEAD_HEADROOM
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=_MAX_REQUEST_BODY_BYTES)
+app.add_middleware(SkillUploadPreflightMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
