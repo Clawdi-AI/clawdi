@@ -677,6 +677,46 @@ async def test_list_skills_etag_binds_revision_and_project(
 
 
 @pytest.mark.asyncio
+async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
+    client: httpx.AsyncClient,
+    db_session,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Inline content fetches must not hold a DB transaction open.
+
+    `/api/skills?include_content=true` first reads metadata from Postgres and
+    then reads tarballs from the file store. If the DB transaction stays open
+    during that second phase, slow S3/R2 reads show up in production as
+    `idle in transaction` connection-pool pressure.
+    """
+    from app.routes import skills as skills_route
+
+    content = "---\nname: inline\ndescription: transaction release\n---\n# Inline\n"
+    tar_bytes, _ = tar_from_content("inline", content)
+    files = {"file": ("inline.tar.gz", tar_bytes, "application/gzip")}
+    upload = await client.post(
+        f"/api/projects/{project_id}/skills/upload",
+        data={"skill_key": "inline"},
+        files=files,
+    )
+    assert upload.status_code == 200, upload.text
+
+    class AssertingFileStore:
+        async def get(self, key: str) -> bytes:
+            assert key.endswith("/inline.tar.gz")
+            assert not db_session.in_transaction()
+            return tar_bytes
+
+    monkeypatch.setattr(skills_route, "file_store", AssertingFileStore())
+
+    listing = await client.get(f"/api/skills?project_id={project_id}&include_content=true")
+    assert listing.status_code == 200, listing.text
+    item = next(item for item in listing.json()["items"] if item["skill_key"] == "inline")
+    assert item["content"] == content
+
+
+@pytest.mark.asyncio
 async def test_project_explicit_upload_targets_named_project(
     client: httpx.AsyncClient, db_session, seed_user
 ):
