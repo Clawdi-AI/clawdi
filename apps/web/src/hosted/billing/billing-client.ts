@@ -149,10 +149,7 @@ export function useBillingClient() {
 				return unwrapDeploy(
 					await api.POST("/v2/deployments/{deployment_id}/onboard-agent", {
 						params: { path: { deployment_id: id } },
-						body: {
-							agent_type: runtime,
-							ai_provider_auth_kind: "managed",
-						},
+						body: { agent_type: runtime },
 					}),
 				);
 			},
