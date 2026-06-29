@@ -17,7 +17,8 @@ def main() -> None:
             [
                 "sh",
                 "-c",
-                "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
+                "alembic upgrade head && exec uvicorn app.main:app "
+                "--host 0.0.0.0 --port 8000 --no-access-log",
             ]
         )
     if role == CHANNELS_WORKER_ROLE:
