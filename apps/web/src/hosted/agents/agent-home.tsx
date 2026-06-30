@@ -7,6 +7,7 @@ import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
+import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import type { AgentSectionId } from "@/lib/agent-routes";
 
 /**
@@ -57,17 +58,11 @@ export function AgentHome({
 
 	if (deployment) {
 		// Scope the detail to a single runtime. Prefer the env's matched runtime;
-		// fall back to the first enabled one (e.g. when the route used a
-		// deployment id, or matched a non-UI env like codex).
-		const ci = deployment.config_info;
-		const runtime: "openclaw" | "hermes" =
-			matchedRuntime === "hermes"
-				? "hermes"
-				: matchedRuntime === "openclaw"
-					? "openclaw"
-					: ci?.enable_openclaw
-						? "openclaw"
-						: "hermes";
+		// fall back to the deployment default when the route used a deployment id.
+		const runtime =
+			matchedRuntime && isHostedRuntime(matchedRuntime)
+				? matchedRuntime
+				: defaultDeploymentRuntime(deployment);
 		return (
 			<HostedAgentDetail
 				environmentId={resolvedEnvId}

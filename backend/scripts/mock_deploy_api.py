@@ -15,8 +15,9 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
@@ -45,12 +46,40 @@ def _openclaw_env_id() -> str:
     return os.getenv("MOCK_OPENCLAW_ENV_ID") or _stable_uuid(_clerk_id(), "hosted-openclaw-env")
 
 
+def _codex_env_id() -> str:
+    return os.getenv("MOCK_CODEX_ENV_ID") or _stable_uuid(_clerk_id(), "hosted-codex-env")
+
+
 def _hermes_env_id() -> str:
     return os.getenv("MOCK_HERMES_ENV_ID") or _stable_uuid(_clerk_id(), "hosted-hermes-env")
 
 
 def _web_base_url() -> str:
     return os.getenv("MOCK_WEB_BASE_URL", "http://localhost:3001").rstrip("/")
+
+
+def _ws_base_url(request: Request) -> str:
+    base_url = str(request.base_url).rstrip("/")
+    if base_url.startswith("https://"):
+        return f"wss://{base_url[len('https://') :]}"
+    if base_url.startswith("http://"):
+        return f"ws://{base_url[len('http://') :]}"
+    return base_url
+
+
+def _runtime_env_id(agent_type: str) -> str:
+    if agent_type == "codex":
+        return _codex_env_id()
+    if agent_type == "openclaw":
+        return _openclaw_env_id()
+    if agent_type == "hermes":
+        return _hermes_env_id()
+    raise HTTPException(status_code=400, detail="Unsupported runtime")
+
+
+def _ordered_agents(values: set[str]) -> list[str]:
+    order = {"codex": 0, "openclaw": 1, "hermes": 2}
+    return sorted(values, key=lambda value: order.get(value, 99))
 
 
 def _base_config() -> dict[str, Any]:
@@ -67,6 +96,11 @@ def _base_config() -> dict[str, Any]:
         "ai_provider_id": DEV_V2_PROVIDER_ID,
         "ai_provider_auth_kind": "api_key",
         "ai_provider_bindings": {
+            "codex": {
+                "provider_id": DEV_V2_PROVIDER_ID,
+                "auth_kind": "api_key",
+                "primary_model": "openai/gpt-4o-mini",
+            },
             "openclaw": {
                 "provider_id": DEV_V2_PROVIDER_ID,
                 "auth_kind": "api_key",
@@ -85,9 +119,10 @@ def _base_config() -> dict[str, Any]:
         "public_ports": [18789, 9119],
         "enable_openclaw": True,
         "enable_hermes": True,
-        "onboarded_agents": ["openclaw", "hermes"],
-        "configured_agents": ["openclaw", "hermes"],
+        "onboarded_agents": ["codex", "openclaw", "hermes"],
+        "configured_agents": ["codex", "openclaw", "hermes"],
         "clawdi_cloud_environments": {
+            "codex": _codex_env_id(),
             "openclaw": _openclaw_env_id(),
             "hermes": _hermes_env_id(),
         },
@@ -113,11 +148,13 @@ def _deployment(
         "backend": "mock",
         "status": status,
         "endpoints": [
+            "https://codex.dev-preview.local",
             "https://openclaw.dev-preview.local",
             "https://hermes.dev-preview.local",
         ],
         "gateway_token": None,
         "ui_access_token": None,
+        "codex_ui_url": "https://codex.dev-preview.local",
         "openclaw_ui_url": "https://openclaw.dev-preview.local",
         "hermes_ui_url": "https://hermes.dev-preview.local",
         "config_info": config_info or _base_config(),
@@ -168,19 +205,19 @@ async def list_deployments() -> list[dict[str, Any]]:
 async def create_deployment(request: Request) -> dict[str, Any]:
     body = await request.json()
     deployment_id = f"hdep_dev_{uuid.uuid4().hex[:8]}"
-    enabled = []
+    enabled_optional = []
     if body.get("enable_openclaw", True):
-        enabled.append("openclaw")
+        enabled_optional.append("openclaw")
     if body.get("enable_hermes", False):
-        enabled.append("hermes")
-    if not enabled:
-        enabled = ["openclaw"]
+        enabled_optional.append("hermes")
+    agents = ["codex", *enabled_optional]
     config = _base_config()
     config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_free")
-    config["enable_openclaw"] = "openclaw" in enabled
-    config["enable_hermes"] = "hermes" in enabled
-    config["onboarded_agents"] = enabled
-    config["configured_agents"] = enabled
+    config["enable_openclaw"] = "openclaw" in enabled_optional
+    config["enable_hermes"] = "hermes" in enabled_optional
+    config["onboarded_agents"] = agents
+    config["configured_agents"] = agents
+    config["clawdi_cloud_environments"] = {runtime: _runtime_env_id(runtime) for runtime in agents}
     config["primary_model"] = body.get("primary_model") or "openai/gpt-4o-mini"
     config["ai_provider_id"] = body.get("ai_provider_id") or DEV_V2_PROVIDER_ID
     config["ai_provider_auth_kind"] = body.get("ai_provider_auth_kind") or "managed"
@@ -190,7 +227,7 @@ async def create_deployment(request: Request) -> dict[str, Any]:
             "auth_kind": config["ai_provider_auth_kind"],
             "primary_model": config["primary_model"],
         }
-        for runtime in enabled
+        for runtime in agents
     }
     created = _deployment(
         deployment_id=deployment_id,
@@ -236,15 +273,28 @@ async def set_agent_enabled(
     body = await request.json()
     enabled = bool(body.get("enabled"))
     config = deployment["config_info"]
-    if agent_type not in {"openclaw", "hermes"}:
+    if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
+    if agent_type == "codex":
+        if not enabled:
+            raise HTTPException(status_code=400, detail="Codex is always enabled")
+        onboarded = set(config.get("onboarded_agents") or [])
+        configured = set(config.get("configured_agents") or [])
+        onboarded.add("codex")
+        configured.add("codex")
+        config["onboarded_agents"] = _ordered_agents(onboarded)
+        config["configured_agents"] = _ordered_agents(configured)
+        envs = dict(config.get("clawdi_cloud_environments") or {})
+        envs["codex"] = _runtime_env_id("codex")
+        config["clawdi_cloud_environments"] = envs
+        return deployment
     config[f"enable_{agent_type}"] = enabled
     onboarded = set(config.get("onboarded_agents") or [])
     if enabled:
         onboarded.add(agent_type)
     else:
         onboarded.discard(agent_type)
-    config["onboarded_agents"] = sorted(onboarded)
+    config["onboarded_agents"] = _ordered_agents(onboarded)
     return deployment
 
 
@@ -256,6 +306,8 @@ async def set_agent_ai_provider(
 ) -> dict[str, Any]:
     deployment = await get_deployment(deployment_id)
     body = await request.json()
+    if agent_type not in {"codex", "openclaw", "hermes"}:
+        raise HTTPException(status_code=400, detail="Unsupported runtime")
     config = deployment["config_info"]
     bindings = dict(config.get("ai_provider_bindings") or {})
     bindings[agent_type] = {
@@ -275,7 +327,7 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
     body = await request.json()
     deployment = await get_deployment(deployment_id)
     agent_type = body.get("agent_type", "openclaw")
-    if agent_type not in {"openclaw", "hermes"}:
+    if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
     config = deployment["config_info"]
     bindings = dict(config.get("ai_provider_bindings") or {})
@@ -287,7 +339,7 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
         source = next(
             (
                 bindings.get(runtime)
-                for runtime in ("openclaw", "hermes")
+                for runtime in ("codex", "openclaw", "hermes")
                 if runtime != agent_type and isinstance(bindings.get(runtime), dict)
             ),
             None,
@@ -315,14 +367,99 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
         config["ai_provider_id"] = binding["provider_id"]
         config["ai_provider_auth_kind"] = binding["auth_kind"]
         config["primary_model"] = binding["primary_model"]
-    config[f"enable_{agent_type}"] = True
+    if agent_type != "codex":
+        config[f"enable_{agent_type}"] = True
     onboarded = set(config.get("onboarded_agents") or [])
     onboarded.add(agent_type)
-    config["onboarded_agents"] = sorted(onboarded)
+    config["onboarded_agents"] = _ordered_agents(onboarded)
     configured = set(config.get("configured_agents") or [])
     configured.add(agent_type)
-    config["configured_agents"] = sorted(configured)
+    config["configured_agents"] = _ordered_agents(configured)
+    envs = dict(config.get("clawdi_cloud_environments") or {})
+    envs[agent_type] = _runtime_env_id(agent_type)
+    config["clawdi_cloud_environments"] = envs
     return deployment
+
+
+@app.post("/v2/deployments/{deployment_id}/terminal")
+async def create_terminal_session(
+    deployment_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    deployment = await get_deployment(deployment_id)
+    if deployment.get("status") not in {"running", "ready"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Terminal is available only while the deployment is running.",
+        )
+    session_id = f"term_{uuid.uuid4().hex[:10]}"
+    fragment = urlencode({"token": session_id})
+    websocket_url = f"{_ws_base_url(request)}/v2/deployments/{deployment_id}/terminal/ws#{fragment}"
+    return {
+        "deployment_id": deployment_id,
+        "websocket_url": websocket_url,
+        "expires_at": _iso(_now() + timedelta(minutes=30)),
+    }
+
+
+@app.websocket("/v2/deployments/{deployment_id}/terminal/ws")
+async def mock_terminal_ws(websocket: WebSocket, deployment_id: str) -> None:
+    deployment = DEPLOYMENTS.get(deployment_id)
+    if deployment is None or deployment.get("status") not in {"running", "ready"}:
+        await websocket.close(code=1008)
+        return
+
+    protocols = websocket.headers.get("sec-websocket-protocol", "")
+    subprotocol = "tty" if "tty" in {value.strip() for value in protocols.split(",")} else None
+    await websocket.accept(subprotocol=subprotocol)
+    await websocket.send_text(
+        "0"
+        f"Clawdi mock terminal - {deployment_id}\r\n"
+        "whoami: clawdi\r\n"
+        "cwd: /home/clawdi/clawdi\r\n"
+        "$ "
+    )
+
+    buffer = ""
+    try:
+        while True:
+            message = await websocket.receive_text()
+            if not message or message[0] in {"{", "1"}:
+                continue
+            if message[0] != "0":
+                continue
+
+            data = message[1:]
+            for char in data:
+                if char == "\x03":
+                    buffer = ""
+                    await websocket.send_text("0^C\r\n$ ")
+                    continue
+                if char in {"\r", "\n"}:
+                    command = buffer.strip()
+                    buffer = ""
+                    await websocket.send_text(f"0\r\n{_mock_terminal_command(command)}$ ")
+                    continue
+                if char == "\x7f":
+                    buffer = buffer[:-1]
+                    await websocket.send_text("0\b \b")
+                    continue
+                buffer += char
+                await websocket.send_text(f"0{char}")
+    except WebSocketDisconnect:
+        return
+
+
+def _mock_terminal_command(command: str) -> str:
+    if not command:
+        return ""
+    if command == "pwd":
+        return "/home/clawdi/clawdi\r\n"
+    if command == "whoami":
+        return "clawdi\r\n"
+    if command == "clear":
+        return "\x1b[2J\x1b[H"
+    return f"mock: command received: {command}\r\n"
 
 
 @app.post("/v2/deployments/{deployment_id}/restart")

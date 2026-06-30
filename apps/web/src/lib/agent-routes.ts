@@ -4,6 +4,7 @@ export type AgentSectionId =
 	| "skills"
 	| "projects"
 	| "console"
+	| "terminal"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -22,6 +23,7 @@ export const CONNECTED_AGENT_SECTION_IDS = [
 export const HOSTED_AGENT_SECTION_IDS = [
 	"overview",
 	"console",
+	"terminal",
 	"sessions",
 	"ai",
 	"channels",
@@ -34,6 +36,7 @@ const AGENT_SECTION_SEGMENTS = {
 	skills: "skills",
 	projects: "project-access",
 	console: "console",
+	terminal: "terminal",
 	ai: "model-provider",
 	channels: "channel-links",
 	settings: "settings",
@@ -45,6 +48,7 @@ const AGENT_SECTION_LABELS = {
 	skills: "Skills",
 	projects: "Project Access",
 	console: "Runtime Console",
+	terminal: "Terminal",
 	ai: "Model Provider",
 	channels: "Channel Links",
 	settings: "Settings",

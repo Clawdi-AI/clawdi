@@ -15,6 +15,7 @@ import {
 	QrCode,
 	RefreshCw,
 	Settings,
+	TerminalSquare,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -49,12 +50,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
+	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
 	useOnboardAgent,
 	useSetAgentAiProvider,
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
+import { HostedTerminalPanel } from "@/hosted/agents/hosted-terminal-panel";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
@@ -77,6 +80,17 @@ import {
 	shortDate,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import {
+	HOSTED_RUNTIMES,
+	type HostedRuntime,
+	OPTIONAL_HOSTED_RUNTIMES,
+	runtimeBlurb,
+	runtimeCanDisable,
+	runtimeConsoleUrl,
+	runtimeDisplayName,
+	runtimeIsConfigured,
+	runtimeIsEnabled,
+} from "@/hosted/runtimes";
 import {
 	type AgentSectionId,
 	agentSectionHref,
@@ -103,15 +117,24 @@ import {
 	useUnlinkAgentChannel,
 } from "@/v2/channels/channels-hooks";
 
-type Runtime = "openclaw" | "hermes";
-type HostedAgentTab = "overview" | "console" | "sessions" | "ai" | "channels" | "settings";
-const RUNTIMES: { id: Runtime; label: string; blurb: string }[] = [
-	{ id: "openclaw", label: "OpenClaw", blurb: "General-purpose agent runtime." },
-	{ id: "hermes", label: "Hermes", blurb: "Messaging-first agent runtime." },
-];
+type Runtime = HostedRuntime;
+type HostedAgentTab =
+	| "overview"
+	| "console"
+	| "terminal"
+	| "sessions"
+	| "ai"
+	| "channels"
+	| "settings";
+const RUNTIMES = HOSTED_RUNTIMES.map((id) => ({
+	id,
+	label: runtimeDisplayName(id),
+	blurb: runtimeBlurb(id),
+})) satisfies { id: Runtime; label: string; blurb: string }[];
 const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"overview",
 	"console",
+	"terminal",
 	"sessions",
 	"ai",
 	"channels",
@@ -125,6 +148,10 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	console: {
 		description: "Open the live runtime UI.",
 		icon: MonitorPlay,
+	},
+	terminal: {
+		description: "Start a browser terminal in this deployment.",
+		icon: TerminalSquare,
 	},
 	sessions: {
 		description: "History synced by this hosted runtime.",
@@ -172,7 +199,7 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 }
 
 function hostedAgentContentWidthClass(tab: HostedAgentTab): string | null {
-	if (tab === "console") return null;
+	if (tab === "console" || tab === "terminal") return null;
 	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
 	if (tab === "ai" || tab === "channels") {
 		return CENTERED_PAGE_WIDTH_CLASS.form;
@@ -189,8 +216,6 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 	);
 }
 
-const RUNTIME_LABEL: Record<Runtime, string> = { openclaw: "OpenClaw", hermes: "Hermes" };
-
 function performancePlan(plans: Plan[] | undefined): Plan | undefined {
 	return (
 		plans?.find((p) => p.slug === "compute_performance") ?? plans?.find((p) => p.price_cents > 0)
@@ -204,10 +229,10 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 }
 
 /**
- * PER-RUNTIME agent detail. A compute (deployment) hosts 1–2 runtime agents
- * (OpenClaw / Hermes); each is a separate agent with its OWN env id, AI
- * provider binding, channel links, sessions, and console. Settings also includes
- * the deployment-wide compute controls that affect every runtime.
+ * PER-RUNTIME agent detail. A compute (deployment) hosts the always-on Codex
+ * runtime plus optional sibling runtimes; each runtime has its own env id, AI
+ * provider binding, channel links, sessions, and console. Terminal and compute
+ * controls are deployment-wide because they attach to the shared hosted compute.
  */
 export function HostedAgentDetail({
 	environmentId,
@@ -234,7 +259,7 @@ export function HostedAgentDetail({
 		enabled: isCloudEnvId(environmentId),
 	});
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
-	const runtimeLabel = RUNTIME_LABEL[runtime];
+	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
 	useSetAgentBreadcrumbTitle({
@@ -244,7 +269,7 @@ export function HostedAgentDetail({
 	});
 
 	const isPerformance = ci?.compute_plan_slug === "compute_performance";
-	const consoleUrl = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
+	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchParams = useSearchParams();
 	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(environmentId, sessionId);
 
@@ -261,14 +286,14 @@ export function HostedAgentDetail({
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const isConsoleTab = activeTab === "console";
+	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	const contentWidthClass = hostedAgentContentWidthClass(activeTab);
 
 	return (
 		<div
 			data-hosted="true"
 			className={
-				isConsoleTab
+				isLiveToolTab
 					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
 					: "flex flex-col gap-6 px-4 lg:px-6"
 			}
@@ -276,11 +301,11 @@ export function HostedAgentDetail({
 			<h1 className="sr-only">{agentTitle}</h1>
 			<section
 				className={cn(
-					isConsoleTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4",
+					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4",
 					contentWidthClass,
 				)}
 			>
-				{isConsoleTab ? null : (
+				{isLiveToolTab ? null : (
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>
 							<div className="flex items-center gap-2">
@@ -314,7 +339,8 @@ export function HostedAgentDetail({
 						sessionHref={(session) => scopedSessionHref(session.id)}
 					/>
 				) : null}
-				{isConsoleTab ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
+				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
+				{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 				{activeTab === "sessions" ? (
 					sessions.error ? (
 						<ChannelError
@@ -416,15 +442,15 @@ function OverviewTab({
 // ── Console ──────────────────────────────────────────────────────────────────
 
 /**
- * Live agent console embedded inline. The deployment's `openclaw_ui_url` /
- * `hermes_ui_url` point at owner-only runtime bridge URLs. When the runtime
+ * Live agent console embedded inline. The deployment's per-runtime UI URLs
+ * point at owner-only runtime bridge URLs. When the runtime
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
  * the full-screen link is the alternate path.
  */
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
-	const label = RUNTIME_LABEL[runtime];
-	const url = runtime === "openclaw" ? deployment.openclaw_ui_url : deployment.hermes_ui_url;
+	const label = runtimeDisplayName(runtime);
+	const url = runtimeConsoleUrl(deployment, runtime);
 
 	// Not running yet — the runtime UI and bridge only exist once the agent boots.
 	if (!isRunning) {
@@ -480,7 +506,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
 			    full-screen link instead. */}
 			<iframe
-				key={runtime}
+				key={`${runtime}:${url}`}
 				src={url}
 				title={`${label} console`}
 				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
@@ -497,6 +523,101 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 					</a>
 				</Button>
 			</div>
+		</div>
+	);
+}
+
+// ── Terminal ────────────────────────────────────────────────────────────────
+
+function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
+	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const label = deploymentDisplayName(deployment.name);
+	const terminal = useCreateTerminalSession();
+	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
+
+	function startTerminal() {
+		terminal.mutate(
+			{ id: deployment.id },
+			{
+				onSuccess: (session) => {
+					if (!session.websocket_url) {
+						toast.error("Terminal unavailable", {
+							description: "The deployment did not return a terminal websocket URL.",
+						});
+						return;
+					}
+					setWebsocketUrl(session.websocket_url);
+				},
+			},
+		);
+	}
+
+	if (!isRunning) {
+		return (
+			<EmptyState
+				bordered
+				icon={TerminalSquare}
+				title="Terminal available once running"
+				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${statusLabel(
+					deployment.status,
+				).toLowerCase()}.`}
+			/>
+		);
+	}
+
+	if (!websocketUrl) {
+		return (
+			<div className="flex min-h-0 flex-1 items-center justify-center border-y bg-background px-4 py-10">
+				<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
+					<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/40">
+						<TerminalSquare className="size-5 text-muted-foreground" />
+					</div>
+					<div>
+						<h2 className="text-base font-semibold">Open deployment terminal</h2>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Start a real shell in the hosted deployment as the default runtime user.
+						</p>
+					</div>
+					<Button onClick={startTerminal} disabled={terminal.isPending}>
+						{terminal.isPending ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<TerminalSquare className="size-3.5" />
+						)}
+						{terminal.isPending ? "Opening…" : "Open terminal"}
+					</Button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y bg-background md:rounded-b-xl">
+			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
+				<div className="flex min-w-0 items-center gap-2 text-sm">
+					<TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+					<span className="shrink-0 font-medium">{label}</span>
+					<span className="min-w-0 truncate text-muted-foreground">Deployment terminal</span>
+				</div>
+				<div className="flex shrink-0 items-center gap-2">
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="hidden sm:inline-flex"
+						disabled={terminal.isPending}
+						onClick={startTerminal}
+					>
+						{terminal.isPending ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+						New session
+					</Button>
+				</div>
+			</div>
+			<HostedTerminalPanel key={websocketUrl} websocketUrl={websocketUrl} />
 		</div>
 	);
 }
@@ -556,6 +677,17 @@ function AiProviderTab({
 		setSyncedIdentity(bindingIdentity);
 		setSelected(initial);
 		setPrimaryModel(currentModel);
+	}
+
+	if (runtime === "codex") {
+		return (
+			<EmptyState
+				bordered
+				icon={Info}
+				title="Codex AI access is set at deploy time"
+				description="This hosted runtime is always available. Runtime-specific AI provider changes are available for OpenClaw and Hermes."
+			/>
+		);
 	}
 
 	const dirty = selected !== initial || primaryModel !== currentModel;
@@ -1000,10 +1132,9 @@ function ComputeSettingsSections({
 	const currentSubscription = deployment.compute_subscription;
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
-	const configured = new Set(ci?.configured_agents ?? []);
 	const envs = ci?.clawdi_cloud_environments ?? {};
-	const enabledCount = RUNTIMES.filter((r) =>
-		r.id === "openclaw" ? ci?.enable_openclaw : ci?.enable_hermes,
+	const optionalEnabledCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
+		runtimeIsEnabled(ci, runtimeId),
 	).length;
 	const runtimePending = setEnabled.isPending || onboard.isPending;
 	const perfPlan = useMemo(() => performancePlan(plans.data), [plans.data]);
@@ -1124,14 +1255,18 @@ function ComputeSettingsSections({
 				description="Choose which runtimes are active on this hosted compute."
 			>
 				<div className="flex flex-col gap-4">
-					<LiveNote>Toggling a runtime adds/removes its program live — no restart.</LiveNote>
+					<LiveNote>
+						Codex stays on by default. Optional runtime changes apply live, no restart.
+					</LiveNote>
 					<div className="flex flex-col">
 						{RUNTIMES.map((r, index) => {
-							const enabled = r.id === "openclaw" ? !!ci?.enable_openclaw : !!ci?.enable_hermes;
-							const isConfigured = configured.has(r.id);
+							const enabled = runtimeIsEnabled(ci, r.id);
+							const isConfigured = runtimeIsConfigured(ci, r.id);
 							const isCurrent = r.id === runtime;
 							const siblingEnv = envs[r.id];
-							const blockedByPlan = !isPerformance && !enabled && enabledCount >= 1;
+							const canDisable = runtimeCanDisable(r.id);
+							const blockedByPlan =
+								canDisable && !isPerformance && !enabled && optionalEnabledCount >= 1;
 							return (
 								<Fragment key={r.id}>
 									{index > 0 ? <Separator /> : null}
@@ -1141,24 +1276,23 @@ function ComputeSettingsSections({
 											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
 												{r.label}
 												{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
+												{canDisable ? null : <Badge variant="outline">Always on</Badge>}
 											</div>
 											<div className="text-xs text-muted-foreground">{r.blurb}</div>
 										</div>
 										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
 											{!isCurrent && enabled && siblingEnv ? (
 												<Button asChild variant="ghost" size="sm">
-													<Link href={agentSectionHref(siblingEnv)}>
+													<Link href={agentSectionHref(siblingEnv, "overview", "source=on-clawdi")}>
 														Open
 														<ArrowUpRight className="size-3.5" />
 													</Link>
 												</Button>
 											) : null}
-											{isConfigured ? (
+											{!canDisable ? null : isConfigured ? (
 												<Switch
 													checked={enabled}
-													disabled={
-														runtimePending || (enabled && enabledCount <= 1) || blockedByPlan
-													}
+													disabled={runtimePending || blockedByPlan}
 													onCheckedChange={(next) =>
 														setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
 													}
@@ -1191,7 +1325,8 @@ function ComputeSettingsSections({
 						})}
 					</div>
 					<p className="text-xs text-muted-foreground">
-						At least one runtime stays enabled. Running both at once needs Performance compute.
+						Codex is always available. Free can add one optional runtime; Performance can add both
+						OpenClaw and Hermes.
 					</p>
 				</div>
 			</SettingsSection>

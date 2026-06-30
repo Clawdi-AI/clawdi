@@ -37,6 +37,7 @@ import {
 	Search,
 	Settings,
 	Sparkles,
+	TerminalSquare,
 	Zap,
 } from "lucide-react";
 import Link from "next/link";
@@ -189,6 +190,11 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Open the hosted runtime console",
 	},
 	{
+		id: "terminal",
+		icon: TerminalSquare,
+		tooltip: "Open a hosted shell",
+	},
+	{
 		id: "sessions",
 		icon: MessageSquare,
 		tooltip: "Sessions from this runtime",
@@ -216,6 +222,7 @@ const AGENT_SECTION_TINTS = {
 	skills: RESOURCE_TINT_CLASSES.skills,
 	projects: RESOURCE_TINT_CLASSES.projects,
 	console: "bg-identity-6-bg text-identity-6-fg",
+	terminal: "bg-identity-7-bg text-identity-7-fg",
 	ai: "bg-identity-2-bg text-identity-2-fg",
 	channels: "bg-identity-5-bg text-identity-5-fg",
 	settings: "bg-identity-4-bg text-identity-4-fg",
@@ -407,10 +414,10 @@ function AgentSectionList({
 		? activeSection
 		: "overview";
 	const primarySections = sections.filter(
-		(section) => section.id === "overview" || section.id === "console",
+		(section) => section.id === "overview" || section.id === "console" || section.id === "terminal",
 	);
 	const resourceSections = sections.filter(
-		(section) => section.id !== "overview" && section.id !== "console",
+		(section) => section.id !== "overview" && section.id !== "console" && section.id !== "terminal",
 	);
 
 	const primaryItems = primarySections.map((section): SidebarNavItem => {

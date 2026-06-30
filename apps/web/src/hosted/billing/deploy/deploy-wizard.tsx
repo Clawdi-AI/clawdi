@@ -194,7 +194,7 @@ export function DeployWizard() {
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan : !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const canSubmit = enginesSelected.length >= 1 && planReady && !submitting;
+	const canSubmit = planReady && !submitting;
 
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
@@ -229,10 +229,9 @@ export function DeployWizard() {
 	function toggleEngine(engine: Engine) {
 		setEngines((prev) => {
 			if (dualAllowed) {
-				const next = { ...prev, [engine]: !prev[engine] };
-				if (!next.openclaw && !next.hermes) return prev;
-				return next;
+				return { ...prev, [engine]: !prev[engine] };
 			}
+			if (prev[engine]) return { ...prev, [engine]: false };
 			return { openclaw: engine === "openclaw", hermes: engine === "hermes" };
 		});
 	}
@@ -334,10 +333,12 @@ export function DeployWizard() {
 			: (providerList.find((p) => p.provider_id === aiChoice)?.label ?? "Your provider");
 	const runtimeSummary =
 		enginesSelected.length === 2
-			? "OpenClaw + Hermes"
-			: enginesSelected[0] === "hermes"
-				? "Hermes"
-				: "OpenClaw";
+			? "Codex + OpenClaw + Hermes"
+			: enginesSelected[0] === "openclaw"
+				? "Codex + OpenClaw"
+				: enginesSelected[0] === "hermes"
+					? "Codex + Hermes"
+					: "Codex";
 	const personalityLabel = PERSONALITY_PRESETS.find((p) => p.id === personality)?.label;
 	const summaryLine = [
 		agentName.trim() || null,
@@ -375,20 +376,27 @@ export function DeployWizard() {
 		<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
 			<PageHeader
 				title="Deploy an agent"
-				description="Pick a runtime and AI provider. Free uses one active slot per user; Performance uses one paid subscription per deployment."
+				description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
 			/>
 
 			{/* 1. Runtime */}
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-base">1. Choose a runtime</CardTitle>
+					<CardTitle className="text-base">1. Hosted runtimes</CardTitle>
 					<CardDescription>
 						{dualAllowed
-							? "Performance can run both runtimes at once."
-							: "Free runs a single runtime. Choose Performance to run both."}
+							? "Codex stays on. Performance can also run OpenClaw and Hermes together."
+							: "Codex stays on. Free can add one optional runtime."}
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="grid gap-2 sm:grid-cols-2">
+				<CardContent className="grid gap-2 lg:grid-cols-3">
+					<Tile
+						selected
+						leading={<EntityIcon kind="framework" id="codex" label="Codex" />}
+						title="Codex"
+						subtitle="Default hosted coding runtime."
+						badge={<Badge variant="outline">Always on</Badge>}
+					/>
 					<Tile
 						selected={engines.openclaw}
 						onClick={() => toggleEngine("openclaw")}
@@ -500,8 +508,8 @@ export function DeployWizard() {
 				<CardHeader>
 					<CardTitle className="text-base">4. Compute</CardTitle>
 					<CardDescription>
-						Free gives one active hosted agent. Performance is billed per hosted agent and can run
-						dual engines.
+						Free gives one active hosted deployment. Performance is billed per deployment and can
+						run both optional runtimes.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-3">
@@ -523,8 +531,8 @@ export function DeployWizard() {
 										: deployments.error
 											? "Free slot check unavailable"
 											: freePlan
-												? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active agent`
-												: "$0 · single engine"
+												? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active deployment`
+												: "$0 · Codex included"
 							}
 							badge={<Badge variant="secondary">$0</Badge>}
 							disabled={freeSlotUnavailable}
