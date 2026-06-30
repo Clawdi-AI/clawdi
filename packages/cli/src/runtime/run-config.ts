@@ -7,6 +7,12 @@ import { buildMitmBrokerEnv } from "./mitm-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 
+export const runtimeNameSchema = z
+	.string()
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
+	.refine((name) => name !== "clawdi", "Runtime name is reserved.");
+export type RuntimeName = z.infer<typeof runtimeNameSchema>;
+
 const supportedRuntimeSchema = z.enum(["hermes", "openclaw"]);
 export type SupportedRuntimeName = z.infer<typeof supportedRuntimeSchema>;
 
@@ -27,7 +33,7 @@ export type RuntimeRunSettings = z.infer<typeof runtimeRunSettingsSchema>;
 const runtimeRunConfigSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeRunConfig.v1"),
-		runtime: supportedRuntimeSchema,
+		runtime: runtimeNameSchema,
 		enabled: z.boolean(),
 		generatedAt: z.string().min(1),
 		generation: z.number().int().nonnegative(),
@@ -63,10 +69,10 @@ const DEFAULT_RUNTIME_ARGS: Record<SupportedRuntimeName, string[]> = {
 
 export type RuntimeRunConfigRead =
 	| { status: "not-runtime"; runtime: null }
-	| { status: "missing"; runtime: SupportedRuntimeName; path: string }
-	| { status: "invalid"; runtime: SupportedRuntimeName; path: string; error: string }
-	| { status: "disabled"; runtime: SupportedRuntimeName; path: string; config: RuntimeRunConfig }
-	| { status: "ok"; runtime: SupportedRuntimeName; path: string; config: RuntimeRunConfig };
+	| { status: "missing"; runtime: RuntimeName; path: string }
+	| { status: "invalid"; runtime: RuntimeName; path: string; error: string }
+	| { status: "disabled"; runtime: RuntimeName; path: string; config: RuntimeRunConfig }
+	| { status: "ok"; runtime: RuntimeName; path: string; config: RuntimeRunConfig };
 
 export interface RuntimeRunInvocation {
 	runtime: string;
@@ -77,21 +83,22 @@ export interface RuntimeRunInvocation {
 	configPath: string;
 }
 
-export function runtimeNameForCommand(command: string): SupportedRuntimeName | null {
+export function isSupportedRuntimeName(name: string): name is SupportedRuntimeName {
+	return supportedRuntimeSchema.safeParse(name).success;
+}
+
+export function runtimeNameForCommand(command: string): RuntimeName | null {
 	const name = basename(command);
-	const parsed = supportedRuntimeSchema.safeParse(name);
+	const parsed = runtimeNameSchema.safeParse(name);
 	return parsed.success ? parsed.data : null;
 }
 
-export function runtimeRunConfigPath(
-	runtime: SupportedRuntimeName,
-	paths = getRuntimePaths(),
-): string {
+export function runtimeRunConfigPath(runtime: RuntimeName, paths = getRuntimePaths()): string {
 	return join(paths.runConfigRoot, `${runtime}.json`);
 }
 
 export function buildRuntimeRunConfig(input: {
-	runtime: SupportedRuntimeName;
+	runtime: RuntimeName;
 	enabled: boolean;
 	generatedAt: string;
 	generation: number;
@@ -116,7 +123,7 @@ export function buildRuntimeRunConfig(input: {
 		generation: input.generation,
 		instanceId: input.instanceId,
 		command: input.settings?.command ?? input.commandPath ?? input.runtime,
-		defaultArgs: input.settings?.args ?? DEFAULT_RUNTIME_ARGS[input.runtime],
+		defaultArgs: input.settings?.args ?? defaultRuntimeArgs(input.runtime),
 		env: input.settings?.env ?? {},
 		secretEnv: input.secretEnv ?? {},
 		secretFilePath: input.secretFilePath ?? null,
@@ -145,7 +152,11 @@ export function readRuntimeRunConfigForCommand(
 	if (!runtime) return { status: "not-runtime", runtime: null };
 
 	const path = runtimeRunConfigPath(runtime, paths);
-	if (!existsSync(path)) return { status: "missing", runtime, path };
+	if (!existsSync(path)) {
+		return isSupportedRuntimeName(runtime)
+			? { status: "missing", runtime, path }
+			: { status: "not-runtime", runtime: null };
+	}
 
 	try {
 		const parsed = runtimeRunConfigSchema.parse(JSON.parse(readFileSync(path, "utf8")));
@@ -165,9 +176,10 @@ export function buildRuntimeRunInvocation(
 	read: Extract<RuntimeRunConfigRead, { status: "ok" }>,
 	args: string[],
 	baseEnv: NodeJS.ProcessEnv,
+	paths = getRuntimePaths(),
 ): RuntimeRunInvocation {
 	const pathPrefix = read.config.prependPath.join(":");
-	const currentPath = baseEnv.PATH ?? "";
+	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", runtimeCommandShimDir(paths));
 	const env = {
 		...baseEnv,
 		...read.config.env,
@@ -193,6 +205,22 @@ export function buildRuntimeRunInvocation(
 		env: brokerEnv,
 		configPath: read.path,
 	};
+}
+
+export function runtimeCommandShimDir(paths = getRuntimePaths()): string {
+	return join(paths.serviceStateRoot, "bin");
+}
+
+export function withoutPathEntry(path: string, entry: string): string {
+	return path
+		.split(":")
+		.filter((part) => part && part !== entry)
+		.join(":");
+}
+
+function defaultRuntimeArgs(runtime: RuntimeName): string[] {
+	const parsed = supportedRuntimeSchema.safeParse(runtime);
+	return parsed.success ? DEFAULT_RUNTIME_ARGS[parsed.data] : [];
 }
 
 function runtimeSecretEnv(

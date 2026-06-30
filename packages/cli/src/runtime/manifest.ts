@@ -8,10 +8,12 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,6 +26,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderType } from "@clawdi/shared";
+import { z } from "zod";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	mergeHermesConfig,
@@ -51,6 +54,10 @@ import {
 import type { RuntimePaths } from "./paths";
 import {
 	buildRuntimeRunConfig,
+	isSupportedRuntimeName,
+	type RuntimeName,
+	runtimeCommandShimDir,
+	runtimeNameSchema,
 	runtimeRunConfigPath,
 	type SupportedRuntimeName,
 	writeRuntimeRunConfig,
@@ -88,7 +95,7 @@ export interface RuntimeConvergenceResult {
 interface RuntimeInstallObservation {
 	runtime: string;
 	enabled: boolean;
-	status: "disabled" | "present" | "installed" | "install_failed";
+	status: "disabled" | "present" | "installed" | "configured" | "install_failed";
 	executionUser: string | null;
 	commandPath: string | null;
 	appRoot: string | null;
@@ -325,11 +332,19 @@ const SUPPORTED_RUNTIME_NAMES = [
 	"openclaw",
 ] as const satisfies readonly SupportedRuntimeName[];
 
-type RuntimeCommandShimName = SupportedRuntimeName | "codex";
+const runtimeCommandShimIndexSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeCommandShims.v1"),
+		commands: z.array(runtimeNameSchema).default([]),
+	})
+	.strict();
 
-function isSupportedRuntimeName(name: string): name is SupportedRuntimeName {
-	return (SUPPORTED_RUNTIME_NAMES as readonly string[]).includes(name);
-}
+const liveSyncEnvironmentIndexSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.liveSyncEnvironments.v1"),
+		agentTypes: z.array(runtimeNameSchema).default([]),
+	})
+	.strict();
 
 function executableExists(path: string): boolean {
 	try {
@@ -596,6 +611,23 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 		} satisfies RuntimeInstallObservation;
 	}
 	if (!runtime.install) {
+		if (runtime.run?.command?.trim()) {
+			return {
+				runtime: name,
+				enabled: true,
+				status: "configured",
+				executionUser: null,
+				commandPath: null,
+				appRoot: null,
+				install: null,
+				installerUrl: null,
+				executedInstallerUrl: null,
+				exitCode: null,
+				stdoutTail: null,
+				stderrTail: null,
+				error: null,
+			} satisfies RuntimeInstallObservation;
+		}
 		return {
 			runtime: name,
 			enabled: true,
@@ -1052,10 +1084,14 @@ function clearMitmProfileBundle(paths: RuntimePaths): null {
 }
 
 function removeStaleRuntimeRunConfigs(
-	writtenRuntimes: Set<SupportedRuntimeName>,
+	writtenRuntimes: Set<RuntimeName>,
 	paths: RuntimePaths,
 ): void {
-	for (const runtime of SUPPORTED_RUNTIME_NAMES) {
+	if (!existsSync(paths.runConfigRoot)) return;
+	for (const entry of readdirSync(paths.runConfigRoot)) {
+		if (!entry.endsWith(".json")) continue;
+		const runtime = entry.slice(0, -".json".length);
+		if (!runtimeNameSchema.safeParse(runtime).success) continue;
 		if (!writtenRuntimes.has(runtime)) {
 			rmSync(runtimeRunConfigPath(runtime, paths), { force: true });
 		}
@@ -1085,7 +1121,11 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	makeRuntimeUserOwned(envDir);
 	const agents = desiredLiveSyncAgents(manifest);
 	const desiredTypes = new Set(agents.map((agent) => agent.agentType));
-	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
+	const staleCandidates = new Set<RuntimeName>([
+		...readLiveSyncEnvironmentIndex(paths),
+		...MANAGED_LIVE_SYNC_AGENTS,
+	] as RuntimeName[]);
+	for (const agentType of staleCandidates) {
 		if (!desiredTypes.has(agentType)) {
 			rmSync(join(envDir, `${agentType}.json`), { force: true });
 		}
@@ -1111,7 +1151,38 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 		makeRuntimeUserOwned(path);
 		written.push(path);
 	}
+	writeLiveSyncEnvironmentIndex(desiredTypes, paths);
 	return written;
+}
+
+function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
+	return join(paths.serviceStateRoot, "config", "runtime-live-sync-agents.json");
+}
+
+function readLiveSyncEnvironmentIndex(paths: RuntimePaths): RuntimeName[] {
+	const path = liveSyncEnvironmentIndexPath(paths);
+	if (!existsSync(path)) return [];
+	try {
+		const parsed = liveSyncEnvironmentIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
+		return parsed.agentTypes;
+	} catch {
+		return [];
+	}
+}
+
+function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: RuntimePaths): void {
+	writePrivateFileAtomic(
+		liveSyncEnvironmentIndexPath(paths),
+		`${JSON.stringify(
+			{
+				schemaVersion: "clawdi.liveSyncEnvironments.v1",
+				agentTypes: [...agentTypes].sort(),
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o644, dirMode: 0o755 },
+	);
 }
 
 function writeDaemonAuthToken(paths: RuntimePaths): string | null {
@@ -1351,6 +1422,9 @@ function writeSupervisorConfig(
 		CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
 	});
 	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
+	const supervisedEnabled = enabledRuntimes.filter((runtime) =>
+		shouldSuperviseRuntime(runtime, manifest),
+	);
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const shouldRunUiBridge = supportedEnabled.length > 0;
@@ -1364,7 +1438,7 @@ function writeSupervisorConfig(
 				profiles: manifest.mitmProfiles,
 			}),
 		) ||
-		(supportedEnabled.length > 0 && Object.keys(providerSecretEnv).length > 0);
+		(supervisedEnabled.length > 0 && Object.keys(providerSecretEnv).length > 0);
 	const lines = [
 		"; Generated by clawdi runtime init. Do not edit inside hosted runtime.",
 		`; Desired-state generation: ${manifest.generation}`,
@@ -1388,7 +1462,7 @@ function writeSupervisorConfig(
 		"",
 	];
 
-	if (supportedEnabled.length === 0 && !shouldRunDaemon) {
+	if (supervisedEnabled.length === 0 && !shouldRunDaemon) {
 		lines.push("; No enabled agent runtimes in the current manifest.", "");
 	}
 
@@ -1462,7 +1536,7 @@ function writeSupervisorConfig(
 		);
 	}
 
-	for (const runtime of supportedEnabled) {
+	for (const runtime of supervisedEnabled) {
 		const runtimeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
@@ -1492,26 +1566,54 @@ function writeSupervisorConfig(
 	return paths.supervisorConfig;
 }
 
-function writeRuntimeCommandShims(commands: RuntimeCommandShimName[], paths: RuntimePaths): void {
-	const active = new Set(commands);
-	for (const command of ["codex", ...SUPPORTED_RUNTIME_NAMES] satisfies RuntimeCommandShimName[]) {
-		const shimPath = join(paths.serviceStateRoot, "bin", command);
-		if (!active.has(command)) {
-			rmSync(shimPath, { force: true });
-			continue;
-		}
-		writePrivateFileAtomic(shimPath, runtimeCommandShimScript(command, paths), {
-			mode: 0o755,
-			dirMode: 0o755,
-		});
-		makeRuntimeUserOwned(shimPath);
-	}
+function shouldSuperviseRuntime(runtime: string, manifest: RuntimeManifest): boolean {
+	const desired = manifest.runtimes[runtime];
+	if (!desired?.enabled) return false;
+	return isSupportedRuntimeName(runtime) || Boolean(desired.run?.command?.trim());
 }
 
-function runtimeCommandShimScript(command: RuntimeCommandShimName, paths: RuntimePaths): string {
+function writeRuntimeCommandShims(commands: Iterable<RuntimeName>, paths: RuntimePaths): void {
+	const binDir = runtimeCommandShimDir(paths);
+	const dispatcherPath = join(binDir, ".clawdi-runtime-command-shim");
+	const active = new Set(
+		[...commands]
+			.filter((command) => command !== "clawdi")
+			.filter((command) => runtimeNameSchema.safeParse(command).success)
+			.sort(),
+	);
+	const previous = readRuntimeCommandShimIndex(paths);
+	const staleCandidates = new Set<RuntimeName>([
+		...previous,
+		"codex",
+		...SUPPORTED_RUNTIME_NAMES,
+	] as RuntimeName[]);
+	for (const command of staleCandidates) {
+		if (!active.has(command)) rmSync(join(binDir, command), { force: true });
+	}
+	if (active.size === 0) {
+		rmSync(dispatcherPath, { force: true });
+		writeRuntimeCommandShimIndex(active, paths);
+		return;
+	}
+	writePrivateFileAtomic(dispatcherPath, runtimeCommandShimScript(paths), {
+		mode: 0o755,
+		dirMode: 0o755,
+	});
+	makeRuntimeUserOwned(dispatcherPath);
+	for (const command of active) {
+		const shimPath = join(binDir, command);
+		rmSync(shimPath, { force: true });
+		symlinkSync(".clawdi-runtime-command-shim", shimPath);
+		makeRuntimeUserOwned(shimPath);
+	}
+	writeRuntimeCommandShimIndex(active, paths);
+}
+
+function runtimeCommandShimScript(paths: RuntimePaths): string {
 	return [
 		"#!/usr/bin/env sh",
 		"set -eu",
+		"command_name=$" + "{0##*/}",
 		'shim_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
 		"old_ifs=$" + "{IFS-}",
 		"IFS=:",
@@ -1522,9 +1624,39 @@ function runtimeCommandShimScript(command: RuntimeCommandShimName, paths: Runtim
 		"done",
 		"IFS=$old_ifs",
 		"export PATH=$clean_path",
-		`exec ${shellQuote(paths.cliManagedBin)} run -- ${command} "$@"`,
+		`exec ${shellQuote(paths.cliManagedBin)} run -- "$command_name" "$@"`,
 		"",
 	].join("\n");
+}
+
+function runtimeCommandShimIndexPath(paths: RuntimePaths): string {
+	return join(paths.serviceStateRoot, "config", "runtime-command-shims.json");
+}
+
+function readRuntimeCommandShimIndex(paths: RuntimePaths): RuntimeName[] {
+	const path = runtimeCommandShimIndexPath(paths);
+	if (!existsSync(path)) return [];
+	try {
+		const parsed = runtimeCommandShimIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
+		return parsed.commands;
+	} catch {
+		return [];
+	}
+}
+
+function writeRuntimeCommandShimIndex(commands: Set<RuntimeName>, paths: RuntimePaths): void {
+	writePrivateFileAtomic(
+		runtimeCommandShimIndexPath(paths),
+		`${JSON.stringify(
+			{
+				schemaVersion: "clawdi.runtimeCommandShims.v1",
+				commands: [...commands].sort(),
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o644, dirMode: 0o755 },
+	);
 }
 
 function hostedUiAccessToken(): string {
@@ -1589,7 +1721,7 @@ export function convergeRuntimeManifest(
 	const installInventory: string[] = [];
 	const projections: string[] = [];
 	const runConfigs: string[] = [];
-	const commandShims: RuntimeCommandShimName[] = ["codex", ...SUPPORTED_RUNTIME_NAMES];
+	const commandShims = new Set<RuntimeName>();
 	const installErrors: string[] = [];
 
 	mkdirSync(workspaceRoot, { recursive: true });
@@ -1671,7 +1803,11 @@ export function convergeRuntimeManifest(
 		daemonAuthTokenFile,
 		load.secretValues,
 	);
-	const writtenRunConfigRuntimes = new Set<SupportedRuntimeName>();
+	const writtenRunConfigRuntimes = new Set<RuntimeName>();
+	for (const agent of desiredLiveSyncAgents(manifest)) {
+		const parsed = runtimeNameSchema.safeParse(agent.agentType);
+		if (parsed.success) commandShims.add(parsed.data);
+	}
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
@@ -1735,27 +1871,27 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		if (isSupportedRuntimeName(name)) {
-			const runConfigPath = writeRuntimeRunConfig(
-				buildRuntimeRunConfig({
-					runtime: name,
-					enabled: runtime.enabled,
-					generatedAt,
-					generation: manifest.generation,
-					instanceId: manifest.instanceId,
-					commandPath: observation.commandPath,
-					appRoot: observation.appRoot,
-					workspaceRoot,
-					mitmProfileBundlePath,
-					settings: runtime.run,
-					secretFilePath: mitmSecretFile,
-					secretEnv: hostedProviderSecretEnv(manifest, name),
-				}),
-				paths,
-			);
-			runConfigs.push(runConfigPath);
-			writtenRunConfigRuntimes.add(name);
-		}
+		const runtimeName = runtimeNameSchema.parse(name);
+		const runConfigPath = writeRuntimeRunConfig(
+			buildRuntimeRunConfig({
+				runtime: runtimeName,
+				enabled: runtime.enabled,
+				generatedAt,
+				generation: manifest.generation,
+				instanceId: manifest.instanceId,
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+				workspaceRoot,
+				mitmProfileBundlePath,
+				settings: runtime.run,
+				secretFilePath: mitmSecretFile,
+				secretEnv: hostedProviderSecretEnv(manifest, name),
+			}),
+			paths,
+		);
+		runConfigs.push(runConfigPath);
+		writtenRunConfigRuntimes.add(runtimeName);
+		commandShims.add(runtimeName);
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
 		if (runtime.enabled) {

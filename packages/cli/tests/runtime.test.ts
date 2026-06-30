@@ -3858,6 +3858,71 @@ exit 64
 		}
 	});
 
+	it("converges future runtimes from explicit run commands without image shims", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "future-runtime.json");
+		const futureBin = join(home, "tools", "future-agent");
+		mkdirSync(dirname(futureBin), { recursive: true });
+		writeFileSync(futureBin, "#!/bin/sh\nexit 0\n");
+		chmodSync(futureBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_future_runtime",
+				environmentId: "env_future_runtime",
+				instanceId: "iid_future_runtime",
+				generation: 1,
+				issuedAt: "2026-06-29T00:00:00Z",
+				workspaceRoot: join(home, "workspace"),
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					"future-agent": {
+						enabled: true,
+						run: {
+							command: futureBin,
+							args: ["serve", "--host", "127.0.0.1"],
+							env: { FUTURE_AGENT_MODE: "hosted" },
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const runConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "future-agent.json"), "utf-8"),
+		);
+		expect(runConfig.command).toBe(futureBin);
+		expect(runConfig.commandPath).toBeNull();
+		expect(runConfig.defaultArgs).toEqual(["serve", "--host", "127.0.0.1"]);
+		expect(runConfig.env).toEqual({ FUTURE_AGENT_MODE: "hosted" });
+		expect(readlinkSync(join(state, "bin", "future-agent"))).toBe(".clawdi-runtime-command-shim");
+		const dispatcher = readFileSync(join(state, "bin", ".clawdi-runtime-command-shim"), "utf-8");
+		expect(dispatcher).toContain("command_name=$" + "{0##*/}");
+		expect(dispatcher).toContain('run -- "$command_name" "$@"');
+		const shimIndex = JSON.parse(
+			readFileSync(join(state, "config", "runtime-command-shims.json"), "utf-8"),
+		);
+		expect(shimIndex.commands).toEqual(["future-agent"]);
+		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
+		expect(supervisorConfig).toContain("[program:clawdi-future-agent]");
+		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- future-agent");
+		expect(supervisorConfig).not.toContain("[program:clawdi-ui-bridge]");
+	});
+
 	it("rejects legacy hosted controlPlane apiUrl", async () => {
 		const home = join(root, "home", "clawdi");
 		const manifestPath = join(root, "hosted-legacy-api-url.json");

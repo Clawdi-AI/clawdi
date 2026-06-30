@@ -765,6 +765,27 @@ describe("run command project folder selection", () => {
 		);
 	});
 
+	it("runs generic hosted commands without login when no MITM profile bundle exists", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const { calls, spawnImpl } = recordSpawn();
+		const broker = recordBroker();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		process.env.PATH = `${join(serviceStateRoot, "bin")}:/usr/local/bin:/usr/bin`;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		await run(["node", "--version"], {}, spawnImpl, broker.brokerFactory);
+
+		expect(broker.calls).toHaveLength(0);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].command).toBe("node");
+		expect(calls[0].args).toEqual(["--version"]);
+		expect(calls[0].env.PATH).toBe("/usr/local/bin:/usr/bin");
+	});
+
 	it("does not inject cloud-managed AI provider keys into hosted runtime commands", async () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");

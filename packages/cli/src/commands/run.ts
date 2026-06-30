@@ -43,6 +43,8 @@ import {
 	type RuntimeRunConfigRead,
 	type RuntimeRunInvocation,
 	readRuntimeRunConfigForCommand,
+	runtimeCommandShimDir,
+	withoutPathEntry,
 } from "../runtime/run-config";
 
 interface RunOpts {
@@ -90,8 +92,9 @@ export async function run(
 	const baseProcessEnv = { ...process.env };
 	const hostedGenericRun = hostedGenericRunInvocation(args, baseProcessEnv);
 	if (hostedRuntimeRun.status === "ok" && !requiresCloudResolution(opts)) {
+		const paths = getRuntimePaths({ mode: "hosted" });
 		await spawnRuntimeInvocation(
-			buildRuntimeRunInvocation(hostedRuntimeRun, args, baseProcessEnv),
+			buildRuntimeRunInvocation(hostedRuntimeRun, args, baseProcessEnv, paths),
 			spawnImpl,
 			brokerFactory,
 		);
@@ -191,8 +194,9 @@ export async function run(
 		detectRuntimeMode() === "hosted" ? {} : await resolveManagedAiProviderEnv(spawnEnv);
 	const childEnv = { ...spawnEnv, ...managedAiProviderEnv };
 	if (hostedRuntimeRun.status === "ok") {
+		const paths = getRuntimePaths({ mode: "hosted" });
 		await spawnRuntimeInvocation(
-			buildRuntimeRunInvocation(hostedRuntimeRun, args, childEnv),
+			buildRuntimeRunInvocation(hostedRuntimeRun, args, childEnv, paths),
 			spawnImpl,
 			brokerFactory,
 		);
@@ -274,18 +278,21 @@ function hostedGenericRunInvocation(
 	const [command, ...commandArgs] = args;
 	if (!command) return null;
 	const paths = getRuntimePaths({ mode: "hosted" });
-	if (!existsSync(paths.mitmProfileBundle)) return null;
+	const mitmProfileBundle = existsSync(paths.mitmProfileBundle) ? paths.mitmProfileBundle : null;
 	return {
 		runtime: "generic",
 		command,
 		args: commandArgs,
 		cwd: process.cwd(),
 		env: buildMitmBrokerEnv({
-			env: baseEnv,
-			profileBundlePath: paths.mitmProfileBundle,
+			env: {
+				...baseEnv,
+				PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeCommandShimDir(paths)),
+			},
+			profileBundlePath: mitmProfileBundle,
 			secretFile: paths.managedSecretFile,
 		}),
-		configPath: paths.mitmProfileBundle,
+		configPath: mitmProfileBundle ?? paths.managedConfig,
 	};
 }
 
