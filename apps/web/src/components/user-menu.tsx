@@ -1,7 +1,7 @@
 "use client";
 
 import { LogOut, Monitor, Moon, Sun } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
 	DropdownMenuItem,
@@ -30,6 +30,11 @@ export function UserMenuItems() {
 	const { signOut } = useAuthActions();
 	const { user } = useCurrentUser();
 	const { theme, setTheme } = useTheme();
+	const setThemeFromMenu = (value: string) => {
+		if (value === "light" || value === "dark" || value === "system") {
+			setTheme(value);
+		}
+	};
 
 	return (
 		<>
@@ -54,7 +59,7 @@ export function UserMenuItems() {
 					Theme
 				</DropdownMenuSubTrigger>
 				<DropdownMenuSubContent>
-					<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+					<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setThemeFromMenu}>
 						<DropdownMenuRadioItem value="light">
 							<Sun />
 							Light

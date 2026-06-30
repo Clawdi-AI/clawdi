@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -12,8 +13,6 @@ import {
 	Sparkles,
 	Trash2,
 } from "lucide-react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -43,14 +42,11 @@ import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
-	agentSessionDetailHref,
-	agentSkillDetailHref,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { projectResourceHref } from "@/lib/project-resource-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -94,13 +90,13 @@ export function ConnectedAgentDetail({
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const searchParams = useSearchParams();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const activeTab = parseAgentTab(section) ?? "overview";
 
 	useEffect(() => {
 		if (parseAgentTab(section)) return;
-		router.replace(agentSectionHref(id, "overview", searchParams.toString()));
-	}, [id, router, searchParams, section]);
+		void router.navigate({ href: agentSectionHref(id, "overview", searchStr), replace: true });
+	}, [id, router, searchStr, section]);
 
 	const {
 		data: agent,
@@ -211,9 +207,15 @@ export function ConnectedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
 	const contentWidthClass = connectedAgentContentWidthClass(activeTab);
-	const scopedSessionHref = (sessionId: string) => agentSessionDetailHref(id, sessionId);
-	const scopedSkillHref = (skill: SkillSummary) =>
-		agentSkillDetailHref(id, skill.skill_key, skill.project_id);
+	const scopedSessionLink = (sessionId: string) => ({
+		to: "/agents/$id/sessions/$sessionId" as const,
+		params: { id, sessionId },
+	});
+	const scopedSkillLink = (skill: SkillSummary) => ({
+		to: "/agents/$id/skills/$" as const,
+		params: { id, _splat: skill.skill_key },
+		search: skill.project_id ? { project: skill.project_id } : undefined,
+	});
 
 	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
@@ -249,7 +251,7 @@ export function ConnectedAgentDetail({
 							</div>
 							{activeTab === "skills" ? (
 								<Button asChild variant="outline" size="sm">
-									<Link href={`${projectResourceHref("skills")}?target=${encodeURIComponent(id)}`}>
+									<Link to="/skills" search={{ target: id }}>
 										<Plus />
 										Install skills
 									</Link>
@@ -274,7 +276,7 @@ export function ConnectedAgentDetail({
 								isLoading={sessionsLoading}
 								emptyMessage="No sessions synced from this agent yet."
 								showAgent={false}
-								sessionHref={(session) => scopedSessionHref(session.id)}
+								sessionLink={(session) => scopedSessionLink(session.id)}
 							/>
 						) : null}
 
@@ -284,7 +286,7 @@ export function ConnectedAgentDetail({
 								isLoading={sessionsLoading}
 								emptyMessage="No sessions synced from this agent yet."
 								showAgent={false}
-								sessionHref={(session) => scopedSessionHref(session.id)}
+								sessionLink={(session) => scopedSessionLink(session.id)}
 							/>
 						) : null}
 
@@ -300,7 +302,7 @@ export function ConnectedAgentDetail({
 									uninstallSkill.mutate({ skillKey, projectId })
 								}
 								uninstallPending={uninstallSkill.isPending}
-								skillHref={scopedSkillHref}
+								skillLink={scopedSkillLink}
 							/>
 						) : null}
 

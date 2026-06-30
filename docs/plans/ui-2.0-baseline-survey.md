@@ -25,12 +25,12 @@ crispness applies to the light theme as the default; dark stays supported via to
 
 ## What's already good (don't redo)
 
-- **Geist Sans + Geist Mono already wired** via next/font in root layout (`--font-sans`/`--font-mono`).
+- **Geist Sans + Geist Mono already wired** through shared theme CSS variables (`--font-sans`/`--font-mono`).
 - Tokens are OKLCH CSS vars in `packages/shared/src/style/theme.css`, consumed by Tailwind v4 `@theme` — single source of truth, easy to overhaul.
 - **Zero hardcoded hex** in tsx. Only ~15 Tailwind palette-utility violations (mostly `daemon-status.tsx`).
 - Lucide icons only, no mixed sets. No emoji-as-icons found in code. No `window.alert`. No `100vh` (uses `svh`).
 - Solid shadcn base: 37 components, customized sidebar (collapsible icon-mode, ⌘B, cookie persistence), DataTable with loading/empty built in, Empty/Skeleton/Spinner/Kbd exist, sonner themed.
-- next-themes class strategy, light+dark both render.
+- Custom class-based theme provider, light+dark both render.
 
 ## Problems found (visual, vs design directives)
 
@@ -54,14 +54,14 @@ crispness applies to the light theme as the default; dark stays supported via to
 
 ## Local dev notes (for reproducibility)
 
-- Worktree `.env`s enable `NEXT_PUBLIC_DEV_AUTH_BYPASS` (web) + `DEV_AUTH_BYPASS` / `DEV_AUTH_CLERK_ID=<marvin>` (backend) — local-only, backend refuses outside `ENVIRONMENT=development`.
+- Worktree `.env`s enable `VITE_DEV_AUTH_BYPASS` (web) + `DEV_AUTH_BYPASS` / `DEV_AUTH_CLERK_ID=<marvin>` (backend) — local-only, backend refuses outside `ENVIRONMENT=development`.
 - DB: `clawdi_cloud_ui2` cloned from `clawdi_cloud`; the source DB's alembic stamp (`d7e3f8a4c1b2`, bench-fixes line) didn't match its real schema — re-stamped clone at `672acd66fc7d`, ran `alembic upgrade head`, then patched genuine drift (`sessions.content_hash`, `content_uploaded_at`, `device_authorizations` table). Marvin's original DB untouched.
 - Run: `uv run uvicorn app.main:app --port 8001` (backend/), `bun run dev -- -p 3001` (apps/web/).
 
 ## Phase plan validation
 
 Survey confirms the handoff phase list with these adjustments:
-- Phase 1 font work is a no-op (Geist already in); focus = tokens + DESIGN.md. **Light-first** per Marvin's override; `defaultTheme="system"` stays.
+- Phase 1 font work is a no-op (Geist already in); focus = tokens + DESIGN.md. **Light-first** per Marvin's override; system default stays.
 - Phase 4 impact order: overview → sessions list/detail → skills → projects list/detail → vault → agents → memories → connectors → share/cli-authorize.
 - Phase 4 must also: sanitize tag-leaking session titles, de-nest section "cards", sentence-case all headers.
 - Phase 5 scope is small (~15 hits, 5 files) — fold the daemon-status refactor into the StatusBadge primitive (Phase 2) and sweep the rest.

@@ -212,4 +212,4 @@ On top of DESIGN.md tokens (unchanged):
 Synthesized from full backend model/route survey + frontend flow survey
 (2026-06-03, this branch). Entity semantics verified against
 `backend/app/models/*` and `app/core/project.py`; flows traced through
-`apps/web/src/app/(dashboard)/*` and `packages/cli/src/commands/auth.ts`.
+`apps/web/src/pages/dashboard/*` and `packages/cli/src/commands/auth.ts`.

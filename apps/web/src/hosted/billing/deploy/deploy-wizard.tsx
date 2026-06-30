@@ -1,7 +1,7 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { CalendarClock, Cpu, Plus, Rocket, Sparkles, Zap } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -318,7 +318,9 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
-			router.push(agentSectionHref(deployment.id, "overview", "source=on-clawdi"));
+			void router.navigate({
+				href: agentSectionHref(deployment.id, "overview", "source=on-clawdi"),
+			});
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {

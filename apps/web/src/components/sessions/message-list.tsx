@@ -1,7 +1,6 @@
 "use client";
 
 import { ChevronRight, Terminal } from "lucide-react";
-import Image from "next/image";
 import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
@@ -107,7 +106,7 @@ function MessageBlock({
 				{isGroupStart ? (
 					isUser ? (
 						userAvatar ? (
-							<Image src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
+							<img src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
 						) : (
 							<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
 								{userName[0]}

@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import {
 	Brain,
 	Key,
@@ -11,7 +12,6 @@ import {
 	Settings,
 	Sparkles,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
@@ -197,10 +197,12 @@ function CommandPalette({
 				const section =
 					normalizeSettingsSection(new URLSearchParams(href).get("settings")) ??
 					DEFAULT_SETTINGS_SECTION;
-				router.push(settingsQueryHref(section, new URLSearchParams(window.location.search)));
+				void router.navigate({
+					href: settingsQueryHref(section, new URLSearchParams(window.location.search)),
+				});
 				return;
 			}
-			router.push(href);
+			void router.navigate({ href });
 		},
 		[router, onOpenChange],
 	);

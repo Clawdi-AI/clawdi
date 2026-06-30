@@ -1,7 +1,7 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { Check, ChevronRight } from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -189,7 +189,7 @@ export function EntityRow({
 						<span className="sr-only">{label}</span>
 					</a>
 				) : (
-					<Link href={href} className={linkClass}>
+					<Link to={href} className={linkClass}>
 						<span className="sr-only">{label}</span>
 					</Link>
 				)}

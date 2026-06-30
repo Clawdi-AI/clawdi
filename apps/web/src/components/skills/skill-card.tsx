@@ -1,7 +1,7 @@
 "use client";
 
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
-import Link from "next/link";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,11 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import { skillDetailHref } from "@/lib/project-resource-model";
 import { cn, relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type SkillHrefBuilder = (skill: SkillSummary) => string;
+type SkillLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
+type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
  * treatment as projects and vaults: emoji identity tile, name, version,
@@ -34,7 +34,7 @@ export function SkillCard({
 	selected = false,
 	onToggleSelect,
 	sourceLabel,
-	skillHref,
+	skillLink,
 }: {
 	skill: SkillSummary;
 	readOnly?: boolean;
@@ -46,11 +46,15 @@ export function SkillCard({
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
-	skillHref?: SkillHrefBuilder;
+	skillLink?: SkillLinkBuilder;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!skill.project_id;
-	const detailHref = skillHref?.(skill) ?? skillDetailHref(skill.skill_key, skill.project_id);
+	const detailLink = skillLink?.(skill) ?? {
+		to: "/skills/$key",
+		params: { key: skill.skill_key },
+		search: skill.project_id ? { project: skill.project_id } : undefined,
+	};
 	return (
 		<div
 			className={cn(
@@ -150,7 +154,7 @@ export function SkillCard({
 				</button>
 			) : (
 				<Link
-					href={detailHref}
+					{...detailLink}
 					className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					<span className="sr-only">Open {skill.name}</span>
@@ -171,7 +175,7 @@ export function SkillCardGrid({
 	selectedKeys,
 	onToggleSelect,
 	sourceLabelFor,
-	skillHref,
+	skillLink,
 }: {
 	skills: SkillSummary[];
 	isLoading: boolean;
@@ -186,7 +190,7 @@ export function SkillCardGrid({
 	onToggleSelect?: (skill: SkillSummary) => void;
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
-	skillHref?: SkillHrefBuilder;
+	skillLink?: SkillLinkBuilder;
 }) {
 	if (isLoading) {
 		return (
@@ -217,7 +221,7 @@ export function SkillCardGrid({
 					selected={selectedKeys?.has(skillSelectionKey(skill)) ?? false}
 					onToggleSelect={onToggleSelect}
 					sourceLabel={sourceLabelFor?.(skill) ?? null}
-					skillHref={skillHref}
+					skillLink={skillLink}
 				/>
 			))}
 		</div>

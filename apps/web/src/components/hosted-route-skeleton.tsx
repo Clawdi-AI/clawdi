@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Loading fallback for the IS_HOSTED-gated `dynamic()` route imports (billing,
+ * Loading fallback for hosted-build-gated lazy route imports (billing,
  * channels, ai-providers, deploy). Without it the chunk load shows a blank frame before
  * the page's own skeleton mounts. Header + body skeleton matching the canonical
  * `px-4 lg:px-6` page chrome.

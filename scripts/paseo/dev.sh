@@ -18,14 +18,6 @@ WEB_BIND_HOST="${HOST:-0.0.0.0}"
 API_BIND_HOST="${HOST:-0.0.0.0}"
 WEB_URL="${REQUESTED_WEB_PUBLIC_URL:-${WEB_PUBLIC_URL:-http://localhost:${WEB_RUNTIME_PORT}}}"
 API_URL="${REQUESTED_API_PUBLIC_URL:-${API_PUBLIC_URL:-http://localhost:${BACKEND_RUNTIME_PORT}}}"
-WEB_PUBLIC_HOST="$(
-  python3 - "$WEB_URL" <<'PY'
-import sys
-from urllib.parse import urlparse
-
-print(urlparse(sys.argv[1]).hostname or "")
-PY
-)"
 CORS_ORIGINS="$(
   json_string_array \
     "$WEB_URL" \
@@ -48,24 +40,17 @@ export DEBUG=true
 export PUBLIC_API_URL="$API_URL"
 export WEB_ORIGIN="$WEB_URL"
 export CORS_ORIGINS
-export NEXT_PUBLIC_API_URL="$API_URL"
-export NEXT_PUBLIC_CLAWDI_HOSTED="${NEXT_PUBLIC_CLAWDI_HOSTED:-}"
-export NEXT_PUBLIC_DEPLOY_API_URL="${NEXT_PUBLIC_DEPLOY_API_URL:-http://localhost:50021}"
+export VITE_CLAWDI_API_URL="$API_URL"
+export VITE_CLAWDI_HOSTED="${VITE_CLAWDI_HOSTED:-}"
+export VITE_CLAWDI_DEPLOY_API_URL="${VITE_CLAWDI_DEPLOY_API_URL:-http://localhost:50021}"
 DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-true}"
-case "$WEB_PUBLIC_HOST" in
-  ""|"localhost"|"127.0.0.1")
-    ;;
-  *)
-    export NEXT_ALLOWED_DEV_ORIGINS="${NEXT_ALLOWED_DEV_ORIGINS:-$WEB_PUBLIC_HOST}"
-    ;;
-esac
 if [ "${DEV_AUTH_BYPASS:-}" = "true" ]; then
   export DEV_AUTH_TOKEN="${DEV_AUTH_TOKEN:-dev-bypass}"
   export DEV_AUTH_CLERK_ID="${DEV_AUTH_CLERK_ID:-dev_browser}"
   export DEV_AUTH_EMAIL="${DEV_AUTH_EMAIL:-dev@clawdi.local}"
   export DEV_AUTH_NAME="${DEV_AUTH_NAME:-Dev User}"
-  export NEXT_PUBLIC_DEV_AUTH_BYPASS="${NEXT_PUBLIC_DEV_AUTH_BYPASS:-true}"
-  export NEXT_PUBLIC_DEV_AUTH_TOKEN="${NEXT_PUBLIC_DEV_AUTH_TOKEN:-$DEV_AUTH_TOKEN}"
+  export VITE_DEV_AUTH_BYPASS="${VITE_DEV_AUTH_BYPASS:-true}"
+  export VITE_DEV_AUTH_TOKEN="${VITE_DEV_AUTH_TOKEN:-$DEV_AUTH_TOKEN}"
 fi
 
 docker compose up -d --wait postgres
@@ -103,12 +88,11 @@ trap 'cleanup; exit 143' TERM
 
 (
   cd apps/web
-  NEXT_PUBLIC_API_URL="$API_URL" \
-    NEXT_PUBLIC_CLAWDI_HOSTED="$NEXT_PUBLIC_CLAWDI_HOSTED" \
-    NEXT_PUBLIC_DEPLOY_API_URL="$NEXT_PUBLIC_DEPLOY_API_URL" \
-    NEXT_PUBLIC_DEV_AUTH_BYPASS="${NEXT_PUBLIC_DEV_AUTH_BYPASS:-}" \
-    NEXT_PUBLIC_DEV_AUTH_TOKEN="${NEXT_PUBLIC_DEV_AUTH_TOKEN:-}" \
-    NEXT_ALLOWED_DEV_ORIGINS="${NEXT_ALLOWED_DEV_ORIGINS:-}" \
+  VITE_CLAWDI_API_URL="$API_URL" \
+    VITE_CLAWDI_HOSTED="$VITE_CLAWDI_HOSTED" \
+    VITE_CLAWDI_DEPLOY_API_URL="$VITE_CLAWDI_DEPLOY_API_URL" \
+    VITE_DEV_AUTH_BYPASS="${VITE_DEV_AUTH_BYPASS:-}" \
+    VITE_DEV_AUTH_TOKEN="${VITE_DEV_AUTH_TOKEN:-}" \
     bun run dev -- --hostname "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
 ) &
 pids+=("$!")

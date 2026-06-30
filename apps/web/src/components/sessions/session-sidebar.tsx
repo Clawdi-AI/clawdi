@@ -113,9 +113,8 @@ function Chip({
 }
 
 // `pr` (not `ref`) — `ref` is React's forwarded-ref prop name; passing a
-// string under that name in React 19 / Next.js 16 makes the RSC renderer
-// treat the string as a real ref object and throw "Refs cannot be used in
-// Server Components" at SSR time.
+// string under that name in React 19 makes the renderer treat the string as a
+// real ref object.
 function PrChip({ pr }: { pr: string }) {
 	const match = pr.match(/^([^/]+)\/([^#]+)#(\d+)$/);
 	if (!match) {

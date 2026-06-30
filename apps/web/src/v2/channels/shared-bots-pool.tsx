@@ -1,7 +1,7 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, Link2, Users } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
@@ -126,7 +126,7 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 
 			{owner ? (
 				<Button asChild variant="outline" size="sm" className="w-full">
-					<Link href={`/channels/${item.id}`}>
+					<Link to="/channels/$id" params={{ id: item.id }}>
 						Manage
 						<ArrowUpRight className="size-3.5" />
 					</Link>

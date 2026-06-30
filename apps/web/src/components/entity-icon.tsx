@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,8 +13,8 @@ import { cn } from "@/lib/utils";
  *                 both themes; OpenAI / custom have no brand mark → monogram
  *   - anything unresolved → neutral monogram tile
  *
- * Uses next/image `unoptimized` (per the monorepo ChannelIcon) — these are
- * tiny/vector brand assets that don't benefit from the optimizer.
+ * Uses plain image rendering — these are tiny/vector brand assets that don't
+ * benefit from an optimizer.
  */
 
 const ICON_BASE = "https://assets.clawdi.ai/icons";
@@ -91,12 +90,11 @@ export function EntityIcon({
 		kind === "channel" ? CHANNEL_PNG[key] : kind === "framework" ? FRAMEWORK_PNG[key] : undefined;
 	if (png) {
 		return (
-			<Image
+			<img
 				src={png}
 				alt={alt}
 				width={s.px}
 				height={s.px}
-				unoptimized
 				className={cn(s.box, "shrink-0 object-cover", SHADOW, className)}
 			/>
 		);
@@ -115,12 +113,11 @@ export function EntityIcon({
 						className,
 					)}
 				>
-					<Image
+					<img
 						src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
 						alt={alt}
 						width={s.px}
 						height={s.px}
-						unoptimized
 						className="size-[60%] object-contain"
 					/>
 				</span>

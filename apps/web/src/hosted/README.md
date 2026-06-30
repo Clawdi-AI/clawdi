@@ -1,7 +1,7 @@
 # `apps/web/src/hosted/`
 
 Components and helpers for the hosted agent service and hosted billing surfaces.
-They render only in the hosted build (`NEXT_PUBLIC_CLAWDI_HOSTED=true`).
+They render only in the hosted build (`VITE_CLAWDI_HOSTED=true`).
 
 OSS users running their own Clawdi instance see none of this UI.
 
@@ -9,7 +9,7 @@ OSS users running their own Clawdi instance see none of this UI.
 
 1. **Side-effect-free at module top level.**
    No top-level `new ApiClient()`, no top-level
-   `process.env.NEXT_PUBLIC_DEPLOY_API_URL!` reads that throw.
+   `VITE_CLAWDI_DEPLOY_API_URL!` reads that throw.
    Initialize lazily inside hooks / event handlers / queries.
 
 2. **Every component sets `data-hosted="true"` on its root element.**
@@ -19,14 +19,15 @@ OSS users running their own Clawdi instance see none of this UI.
    invariant would be overkill). Tightens runtime debugging too:
    anything carrying `data-hosted="true"` in OSS DevTools is a leak.
 
-3. **Imports from outside `hosted/` go through `next/dynamic`,
-   gated on `IS_HOSTED` at the construction site.**
+3. **Imports from outside `hosted/` use `React.lazy`,
+   gated on a local `IS_HOSTED_BUILD` constant at the construction site.**
    ```tsx
-   import dynamic from "next/dynamic";
-   import { IS_HOSTED } from "@/lib/hosted";
+   import { lazy, Suspense } from "react";
 
-   const DeployWizard = IS_HOSTED
-     ? dynamic(() =>
+   const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+   const DeployWizard = IS_HOSTED_BUILD
+     ? lazy(() =>
          import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
            default: m.DeployWizard,
          })),
@@ -35,18 +36,20 @@ OSS users running their own Clawdi instance see none of this UI.
 
    // …
 
-   {DeployWizard ? <DeployWizard /> : null}
+   {DeployWizard ? (
+     <Suspense fallback={null}>
+       <DeployWizard />
+     </Suspense>
+   ) : null}
    ```
-   Why this shape: the bundler folds `IS_HOSTED ? … : null` at
-   build time using the `NEXT_PUBLIC_CLAWDI_HOSTED` constant. In OSS
-   builds the conditional collapses to `null`, the `dynamic(…)` call
-   is unreachable, the `import()` site is eliminated, and the
-   hosted chunk never ships. A bare `dynamic(() => import(…))` at
+   Why this shape: Vite folds `IS_HOSTED ? … : null` at build time
+   using the `VITE_CLAWDI_HOSTED` constant. In OSS builds the
+   conditional collapses to `null`, so the dynamic import site is not
+   part of the client graph. A bare `lazy(() => import(…))` at
    module top level would still register the chunk in OSS builds —
-   that's why the ternary matters.
-   `oss-clean.test.ts` fails the build if anyone reintroduces a
-   static `import … from "@/hosted/…"` outside the hosted/
-   directory.
+   that's why the ternary matters. `oss-clean.test.ts` fails the build
+   if anyone reintroduces a static `import … from "@/hosted/…"` outside
+   the hosted/ directory.
 
 ## What lives here today
 
@@ -55,9 +58,10 @@ OSS users running their own Clawdi instance see none of this UI.
   state.
 - `agents/` — Hosted agent detail, runtime controls, and AI-provider configuration.
 - `billing/` — Wallet, subscription, usage, and managed agent deployment.
+- `analytics-client.tsx` — Hosted-only analytics identity bridge.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
-  gate (`NEXT_PUBLIC_CLAWDI_HOSTED === "true"`) plus dynamic import).
+  gate (`VITE_CLAWDI_HOSTED === "true"`) plus dynamic import).
 
 Connector UI does not live here. Hosted and connected sessions both
 read connectors from the shared `/api/connectors` route.

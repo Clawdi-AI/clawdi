@@ -174,43 +174,42 @@ services:
       - web-node-modules:/app/node_modules
       - web-app-node-modules:/app/apps/web/node_modules
     environment:
-      # NEXT_PUBLIC_API_URL is derived in the command from SERVICE_FQDN_API
+      # VITE_CLAWDI_API_URL is derived in the command from SERVICE_FQDN_API
       # (per-deploy value); it must be exported BEFORE `bun run build` since
-      # NEXT_PUBLIC_* env vars are baked into the JS bundle at build time.
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      # VITE_* env vars are baked into the JS bundle at build time.
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
+      VITE_CLAWDI_DEPLOY_API_URL: ${VITE_CLAWDI_DEPLOY_API_URL}
+      VITE_CLAWDI_HOSTED: ${VITE_CLAWDI_HOSTED:-true}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
     ports:
       - "3000"
     command: >
       bash -c '
         set -e
-        export NEXT_PUBLIC_API_URL="https://$$SERVICE_FQDN_API"
+        export VITE_CLAWDI_API_URL="https://$$SERVICE_FQDN_API"
         cd /app
         # --ignore-scripts skips the root lefthook postinstall which needs git
         # (dev-only hook; not needed in containers).
         bun install --frozen-lockfile --ignore-scripts
         cd apps/web
-        # Production build (no HMR, no dev-mode WS — Cloudflare Tunnel proxies HTTP
-        # cleanly but the dev WebSocket /_next/webpack-hmr fails through it).
+        # Production build (no HMR, no dev-mode WS).
         # First boot: ~2 min build. Subsequent restarts: skip build if the
         # cached bundle was built from THIS commit. The clone step stamps
         # `/app/.source-commit` (alpine/git has git; oven/bun:1 does NOT —
         # calling git here would crash the container under set -e). We
-        # mirror that stamp into `.next/.commit` and rebuild whenever it
-        # differs from the current HEAD.
-        # Pre-fix this branch only checked `.next/BUILD_ID` existence — on a
-        # redeploy that fast-forwarded the source volume to a new commit,
-        # the previous build artifacts (incl. NEXT_PUBLIC_* baked into the
-        # JS bundle) were kept and the web container served stale code
-        # against the new API URL until someone manually wiped the volume.
+        # mirror that stamp into `.output/.commit` and rebuild whenever it
+        # differs from the current HEAD. This prevents a redeploy from serving
+        # stale code or stale VITE_* values from the source volume cache.
         COMMIT=$$(cat /app/.source-commit 2>/dev/null || echo "unknown")
-        STAMPED=$$(cat .next/.commit 2>/dev/null || echo "")
-        if [ ! -f .next/BUILD_ID ] || [ "$$STAMPED" != "$$COMMIT" ]; then
-          rm -rf .next
+        STAMPED=$$(cat .output/.commit 2>/dev/null || echo "")
+        if [ ! -f .output/server/index.mjs ] || [ "$$STAMPED" != "$$COMMIT" ]; then
+          rm -rf .output .nitro .tanstack
           bun run build
-          echo "$$COMMIT" > .next/.commit
+          echo "$$COMMIT" > .output/.commit
         fi
-        exec bun run start --hostname 0.0.0.0 --port 3000
+        export HOST=0.0.0.0
+        export PORT=3000
+        exec bun run start
       '
 
 volumes:

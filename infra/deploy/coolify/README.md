@@ -197,7 +197,7 @@ build locally:
 
 It always pushes `ghcr.io/clawdi-ai/clawdi-backend:<full-git-sha>`. When
 `build_web=true`, it also pushes `ghcr.io/clawdi-ai/clawdi-web:<full-git-sha>`
-using the explicit `NEXT_PUBLIC_*` build variables supplied to that workflow
+using the explicit `VITE_*` build variables supplied to that workflow
 run. The Coolify deploy step uses only the backend image because this Coolify
 stack owns backend runtime processes.
 

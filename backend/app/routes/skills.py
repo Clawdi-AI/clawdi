@@ -116,7 +116,6 @@ _SKILL_HASH_EXCLUDE = {
     "node_modules",
     ".git",
     ".turbo",
-    ".next",
     ".cache",
     "dist",
     "build",

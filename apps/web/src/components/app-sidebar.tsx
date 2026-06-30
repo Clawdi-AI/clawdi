@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation } from "@tanstack/react-router";
 import {
 	BookOpen,
 	CircleHelp,
@@ -40,8 +41,6 @@ import {
 	TerminalSquare,
 	Zap,
 } from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
 import { useEffect, useRef, useState } from "react";
@@ -302,7 +301,7 @@ function SidebarNavSection({
 						return (
 							<SidebarMenuItem key={item.id}>
 								<SidebarMenuButton asChild isActive={item.active} tooltip={item.tooltip}>
-									<Link href={item.href} onClick={onNavigate}>
+									<Link to={item.href} onClick={onNavigate}>
 										<NavIconChip tint={item.tint}>
 											<Icon />
 										</NavIconChip>
@@ -680,7 +679,7 @@ function RailFocusButton({
 			)}
 		>
 			<Link
-				href={href}
+				to={href}
 				draggable={false}
 				onClickCapture={onClickCapture}
 				onClick={onNavigate}
@@ -1387,7 +1386,7 @@ export function AppSidebar({
 	style,
 	...props
 }: React.ComponentProps<typeof Sidebar>) {
-	const pathname = usePathname();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const { user } = useCurrentUser();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile } = useSidebar();

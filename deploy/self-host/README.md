@@ -22,10 +22,10 @@ and skill file reads.
 
 The optional dashboard uses the matching open-source web image contract:
 `ghcr.io/clawdi-ai/clawdi-web:<tag>` is built from `apps/web/Dockerfile`.
-Next.js public variables are compiled into the browser bundle at image build
-time, so a published web image is only correct when its baked
-`NEXT_PUBLIC_*` values match the deployment. For a custom public API URL,
-Clerk publishable key, or hosted-mode setting, rebuild the web image with the
+Vite public variables are compiled into the browser bundle at image build time,
+so a published web image is only correct when its baked `VITE_*` values match
+the deployment. For a custom public API URL, Clerk publishable key, or
+hosted-mode setting, rebuild the web image with the
 matching build args instead of changing only container runtime env.
 
 ## Usage
@@ -53,7 +53,7 @@ image instead, set `CLAWDI_WEB_IMAGE_TAG` to an available tag whose build-time
 public variables match this deployment.
 
 The dashboard requires Clerk auth configuration. Fill both
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` before enabling the
+`VITE_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` before enabling the
 `web` profile.
 
 For a reverse proxy, set `PUBLIC_API_URL`, `WEB_ORIGIN`, `CORS_ORIGINS`, and

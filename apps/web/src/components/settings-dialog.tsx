@@ -9,8 +9,7 @@ import {
 	User,
 	WalletCards,
 } from "lucide-react";
-import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { GeneralPanel } from "@/components/settings/general-panel";
@@ -23,7 +22,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { IS_HOSTED } from "@/lib/hosted";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
@@ -32,28 +30,24 @@ import {
 import { cn } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
 
-const WalletPage = IS_HOSTED
-	? dynamic(
-			() => import("@/hosted/billing/wallet/wallet-page").then((m) => ({ default: m.WalletPage })),
-			{ loading: HostedRouteSkeleton },
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const WalletPage = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/billing/wallet/wallet-page").then((m) => ({ default: m.WalletPage })),
 		)
 	: null;
 
-const SubscriptionPage = IS_HOSTED
-	? dynamic(
-			() =>
-				import("@/hosted/billing/subscription/subscription-page").then((m) => ({
-					default: m.SubscriptionPage,
-				})),
-			{ loading: HostedRouteSkeleton },
+const SubscriptionPage = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/billing/subscription/subscription-page").then((m) => ({
+				default: m.SubscriptionPage,
+			})),
 		)
 	: null;
 
-const UsagePage = IS_HOSTED
-	? dynamic(
-			() => import("@/hosted/billing/usage/usage-page").then((m) => ({ default: m.UsagePage })),
-			{ loading: HostedRouteSkeleton },
-		)
+const UsagePage = IS_HOSTED_BUILD
+	? lazy(() => import("@/hosted/billing/usage/usage-page").then((m) => ({ default: m.UsagePage })))
 	: null;
 
 type SettingsNavItem = {
@@ -123,7 +117,7 @@ export function SettingsDialog({
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showBilling = mounted && IS_HOSTED && v2Access.canUseV2;
+	const showBilling = mounted && IS_HOSTED_BUILD && v2Access.canUseV2;
 	const items = SETTINGS_NAV.filter((item) => !item.v2Only || showBilling);
 	const activeSection = items.some((item) => item.id === section)
 		? section
@@ -222,11 +216,29 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 		case "api-keys":
 			return <ApiKeysPanel />;
 		case "billing-wallet":
-			return WalletPage ? <WalletPage /> : <GeneralPanel />;
+			return WalletPage ? (
+				<Suspense fallback={<HostedRouteSkeleton />}>
+					<WalletPage />
+				</Suspense>
+			) : (
+				<GeneralPanel />
+			);
 		case "billing-plan":
-			return SubscriptionPage ? <SubscriptionPage /> : <GeneralPanel />;
+			return SubscriptionPage ? (
+				<Suspense fallback={<HostedRouteSkeleton />}>
+					<SubscriptionPage />
+				</Suspense>
+			) : (
+				<GeneralPanel />
+			);
 		case "billing-usage":
-			return UsagePage ? <UsagePage /> : <GeneralPanel />;
+			return UsagePage ? (
+				<Suspense fallback={<HostedRouteSkeleton />}>
+					<UsagePage />
+				</Suspense>
+			) : (
+				<GeneralPanel />
+			);
 		default:
 			return <GeneralPanel />;
 	}

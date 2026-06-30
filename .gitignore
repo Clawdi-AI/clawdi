@@ -1,5 +1,9 @@
 node_modules/
-.next/
+.output/
+.tanstack/
+.nitro/
+.vite/
+.vite-temp/
 dist/
 dist-bin/
 packages/cli/dist-release/
@@ -18,6 +22,7 @@ __pycache__/
 .env
 .env.local
 .clawdi.env
+.vercel/
 .paseo/
 infra/deploy/coolify/*.local.json
 infra/deploy/coolify/*.live.json

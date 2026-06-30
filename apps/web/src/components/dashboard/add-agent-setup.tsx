@@ -1,13 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Check, ChevronDown, Copy } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
-import { agentSectionHref } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -184,7 +183,9 @@ export function AddAgentSetup() {
 									className="min-w-0 flex-1"
 								/>
 								<Button asChild size="sm" variant="outline">
-									<Link href={agentSectionHref(env.id)}>Open agent</Link>
+									<Link to="/agents/$id" params={{ id: env.id }}>
+										Open agent
+									</Link>
 								</Button>
 							</div>
 						))}

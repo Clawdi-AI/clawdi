@@ -20,10 +20,10 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * AgentsCard / OnboardingCard render decision into one component so the
  * entire hosted code path — including the cross-origin client and the
  * empty-state coupling between hosted and self-managed counts — can be
- * loaded via `next/dynamic`.
+ * loaded via the local dynamic import wrapper.
  *
  * OSS builds never include this file in their main bundle: the
- * dashboard page conditionally constructs the `dynamic(() => …)`
+ * dashboard page conditionally constructs the `lazy(() => …)`
  * call only when `IS_HOSTED` is true, so the import path is
  * statically eliminated at build time and the chunk is never
  * generated for self-hosters.

@@ -1,11 +1,15 @@
-import { ClerkProvider } from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/tanstack-react-start";
 import { shadcn } from "@clerk/themes";
+import { env } from "@/lib/env";
 
-const isDevAuthBypass =
-	process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true" && process.env.NODE_ENV !== "production";
+const isDevAuthBypass = env.VITE_DEV_AUTH_BYPASS;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 	if (isDevAuthBypass) return <>{children}</>;
 
-	return <ClerkProvider appearance={{ baseTheme: shadcn }}>{children}</ClerkProvider>;
+	return (
+		<ClerkProvider appearance={shadcn} publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}>
+			{children}
+		</ClerkProvider>
+	);
 }

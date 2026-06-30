@@ -1,7 +1,7 @@
 "use client";
 
+import { useLocation, useRouter } from "@tanstack/react-router";
 import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,7 +53,8 @@ export function PlanComparison({
 	onTermChange?: (term: number) => void;
 } = {}) {
 	const router = useRouter();
-	const searchParams = useSearchParams();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const searchParams = new URLSearchParams(searchStr);
 	const plansQuery = usePlans();
 	const runAction = useActionLock();
 	const [internalTerm, setInternalTerm] = useState(1);
@@ -72,7 +73,7 @@ export function PlanComparison({
 
 	async function startPerformanceCheckout() {
 		if (!performance) return;
-		router.push("/deploy");
+		void router.navigate({ href: "/deploy" });
 	}
 
 	if (!plansQuery.data) return null;
@@ -129,7 +130,11 @@ export function PlanComparison({
 						</ul>
 					</CardContent>
 					<CardFooter>
-						<Button className="w-full" variant="outline" onClick={() => router.push("/deploy")}>
+						<Button
+							className="w-full"
+							variant="outline"
+							onClick={() => void router.navigate({ href: "/deploy" })}
+						>
 							<Rocket /> Deploy Free agent
 						</Button>
 					</CardFooter>
@@ -238,7 +243,9 @@ export function PlanComparison({
 						<Button
 							className="w-full"
 							variant="outline"
-							onClick={() => router.push(settingsQueryHref("billing-wallet", searchParams))}
+							onClick={() =>
+								void router.navigate({ href: settingsQueryHref("billing-wallet", searchParams) })
+							}
 						>
 							<Sparkles /> Open Wallet
 						</Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useLocation } from "@tanstack/react-router";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isCloudEnvId } from "@/hosted/agent-identity";
@@ -24,7 +24,8 @@ export function AgentHome({
 	environmentId: string;
 	section: AgentSectionId;
 }) {
-	const searchParams = useSearchParams();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const searchParams = new URLSearchParams(searchStr);
 	const {
 		deployment,
 		environmentId: resolvedEnvId,

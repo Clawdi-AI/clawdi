@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, useLocation } from "@tanstack/react-router";
 import { useBreadcrumbSegmentTitles, useBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	Breadcrumb,
@@ -60,7 +59,7 @@ function segmentLabel(
 }
 
 export function AppBreadcrumb() {
-	const pathname = usePathname();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const segments = pathname.split("/").filter(Boolean);
 	const overrideTitle = useBreadcrumbTitle();
 	const segmentTitles = useBreadcrumbSegmentTitles();
@@ -104,12 +103,10 @@ export function AppBreadcrumb() {
 											{label}
 										</BreadcrumbPage>
 									) : (
-										// asChild + next/link: shadcn's default BreadcrumbLink is
-										// a raw <a> which forces a full page reload + drops
-										// prefetch. asChild lets us pass our own anchor — Next's
-										// Link gives SPA navigation and hover-prefetch.
+										// asChild lets us pass our own router-aware link while
+										// preserving shadcn's breadcrumb anchor semantics.
 										<BreadcrumbLink asChild>
-											<Link href={href}>{label}</Link>
+											<Link to={href}>{label}</Link>
 										</BreadcrumbLink>
 									)}
 								</BreadcrumbItem>

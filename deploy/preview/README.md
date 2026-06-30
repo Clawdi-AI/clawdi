@@ -126,17 +126,17 @@ for each service.
     COMPOSIO_API_KEY=...
     MEMORY_EMBEDDING_MODE=...
     MEMORY_EMBEDDING_MODEL=...
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
+    VITE_CLERK_PUBLISHABLE_KEY=...
     CLERK_SECRET_KEY=...
-    NEXT_PUBLIC_DEPLOY_API_URL=https://<your-public-prod-api>
-    NEXT_PUBLIC_CLAWDI_HOSTED=true
+    VITE_CLAWDI_DEPLOY_API_URL=https://<your-public-prod-api>
+    VITE_CLAWDI_HOSTED=true
     ALLOWED_EMAIL_DOMAINS=<your-team-email-domain>
     REPO_URL=https://github.com/<owner>/<repo>
     REPO_REF=<production-tracking-branch>
     PG_PASSWORD=preview_local
     ```
     Per-deploy URL env vars (`PUBLIC_API_URL`, `WEB_ORIGIN`, `CORS_ORIGINS`,
-    `NEXT_PUBLIC_API_URL`) are derived inside each container's startup
+    `VITE_CLAWDI_API_URL`) are derived inside each container's startup
     command from the auto-injected `SERVICE_FQDN_*` — no need to set them
     in the Coolify UI.
 
@@ -202,6 +202,6 @@ in Coolify — that drops volumes and re-runs `restore`.
   Coolify only substitutes `{{pr_id}}` in URL-template fields, NOT in env
   var values. This compose builds URLs from `SERVICE_FQDN_*` (Coolify
   auto-injects per-deploy values) inside each service's startup command,
-  so don't set `NEXT_PUBLIC_API_URL`/`PUBLIC_API_URL` in the Coolify UI
+  so don't set `VITE_CLAWDI_API_URL`/`PUBLIC_API_URL` in the Coolify UI
   with `{{pr_id}}` — they'd be ignored anyway since the compose `command`
   exports the right value at runtime.

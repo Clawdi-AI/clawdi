@@ -1,12 +1,11 @@
 "use client";
 
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { MessageSquare, Zap } from "lucide-react";
-import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Stat } from "@/components/meta/stat";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { sessionDetailHref } from "@/lib/project-resource-model";
 import {
 	cn,
 	formatAbsoluteTooltip,
@@ -15,6 +14,8 @@ import {
 	recencyBucketFor,
 	relativeTime,
 } from "@/lib/utils";
+
+type SessionLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
 /* Human feed for sessions (journey J1): day-grouped cards with the summary
  * as the headline. The data table remains available behind the view toggle
@@ -28,7 +29,7 @@ export function SessionFeed({
 	groupBy = "last_activity_at",
 	showAgent = true,
 	quietAutomated = true,
-	sessionHref = (session) => sessionDetailHref(session.id),
+	sessionLink = (session) => ({ to: "/sessions/$id", params: { id: session.id } }),
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;
@@ -42,7 +43,7 @@ export function SessionFeed({
 	 * results read as disabled (journey simulation finding J1). */
 	quietAutomated?: boolean;
 	/** Build the detail link for the current navigation scope. */
-	sessionHref?: (session: SessionListItem) => string;
+	sessionLink?: (session: SessionListItem) => SessionLinkOptions;
 }) {
 	if (isLoading) {
 		return (
@@ -74,7 +75,7 @@ export function SessionFeed({
 						session={session}
 						showAgent={showAgent}
 						quietAutomated={quietAutomated}
-						href={sessionHref(session)}
+						link={sessionLink(session)}
 					/>
 				))}
 			</div>
@@ -105,7 +106,7 @@ export function SessionFeed({
 								session={session}
 								showAgent={showAgent}
 								quietAutomated={quietAutomated}
-								href={sessionHref(session)}
+								link={sessionLink(session)}
 							/>
 						))}
 					</div>
@@ -119,12 +120,12 @@ function SessionFeedCard({
 	session,
 	showAgent = true,
 	quietAutomated = true,
-	href,
+	link,
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
 	quietAutomated?: boolean;
-	href: string;
+	link: SessionLinkOptions;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
@@ -140,7 +141,7 @@ function SessionFeedCard({
 			)}
 		>
 			<Link
-				href={href}
+				{...link}
 				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				<span className="sr-only">Open session {session.local_session_id}</span>

@@ -1,8 +1,8 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
-import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import {
 	AgentLabel,
@@ -318,7 +318,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					<span className="sr-only">{tile.name}</span>
 				</a>
 			) : (
-				<Link href={tile.href} className={linkClassName}>
+				<Link to={tile.href} className={linkClassName}>
 					<span className="sr-only">{tile.name}</span>
 				</Link>
 			)}

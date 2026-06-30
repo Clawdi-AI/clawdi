@@ -8,20 +8,20 @@ import { dirname, join, relative } from "node:path";
  *
  * The hosted/ and v2/ directories must stay quarantined: hosted components set
  * `data-hosted="true"`, v2 components set `data-v2="true"`, and every
- * consumer outside those quarantines is gated by `IS_HOSTED` somewhere in the
+ * consumer outside those quarantines is gated by the hosted build flag somewhere in the
  * same file.
  *
  * Static regex / file-walk checks instead of React render tests —
  * apps/web has no jsdom / @testing-library setup and adding it for
  * one invariant would be overkill. The static gates catch the
  * failure modes that matter: forgetting DOM markers, forgetting
- * the IS_HOSTED guard when importing gated modules.
+ * the hosted build guard when importing gated modules.
  */
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const V2_DIR = join(SRC_DIR, "v2");
-const APP_DIR = join(SRC_DIR, "app");
+const PAGES_DIR = join(SRC_DIR, "pages");
 const GATED_ROUTE_DYNAMIC_IMPORT =
 	/\bimport\s*\(\s*["'](@\/(?:v2\/|hosted\/billing\/)[^"']+)["']\s*\)/g;
 
@@ -62,7 +62,7 @@ function nearestV2GateFile(routeFile: string): string | null {
 	if (hasV2Gate(routeFile)) return routeFile;
 
 	let dir = dirname(routeFile);
-	while (dir.startsWith(APP_DIR)) {
+	while (dir.startsWith(PAGES_DIR)) {
 		const layoutFile = join(dir, "layout.tsx");
 		if (layoutFile !== routeFile && existsSync(layoutFile) && hasV2Gate(layoutFile)) {
 			return layoutFile;
@@ -93,7 +93,7 @@ function discoverV2OnlyRouteFiles(): string[] {
 	const gateFiles = new Set<string>();
 	const ungatedRouteFiles: string[] = [];
 
-	for (const file of listTsx(APP_DIR)) {
+	for (const file of listTsx(PAGES_DIR)) {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
 		const src = readFileSync(file, "utf8");
 		if (!routeUsesV2OnlyModule(src)) continue;
@@ -119,8 +119,8 @@ function discoverV2OnlyRouteFiles(): string[] {
 describe("IS_HOSTED flag", () => {
 	test("defaults to false when env var is unset", () => {
 		const env = { ...process.env };
-		delete env.NEXT_PUBLIC_CLAWDI_HOSTED;
-		env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??= "pk_test_dummy_for_unit_tests";
+		delete env.VITE_CLAWDI_HOSTED;
+		env.VITE_CLERK_PUBLISHABLE_KEY ??= "pk_test_dummy_for_unit_tests";
 
 		const result = spawnSync(
 			process.execPath,
@@ -173,90 +173,6 @@ function stripComments(src: string): string {
 		}
 	}
 	return out;
-}
-
-function findMatchingBrace(src: string, openBraceIndex: number): number {
-	let depth = 0;
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let inTemplate = false;
-	let inLineComment = false;
-	let inBlockComment = false;
-
-	for (let i = openBraceIndex; i < src.length; i++) {
-		const c = src[i];
-		const n = src[i + 1];
-
-		if (inLineComment) {
-			if (c === "\n") inLineComment = false;
-			continue;
-		}
-		if (inBlockComment) {
-			if (c === "*" && n === "/") {
-				inBlockComment = false;
-				i++;
-			}
-			continue;
-		}
-		if (inSingleQuote) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === "'") inSingleQuote = false;
-			continue;
-		}
-		if (inDoubleQuote) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === '"') inDoubleQuote = false;
-			continue;
-		}
-		if (inTemplate) {
-			if (c === "\\") {
-				i++;
-				continue;
-			}
-			if (c === "`") inTemplate = false;
-			continue;
-		}
-
-		if (c === "/" && n === "/") {
-			inLineComment = true;
-			i++;
-			continue;
-		}
-		if (c === "/" && n === "*") {
-			inBlockComment = true;
-			i++;
-			continue;
-		}
-		if (c === "'") {
-			inSingleQuote = true;
-			continue;
-		}
-		if (c === '"') {
-			inDoubleQuote = true;
-			continue;
-		}
-		if (c === "`") {
-			inTemplate = true;
-			continue;
-		}
-
-		if (c === "{") {
-			depth++;
-			continue;
-		}
-		if (c === "}") {
-			depth--;
-			if (depth === 0) return i;
-		}
-	}
-
-	return -1;
 }
 
 describe("hosted/ directory invariants", () => {
@@ -331,15 +247,15 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 		// Static imports of `@/hosted/*` from any OSS-reachable file
 		// would pull the hosted chunk into the OSS main bundle even
 		// when the runtime usage is gated by `IS_HOSTED`. The fix is
-		// always `dynamic(() => import("@/hosted/…"))` constructed
-		// inside an `IS_HOSTED ? … : null` ternary so the OSS bundler
+		// always `lazy(() => import("@/hosted/…"))` constructed
+		// inside an `IS_HOSTED_BUILD ? … : null` ternary so the OSS bundler
 		// statically eliminates the import() site. This test fails if
 		// anyone re-introduces a static `from "@/hosted/…"` import.
 		const offenders: string[] = [];
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			// Match top-of-file `import … from "@/hosted/…"` — `dynamic`
-			// arrow-callbacks use `import("…")` (no `from` keyword).
+			// Match top-of-file `import … from "@/hosted/…"` — lazy arrow-callbacks
+			// use `import("…")` (no `from` keyword).
 			if (/^\s*import\s+[^"']+from\s+["']@\/hosted\//m.test(src)) {
 				offenders.push(relative(SRC_DIR, file));
 			}
@@ -369,40 +285,39 @@ describe("no static @/v2/* imports outside v2/ or hosted/", () => {
 	});
 });
 
-describe("dynamic gated-module imports are gated by IS_HOSTED", () => {
-	test('every `dynamic(import("@/hosted/…"))` or `dynamic(import("@/v2/…"))` is constructed inside `IS_HOSTED ? … : null`', () => {
-		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
-		// or `dynamic(() => import("@/v2/x"))` at module top level would
+describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
+	test('every `lazy(import("@/hosted/…"))` or `lazy(import("@/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
+		// Why this matters: a bare `lazy(() => import("@/hosted/x"))`
+		// or `lazy(() => import("@/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
-		// build's webpack/turbopack manifest even though `IS_HOSTED &&
+		// client build graph even though `IS_HOSTED_BUILD &&
 		// <Component />` keeps it from rendering. The runtime bundler
 		// only eliminates the import() call when the surrounding
-		// expression is provably unreachable — `IS_HOSTED ? dynamic(…)
+		// expression is provably unreachable — `IS_HOSTED_BUILD ? lazy(…)
 		// : null` collapses to `null` at build time once
-		// `NEXT_PUBLIC_CLAWDI_HOSTED` is folded in, taking the entire
+		// `VITE_CLAWDI_HOSTED` is folded in, taking the entire
 		// import() with it.
 		const offenders: string[] = [];
-		// Anchor on each `dynamic(() => import("@/hosted/…"))` call,
+		// Anchor on each `lazy(() => import("@/hosted/…"))` call,
 		// then walk backwards to the most recent `const ` keyword. The
-		// snippet between the two must contain `IS_HOSTED ?` — that's
+		// snippet between the two must contain `IS_HOSTED_BUILD ?` — that's
 		// the gate the bundler folds at build time.
-		const gatedDynamic =
-			/dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
+		const gatedLazy = /lazy\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			for (const match of src.matchAll(gatedDynamic)) {
+			for (const match of src.matchAll(gatedLazy)) {
 				const idx = match.index ?? 0;
 				const lastConst = src.lastIndexOf("\nconst ", idx);
 				const start = lastConst >= 0 ? lastConst : 0;
 				const snippet = src.slice(start, idx);
-				if (!/\bIS_HOSTED\s*\?/.test(snippet)) {
+				if (!/\bIS_HOSTED_BUILD\s*\?/.test(snippet)) {
 					offenders.push(`${relative(SRC_DIR, file)} — ${match[0].slice(0, 80)}…`);
 				}
 			}
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated dynamic imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED ? dynamic(…) : null\`.`,
+				`Ungated lazy imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? lazy(…) : null\`.`,
 			);
 		}
 	});
@@ -433,13 +348,13 @@ describe("v2 route exposure", () => {
 
 	test("the unified new-agent entrypoint opens the in-app v2 wizard", () => {
 		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
-		expect(src).toContain('router.push("/deploy")');
+		expect(src).toContain('router.navigate({ href: "/deploy" })');
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
 	});
 
 	test("v2-off agent index copy stays neutral", () => {
-		const agentsIndex = readFileSync(join(SRC_DIR, "app/(dashboard)/agents/page.tsx"), "utf8");
+		const agentsIndex = readFileSync(join(SRC_DIR, "pages/dashboard/agents/page.tsx"), "utf8");
 		const agentsCard = readFileSync(join(SRC_DIR, "components/dashboard/agents-card.tsx"), "utf8");
 		expect(agentsIndex).not.toContain("hosted on your account");
 		expect(agentsCard).not.toContain("deploy a hosted one");
@@ -473,6 +388,25 @@ describe("posthog-js is hosted-only", () => {
 	});
 });
 
+describe("@xterm packages are hosted-only", () => {
+	test("non-hosted source files do not import terminal runtime packages", () => {
+		const offenders: string[] = [];
+		const xtermImport =
+			/(?:^\s*import\s+[^"']+\s+from\s+["']@xterm\/[^"']+["'])|(?:\bimport\s*\(\s*["']@xterm\/[^"']+["']\s*\))/m;
+
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
+			const src = readFileSync(file, "utf8");
+			if (xtermImport.test(src)) offenders.push(relative(SRC_DIR, file));
+		}
+
+		if (offenders.length > 0) {
+			throw new Error(
+				`@xterm packages must stay hosted-only. Keep terminal runtime imports under src/hosted and reach them via IS_HOSTED-gated lazy import:\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
 describe("instrumentation-client hosted imports", () => {
 	test("hosted dynamic imports are gated by compile-time hosted checks", () => {
 		const instrumentationClient = join(SRC_DIR, "..", "instrumentation-client.ts");
@@ -481,7 +415,7 @@ describe("instrumentation-client hosted imports", () => {
 		const src = readFileSync(instrumentationClient, "utf8");
 		const offenders: string[] = [];
 		const hostedDynamic = /import\s*\(\s*["']@\/hosted\/[^"']+["']\s*\)/g;
-		const compileTimeHostedGate = /\bprocess\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/;
+		const compileTimeHostedGate = /\bimport\.meta\.env\.VITE_CLAWDI_HOSTED\s*===\s*["']true["']/;
 
 		for (const match of src.matchAll(hostedDynamic)) {
 			const idx = match.index ?? 0;
@@ -493,65 +427,39 @@ describe("instrumentation-client hosted imports", () => {
 
 		if (offenders.length > 0) {
 			throw new Error(
-				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or process.env.NEXT_PUBLIC_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
+				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or import.meta.env.VITE_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
 			);
 		}
 	});
 });
 
-describe("PostHog proxy route boundaries", () => {
-	test("next.config.ts gates PostHog rewrites behind hosted builds", () => {
-		const nextConfig = join(SRC_DIR, "..", "next.config.ts");
-		if (!existsSync(nextConfig)) return;
+describe("Vite hosted flag boundary", () => {
+	test("hosted gating uses Vite-native env replacement without custom build plugins", () => {
+		const viteConfig = readFileSync(join(SRC_DIR, "..", "vite.config.ts"), "utf8");
+		const hostedFlag = readFileSync(join(SRC_DIR, "lib/hosted.ts"), "utf8");
 
-		const src = readFileSync(nextConfig, "utf8");
-		expect(src).toMatch(
-			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
-		);
-		expect(src).toMatch(/source:\s*["']\/s\/:id\.md["']\s*,\s*destination:\s*["']\/s\/:id\/md["']/);
-		expect(src).toMatch(
-			/source:\s*["']\/s\/:id\.json["']\s*,\s*destination:\s*["']\/s\/:id\/json["']/,
-		);
-
-		const hostedIfMatch = /\bif\s*\(\s*isHostedBuild\s*\)\s*\{/.exec(src);
-		expect(hostedIfMatch).not.toBeNull();
-		if (!hostedIfMatch) return;
-
-		const hostedIfOpenBrace = src.indexOf("{", hostedIfMatch.index);
-		expect(hostedIfOpenBrace).toBeGreaterThanOrEqual(0);
-		if (hostedIfOpenBrace < 0) return;
-
-		const hostedIfCloseBrace = findMatchingBrace(src, hostedIfOpenBrace);
-		expect(hostedIfCloseBrace).toBeGreaterThan(hostedIfOpenBrace);
-		if (hostedIfCloseBrace <= hostedIfOpenBrace) return;
-
-		const hostedPosthogBlock = src.slice(hostedIfOpenBrace + 1, hostedIfCloseBrace);
-		expect(hostedPosthogBlock).toMatch(/rewrites\.push\s*\(/);
-		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/static\/:path\*`/);
-		expect(hostedPosthogBlock).toMatch(/source:\s*`\$\{posthogProxyPath\}\/:path\*`/);
-
-		const posthogRewriteSources = [
-			...src.matchAll(/source:\s*`\$\{posthogProxyPath\}\/(?:static\/)?:path\*`/g),
-		];
-		expect(posthogRewriteSources.length).toBe(2);
-		for (const sourceMatch of posthogRewriteSources) {
-			const sourceIndex = sourceMatch.index ?? -1;
-			expect(sourceIndex).toBeGreaterThanOrEqual(hostedIfOpenBrace + 1);
-			expect(sourceIndex).toBeLessThan(hostedIfCloseBrace);
-		}
+		expect(viteConfig).not.toContain("clawdi-oss-hosted-boundary");
+		expect(viteConfig).not.toContain("envPrefix");
+		expect(viteConfig).not.toContain("define:");
+		expect(hostedFlag).toContain("import.meta.env.VITE_CLAWDI_HOSTED");
 	});
+});
 
-	test("proxy.ts only exposes /_cdi/px as public in hosted builds", () => {
-		const proxyFile = join(SRC_DIR, "proxy.ts");
-		if (!existsSync(proxyFile)) return;
+describe("PostHog proxy route boundaries", () => {
+	test("vercel.json keeps PostHog first-party proxy rewrites explicit", () => {
+		const vercelConfig = join(SRC_DIR, "..", "vercel.json");
+		expect(existsSync(vercelConfig)).toBe(true);
 
-		const src = readFileSync(proxyFile, "utf8");
-		expect(src).toMatch(
-			/\bconst\s+isHostedBuild\s*=\s*process\.env\.NEXT_PUBLIC_CLAWDI_HOSTED\s*===\s*["']true["']/,
-		);
-		expect(src).toMatch(
-			/if\s*\(\s*isHostedBuild\s*\)\s*\{[\s\S]*publicRoutes\.push\(\s*["']\/_cdi\/px\(\.\*\)["']\s*\)/,
-		);
-		expect(src).not.toMatch(/createRouteMatcher\s*\(\s*\[[\s\S]*["']\/_cdi\/px\(\.\*\)["']/);
+		const config = JSON.parse(readFileSync(vercelConfig, "utf8")) as {
+			rewrites?: Array<{ source: string; destination: string }>;
+		};
+		expect(config.rewrites).toContainEqual({
+			source: "/_cdi/px/static/:path*",
+			destination: "https://us-assets.i.posthog.com/static/:path*",
+		});
+		expect(config.rewrites).toContainEqual({
+			source: "/_cdi/px/:path*",
+			destination: "https://us.i.posthog.com/:path*",
+		});
 	});
 });

@@ -66,8 +66,8 @@
 		"commander": "^13.0.0",
 		"openapi-fetch": "^0.17.0",
 		"tar": "^7.5.13",
-		"typescript": "^5.9.0",
+		"typescript": "catalog:",
 		"yaml": "^2.9.0",
-		"zod": "^4.3.6"
+		"zod": "catalog:"
 	}
 }

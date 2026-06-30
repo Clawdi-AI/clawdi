@@ -1,7 +1,7 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,7 @@ export function NewAgentButton({
 		if (!canDeployManagedAgent) return;
 		setChooserOpen(false);
 		onNavigate?.();
-		router.push("/deploy");
+		void router.navigate({ href: "/deploy" });
 	}
 
 	const trigger = (

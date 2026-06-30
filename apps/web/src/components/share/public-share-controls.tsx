@@ -18,7 +18,7 @@ import { cn, errorMessage } from "@/lib/utils";
  * visibility toggle — viewers may not be the owner, and the link already
  * works (server-side gate handles auth/permissions). The Markdown / JSON
  * URLs are the canonical agent-fetch entry points (see
- * `apps/web/src/app/s/[id]/[format]/route.ts`).
+ * `apps/web/src/pages/public-share/session-export-route.ts`).
  */
 export function PublicShareControls({ sessionId }: { sessionId: string }) {
 	const url = buildShareUrl(sessionId);

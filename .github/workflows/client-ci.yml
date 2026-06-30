@@ -140,9 +140,9 @@ jobs:
       - if: steps.guard.outputs.run == 'true'
         name: Typecheck
         env:
-          # Required for `next typegen` — CI doesn't need real values
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          # Required for web typecheck/build — CI doesn't need real values
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+          VITE_CLAWDI_API_URL: http://localhost:8000
         run: bunx turbo typecheck --filter=${{ matrix.filter }}
 
   cli-test:
@@ -197,7 +197,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Build web
         env:
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+          VITE_CLAWDI_API_URL: http://localhost:8000
           CLERK_SECRET_KEY: sk_test_dummy
         run: bunx turbo build --filter=web

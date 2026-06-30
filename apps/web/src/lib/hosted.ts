@@ -1,5 +1,3 @@
-// Build-time flag, validated + parsed to boolean by `env`. See
-// `hosted/README.md` and `v2/README.md` for bundle-boundary contracts.
-import { env } from "@/lib/env";
-
-export const IS_HOSTED: boolean = env.NEXT_PUBLIC_CLAWDI_HOSTED;
+// Build-time flag. Keep this as a direct import.meta.env comparison so Vite can
+// fold IS_HOSTED-gated dynamic imports out of OSS bundles.
+export const IS_HOSTED = import.meta.env.VITE_CLAWDI_HOSTED === "true";

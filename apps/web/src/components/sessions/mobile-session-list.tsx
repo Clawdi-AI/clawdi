@@ -1,12 +1,11 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { MessageSquare, Zap } from "lucide-react";
-import Link from "next/link";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Stat } from "@/components/meta/stat";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { sessionDetailHref } from "@/lib/project-resource-model";
 import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export function MobileSessionList({
@@ -44,7 +43,7 @@ export function MobileSessionList({
 				const totalTokens = session.input_tokens + session.output_tokens;
 				return (
 					<article key={session.id} className="px-4 py-3">
-						<Link href={sessionDetailHref(session.id)} className="block min-w-0">
+						<Link to="/sessions/$id" params={{ id: session.id }} className="block min-w-0">
 							<div className="min-w-0">
 								<h3 className="truncate text-sm font-medium">{title}</h3>
 								{projectFolder ? (
