@@ -22,6 +22,7 @@ __pycache__/
 .env
 .env.local
 .clawdi.env
+.vercel/
 .paseo/
 infra/deploy/coolify/*.local.json
 infra/deploy/coolify/*.live.json
