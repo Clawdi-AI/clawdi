@@ -1,0 +1,19 @@
+{
+	"extends": ["//"],
+	"tasks": {
+		"build": {
+			"env": [
+				"$TURBO_EXTENDS$",
+				"MODE",
+				"VITE_*",
+				"CLERK_*",
+				"VERCEL",
+				"VERCEL_*",
+				"NITRO_*",
+				"SERVER_PRESET",
+				"SKIP_ENV_VALIDATION"
+			],
+			"outputs": ["$TURBO_EXTENDS$", ".output/**", ".vercel/output/**"]
+		}
+	}
+}
