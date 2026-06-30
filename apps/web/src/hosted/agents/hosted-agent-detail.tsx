@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -57,7 +57,10 @@ import {
 	useSetAgentAiProvider,
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
-import { HostedTerminalPanel } from "@/hosted/agents/hosted-terminal-panel";
+import {
+	HostedTerminalPanel,
+	type HostedTerminalStatus,
+} from "@/hosted/agents/hosted-terminal-panel";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
@@ -488,21 +491,23 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	}
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y bg-background md:rounded-b-xl">
-			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
+		<LiveToolFrame
+			toolbar={
 				<div className="flex min-w-0 items-center gap-2 text-sm">
 					<MonitorPlay className="size-4 shrink-0 text-muted-foreground" />
 					<span className="shrink-0 font-medium">{label}</span>
 					<span className="min-w-0 truncate text-muted-foreground">Live runtime UI</span>
 				</div>
+			}
+			action={
 				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
 					<a href={url} target="_blank" rel="noopener noreferrer">
 						Open full screen
 						<Maximize2 className="size-3.5" />
 					</a>
 				</Button>
-			</div>
-
+			}
+		>
 			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
 			    full-screen link instead. */}
 			<iframe
@@ -523,34 +528,120 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 					</a>
 				</Button>
 			</div>
-		</div>
+		</LiveToolFrame>
 	);
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────
 
+function LiveToolFrame({
+	toolbar,
+	action,
+	children,
+}: {
+	toolbar: React.ReactNode;
+	action?: React.ReactNode;
+	children: React.ReactNode;
+}) {
+	return (
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-b bg-background md:rounded-b-xl">
+			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
+				{toolbar}
+				{action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
+			</div>
+			{children}
+		</div>
+	);
+}
+
+const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
+	connecting: "Connecting",
+	connected: "Connected",
+	disconnected: "Disconnected",
+};
+
+function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
+	return (
+		<div className="flex items-center gap-2 text-xs text-muted-foreground">
+			<span
+				className={cn(
+					"size-2 rounded-full",
+					status === "connected"
+						? "bg-emerald-500"
+						: status === "connecting"
+							? "bg-amber-500"
+							: "bg-destructive",
+				)}
+			/>
+			<span>{TERMINAL_STATUS_LABELS[status]}</span>
+		</div>
+	);
+}
+
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
 	const label = deploymentDisplayName(deployment.name);
 	const terminal = useCreateTerminalSession();
+	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
+	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
+	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
+	const autoStartedDeploymentRef = useRef<string | null>(null);
+	const currentDeploymentIdRef = useRef(deployment.id);
+	const terminalRequestRef = useRef(0);
 
-	function startTerminal() {
-		terminal.mutate(
-			{ id: deployment.id },
-			{
-				onSuccess: (session) => {
-					if (!session.websocket_url) {
-						toast.error("Terminal unavailable", {
-							description: "The deployment did not return a terminal websocket URL.",
-						});
-						return;
-					}
-					setWebsocketUrl(session.websocket_url);
-				},
-			},
-		);
-	}
+	const startTerminal = useCallback(async () => {
+		if (!isRunning || isOpeningTerminal) return;
+		const requestId = terminalRequestRef.current + 1;
+		terminalRequestRef.current = requestId;
+		setTerminalFailure(null);
+		setTerminalStatus("connecting");
+		try {
+			const session = await createTerminalSession({ id: deployment.id });
+			if (terminalRequestRef.current !== requestId) return;
+			if (!session.websocket_url) {
+				setTerminalStatus("disconnected");
+				setTerminalFailure("The deployment did not return a terminal websocket URL.");
+				toast.error("Terminal unavailable", {
+					description: "The deployment did not return a terminal websocket URL.",
+				});
+				return;
+			}
+			setWebsocketUrl(session.websocket_url);
+		} catch {
+			if (terminalRequestRef.current !== requestId) return;
+			setTerminalStatus("disconnected");
+			setTerminalFailure("Couldn't open terminal. Try again.");
+		}
+	}, [createTerminalSession, deployment.id, isOpeningTerminal, isRunning]);
+
+	useEffect(() => {
+		if (currentDeploymentIdRef.current === deployment.id) return;
+		currentDeploymentIdRef.current = deployment.id;
+		autoStartedDeploymentRef.current = null;
+		setWebsocketUrl(null);
+		setTerminalFailure(null);
+		setTerminalStatus("disconnected");
+	}, [deployment.id]);
+
+	useEffect(() => {
+		if (isRunning) return;
+		autoStartedDeploymentRef.current = null;
+		setWebsocketUrl(null);
+		setTerminalFailure(null);
+		setTerminalStatus("disconnected");
+	}, [isRunning]);
+
+	useEffect(() => {
+		if (!isRunning || websocketUrl || isOpeningTerminal || terminalFailure) return;
+		if (autoStartedDeploymentRef.current === deployment.id) return;
+		autoStartedDeploymentRef.current = deployment.id;
+		void startTerminal();
+	}, [deployment.id, isOpeningTerminal, isRunning, startTerminal, terminalFailure, websocketUrl]);
+
+	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
+		setTerminalStatus(status);
+	}, []);
 
 	if (!isRunning) {
 		return (
@@ -565,60 +656,80 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		);
 	}
 
+	const terminalToolbar = (
+		<div className="flex min-w-0 items-center gap-2 text-sm">
+			<TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+			<span className="shrink-0 font-medium">{label}</span>
+			<span className="min-w-0 truncate text-muted-foreground">Deployment terminal</span>
+		</div>
+	);
+	const displayStatus = websocketUrl
+		? terminalStatus
+		: terminalFailure
+			? "disconnected"
+			: "connecting";
+	const terminalAction = (
+		<>
+			<TerminalStatusIndicator status={displayStatus} />
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				className="hidden sm:inline-flex"
+				disabled={isOpeningTerminal}
+				onClick={() => void startTerminal()}
+			>
+				{isOpeningTerminal ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+				Reconnect
+			</Button>
+		</>
+	);
+
 	if (!websocketUrl) {
 		return (
-			<div className="flex min-h-0 flex-1 items-center justify-center border-y bg-background px-4 py-10">
-				<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-					<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/40">
-						<TerminalSquare className="size-5 text-muted-foreground" />
+			<LiveToolFrame toolbar={terminalToolbar} action={terminalAction}>
+				<div className="flex min-h-0 flex-1 items-center justify-center bg-background px-4 py-10">
+					<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
+						<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/40">
+							{terminalFailure ? (
+								<TerminalSquare className="size-5 text-muted-foreground" />
+							) : (
+								<Spinner className="size-5 text-muted-foreground" />
+							)}
+						</div>
+						<div>
+							<h2 className="text-base font-semibold">
+								{terminalFailure ? "Terminal unavailable" : "Opening deployment terminal"}
+							</h2>
+							<p className="mt-1 text-sm text-muted-foreground">
+								{terminalFailure ??
+									"Starting a real shell in the hosted deployment as the default runtime user."}
+							</p>
+						</div>
+						{terminalFailure ? (
+							<Button onClick={() => void startTerminal()} disabled={isOpeningTerminal}>
+								{isOpeningTerminal ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<RefreshCw className="size-3.5" />
+								)}
+								Retry
+							</Button>
+						) : null}
 					</div>
-					<div>
-						<h2 className="text-base font-semibold">Open deployment terminal</h2>
-						<p className="mt-1 text-sm text-muted-foreground">
-							Start a real shell in the hosted deployment as the default runtime user.
-						</p>
-					</div>
-					<Button onClick={startTerminal} disabled={terminal.isPending}>
-						{terminal.isPending ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<TerminalSquare className="size-3.5" />
-						)}
-						{terminal.isPending ? "Opening…" : "Open terminal"}
-					</Button>
 				</div>
-			</div>
+			</LiveToolFrame>
 		);
 	}
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-y bg-background md:rounded-b-xl">
-			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
-				<div className="flex min-w-0 items-center gap-2 text-sm">
-					<TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
-					<span className="shrink-0 font-medium">{label}</span>
-					<span className="min-w-0 truncate text-muted-foreground">Deployment terminal</span>
-				</div>
-				<div className="flex shrink-0 items-center gap-2">
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="hidden sm:inline-flex"
-						disabled={terminal.isPending}
-						onClick={startTerminal}
-					>
-						{terminal.isPending ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-						New session
-					</Button>
-				</div>
-			</div>
-			<HostedTerminalPanel key={websocketUrl} websocketUrl={websocketUrl} />
-		</div>
+		<LiveToolFrame toolbar={terminalToolbar} action={terminalAction}>
+			<HostedTerminalPanel
+				key={websocketUrl}
+				websocketUrl={websocketUrl}
+				onStatusChange={handleTerminalStatusChange}
+			/>
+		</LiveToolFrame>
 	);
 }
 

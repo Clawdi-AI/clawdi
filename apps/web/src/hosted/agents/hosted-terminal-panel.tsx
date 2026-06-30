@@ -3,15 +3,17 @@
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 
 const TTYD_OUTPUT = "0";
 const TTYD_INPUT = "0";
 const TTYD_RESIZE = "1";
 const TERMINAL_TOKEN_PROTOCOL_PREFIX = "clawdi-terminal.";
 
+export type HostedTerminalStatus = "connecting" | "connected" | "disconnected";
+
 type HostedTerminalPanelProps = {
 	websocketUrl: string;
+	onStatusChange?: (status: HostedTerminalStatus) => void;
 };
 
 function terminalWebSocketTarget(websocketUrl: string): { url: string; protocols: string[] } {
@@ -30,15 +32,19 @@ function terminalWebSocketTarget(websocketUrl: string): { url: string; protocols
 	}
 }
 
-export function HostedTerminalPanel({ websocketUrl }: HostedTerminalPanelProps) {
+export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerminalPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<XTerm | null>(null);
 	const fitRef = useRef<FitAddonType | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
 	const cleanupRef = useRef<(() => void) | null>(null);
-	const [status, setStatus] = useState<"connecting" | "connected" | "disconnected">("disconnected");
+	const [status, setStatus] = useState<HostedTerminalStatus>("connecting");
 	const { url: wsUrl, protocols } = terminalWebSocketTarget(websocketUrl);
 	const wsProtocols = protocols.join(",");
+
+	useEffect(() => {
+		onStatusChange?.(status);
+	}, [onStatusChange, status]);
 
 	const connect = useCallback(async () => {
 		cleanupRef.current?.();
@@ -147,25 +153,6 @@ export function HostedTerminalPanel({ websocketUrl }: HostedTerminalPanelProps) 
 
 	return (
 		<div data-hosted="true" className="flex min-h-0 flex-1 flex-col">
-			<div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
-				<div className="flex items-center gap-2 text-xs text-muted-foreground">
-					<span
-						className={
-							status === "connected"
-								? "size-2 rounded-full bg-emerald-500"
-								: status === "connecting"
-									? "size-2 rounded-full bg-amber-500"
-									: "size-2 rounded-full bg-destructive"
-						}
-					/>
-					{status}
-				</div>
-				{status === "disconnected" ? (
-					<Button type="button" variant="ghost" size="sm" onClick={() => void connect()}>
-						Reconnect
-					</Button>
-				) : null}
-			</div>
 			<div ref={containerRef} className="min-h-0 flex-1 bg-[#0a0a0a] p-1" />
 		</div>
 	);
