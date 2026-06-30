@@ -11,9 +11,8 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 		backend: null,
 		status: "provisioning",
 		endpoints: [],
-		ui_access_token: null,
-		openclaw_ui_url: null,
-		hermes_ui_url: null,
+		openclaw_control_ui_url: null,
+		hermes_control_ui_url: null,
 		config_info: envs
 			? {
 					compute_plan_slug: "compute_free",
