@@ -13,7 +13,7 @@ import {
 	type RuntimeManifest,
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
-import type { RuntimeRunSettings } from "./run-config";
+import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
 import { UI_ACCESS_TOKEN_ENV } from "./ui-bridge";
 
 export interface RuntimeManifestLoad {
@@ -499,15 +499,16 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 				{
 					enabled: runtime.enabled,
 					updateChannel: runtime.install?.channel,
-					install: runtime.enabled
-						? {
-								authority: "official" as const,
-								method: "official-installer" as const,
-								url: OFFICIAL_INSTALL_URLS[name] ?? "",
-								home: runtime.paths?.home || home,
-								args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[name] ?? [],
-							}
-						: undefined,
+					install:
+						runtime.enabled && OFFICIAL_INSTALL_URLS[name]
+							? {
+									authority: "official" as const,
+									method: "official-installer" as const,
+									url: OFFICIAL_INSTALL_URLS[name] ?? "",
+									home: runtime.paths?.home || home,
+									args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[name] ?? [],
+								}
+							: undefined,
 					run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
 				},
 			]),
@@ -629,14 +630,25 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		if (!runtime.enabled) continue;
-		if (name !== "openclaw" && name !== "hermes") {
-			errors.push(`runtime ${name} is not supported by the hosted runtime simulator`);
+		const runCommand = runtime.run?.command?.trim();
+		if (!isSupportedRuntimeName(name)) {
+			if (runtime.install) {
+				errors.push(
+					`runtime ${name} install metadata is not supported by this Clawdi CLI; provide run.command or upgrade the CLI`,
+				);
+			}
+			if (!runCommand) {
+				errors.push(
+					`runtime ${name} is not supported by this Clawdi CLI; provide run.command or upgrade the CLI`,
+				);
+			}
 			continue;
 		}
-		if (!runtime.install) {
+		if (!runtime.install && !runCommand) {
 			errors.push(`runtime ${name} is enabled but missing install metadata`);
 			continue;
 		}
+		if (!runtime.install) continue;
 		const expectedUrl = OFFICIAL_INSTALL_URLS[name];
 		if (runtime.install.url !== expectedUrl) {
 			errors.push(`runtime ${name} must use official installer ${expectedUrl}`);

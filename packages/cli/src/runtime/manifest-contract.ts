@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { mitmProfileInputBundleSchema } from "./mitm-profiles";
-import { runtimeRunSettingsSchema } from "./run-config";
+import { runtimeNameSchema, runtimeRunSettingsSchema } from "./run-config";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
@@ -49,7 +49,7 @@ export const DEFAULT_CLAWDI_CLI_POLICY = {
 
 const liveSyncAgentSchema = z
 	.object({
-		agentType: z.enum(["openclaw", "hermes", "codex"]),
+		agentType: runtimeNameSchema,
 		environmentId: z.string().min(1),
 	})
 	.strict();
@@ -87,7 +87,7 @@ const runtimeDesiredStateShape = {
 		})
 		.strict(),
 	clawdiCli: cliPayloadPolicySchema.optional(),
-	runtimes: z.record(z.string().min(1), runtimeSchema),
+	runtimes: z.record(runtimeNameSchema, runtimeSchema),
 	projection: runtimeProjectionSchema.optional(),
 	mitmProfiles: mitmProfileInputBundleSchema.optional(),
 	liveSync: liveSyncSchema.optional(),
@@ -168,7 +168,7 @@ export const hostedRuntimeManifestSchema = z
 				path: ["apiUrl"],
 			}),
 		clawdiCli: cliPayloadPolicySchema.optional(),
-		runtimes: z.record(z.string().min(1), hostedRuntimeEntrySchema),
+		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 		providers: z
 			.record(
 				z.string().min(1),

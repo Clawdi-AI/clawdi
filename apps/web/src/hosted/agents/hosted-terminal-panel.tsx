@@ -175,7 +175,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		term.loadAddon(fitAddon);
 		term.loadAddon(new WebLinksAddon());
 		term.open(container);
-		fitAddon.fit();
 		term.focus();
 
 		termRef.current = term;
@@ -183,6 +182,22 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		setStatus("connecting");
 
 		let disposed = false;
+		let fitFrame: number | null = null;
+		const fitNow = () => {
+			if (fitFrame !== null) {
+				window.cancelAnimationFrame(fitFrame);
+				fitFrame = null;
+			}
+			if (!disposed) fitAddon.fit();
+		};
+		const scheduleFit = () => {
+			if (fitFrame !== null) return;
+			fitFrame = window.requestAnimationFrame(() => {
+				fitFrame = null;
+				if (!disposed) fitAddon.fit();
+			});
+		};
+		fitNow();
 
 		const openWebSocket = (target: TerminalWebSocketTarget) => {
 			let ws: WebSocket;
@@ -253,13 +268,17 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 			}
 		});
 
-		const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+		const resizeObserver = new ResizeObserver(scheduleFit);
 		resizeObserver.observe(container);
 		const focusTerminal = () => term.focus();
 		container.addEventListener("pointerdown", focusTerminal);
 
 		const cleanup = () => {
 			disposed = true;
+			if (fitFrame !== null) {
+				window.cancelAnimationFrame(fitFrame);
+				fitFrame = null;
+			}
 			resizeObserver.disconnect();
 			container.removeEventListener("pointerdown", focusTerminal);
 			wsRef.current?.close();
