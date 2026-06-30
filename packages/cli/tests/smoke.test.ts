@@ -256,6 +256,11 @@ printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-co
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
 cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
 #!/usr/bin/env bash
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ]; then
+  install -d "$HOME/.openclaw/install-proof"
+  printf '%s\n' "$*" > "$HOME/.openclaw/install-proof/config-patch-args"
+  cat > "$HOME/.openclaw/install-proof/config-patch-stdin"
+fi
 echo "openclaw fixture"
 SH
 chmod +x "$HOME/.openclaw/bin/openclaw"
@@ -481,7 +486,22 @@ chmod +x "$HOME/.local/bin/hermes"
 				supervisorConfig.indexOf("\n\n", openclawStart),
 			);
 			expect(openclawSection).not.toContain("user=clawdi");
+			expect(openclawSection).toContain('OPENCLAW_NO_AUTO_UPDATE="1"');
 			expect(supervisorConfig).not.toContain("auth-test-token");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "config-patch-args"), "utf-8").trim(),
+			).toBe("config patch --stdin");
+			const openclawPolicyPatch = JSON.parse(
+				readFileSync(join(home, ".openclaw", "install-proof", "config-patch-stdin"), "utf-8"),
+			);
+			expect(openclawPolicyPatch).toEqual({
+				update: {
+					checkOnStart: false,
+					auto: {
+						enabled: false,
+					},
+				},
+			});
 			const inventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
 			);

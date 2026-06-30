@@ -831,6 +831,38 @@ function applyHostedAiProviderProjection(
 	return null;
 }
 
+function applyHostedOpenClawPolicy(
+	name: string,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+): string | null {
+	if (name !== "openclaw") return null;
+	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+		return null;
+	}
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	runRuntimeUserCommand(
+		observation.commandPath,
+		["config", "patch", "--stdin"],
+		`${JSON.stringify(hostedOpenClawPolicyPatch(), null, 2)}\n`,
+		home,
+		workspaceRoot,
+	);
+	return observation.commandPath;
+}
+
+function hostedOpenClawPolicyPatch(): Record<string, unknown> {
+	return {
+		update: {
+			checkOnStart: false,
+			auto: {
+				enabled: false,
+			},
+		},
+	};
+}
+
 function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unknown> | null {
 	if (!manifest.projection || !Object.hasOwn(manifest.projection, "channels")) {
 		return null;
@@ -1548,6 +1580,7 @@ function writeSupervisorConfig(
 		const runtimeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
+			...(runtime === "openclaw" ? { OPENCLAW_NO_AUTO_UPDATE: "1" } : {}),
 			CLAWDI_RUNTIME_REV: runtimeProgramRevision(manifest, runtime, secretValues),
 		});
 		lines.push(
@@ -1862,6 +1895,15 @@ export function convergeRuntimeManifest(
 		const projectionPath = join(paths.projectionRoot, `${name}.json`);
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
+		try {
+			applyHostedOpenClawPolicy(name, observation, manifest, workspaceRoot);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} hosted policy projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 		try {
 			applyHostedAiProviderProjection(name, observation, manifest, workspaceRoot);
 		} catch (error) {

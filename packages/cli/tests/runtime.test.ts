@@ -805,6 +805,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				"  cat >/dev/null",
+				"  exit 0",
+				"fi",
 				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
 				"exit 2",
 				"",
@@ -909,6 +913,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				"#!/bin/sh",
 				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
 				`  cat > '${openclawPatch}'`,
+				"  exit 0",
+				"fi",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				"  cat >/dev/null",
 				"  exit 0",
 				"fi",
 				"exit 2",
@@ -1032,6 +1040,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				"#!/bin/sh",
 				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
 				`  cat > '${openclawPatch}'`,
+				"  exit 0",
+				"fi",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				"  cat >/dev/null",
 				"  exit 0",
 				"fi",
 				"exit 2",
@@ -2876,6 +2888,10 @@ install -d "$HOME/.openclaw/bin"
 cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
+  payload="$(cat)"
+  if printf '%s' "$payload" | grep -q '"checkOnStart"'; then
+    exit 0
+  fi
   echo "projection boom" >&2
   exit 73
 fi
@@ -3724,11 +3740,14 @@ exit 64
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
 			.map((entry) => JSON.parse(entry));
-		expect(patches).toHaveLength(2);
-		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
-		expect(patches[1].channels.discord).toBeNull();
-		expect(patches[1].plugins.entries.discord).toBeNull();
-		expect(patches[1].channels.telegram).toEqual({
+		const policyPatches = patches.filter((patch) => Object.hasOwn(patch, "update"));
+		const channelPatches = patches.filter((patch) => Object.hasOwn(patch, "channels"));
+		expect(policyPatches).toHaveLength(2);
+		expect(channelPatches).toHaveLength(2);
+		expect(channelPatches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
+		expect(channelPatches[1].channels.discord).toBeNull();
+		expect(channelPatches[1].plugins.entries.discord).toBeNull();
+		expect(channelPatches[1].channels.telegram).toEqual({
 			enabled: true,
 			botToken: "telegram-token",
 		});
@@ -4036,6 +4055,10 @@ if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ] && [ "\${3:-}" = "clawdi" ];
   rm -f '${openclawMcp}'
   exit 0
 fi
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ]; then
+  cat >/dev/null
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 `,
@@ -4267,6 +4290,7 @@ exit 64
 		expect(runtimeBridgeSection).not.toContain('"name":"hermes"');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES=""');
+		expect(openclawSection).toContain('OPENCLAW_NO_AUTO_UPDATE="1"');
 		expect(openclawSection).not.toContain("bridge-secret");
 	});
 

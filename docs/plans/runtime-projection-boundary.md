@@ -111,6 +111,9 @@ The CLI may own:
 - proxy and trust environment projection;
 - request matching for explicit profiles;
 - secret reference lookup from short-lived runtime state.
+- target-native policy projection required to preserve managed-runtime
+  boundaries, such as disabling OpenClaw gateway self-update prompts in hosted
+  mode.
 
 The CLI must not own:
 
@@ -142,13 +145,14 @@ Built-in installer/projection support is currently explicit. Unknown runtime
 names are acceptable only when the manifest includes enough `run.command`
 information for the CLI to launch them deterministically.
 
-## Control UI And Terminal Boundary
+## Runtime UI And Terminal Boundary
 
-Control UI is a runtime browser UI surface proxied by the local runtime bridge.
+Runtime UI is a runtime browser UI surface proxied by the local runtime bridge.
 Terminal is a deployment shell surface exposed by the dashboard and hosted API
 contract. They are intentionally separate:
 
-- Control UI is runtime-specific.
+- Runtime UI is runtime-specific and should use the runtime's official
+  user-facing name.
 - The bridge accepts explicitly declared runtime surfaces with listen/upstream
   targets and surface-specific policy; it must not become arbitrary port
   forwarding.
