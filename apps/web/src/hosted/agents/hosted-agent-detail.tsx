@@ -150,7 +150,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Info,
 	},
 	console: {
-		description: "Open the live runtime UI.",
+		description: "Open the live runtime control UI.",
 		icon: MonitorPlay,
 	},
 	terminal: {
@@ -235,7 +235,7 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 /**
  * PER-RUNTIME agent detail. A compute (deployment) hosts the always-on Codex
  * runtime plus optional sibling runtimes; each runtime has its own env id, AI
- * provider binding, channel links, sessions, and console. Terminal and compute
+ * provider binding, channel links, sessions, and control UI. Terminal and compute
  * controls are deployment-wide because they attach to the shared hosted compute.
  */
 export function HostedAgentDetail({
@@ -324,7 +324,7 @@ export function HostedAgentDetail({
 						{consoleUrl ? (
 							<Button asChild variant="outline" size="sm">
 								<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-									Open {runtimeLabel}
+									Open {runtimeControlUiLabel(runtime)}
 									<ExternalLink className="size-3.5" />
 								</a>
 							</Button>
@@ -443,10 +443,10 @@ function OverviewTab({
 	);
 }
 
-// ── Console ──────────────────────────────────────────────────────────────────
+// ── Control UI ───────────────────────────────────────────────────────────────
 
 /**
- * Live agent console embedded inline. The deployment's per-runtime UI URLs
+ * Live agent control UI embedded inline. The deployment's per-runtime UI URLs
  * point at owner-only runtime bridge URLs. When the runtime
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
  * the full-screen link is the alternate path.
@@ -454,6 +454,7 @@ function OverviewTab({
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
 	const label = runtimeDisplayName(runtime);
+	const controlUiLabel = runtimeControlUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
 
 	// Not running yet — the runtime UI and bridge only exist once the agent boots.
@@ -462,8 +463,8 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				bordered
 				icon={MonitorPlay}
-				title="Console available once running"
-				description={`The live ${label} UI opens here as soon as the agent is running — currently ${statusLabel(
+				title="Control UI available once running"
+				description={`The live ${controlUiLabel} opens here as soon as the agent is running — currently ${statusLabel(
 					deployment.status,
 				).toLowerCase()}.`}
 			/>
@@ -476,11 +477,11 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				bordered
 				icon={MonitorPlay}
-				title="No console URL yet"
+				title="No Control UI URL yet"
 				description={
 					<span>
-						This {label} runtime is running but hasn&apos;t published a UI endpoint. Reach it by
-						linking a channel from{" "}
+						This {label} runtime is running but hasn&apos;t published its Control UI endpoint. Reach
+						it by linking a channel from{" "}
 						<Link href="/channels" className="underline">
 							Channels
 						</Link>
@@ -494,7 +495,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	return (
 		<LiveToolFrame
 			icon={MonitorPlay}
-			title={`${label} console`}
+			title={controlUiLabel}
 			action={
 				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
 					<a href={url} target="_blank" rel="noopener noreferrer">
@@ -509,23 +510,27 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<iframe
 				key={`${runtime}:${url}`}
 				src={url}
-				title={`${label} console`}
+				title={controlUiLabel}
 				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
 				allow="clipboard-read; clipboard-write"
 			/>
 			<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
 				<p className="text-sm text-muted-foreground">
-					The console is best viewed full screen on a small screen.
+					The Control UI is best viewed full screen on a small screen.
 				</p>
 				<Button asChild variant="outline" size="sm">
 					<a href={url} target="_blank" rel="noopener noreferrer">
-						Open {label} full screen
+						Open {controlUiLabel}
 						<Maximize2 className="size-3.5" />
 					</a>
 				</Button>
 			</div>
 		</LiveToolFrame>
 	);
+}
+
+function runtimeControlUiLabel(runtime: Runtime): string {
+	return `${runtimeDisplayName(runtime)} Control UI`;
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────

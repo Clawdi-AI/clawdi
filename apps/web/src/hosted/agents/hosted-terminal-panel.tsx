@@ -176,6 +176,7 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		term.loadAddon(new WebLinksAddon());
 		term.open(container);
 		fitAddon.fit();
+		term.focus();
 
 		termRef.current = term;
 		fitRef.current = fitAddon;
@@ -204,6 +205,7 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 				if (disposed) return;
 				opened = true;
 				setStatus("connected");
+				term.focus();
 				ws.send(JSON.stringify({ AuthToken: "", columns: term.cols, rows: term.rows }));
 			};
 
@@ -253,10 +255,13 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 
 		const resizeObserver = new ResizeObserver(() => fitAddon.fit());
 		resizeObserver.observe(container);
+		const focusTerminal = () => term.focus();
+		container.addEventListener("pointerdown", focusTerminal);
 
 		const cleanup = () => {
 			disposed = true;
 			resizeObserver.disconnect();
+			container.removeEventListener("pointerdown", focusTerminal);
 			wsRef.current?.close();
 			term.dispose();
 			termRef.current = null;
