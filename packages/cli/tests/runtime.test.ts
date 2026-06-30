@@ -4260,10 +4260,11 @@ exit 64
 		const runtimeBridgeSection = supervisorConfig.split("[program:clawdi-openclaw]")[0];
 		const openclawSection = supervisorConfig.split("[program:clawdi-openclaw]")[1] ?? "";
 		expect(runtimeBridgeSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-secret"');
-		expect(runtimeBridgeSection).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES="');
-		expect(runtimeBridgeSection).toContain('\\"name\\":\\"openclaw\\"');
-		expect(runtimeBridgeSection).toContain('\\"listenPort\\":28789');
-		expect(runtimeBridgeSection).not.toContain('\\"name\\":\\"hermes\\"');
+		expect(runtimeBridgeSection).toContain("CLAWDI_RUNTIME_BRIDGE_SURFACES='");
+		expect(runtimeBridgeSection).toContain('"name":"openclaw"');
+		expect(runtimeBridgeSection).toContain('"kind":"control-ui"');
+		expect(runtimeBridgeSection).toContain('"listenPort":28789');
+		expect(runtimeBridgeSection).not.toContain('"name":"hermes"');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES=""');
 		expect(openclawSection).not.toContain("bridge-secret");

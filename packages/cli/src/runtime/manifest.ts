@@ -1700,12 +1700,22 @@ function supervisorPath(paths: RuntimePaths): string {
 
 function supervisorEnvironment(values: Record<string, string>): string {
 	return Object.entries(values)
-		.map(([key, value]) => `${key}="${supervisorEscape(value)}"`)
+		.map(([key, value]) => `${key}=${supervisorQuoteValue(value)}`)
 		.join(",");
 }
 
-function supervisorEscape(value: string): string {
-	return value.replace(/%/g, "%%").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function supervisorQuoteValue(value: string): string {
+	if (/[\r\n]/.test(value)) {
+		throw new Error("supervisor environment values must be single-line strings");
+	}
+	const escaped = value.replace(/%/g, "%%");
+	if (!escaped.includes('"')) {
+		return `"${escaped.replace(/\\/g, "\\\\")}"`;
+	}
+	if (!escaped.includes("'")) {
+		return `'${escaped}'`;
+	}
+	throw new Error("supervisor environment values must not contain both quote types");
 }
 
 function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): string {
