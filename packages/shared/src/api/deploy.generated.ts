@@ -789,12 +789,10 @@ export interface components {
             endpoints?: string[];
             /** Gateway Token */
             gateway_token?: string | null;
-            /** Ui Access Token */
-            ui_access_token?: string | null;
-            /** Openclaw Ui Url */
-            openclaw_ui_url?: string | null;
-            /** Hermes Ui Url */
-            hermes_ui_url?: string | null;
+            /** Openclaw Control Ui Url */
+            openclaw_control_ui_url?: string | null;
+            /** Hermes Control Ui Url */
+            hermes_control_ui_url?: string | null;
             config_info?: components["schemas"]["V2HostedDeploymentDetailsInfo"] | null;
             compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
             /**

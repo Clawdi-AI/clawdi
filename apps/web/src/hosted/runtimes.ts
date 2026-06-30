@@ -86,8 +86,8 @@ export function runtimeConsoleUrl(
 	runtime: HostedRuntime,
 ): string | null | undefined {
 	if (runtime === "codex") return null;
-	if (runtime === "openclaw") return deployment.openclaw_ui_url;
-	return deployment.hermes_ui_url;
+	if (runtime === "openclaw") return deployment.openclaw_control_ui_url;
+	return deployment.hermes_control_ui_url;
 }
 
 export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[] {
