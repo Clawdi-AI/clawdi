@@ -10,6 +10,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
+import { startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -37,7 +38,6 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
-import { startRuntimeUiBridge } from "../runtime/ui-bridge";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -1962,16 +1962,16 @@ function nextCliInstallBackoffMs(previousMs: number): number {
 	return Math.min(previousMs * 2, 300_000);
 }
 
-export async function runtimeUiBridge(): Promise<void> {
+export async function runtimeBridge(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime ui-bridge is only available in hosted runtime mode");
+		throw new Error("runtime bridge is only available in hosted runtime mode");
 	}
-	const bridge = await startRuntimeUiBridge();
+	const bridge = await startRuntimeBridge();
 	console.error(
-		`runtime ui bridge listening on ${bridge.targets
+		`runtime bridge listening on ${bridge.surfaces
 			.map(
-				(target) =>
-					`${target.listenHost}:${target.listenPort}->${target.targetHost}:${target.targetPort}`,
+				(surface) =>
+					`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
 			)
 			.join(", ")}`,
 	);

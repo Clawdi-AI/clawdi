@@ -6,7 +6,7 @@ High-level map of what's actually in Clawdi Cloud today — updated as the code 
 
 ## One-paragraph overview
 
-Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a read-mostly dashboard on the same backend. The same CLI also owns the public managed runtime command surface for controlled environments. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
+Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a dashboard on the same backend, including hosted deployment surfaces such as Control UI and Terminal. The same CLI also owns the public managed runtime command surface for controlled environments: runtime manifests, convergence, command shims, `clawdi run`, local UI bridging, and diagnostics. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
 
 ---
 
@@ -33,6 +33,19 @@ Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads 
 │ Next.js web dashboard│─────────────────────────▶│ File store     │
 │ (read-mostly)        │                          │ (local / S3)   │
 └──────────────────────┘                          └────────────────┘
+
+┌──────────────────────┐  Runtime manifest / state ┌──────────────────────┐
+│ Hosted control plane │──────────────────────────▶│ Managed runtime CLI  │
+│ (external service)   │                           │  - runtime init/watch│
+└──────────────────────┘                           │  - run configs/shims │
+        ▲                                          │  - runtime bridge         │
+        │ Control UI + Terminal contracts          └──────────┬───────────┘
+        └─────────────────────────────────────────────────────▼
+                                                   ┌──────────────────────┐
+                                                   │ Agent runtimes       │
+                                                   │ Hermes / OpenClaw /  │
+                                                   │ manifest run.command │
+                                                   └──────────────────────┘
 ```
 
 Two auth paths hit the same backend:
@@ -62,6 +75,8 @@ All keyed off Clerk `user_id`:
 | `memories` | Long-term recall. `content` (text), `category`, `tags`, plus three search columns (`content_tsv` generated tsvector, `embedding vector(768)`) | CLI and MCP `memory_add` |
 | `user_settings` | Opaque JSONB per-user prefs: `memory_provider` (`builtin` / `mem0`), `mem0_api_key` | `PATCH /api/settings` |
 | `channel_accounts` + `channel_bot_agent_links` + `channel_secrets` + `channel_bindings` + `channel_binding_aliases` + `channel_pair_codes` + `channel_messages` + `channel_deliveries` + `channel_agent_credentials` + `channel_whatsapp_auth_certs` | Native Channels control plane and agent-facing emulation state. Accounts own external bot/provider identity, visibility, webhook secrets, and provider credentials; public preconfigured accounts can be linked by many users while private accounts stay owner-only; bot-agent links own hashed agent SDK tokens and agent routing; extra provider secrets are AES-GCM encrypted; bindings and aliases map each external chat session to one active bot-agent link and actor-scoped pair control; pair codes authorize chat binding or re-binding; messages record routed traffic and inbox cursors; deliveries provide the DB outbox; WhatsApp agent credentials and auth certs persist Baileys-facing identity material. See `docs/designs/native-channels-product-model.md` for the product model. | `/api/channels`, `/api/channels/telegram/*`, `/api/channels/discord/*`, `/api/channels/whatsapp/*`, `/api/channels/imessage/*`, `pdm run channels-worker` |
+
+Hosted deployment persistence is owned by the hosted agent service, not by the OSS backend tables above. This repository consumes that service through generated API contracts, the dashboard UI, the mock deploy API used for local development, and the CLI managed-runtime contract.
 
 There is no `cron_job` / `celery` / `background_task` table — those were in the original plan but never built. See [What's not implemented](#whats-not-implemented) below.
 
@@ -146,28 +161,117 @@ not add a private runtime-control RPC surface for ordinary agent actions.
 
 Public contract: [`managed-runtime.md`](managed-runtime.md).
 
+### Design Principles
+
+- The host image is a stable envelope. It should provide the OS user, base
+  packages, host policy, CLI bootstrap path, and PATH ordering, but runtime
+  semantics come from the CLI and runtime manifest.
+- `clawdi runtime init --non-interactive` is the convergence boundary. It
+  validates desired state, installs or verifies runtimes through supported
+  installers, writes projections, writes run configs, writes command shims, and
+  renders supervisor config.
+- `clawdi run -- <command>` is the execution boundary. Runtime commands such as
+  `openclaw` and `hermes` resolve through generated run config. Ordinary shell
+  commands keep normal shell behavior.
+- Runtime-specific behavior is manifest-driven. Known runtimes can use built-in
+  install/projection support; future runtimes can be launched through an
+  explicit `run.command` without adding per-agent wrappers to the image.
+- Secrets stay out of durable config. The CLI may project short-lived secret
+  files under the runtime run directory and removes `CLAWDI_AUTH_TOKEN` before
+  launching agent child processes.
+
 ### Module Map
 
 | Area | Files |
 |---|---|
 | Contract schemas | `packages/cli/src/runtime/manifest-contract.ts` |
 | Datasource fetch, normalization, validation | `packages/cli/src/runtime/manifest-source.ts` |
-| Local convergence and install inventory | `packages/cli/src/runtime/manifest.ts` |
+| Local convergence, projections, supervisor config, command shims | `packages/cli/src/runtime/manifest.ts` |
 | Runtime path contract | `packages/cli/src/runtime/paths.ts` |
-| Runtime boot status | `packages/cli/src/runtime/state.ts` |
+| Host policy | `packages/cli/src/runtime/host-policy.ts` |
+| Runtime boot status and observed state | `packages/cli/src/runtime/state.ts`, `packages/cli/src/runtime/observed.ts` |
 | Run config and invocation | `packages/cli/src/runtime/run-config.ts`, `packages/cli/src/commands/run.ts` |
+| CLI self-management in hosted runtime | `packages/cli/src/runtime/cli-update.ts` |
+| Runtime bridge | `packages/cli/src/runtime/bridge.ts` |
 | Broker profile schema and profile generation | `packages/cli/src/runtime/mitm-profiles.ts`, `packages/cli/src/runtime/hosted-mitm-profiles.ts` |
 | Native broker launcher and env projection | `packages/cli/src/runtime/mitm-broker.ts`, `packages/cli/src/runtime/mitm-env.ts` |
 | Native broker implementation | `packages/cli/native/mitm-broker/` |
+| Hosted deployment UI and terminal panel | `apps/web/src/hosted/agents/hosted-agent-detail.tsx`, `apps/web/src/hosted/agents/hosted-terminal-panel.tsx` |
+| Local mock deploy API | `backend/scripts/mock_deploy_api.py` |
+
+### Runtime Flow
+
+```mermaid
+flowchart TD
+    CP[Hosted control plane] -->|hosted manifest response| Source[manifest-source]
+    Source -->|normalized desired state| Init[clawdi runtime init]
+    Init --> Paths[/var/lib/clawdi state]
+    Init --> RunConfigs[config/run/<runtime>.json]
+    Init --> Shims[bin/<runtime> -> .clawdi-runtime-command-shim]
+    Init --> Supervisor[supervisord.conf]
+    Supervisor --> Watch[clawdi runtime watch]
+    Supervisor --> Bridge[clawdi runtime bridge]
+    Supervisor --> Runtime[clawdi run -- <runtime>]
+    Shims --> Runtime
+    Runtime --> Agent[Agent runtime process]
+```
+
+The hosted manifest schema is `clawdi.hosted-runtime.manifest.v1`. The CLI
+normalizes it to `clawdi.runtimeDesiredState.v1`, which is the internal
+convergence shape. The normalized state includes deployment identity,
+environment identity, instance identity, generation, workspace root, control
+plane API origin, CLI package policy, runtime entries, provider projections,
+MCP/tool projections, MITM profiles, live-sync settings, and recovery policy.
+
+### Command Shims
+
+Runtime command shims live under the service state bin directory. The host
+environment puts that directory first on PATH, so typing a managed runtime name
+such as `openclaw` or `hermes` enters the dispatcher before any native binary.
+The dispatcher removes the shim directory from PATH and executes the managed CLI
+as:
+
+```bash
+clawdi run -- "$command_name" "$@"
+```
+
+This keeps the image stable: the image does not need one wrapper script per
+agent. Disabled runtimes write disabled run config, and `clawdi run` reports the
+runtime as disabled instead of falling back to a native binary.
+
+### Control UI And Terminal
+
+Control UI and Terminal are separate hosted deployment surfaces:
+
+- **Control UI** is the runtime's browser UI endpoint, proxied through the
+  runtime bridge as an explicitly declared `control-ui` surface. It is
+  runtime-specific, so the dashboard labels it as `<Runtime> Control UI`.
+- **Terminal** is a deployment shell, not an agent-specific surface. The
+  dashboard requests a terminal session for the deployment and then opens one
+  xterm WebSocket. The terminal uses tty-style frames (`0` for input/output,
+  `1` for resize), follows the dashboard light/dark theme, and sends the
+  short-lived terminal token through a WebSocket subprotocol by default.
+
+The service-side terminal bridge is outside this repository. The public
+contract is: authenticate the user, require the deployment to be running, bind
+the terminal token to that deployment, and bridge the WebSocket to a shell as
+the default runtime user.
+
+The runtime bridge is a general authenticated surface bridge, but each surface
+must be declared with listen/upstream targets and policy. The current hosted
+surface kind is browser Control UI traffic. Terminal stays separate because it
+grants shell execution rather than proxying a runtime web application.
 
 ### Ownership Boundaries
 
-- The control plane owns identity, desired-state generation, and secret
-  resolution. Deployment selection, rollout, and UI policy stay outside this
-  repository.
-- The CLI owns manifest validation, non-secret convergence, runtime install
-  orchestration, run config, short-lived secret projection, and broker
-  lifecycle.
+- The control plane owns identity, desired-state generation, secret resolution,
+  deployment selection, rollout, billing policy, and terminal session
+  authorization.
+- The CLI owns manifest validation, local convergence, runtime install
+  orchestration, non-secret projections, run config, command shims, short-lived
+  secret projection, local UI bridging, diagnostics, and broker lifecycle.
+- The web dashboard owns the user-facing hosted deployment surfaces and calls
+  only public API contracts.
 - OpenClaw and Hermes keep their official installer/updater authority.
 - Clawdi native Channels own shared channel protocol state.
 - User BYOK provider traffic must not be silently proxied.

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public implementation notes |
-| Last updated | 2026-06-29 |
+| Last updated | 2026-06-30 |
 | Owner | CLI runtime layer |
 
 This note documents the open-source CLI surface for managed runtime
@@ -22,6 +22,8 @@ Related public contract: [`../managed-runtime.md`](../managed-runtime.md).
   runtimes.
 - Avoid storing secrets in durable manifests, caches, shell startup files, or
   generated config.
+- Keep the runtime image stable by avoiding image-level per-agent wrappers.
+- Route managed runtime commands through generated run config and `clawdi run`.
 
 ## Command Surface
 
@@ -30,6 +32,8 @@ Runtime commands are intentionally small:
 ```bash
 clawdi runtime init --non-interactive [--json]
 clawdi runtime init --manifest-file <path> [--json]
+clawdi runtime watch [--self-heal-ms <ms>]
+clawdi runtime bridge
 clawdi runtime status [--json]
 clawdi runtime doctor [--json]
 clawdi run -- <command>
@@ -57,10 +61,27 @@ operator-provided manifest.
 3. Install or verify selected runtimes through their normal installers.
 4. Write non-secret run configuration.
 5. Project short-lived secret files only when needed for the current session.
-6. Record status and diagnostics.
+6. Write command shims for active runtime names.
+7. Render supervisor config.
+8. Record status and diagnostics.
 
 The command should be idempotent. Re-running it with the same desired state
 should not produce unnecessary config churn.
+
+Key generated outputs:
+
+- `config/run/<runtime>.json` for `clawdi run`;
+- `config/projections/<runtime>.json` for runtime-specific config projection;
+- `config/runtime-command-shims.json` plus symlinks under the service-state bin
+  directory;
+- `supervisor/supervisord.conf` with each runtime launched as
+  `clawdi run -- <runtime>`;
+- `cache/manifest.last-good.json` and ETag files for recovery and refresh;
+- `install-inventory/<runtime>.json` for diagnostics.
+
+`runtime watch` is the remote refresh loop. It should use cache validators,
+apply only validated desired state, record rejected generations, and keep a
+last-good manifest only after successful convergence.
 
 ## Run Boundary
 
@@ -75,6 +96,40 @@ Rules:
 - keep provider and channel projection deterministic;
 - avoid source patching of target runtimes;
 - keep request rewriting behind explicit runtime profiles.
+- delete `CLAWDI_AUTH_TOKEN` before launching agent child processes.
+
+In hosted mode, runtime command shims make managed runtimes feel native. The
+host PATH points at the shim directory first. A shim named `openclaw`, `hermes`,
+or another manifest runtime removes the shim directory from PATH, then calls:
+
+```bash
+clawdi run -- "$command_name" "$@"
+```
+
+This is the only per-runtime command wrapper. The image should not grow a new
+wrapper each time a runtime is added. Disabled run configs must fail closed:
+`clawdi run` reports the runtime as disabled and never falls back to a native
+binary later on PATH.
+
+For ordinary shell commands that are not managed runtime names, the hosted
+terminal remains a real shell. The command shim model only intercepts command
+names that `runtime init` generated.
+
+## Runtime Support Model
+
+Built-in support is explicit. The CLI currently knows official installer and
+default run settings for supported runtimes such as OpenClaw and Hermes. A
+future or externally supplied runtime can still be represented in the manifest
+when it includes an explicit `run.command`.
+
+Rules:
+
+- supported runtimes with installer metadata must use official installer URLs;
+- unknown runtime names with install metadata are rejected unless the CLI has
+  been upgraded to support them;
+- unknown runtime names without `run.command` are rejected;
+- unknown runtime names with `run.command` can be launched and shimmed without
+  image changes.
 
 ## Provider Projection
 
@@ -108,6 +163,23 @@ Channel projection follows the same contract-driven pattern:
 The public CLI contract describes local projection and validation only. Service
 specific channel management remains outside this repository.
 
+## Control UI And Terminal Notes
+
+`clawdi runtime bridge` is the local authenticated bridge for manifest-declared
+runtime surfaces. The current hosted surfaces use `kind: "control-ui"` and the
+dashboard labels them as `<Runtime> Control UI` because each is a
+runtime-specific browser application.
+
+Bridge surfaces declare listen/upstream targets, protocol handling, auth
+behavior, and header rewrite rules explicitly. The bridge is not an arbitrary
+port forwarder. Terminal is not a bridge surface.
+
+The hosted Terminal is a dashboard/API contract, not a CLI command. The frontend
+requests a short-lived terminal WebSocket URL, moves fragment tokens into a
+`clawdi-terminal.<token>` WebSocket subprotocol by default, uses `tty` framing,
+and falls back to query-token transport only for compatibility. Terminal is
+deployment-scoped and should not be duplicated per agent.
+
 ## Testing Expectations
 
 Runtime changes should include focused tests for:
@@ -118,5 +190,10 @@ Runtime changes should include focused tests for:
 - `runtime init` idempotence;
 - `runtime status` and `runtime doctor` JSON output;
 - `clawdi run -- <runtime>` environment construction.
+- command shim routing, PATH cleanup, stale-shim cleanup, and disabled-runtime
+  behavior;
+- supervisor config rendering for watch, runtime bridge, daemon, and runtimes;
+- terminal URL token transport and light/dark xterm theme behavior when web UI
+  code changes.
 
 Generated API clients should be regenerated whenever backend contracts change.

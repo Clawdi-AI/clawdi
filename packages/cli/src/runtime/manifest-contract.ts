@@ -61,6 +61,30 @@ const liveSyncSchema = z
 	})
 	.strict();
 
+const tcpPortSchema = z.number().int().min(1).max(65535);
+const runtimeBridgeSurfaceNameSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[a-z0-9][a-z0-9._-]*$/, "must be a lowercase surface id");
+
+export const runtimeBridgeSurfaceSchema = z
+	.object({
+		name: runtimeBridgeSurfaceNameSchema,
+		kind: z.enum(["control-ui"]),
+		listenHost: z.string().min(1).optional(),
+		listenPort: tcpPortSchema,
+		upstreamHost: z.string().min(1).default("127.0.0.1"),
+		upstreamPort: tcpPortSchema,
+	})
+	.strict();
+
+const runtimeBridgeSchema = z
+	.object({
+		surfaces: z.array(runtimeBridgeSurfaceSchema).default([]),
+	})
+	.strict();
+
 const runtimeProjectionSchema = z
 	.object({
 		sourceSchemaVersion: z.string().min(1).optional(),
@@ -88,6 +112,7 @@ const runtimeDesiredStateShape = {
 		.strict(),
 	clawdiCli: cliPayloadPolicySchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
+	bridge: runtimeBridgeSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
 	mitmProfiles: mitmProfileInputBundleSchema.optional(),
 	liveSync: liveSyncSchema.optional(),
@@ -169,6 +194,7 @@ export const hostedRuntimeManifestSchema = z
 			}),
 		clawdiCli: cliPayloadPolicySchema.optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
+		bridge: runtimeBridgeSchema.optional(),
 		providers: z
 			.record(
 				z.string().min(1),
@@ -211,3 +237,5 @@ export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
+export type RuntimeBridgeSurfaceInput = z.input<typeof runtimeBridgeSurfaceSchema>;
+export type RuntimeBridgeSurfaceSpec = z.output<typeof runtimeBridgeSurfaceSchema>;

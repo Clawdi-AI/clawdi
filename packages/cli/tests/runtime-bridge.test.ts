@@ -2,65 +2,100 @@ import { describe, expect, it } from "bun:test";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
 import {
-	DEFAULT_UI_BRIDGE_TARGETS,
-	defaultRuntimeUiBridgeTargets,
-	startRuntimeUiBridge,
-	UI_ACCESS_COOKIE,
-	UI_BRIDGE_LISTEN_HOST_ENV,
-} from "../src/runtime/ui-bridge";
+	RUNTIME_BRIDGE_COOKIE,
+	RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV,
+	RUNTIME_BRIDGE_SURFACES_ENV,
+	startRuntimeBridge,
+} from "../src/runtime/bridge";
 
-describe("runtime UI bridge defaults", () => {
-	it("uses bridge listen ports that do not collide with runtime loopback ports", () => {
-		withBridgeListenEnv({}, () => {
-			expect(defaultRuntimeUiBridgeTargets()).toEqual([
-				{
-					name: "openclaw",
-					listenHost: "0.0.0.0",
-					listenPort: 28789,
-					targetHost: "127.0.0.1",
-					targetPort: 18789,
-				},
-				{
-					name: "hermes",
-					listenHost: "0.0.0.0",
-					listenPort: 28793,
-					targetHost: "127.0.0.1",
-					targetPort: 9119,
-				},
-			]);
-		});
+const OPENCLAW_SURFACE = {
+	name: "openclaw",
+	kind: "control-ui",
+	listenPort: 28789,
+	upstreamPort: 18789,
+} as const;
+
+const HERMES_SURFACE = {
+	name: "hermes",
+	kind: "control-ui",
+	listenPort: 28793,
+	upstreamPort: 9119,
+} as const;
+
+describe("runtime bridge configuration", () => {
+	it("requires explicit bridge surfaces", async () => {
+		await expect(startRuntimeBridge({ token: "env-token" })).rejects.toThrow(
+			"no runtime bridge surfaces configured",
+		);
 	});
 
-	it("honors the explicit bridge listen host", () => {
-		withBridgeListenEnv({ [UI_BRIDGE_LISTEN_HOST_ENV]: "10.42.0.20" }, () => {
-			expect(defaultRuntimeUiBridgeTargets().map((target) => target.listenHost)).toEqual([
-				"10.42.0.20",
-				"10.42.0.20",
-			]);
+	it("uses bridge surfaces declared in the supervisor environment", async () => {
+		const upstream = createServer((_req, res) => {
+			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("env-surface");
 		});
+		await listen(upstream, "127.0.0.1", 0);
+		const listenPort = await unusedTcpPort();
+		const previousSurfaces = process.env[RUNTIME_BRIDGE_SURFACES_ENV];
+		process.env[RUNTIME_BRIDGE_SURFACES_ENV] = JSON.stringify([
+			{
+				name: "openclaw",
+				kind: "control-ui",
+				listenHost: "127.0.0.1",
+				listenPort,
+				upstreamPort: serverPort(upstream),
+			},
+		]);
+		const bridge = await startRuntimeBridge({ token: "env-token" });
+		try {
+			expect(bridge.surfaces).toEqual([
+				{
+					name: "openclaw",
+					kind: "control-ui",
+					listenHost: "127.0.0.1",
+					listenPort,
+					upstreamHost: "127.0.0.1",
+					upstreamPort: serverPort(upstream),
+				},
+			]);
+			const response = await fetch(`http://127.0.0.1:${listenPort}/`, {
+				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=env-token` },
+			});
+
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe("env-surface");
+		} finally {
+			await bridge.close();
+			await close(upstream);
+			if (previousSurfaces === undefined) {
+				delete process.env[RUNTIME_BRIDGE_SURFACES_ENV];
+			} else {
+				process.env[RUNTIME_BRIDGE_SURFACES_ENV] = previousSurfaces;
+			}
+		}
 	});
 });
 
-describe("runtime UI bridge", () => {
-	it("reports health only after the target runtime is reachable", async () => {
+describe("runtime bridge", () => {
+	it("reports health only after the surface runtime is reachable", async () => {
 		const upstream = createServer((_req, res) => {
 			res.writeHead(200);
 			res.end("upstream");
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "secret-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		let upstreamClosed = false;
 		try {
@@ -91,18 +126,18 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "secret-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const unauthorized = await fetch(`http://127.0.0.1:${bridgePort}/`);
@@ -115,7 +150,7 @@ describe("runtime UI bridge", () => {
 			expect(redirect.status).toBe(302);
 			expect(redirect.headers.get("location")).toBe("/control?x=1&y=2");
 			const setCookie = redirect.headers.get("set-cookie") ?? "";
-			expect(setCookie).toContain(`${UI_ACCESS_COOKIE}=secret-token`);
+			expect(setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=secret-token`);
 			expect(setCookie).toContain("Secure");
 			expect(setCookie).toContain("HttpOnly");
 			expect(setCookie).toContain("SameSite=Strict");
@@ -123,7 +158,7 @@ describe("runtime UI bridge", () => {
 			expect(seen).toEqual([]);
 
 			const proxied = await fetch(`http://127.0.0.1:${bridgePort}/control?x=1&t=ignored`, {
-				headers: { Cookie: `${UI_ACCESS_COOKIE}=secret-token` },
+				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=secret-token` },
 			});
 			expect(proxied.status).toBe(200);
 			expect(proxied.headers.get("x-upstream")).toBe("openclaw");
@@ -149,22 +184,22 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "sse-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const response = await fetch(`http://127.0.0.1:${bridgePort}/events`, {
-				headers: { Cookie: `${UI_ACCESS_COOKIE}=sse-token` },
+				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=sse-token` },
 			});
 
 			expect(response.status).toBe(200);
@@ -192,32 +227,32 @@ describe("runtime UI bridge", () => {
 		const hermesUpstream = makeUpstream("hermes");
 		await listen(openclawUpstream, "127.0.0.1", 0);
 		await listen(hermesUpstream, "127.0.0.1", 0);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "frame-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: serverPort(openclawUpstream),
+					upstreamPort: serverPort(openclawUpstream),
 				},
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[1],
+					...HERMES_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: serverPort(hermesUpstream),
+					upstreamPort: serverPort(hermesUpstream),
 				},
 			],
 		});
 		try {
-			for (const target of bridge.targets) {
-				const response = await fetch(`http://127.0.0.1:${target.listenPort}/dashboard`, {
-					headers: { Cookie: `${UI_ACCESS_COOKIE}=frame-token` },
+			for (const surface of bridge.surfaces) {
+				const response = await fetch(`http://127.0.0.1:${surface.listenPort}/dashboard`, {
+					headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=frame-token` },
 				});
 				const csp = response.headers.get("content-security-policy") ?? "";
 
 				expect(response.status).toBe(200);
-				expect(response.headers.get("x-upstream")).toBe(target.name);
+				expect(response.headers.get("x-upstream")).toBe(surface.name);
 				expect(response.headers.get("x-frame-options")).toBeNull();
 				expect(csp).toContain("default-src 'self'");
 				expect(csp).toContain("script-src 'self'");
@@ -231,9 +266,9 @@ describe("runtime UI bridge", () => {
 		}
 	});
 
-	it("uses CLAWDI_UI_FRAME_ANCESTORS to configure allowed iframe ancestors", async () => {
-		const previousFrameAncestors = process.env.CLAWDI_UI_FRAME_ANCESTORS;
-		process.env.CLAWDI_UI_FRAME_ANCESTORS = "'self' https://console.clawdi.ai";
+	it("uses CLAWDI_RUNTIME_BRIDGE_FRAME_ANCESTORS to configure allowed iframe ancestors", async () => {
+		const previousFrameAncestors = process.env[RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV];
+		process.env[RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV] = "'self' https://console.clawdi.ai";
 		const upstream = createServer((req, res) => {
 			res.writeHead(200, {
 				"Content-Security-Policy": "connect-src 'self'",
@@ -243,22 +278,22 @@ describe("runtime UI bridge", () => {
 			res.end(`<html><body>${req.url ?? ""}</body></html>`);
 		});
 		await listen(upstream, "127.0.0.1", 0);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "custom-frame-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: serverPort(upstream),
+					upstreamPort: serverPort(upstream),
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const response = await fetch(`http://127.0.0.1:${bridgePort}/`, {
-				headers: { Cookie: `${UI_ACCESS_COOKIE}=custom-frame-token` },
+				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=custom-frame-token` },
 			});
 			const csp = response.headers.get("content-security-policy") ?? "";
 
@@ -271,9 +306,9 @@ describe("runtime UI bridge", () => {
 			await bridge.close();
 			await close(upstream);
 			if (previousFrameAncestors === undefined) {
-				delete process.env.CLAWDI_UI_FRAME_ANCESTORS;
+				delete process.env[RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV];
 			} else {
-				process.env.CLAWDI_UI_FRAME_ANCESTORS = previousFrameAncestors;
+				process.env[RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV] = previousFrameAncestors;
 			}
 		}
 	});
@@ -287,23 +322,23 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "http-strip-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const response = await fetch(`http://127.0.0.1:${bridgePort}/control`, {
 				headers: {
-					Cookie: `${UI_ACCESS_COOKIE}=http-strip-token`,
+					Cookie: `${RUNTIME_BRIDGE_COOKIE}=http-strip-token`,
 					"X-App-Header": "keep-me",
 					"X-Forwarded": "legacy",
 					"X-Forwarded-For": "10.42.0.1",
@@ -363,18 +398,18 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "ws-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const unauthorized = await websocketRequest({
@@ -389,12 +424,12 @@ describe("runtime UI bridge", () => {
 			});
 			expect(redirect.statusCode).toBe(302);
 			expect(redirect.location).toBe("/socket?x=1");
-			expect(redirect.setCookie).toContain(`${UI_ACCESS_COOKIE}=ws-token`);
+			expect(redirect.setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=ws-token`);
 
 			const authorized = await websocketRequest({
 				port: bridgePort,
 				path: "/socket?x=1",
-				cookie: `${UI_ACCESS_COOKIE}=ws-token`,
+				cookie: `${RUNTIME_BRIDGE_COOKIE}=ws-token`,
 			});
 			expect(authorized.statusCode).toBe(101);
 			expect(authorized.setCookie).toBe("");
@@ -403,14 +438,14 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain("Connection: Upgrade");
 			expect(upstreamRequest).toContain("Upgrade: websocket");
 			expect(upstreamRequest).not.toContain("ws-token");
-			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+			expect(upstreamRequest).not.toContain(RUNTIME_BRIDGE_COOKIE);
 		} finally {
 			await bridge.close();
 			await close(upstream);
 		}
 	});
 
-	it("rewrites websocket browser authority headers to the OpenClaw loopback target", async () => {
+	it("rewrites websocket browser authority headers to the OpenClaw loopback surface", async () => {
 		let upstreamRequest = "";
 		const upstream = createNetServer((socket) => {
 			socket.once("data", (chunk) => {
@@ -428,24 +463,24 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "openclaw-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[0],
+					...OPENCLAW_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const authorized = await websocketRequest({
 				port: bridgePort,
 				path: "/control/?session=abc",
-				cookie: `${UI_ACCESS_COOKIE}=openclaw-token; app_cookie=keep`,
+				cookie: `${RUNTIME_BRIDGE_COOKIE}=openclaw-token; app_cookie=keep`,
 				host: "agent-18789.gateway.example.test",
 				origin: "https://agent-18789.gateway.example.test",
 				referer: "https://agent-18789.gateway.example.test/control/?session=abc",
@@ -463,7 +498,7 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain("X-App-Header: keep-me");
 			expectForwardingHeadersStripped(upstreamRequest);
 			expect(upstreamRequest).not.toContain("agent-18789.gateway.example.test");
-			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+			expect(upstreamRequest).not.toContain(RUNTIME_BRIDGE_COOKIE);
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -497,24 +532,24 @@ describe("runtime UI bridge", () => {
 		});
 		await listen(upstream, "127.0.0.1", 0);
 		const upstreamPort = serverPort(upstream);
-		const bridge = await startRuntimeUiBridge({
+		const bridge = await startRuntimeBridge({
 			token: "hermes-bridge-token",
-			targets: [
+			surfaces: [
 				{
-					...DEFAULT_UI_BRIDGE_TARGETS[1],
+					...HERMES_SURFACE,
 					listenHost: "127.0.0.1",
 					listenPort: 0,
-					targetPort: upstreamPort,
+					upstreamPort: upstreamPort,
 				},
 			],
 		});
-		const bridgePort = bridge.targets[0]?.listenPort;
+		const bridgePort = bridge.surfaces[0]?.listenPort;
 		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
 		try {
 			const authorized = await websocketRequest({
 				port: bridgePort,
 				path: "/api/ws?token=hermes-session&channel=chat-1",
-				cookie: `${UI_ACCESS_COOKIE}=hermes-bridge-token`,
+				cookie: `${RUNTIME_BRIDGE_COOKIE}=hermes-bridge-token`,
 				host: "agent-9119.gateway.example.test",
 				origin: "https://agent-9119.gateway.example.test",
 				referer: "https://agent-9119.gateway.example.test/chat",
@@ -529,7 +564,7 @@ describe("runtime UI bridge", () => {
 			expect(upstreamRequest).toContain("X-App-Header: keep-me");
 			expectForwardingHeadersStripped(upstreamRequest);
 			expect(upstreamRequest).not.toContain("agent-9119.gateway.example.test");
-			expect(upstreamRequest).not.toContain(UI_ACCESS_COOKIE);
+			expect(upstreamRequest).not.toContain(RUNTIME_BRIDGE_COOKIE);
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -610,25 +645,6 @@ function forwardingHeaderLines(): string[] {
 	];
 }
 
-function withBridgeListenEnv(values: Record<string, string>, fn: () => void): void {
-	const keys = [UI_BRIDGE_LISTEN_HOST_ENV];
-	const previous = new Map(keys.map((key) => [key, process.env[key]]));
-	try {
-		for (const key of keys) delete process.env[key];
-		for (const [key, value] of Object.entries(values)) process.env[key] = value;
-		fn();
-	} finally {
-		for (const key of keys) {
-			const value = previous.get(key);
-			if (value === undefined) {
-				delete process.env[key];
-			} else {
-				process.env[key] = value;
-			}
-		}
-	}
-}
-
 function expectForwardingHeadersStripped(rawRequest: string): void {
 	expect(hasForwardingHeader(rawRequest)).toBe(false);
 }
@@ -662,6 +678,14 @@ function listen(server: Server | NetServer, host: string, port: number): Promise
 		server.once("listening", onListening);
 		server.listen(port, host);
 	});
+}
+
+async function unusedTcpPort(): Promise<number> {
+	const server = createNetServer();
+	await listen(server, "127.0.0.1", 0);
+	const port = serverPort(server);
+	await close(server);
+	return port;
 }
 
 function close(server: Server | NetServer): Promise<void> {

@@ -25,6 +25,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     control_plane: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     clawdi_cli: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     runtimes: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    bridge: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     live_sync: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     recovery: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     mitm_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))

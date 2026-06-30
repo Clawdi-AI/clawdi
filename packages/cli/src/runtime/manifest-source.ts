@@ -14,7 +14,6 @@ import {
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { UI_ACCESS_TOKEN_ENV } from "./ui-bridge";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -473,7 +472,6 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
 	const home = hosted.system?.home || "/home/clawdi";
 	const workspaceRoot = hosted.system?.workspace || join(home, "clawdi");
-	const runtimes = hostedRuntimeEntries(hosted.runtimes);
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
@@ -494,7 +492,7 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 				}
 			: { ...DEFAULT_CLAWDI_CLI_POLICY },
 		runtimes: Object.fromEntries(
-			Object.entries(runtimes).map(([name, runtime]) => [
+			Object.entries(hosted.runtimes).map(([name, runtime]) => [
 				name,
 				{
 					enabled: runtime.enabled,
@@ -513,6 +511,7 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 				},
 			]),
 		),
+		bridge: hosted.bridge,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
 			system: hosted.system ?? null,
@@ -525,23 +524,6 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 		recovery: {
 			cacheManifest: hosted.recovery?.cacheManifest ?? true,
 			allowOfflineBoot: hosted.recovery?.allowOfflineBoot ?? true,
-		},
-	};
-}
-
-function hostedRuntimeEntries(
-	runtimes: HostedRuntimeManifest["runtimes"],
-): HostedRuntimeManifest["runtimes"] {
-	const token = process.env[UI_ACCESS_TOKEN_ENV]?.trim();
-	if (!token) return runtimes;
-	const hermes = runtimes.hermes;
-	if (hermes?.enabled === false) return runtimes;
-	return {
-		...runtimes,
-		hermes: {
-			...hermes,
-			enabled: true,
-			install: hermes?.install ?? { source: "official" },
 		},
 	};
 }

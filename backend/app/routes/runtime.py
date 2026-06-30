@@ -101,6 +101,8 @@ async def get_runtime_manifest(
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
     }
+    if state.bridge:
+        manifest["bridge"] = state.bridge
     if state.app_id:
         manifest["appId"] = state.app_id
     if state.mitm_profiles:
