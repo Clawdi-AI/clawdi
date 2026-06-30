@@ -47,7 +47,7 @@ const AGENT_SECTION_LABELS = {
 	sessions: "Sessions",
 	skills: "Skills",
 	projects: "Project Access",
-	console: "Runtime Console",
+	console: "Control UI",
 	terminal: "Terminal",
 	ai: "Model Provider",
 	channels: "Channel Links",
