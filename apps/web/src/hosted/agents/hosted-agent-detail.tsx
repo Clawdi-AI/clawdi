@@ -148,7 +148,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Info,
 	},
 	console: {
-		description: "Open the live runtime control UI.",
+		description: "Open the runtime's live browser UI.",
 		icon: MonitorPlay,
 	},
 	terminal: {
@@ -328,7 +328,7 @@ export function HostedAgentDetail({
 						{consoleUrl ? (
 							<Button asChild variant="outline" size="sm">
 								<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-									Open {runtimeControlUiLabel(runtime)}
+									Open {runtimeBrowserUiLabel(runtime)}
 									<ExternalLink className="size-3.5" />
 								</a>
 							</Button>
@@ -450,10 +450,10 @@ function OverviewTab({
 	);
 }
 
-// ── Control UI ───────────────────────────────────────────────────────────────
+// ── Runtime UI ───────────────────────────────────────────────────────────────
 
 /**
- * Live agent control UI embedded inline. The deployment's per-runtime UI URLs
+ * Live agent browser UI embedded inline. The deployment's per-runtime UI URLs
  * point at owner-only runtime bridge URLs. When the runtime
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
  * the full-screen link is the alternate path.
@@ -461,7 +461,7 @@ function OverviewTab({
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
 	const label = runtimeDisplayName(runtime);
-	const controlUiLabel = runtimeControlUiLabel(runtime);
+	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
 
 	// Not running yet — the runtime UI and bridge only exist once the agent boots.
@@ -470,8 +470,8 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				bordered
 				icon={MonitorPlay}
-				title="Control UI available once running"
-				description={`The live ${controlUiLabel} opens here as soon as the agent is running — currently ${statusLabel(
+				title="Runtime UI available once running"
+				description={`The live ${browserUiLabel} opens here as soon as the agent is running — currently ${statusLabel(
 					deployment.status,
 				).toLowerCase()}.`}
 			/>
@@ -484,10 +484,10 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				bordered
 				icon={MonitorPlay}
-				title="No Control UI URL yet"
+				title="No Runtime UI URL yet"
 				description={
 					<span>
-						This {label} runtime is running but hasn&apos;t published its Control UI endpoint. Reach
+						This {label} runtime is running but hasn&apos;t published its browser UI endpoint. Reach
 						it by linking a channel from{" "}
 						<Link to="/channels" className="underline">
 							Channels
@@ -502,7 +502,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	return (
 		<LiveToolFrame
 			icon={MonitorPlay}
-			title={controlUiLabel}
+			title={browserUiLabel}
 			action={
 				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
 					<a href={url} target="_blank" rel="noopener noreferrer">
@@ -517,17 +517,17 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<iframe
 				key={`${runtime}:${url}`}
 				src={url}
-				title={controlUiLabel}
+				title={browserUiLabel}
 				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
 				allow="clipboard-read; clipboard-write"
 			/>
 			<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
 				<p className="text-sm text-muted-foreground">
-					The Control UI is best viewed full screen on a small screen.
+					This runtime UI is best viewed full screen on a small screen.
 				</p>
 				<Button asChild variant="outline" size="sm">
 					<a href={url} target="_blank" rel="noopener noreferrer">
-						Open {controlUiLabel}
+						Open {browserUiLabel}
 						<Maximize2 className="size-3.5" />
 					</a>
 				</Button>
@@ -536,8 +536,10 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	);
 }
 
-function runtimeControlUiLabel(runtime: Runtime): string {
-	return `${runtimeDisplayName(runtime)} Control UI`;
+function runtimeBrowserUiLabel(runtime: Runtime): string {
+	if (runtime === "openclaw") return "OpenClaw Control UI";
+	if (runtime === "hermes") return "Hermes Dashboard";
+	return `${runtimeDisplayName(runtime)} UI`;
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────

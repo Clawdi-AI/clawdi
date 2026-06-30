@@ -142,13 +142,14 @@ Built-in installer/projection support is currently explicit. Unknown runtime
 names are acceptable only when the manifest includes enough `run.command`
 information for the CLI to launch them deterministically.
 
-## Control UI And Terminal Boundary
+## Runtime UI And Terminal Boundary
 
-Control UI is a runtime browser UI surface proxied by the local runtime bridge.
+Runtime UI is a runtime browser UI surface proxied by the local runtime bridge.
 Terminal is a deployment shell surface exposed by the dashboard and hosted API
 contract. They are intentionally separate:
 
-- Control UI is runtime-specific.
+- Runtime UI is runtime-specific and should use the runtime's own product
+  wording, such as OpenClaw Control UI or Hermes Dashboard.
 - The bridge accepts explicitly declared runtime surfaces with listen/upstream
   targets and surface-specific policy; it must not become arbitrary port
   forwarding.

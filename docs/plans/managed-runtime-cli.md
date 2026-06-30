@@ -163,12 +163,12 @@ Channel projection follows the same contract-driven pattern:
 The public CLI contract describes local projection and validation only. Service
 specific channel management remains outside this repository.
 
-## Control UI And Terminal Notes
+## Runtime UI And Terminal Notes
 
 `clawdi runtime bridge` is the local authenticated bridge for manifest-declared
 runtime surfaces. The current hosted surfaces use `kind: "control-ui"` and the
-dashboard labels them as `<Runtime> Control UI` because each is a
-runtime-specific browser application.
+dashboard labels each browser UI with the runtime's own wording, such as
+OpenClaw Control UI and Hermes Dashboard.
 
 Bridge surfaces declare listen/upstream targets, protocol handling, auth
 behavior, and header rewrite rules explicitly. The bridge is not an arbitrary

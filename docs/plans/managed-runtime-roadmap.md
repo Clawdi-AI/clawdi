@@ -23,7 +23,7 @@ this repository.
 - Stable-image contract: runtime behavior is driven by manifest + CLI, not
   image-level per-agent wrappers.
 - Supervisor rendering that launches runtimes through `clawdi run -- <runtime>`.
-- Runtime bridge for Control UI surfaces.
+- Runtime bridge for browser runtime UI surfaces.
 - Hosted Terminal dashboard contract with xterm, tty-style framing, and
   WebSocket subprotocol token transport.
 - Broker profile validation and local broker lifecycle tests.
@@ -39,7 +39,7 @@ this repository.
 4. Keep target-runtime transport names inside projection code only.
 5. Improve diagnostics without printing secrets.
 6. Expand focused tests for provider, channel, run-environment, command-shim,
-   Control UI, and Terminal projection.
+   runtime UI, and Terminal projection.
 
 ## Non-Goals
 

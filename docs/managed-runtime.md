@@ -21,7 +21,7 @@ Related public docs:
 
 The open-source CLI owns local runtime convergence, command wrapping, runtime
 UI bridging, and diagnostics. The web app owns the hosted deployment dashboard
-surfaces, including Control UI and Terminal tabs. A separate control plane may
+surfaces, including runtime UI and Terminal tabs. A separate control plane may
 provide desired state, credentials, terminal authorization, rollout policy, and
 deployment lifecycle, but that platform-specific implementation is outside this
 repository.
@@ -146,7 +146,7 @@ last-good cached manifests only when recovery policy allows it. `runtime
 bridge` exposes manifest-declared runtime surfaces behind hosted access
 controls.
 
-The current hosted bridge surfaces are browser-facing Control UIs. Each surface
+The current hosted bridge surfaces are browser-facing runtime UIs. Each surface
 declares its listen address, upstream target, protocol behavior, auth model, and
 header rewrite rules. The bridge must not become a generic arbitrary-port
 forwarder. Terminal is deliberately out of scope because it is a shell-exec
@@ -238,19 +238,19 @@ Channel configuration follows the same rule: the open-source contract describes
 the local projection shape and validation rules, while service-specific channel
 control planes remain outside this repository.
 
-## Control UI And Terminal
+## Runtime UI And Terminal
 
 Hosted deployment pages expose two live surfaces:
 
-- **Control UI** embeds or links to the runtime's browser UI through the
-  runtime bridge. It is runtime-specific and should be labelled as
-  `<Runtime> Control UI`.
+- **Runtime UI** embeds or links to the runtime's browser UI through the
+  runtime bridge. It is runtime-specific and should use the runtime's own
+  product wording, such as OpenClaw Control UI or Hermes Dashboard.
 - **Terminal** opens a shell for the deployment. It is not split per agent; a
   deployment has one Terminal surface.
 
 ```mermaid
 flowchart LR
-    Dashboard[Dashboard] -->|Control UI URL| Bridge[clawdi runtime bridge]
+    Dashboard[Dashboard] -->|Runtime UI URL| Bridge[clawdi runtime bridge]
     Bridge --> RuntimeUI[Runtime browser UI<br/>loopback upstream]
     Dashboard -->|Terminal WebSocket| HostedAPI[Hosted API]
     HostedAPI --> Shell[Deployment shell<br/>default runtime user]
