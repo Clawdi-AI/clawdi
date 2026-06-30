@@ -5,7 +5,7 @@ import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client"
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/")({
 	beforeLoad: ({ params, search }) => {
 		if (hasAgentTabQuery(search)) {
-			throw redirect({ to: agentSectionHref(params.id, "overview", search), replace: true });
+			throw redirect({ href: agentSectionHref(params.id, "overview", search), replace: true });
 		}
 	},
 	component: AgentDetailRoute,

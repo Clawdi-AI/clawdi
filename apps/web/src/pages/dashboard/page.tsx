@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import {
 	AgentsCard,
@@ -20,7 +20,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
-import dynamic from "@/lib/dynamic";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { relativeTime } from "@/lib/utils";
 import { useV2Access } from "@/lib/v2-access";
@@ -46,11 +45,9 @@ function countProjectTypes(
 	return counts;
 }
 
-// Dynamic imports gated on a build-time hosted flag. When
-// the flag is false (OSS), the conditional collapses, the
-// `dynamic(…)` calls are unreachable, the bundler eliminates the
-// `import()` sites, and the entire `@/hosted/hosted-agents-section`
-// chunk never ships in the OSS bundle.
+// Lazy imports gated on a build-time hosted flag. When the flag is false (OSS),
+// the conditional collapses, the bundler eliminates the `import()` sites, and
+// the entire `@/hosted/hosted-agents-section` chunk never ships in the OSS bundle.
 //
 // Two exports from the same module: `HostedAgentsSection` for the
 // left-column agent panel, and `HostedSecondaryCTA` for the
@@ -58,14 +55,14 @@ function countProjectTypes(
 // `useHostedAgentTiles` and share its TanStack Query cache, so
 // rendering both still costs only one network request.
 const HostedAgentsSection = IS_HOSTED_BUILD
-	? dynamic(() =>
+	? lazy(() =>
 			import("@/hosted/hosted-agents-section").then((m) => ({
 				default: m.HostedAgentsSection,
 			})),
 		)
 	: null;
 const HostedSecondaryCTA = IS_HOSTED_BUILD
-	? dynamic(() =>
+	? lazy(() =>
 			import("@/hosted/hosted-agents-section").then((m) => ({
 				default: m.HostedSecondaryCTA,
 			})),
@@ -155,12 +152,14 @@ export default function DashboardPage() {
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
 					) : hostedAgentsEnabled && HostedAgentsSection ? (
-						<HostedAgentsSection
-							selfManagedTiles={selfManagedTiles}
-							envsLoading={envsLoading}
-							selfManagedCount={selfManagedCount}
-							cloudEnvs={environments ?? []}
-						/>
+						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
+							<HostedAgentsSection
+								selfManagedTiles={selfManagedTiles}
+								envsLoading={envsLoading}
+								selfManagedCount={selfManagedCount}
+								cloudEnvs={environments ?? []}
+							/>
+						</Suspense>
 					) : ossIsEmptyState ? (
 						<OnboardingCard />
 					) : (
@@ -216,11 +215,13 @@ export default function DashboardPage() {
 				    the count. */}
 				<div className="min-w-0 space-y-4">
 					{hostedAccessLoading ? null : hostedAgentsEnabled && HostedSecondaryCTA ? (
-						<HostedSecondaryCTA
-							selfManagedCount={selfManagedCount}
-							envsLoading={envsLoading}
-							cloudEnvs={environments ?? []}
-						/>
+						<Suspense fallback={null}>
+							<HostedSecondaryCTA
+								selfManagedCount={selfManagedCount}
+								envsLoading={envsLoading}
+								cloudEnvs={environments ?? []}
+							/>
+						</Suspense>
 					) : hasAgents ? (
 						<ConnectAnotherCard />
 					) : null}

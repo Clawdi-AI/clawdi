@@ -11,7 +11,7 @@ the per-user access gate.
    Hosted agent and billing modules may consume v2 capabilities, but v2 product
    modules must not reach back into hosted agent infrastructure.
 
-2. **Route entrypoints use `IS_HOSTED ? dynamic(...) : null`.**
+2. **Route entrypoints use `IS_HOSTED ? lazy(...) : null`.**
    This keeps the v2 chunk out of OSS bundles while the feature remains hidden.
    The route body must also render through `<V2Gate>` so a hosted build can
    enable v2 per user.

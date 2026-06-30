@@ -16,7 +16,6 @@ import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
-import Image from "@/lib/image";
 import {
 	formatAbsoluteTooltip,
 	formatNumber,
@@ -264,7 +263,7 @@ function ShareHeader() {
 		<header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
 			<div className="flex items-center justify-between px-4 py-3 lg:px-6">
 				<Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
-					<Image
+					<img
 						src="/clawdi-logo-transparent.png"
 						alt=""
 						width={28}

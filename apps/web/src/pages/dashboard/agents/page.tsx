@@ -1,11 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { unwrap, useApi } from "@/lib/api";
-import dynamic from "@/lib/dynamic";
 import { useV2Access } from "@/lib/v2-access";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
@@ -20,7 +19,7 @@ const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
  * bundles (same pattern as the Overview agent panel).
  */
 const HostedAgentsByCompute = IS_HOSTED_BUILD
-	? dynamic(() =>
+	? lazy(() =>
 			import("@/hosted/hosted-agents-section").then((m) => ({
 				default: m.HostedAgentsByCompute,
 			})),
@@ -49,12 +48,14 @@ export default function AgentsIndexPage() {
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
 			) : hostedAgentsEnabled && HostedAgentsByCompute ? (
-				<HostedAgentsByCompute
-					selfManagedTiles={selfManagedTiles}
-					envsLoading={envsLoading}
-					selfManagedCount={selfManagedCount}
-					cloudEnvs={environments ?? []}
-				/>
+				<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
+					<HostedAgentsByCompute
+						selfManagedTiles={selfManagedTiles}
+						envsLoading={envsLoading}
+						selfManagedCount={selfManagedCount}
+						cloudEnvs={environments ?? []}
+					/>
+				</Suspense>
 			) : (
 				<AgentsCard agents={selfManagedTiles} isLoading={envsLoading} />
 			)}

@@ -8,7 +8,6 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
 import type { SessionMessage } from "@/lib/api-schemas";
-import Image from "@/lib/image";
 import { cn, formatAbsoluteTooltip } from "@/lib/utils";
 
 /**
@@ -107,7 +106,7 @@ function MessageBlock({
 				{isGroupStart ? (
 					isUser ? (
 						userAvatar ? (
-							<Image src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
+							<img src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
 						) : (
 							<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
 								{userName[0]}

@@ -247,15 +247,15 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 		// Static imports of `@/hosted/*` from any OSS-reachable file
 		// would pull the hosted chunk into the OSS main bundle even
 		// when the runtime usage is gated by `IS_HOSTED`. The fix is
-		// always `dynamic(() => import("@/hosted/…"))` constructed
+		// always `lazy(() => import("@/hosted/…"))` constructed
 		// inside an `IS_HOSTED_BUILD ? … : null` ternary so the OSS bundler
 		// statically eliminates the import() site. This test fails if
 		// anyone re-introduces a static `from "@/hosted/…"` import.
 		const offenders: string[] = [];
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			// Match top-of-file `import … from "@/hosted/…"` — `dynamic`
-			// arrow-callbacks use `import("…")` (no `from` keyword).
+			// Match top-of-file `import … from "@/hosted/…"` — lazy arrow-callbacks
+			// use `import("…")` (no `from` keyword).
 			if (/^\s*import\s+[^"']+from\s+["']@\/hosted\//m.test(src)) {
 				offenders.push(relative(SRC_DIR, file));
 			}
@@ -285,28 +285,27 @@ describe("no static @/v2/* imports outside v2/ or hosted/", () => {
 	});
 });
 
-describe("dynamic gated-module imports are gated by the Vite hosted flag", () => {
-	test('every `dynamic(import("@/hosted/…"))` or `dynamic(import("@/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
-		// Why this matters: a bare `dynamic(() => import("@/hosted/x"))`
-		// or `dynamic(() => import("@/v2/x"))` at module top level would
+describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
+	test('every `lazy(import("@/hosted/…"))` or `lazy(import("@/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
+		// Why this matters: a bare `lazy(() => import("@/hosted/x"))`
+		// or `lazy(() => import("@/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
 		// client build graph even though `IS_HOSTED_BUILD &&
 		// <Component />` keeps it from rendering. The runtime bundler
 		// only eliminates the import() call when the surrounding
-		// expression is provably unreachable — `IS_HOSTED_BUILD ? dynamic(…)
+		// expression is provably unreachable — `IS_HOSTED_BUILD ? lazy(…)
 		// : null` collapses to `null` at build time once
 		// `VITE_CLAWDI_HOSTED` is folded in, taking the entire
 		// import() with it.
 		const offenders: string[] = [];
-		// Anchor on each `dynamic(() => import("@/hosted/…"))` call,
+		// Anchor on each `lazy(() => import("@/hosted/…"))` call,
 		// then walk backwards to the most recent `const ` keyword. The
 		// snippet between the two must contain `IS_HOSTED_BUILD ?` — that's
 		// the gate the bundler folds at build time.
-		const gatedDynamic =
-			/dynamic\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
+		const gatedLazy = /lazy\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			for (const match of src.matchAll(gatedDynamic)) {
+			for (const match of src.matchAll(gatedLazy)) {
 				const idx = match.index ?? 0;
 				const lastConst = src.lastIndexOf("\nconst ", idx);
 				const start = lastConst >= 0 ? lastConst : 0;
@@ -318,7 +317,7 @@ describe("dynamic gated-module imports are gated by the Vite hosted flag", () =>
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated dynamic imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? dynamic(…) : null\`.`,
+				`Ungated lazy imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? lazy(…) : null\`.`,
 			);
 		}
 	});
@@ -384,6 +383,25 @@ describe("posthog-js is hosted-only", () => {
 		if (offenders.length > 0) {
 			throw new Error(
 				`posthog-js must stay hosted-only. Move imports under src/hosted and reach them via IS_HOSTED-gated dynamic import:\n  ${offenders.join("\n  ")}`,
+			);
+		}
+	});
+});
+
+describe("@xterm packages are hosted-only", () => {
+	test("non-hosted source files do not import terminal runtime packages", () => {
+		const offenders: string[] = [];
+		const xtermImport =
+			/(?:^\s*import\s+[^"']+\s+from\s+["']@xterm\/[^"']+["'])|(?:\bimport\s*\(\s*["']@xterm\/[^"']+["']\s*\))/m;
+
+		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
+			const src = readFileSync(file, "utf8");
+			if (xtermImport.test(src)) offenders.push(relative(SRC_DIR, file));
+		}
+
+		if (offenders.length > 0) {
+			throw new Error(
+				`@xterm packages must stay hosted-only. Keep terminal runtime imports under src/hosted and reach them via IS_HOSTED-gated lazy import:\n  ${offenders.join("\n  ")}`,
 			);
 		}
 	});

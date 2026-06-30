@@ -1,4 +1,3 @@
-import Image from "@/lib/image";
 import { cn } from "@/lib/utils";
 
 /**
@@ -91,12 +90,11 @@ export function EntityIcon({
 		kind === "channel" ? CHANNEL_PNG[key] : kind === "framework" ? FRAMEWORK_PNG[key] : undefined;
 	if (png) {
 		return (
-			<Image
+			<img
 				src={png}
 				alt={alt}
 				width={s.px}
 				height={s.px}
-				unoptimized
 				className={cn(s.box, "shrink-0 object-cover", SHADOW, className)}
 			/>
 		);
@@ -115,12 +113,11 @@ export function EntityIcon({
 						className,
 					)}
 				>
-					<Image
+					<img
 						src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
 						alt={alt}
 						width={s.px}
 						height={s.px}
-						unoptimized
 						className="size-[60%] object-contain"
 					/>
 				</span>

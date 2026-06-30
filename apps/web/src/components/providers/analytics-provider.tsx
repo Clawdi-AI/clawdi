@@ -1,12 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
-import dynamic from "@/lib/dynamic";
+import { lazy, type ReactNode, Suspense } from "react";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
 const HostedAnalyticsClient = IS_HOSTED_BUILD
-	? dynamic(() =>
+	? lazy(() =>
 			import("@/hosted/analytics-client").then((m) => ({
 				default: m.HostedAnalyticsClient,
 			})),
@@ -17,7 +16,11 @@ export function AnalyticsProvider({ children }: { children: ReactNode }) {
 	return (
 		<>
 			{children}
-			{HostedAnalyticsClient ? <HostedAnalyticsClient /> : null}
+			{HostedAnalyticsClient ? (
+				<Suspense fallback={null}>
+					<HostedAnalyticsClient />
+				</Suspense>
+			) : null}
 		</>
 	);
 }

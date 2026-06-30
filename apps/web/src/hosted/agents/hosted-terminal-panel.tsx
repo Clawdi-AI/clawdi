@@ -2,8 +2,8 @@
 
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { useTheme } from "next-themes";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTheme } from "@/components/theme-provider";
 
 const TTYD_OUTPUT = "0";
 const TTYD_INPUT = "0";

@@ -15,7 +15,7 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		if (!section || section === "overview") throw notFound();
 		if (hasAgentTabQuery(search)) {
-			throw redirect({ to: agentSectionHref(params.id, section, search), replace: true });
+			throw redirect({ href: agentSectionHref(params.id, section, search), replace: true });
 		}
 		return { section };
 	},

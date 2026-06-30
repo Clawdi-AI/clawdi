@@ -19,15 +19,15 @@ OSS users running their own Clawdi instance see none of this UI.
    invariant would be overkill). Tightens runtime debugging too:
    anything carrying `data-hosted="true"` in OSS DevTools is a leak.
 
-3. **Imports from outside `hosted/` go through `@/lib/dynamic`,
+3. **Imports from outside `hosted/` use `React.lazy`,
    gated on a local `IS_HOSTED_BUILD` constant at the construction site.**
    ```tsx
-   import dynamic from "@/lib/dynamic";
+   import { lazy, Suspense } from "react";
 
    const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
    const DeployWizard = IS_HOSTED_BUILD
-     ? dynamic(() =>
+     ? lazy(() =>
          import("@/hosted/billing/deploy/deploy-wizard").then((m) => ({
            default: m.DeployWizard,
          })),
@@ -36,12 +36,16 @@ OSS users running their own Clawdi instance see none of this UI.
 
    // …
 
-   {DeployWizard ? <DeployWizard /> : null}
+   {DeployWizard ? (
+     <Suspense fallback={null}>
+       <DeployWizard />
+     </Suspense>
+   ) : null}
    ```
    Why this shape: Vite folds `IS_HOSTED ? … : null` at build time
    using the `VITE_CLAWDI_HOSTED` constant. In OSS builds the
    conditional collapses to `null`, so the dynamic import site is not
-   part of the client graph. A bare `dynamic(() => import(…))` at
+   part of the client graph. A bare `lazy(() => import(…))` at
    module top level would still register the chunk in OSS builds —
    that's why the ternary matters. `oss-clean.test.ts` fails the build
    if anyone reintroduces a static `import … from "@/hosted/…"` outside
