@@ -1,28 +1,42 @@
 import { timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, isIP, type Server, type Socket } from "node:net";
+import { z } from "zod";
+import {
+	type RuntimeBridgeSurfaceInput,
+	type RuntimeBridgeSurfaceSpec,
+	type RuntimeManifest,
+	runtimeBridgeSurfaceSchema,
+} from "./manifest-contract";
 
-export const UI_ACCESS_TOKEN_ENV = "UI_ACCESS_TOKEN";
-export const UI_ACCESS_COOKIE = "clawdi_ui";
-export const UI_FRAME_ANCESTORS_ENV = "CLAWDI_UI_FRAME_ANCESTORS";
-export const UI_BRIDGE_LISTEN_HOST_ENV = "CLAWDI_UI_BRIDGE_LISTEN_HOST";
-export const DEFAULT_UI_FRAME_ANCESTORS = "'self' https://*.clawdi.ai";
+export const RUNTIME_BRIDGE_TOKEN_ENV = "CLAWDI_RUNTIME_BRIDGE_TOKEN";
+export const RUNTIME_BRIDGE_COOKIE = "clawdi_runtime_bridge";
+export const RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV = "CLAWDI_RUNTIME_BRIDGE_FRAME_ANCESTORS";
+export const RUNTIME_BRIDGE_LISTEN_HOST_ENV = "CLAWDI_RUNTIME_BRIDGE_LISTEN_HOST";
+export const RUNTIME_BRIDGE_SURFACES_ENV = "CLAWDI_RUNTIME_BRIDGE_SURFACES";
+export const DEFAULT_RUNTIME_BRIDGE_FRAME_ANCESTORS = "'self' https://*.clawdi.ai";
 
-export interface RuntimeUiBridgeTarget {
+export type RuntimeBridgeSurfaceKind = "control-ui";
+const runtimeBridgeRuntimeSurfaceSchema = runtimeBridgeSurfaceSchema.extend({
+	listenPort: z.number().int().min(0).max(65535),
+});
+
+export interface RuntimeBridgeSurface {
 	name: string;
+	kind: RuntimeBridgeSurfaceKind;
 	listenHost: string;
 	listenPort: number;
-	targetHost: string;
-	targetPort: number;
+	upstreamHost: string;
+	upstreamPort: number;
 }
 
-export interface RuntimeUiBridgeServer {
-	targets: RuntimeUiBridgeTarget[];
+export interface RuntimeBridgeServer {
+	surfaces: RuntimeBridgeSurface[];
 	close: () => Promise<void>;
 }
 
-export interface RuntimeUiBridgeOptions {
+export interface RuntimeBridgeOptions {
 	token?: string;
-	targets?: RuntimeUiBridgeTarget[];
+	surfaces?: RuntimeBridgeSurfaceInput[];
 	frameAncestors?: string;
 }
 
@@ -48,23 +62,6 @@ interface AuthUnauthorized {
 }
 
 type AuthResult = AuthQueryToken | AuthAuthorized | AuthUnauthorized;
-
-export const DEFAULT_UI_BRIDGE_TARGETS: RuntimeUiBridgeTarget[] = [
-	{
-		name: "openclaw",
-		listenHost: "0.0.0.0",
-		listenPort: 28789,
-		targetHost: "127.0.0.1",
-		targetPort: 18789,
-	},
-	{
-		name: "hermes",
-		listenHost: "0.0.0.0",
-		listenPort: 28793,
-		targetHost: "127.0.0.1",
-		targetPort: 9119,
-	},
-];
 
 const HEADER_TIMEOUT_MS = 60_000;
 const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
@@ -92,24 +89,29 @@ const PROXY_FORWARDING_HEADERS = new Set([
 	"x-real-ip",
 ]);
 
-export async function startRuntimeUiBridge(
-	options: RuntimeUiBridgeOptions = {},
-): Promise<RuntimeUiBridgeServer> {
-	const token = options.token ?? process.env[UI_ACCESS_TOKEN_ENV]?.trim() ?? "";
-	const targets = options.targets ?? defaultRuntimeUiBridgeTargets();
+export async function startRuntimeBridge(
+	options: RuntimeBridgeOptions = {},
+): Promise<RuntimeBridgeServer> {
+	const token = options.token ?? process.env[RUNTIME_BRIDGE_TOKEN_ENV]?.trim() ?? "";
+	const surfaces = resolveRuntimeBridgeSurfaceInputs(
+		options.surfaces ?? runtimeBridgeSurfaceInputsFromEnv() ?? [],
+	);
+	if (surfaces.length === 0) {
+		throw new Error("no runtime bridge surfaces configured");
+	}
 	const frameAncestors =
 		options.frameAncestors?.trim() ||
-		process.env[UI_FRAME_ANCESTORS_ENV]?.trim() ||
-		DEFAULT_UI_FRAME_ANCESTORS;
+		process.env[RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV]?.trim() ||
+		DEFAULT_RUNTIME_BRIDGE_FRAME_ANCESTORS;
 	const servers: Server[] = [];
-	const listeningTargets: RuntimeUiBridgeTarget[] = [];
+	const listeningSurfaces: RuntimeBridgeSurface[] = [];
 	try {
-		for (const target of targets) {
-			const server = createBridgeServer(target, token, frameAncestors);
-			await listen(server, target.listenHost, target.listenPort);
+		for (const surface of surfaces) {
+			const server = createBridgeServer(surface, token, frameAncestors);
+			await listen(server, surface.listenHost, surface.listenPort);
 			const address = server.address();
-			const listenPort = typeof address === "object" && address ? address.port : target.listenPort;
-			listeningTargets.push({ ...target, listenPort });
+			const listenPort = typeof address === "object" && address ? address.port : surface.listenPort;
+			listeningSurfaces.push({ ...surface, listenPort });
 			servers.push(server);
 		}
 	} catch (error) {
@@ -117,30 +119,94 @@ export async function startRuntimeUiBridge(
 		throw error;
 	}
 	return {
-		targets: listeningTargets,
+		surfaces: listeningSurfaces,
 		close: async () => {
 			await Promise.allSettled(servers.map((server) => closeServer(server)));
 		},
 	};
 }
 
-export function defaultRuntimeUiBridgeTargets(): RuntimeUiBridgeTarget[] {
-	const listenHost = process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() || "0.0.0.0";
-	return DEFAULT_UI_BRIDGE_TARGETS.map((target) => ({ ...target, listenHost }));
+export function runtimeBridgeSurfaceSpecsForManifest(
+	manifest: Pick<RuntimeManifest, "bridge">,
+): RuntimeBridgeSurfaceInput[] {
+	return manifest.bridge ? [...manifest.bridge.surfaces] : [];
+}
+
+export function runtimeBridgeSurfacesForManifest(
+	manifest: Pick<RuntimeManifest, "bridge">,
+): RuntimeBridgeSurface[] {
+	return resolveRuntimeBridgeSurfaceInputs(runtimeBridgeSurfaceSpecsForManifest(manifest));
+}
+
+function runtimeBridgeSurfaceInputsFromEnv(): RuntimeBridgeSurfaceInput[] | null {
+	const raw = process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim();
+	if (!raw) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		throw new Error(
+			`invalid ${RUNTIME_BRIDGE_SURFACES_ENV}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
+	if (!Array.isArray(parsed)) {
+		throw new Error(`invalid ${RUNTIME_BRIDGE_SURFACES_ENV}: expected a JSON array`);
+	}
+	return parsed.map((item, index) => parseRuntimeBridgeSurfaceInput(item, index));
+}
+
+function parseRuntimeBridgeSurfaceInput(value: unknown, index: number): RuntimeBridgeSurfaceSpec {
+	const parsed = runtimeBridgeSurfaceSchema.safeParse(value);
+	if (parsed.success) return parsed.data;
+	throw new Error(
+		`invalid ${RUNTIME_BRIDGE_SURFACES_ENV}[${index}]: ${parsed.error.issues
+			.map((issue) => issue.message)
+			.join("; ")}`,
+	);
+}
+
+function resolveRuntimeBridgeSurfaceInputs(
+	inputs: RuntimeBridgeSurfaceInput[],
+	defaultListenHost = process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() || "0.0.0.0",
+): RuntimeBridgeSurface[] {
+	const seen = new Set<string>();
+	return inputs.map((input, index) => {
+		const parsed = runtimeBridgeRuntimeSurfaceSchema.safeParse(input);
+		if (!parsed.success) {
+			throw new Error(
+				`invalid runtime bridge surface ${index}: ${parsed.error.issues
+					.map((issue) => issue.message)
+					.join("; ")}`,
+			);
+		}
+		const surface = {
+			...parsed.data,
+			listenHost: parsed.data.listenHost?.trim() || defaultListenHost,
+			upstreamHost: parsed.data.upstreamHost.trim(),
+		};
+		const key = `${surface.listenHost}:${surface.listenPort}`;
+		if (surface.listenPort !== 0 && seen.has(key)) {
+			throw new Error(`duplicate runtime bridge listen address: ${key}`);
+		}
+		if (surface.listenPort !== 0) seen.add(key);
+		return surface;
+	});
 }
 
 function createBridgeServer(
-	target: RuntimeUiBridgeTarget,
+	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
 ): Server {
 	return createServer((clientSocket) => {
-		handleClientConnection(target, token, frameAncestors, clientSocket);
+		handleClientConnection(surface, token, frameAncestors, clientSocket);
 	});
 }
 
 function handleClientConnection(
-	target: RuntimeUiBridgeTarget,
+	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
 	clientSocket: Socket,
@@ -181,13 +247,13 @@ function handleClientConnection(
 			writeRawHttpResponse(clientSocket, 400, "Bad Request", "Bad Request");
 			return;
 		}
-		handleParsedRequest(target, token, frameAncestors, clientSocket, parsed, remaining);
+		handleParsedRequest(surface, token, frameAncestors, clientSocket, parsed, remaining);
 	};
 	clientSocket.on("data", onData);
 }
 
 function handleParsedRequest(
-	target: RuntimeUiBridgeTarget,
+	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
 	clientSocket: Socket,
@@ -195,7 +261,7 @@ function handleParsedRequest(
 	remaining: Buffer,
 ): void {
 	if (isHealthCheckRequest(parsed)) {
-		void respondToHealthCheck(target, clientSocket);
+		void respondToHealthCheck(surface, clientSocket);
 		return;
 	}
 	const auth = authenticate(parsed.requestTarget, parsed.headers, token);
@@ -209,14 +275,14 @@ function handleParsedRequest(
 		]);
 		return;
 	}
-	proxyRawRequest(target, frameAncestors, clientSocket, parsed, remaining);
+	proxyRawRequest(surface, frameAncestors, clientSocket, parsed, remaining);
 }
 
 async function respondToHealthCheck(
-	target: RuntimeUiBridgeTarget,
+	surface: RuntimeBridgeSurface,
 	clientSocket: Socket,
 ): Promise<void> {
-	const healthy = await canConnectToTarget(target);
+	const healthy = await canConnectToUpstream(surface);
 	if (healthy) {
 		writeRawHttpResponse(clientSocket, 200, "OK", "OK", [["Cache-Control", "no-store"]]);
 		return;
@@ -232,11 +298,11 @@ function isHealthCheckRequest(parsed: ParsedHttpRequest): boolean {
 	return url?.pathname === "/health";
 }
 
-function canConnectToTarget(target: RuntimeUiBridgeTarget): Promise<boolean> {
+function canConnectToUpstream(surface: RuntimeBridgeSurface): Promise<boolean> {
 	return new Promise((resolve) => {
 		const socket = createConnection({
-			host: target.targetHost,
-			port: target.targetPort,
+			host: surface.upstreamHost,
+			port: surface.upstreamPort,
 		});
 		let done = false;
 		const finish = (healthy: boolean) => {
@@ -253,15 +319,15 @@ function canConnectToTarget(target: RuntimeUiBridgeTarget): Promise<boolean> {
 }
 
 function proxyRawRequest(
-	target: RuntimeUiBridgeTarget,
+	surface: RuntimeBridgeSurface,
 	frameAncestors: string,
 	clientSocket: Socket,
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
 ): void {
 	const upstreamSocket = createConnection({
-		host: target.targetHost,
-		port: target.targetPort,
+		host: surface.upstreamHost,
+		port: surface.upstreamPort,
 	});
 	const isUpgrade = isUpgradeRequest(parsed.headers);
 	let connected = false;
@@ -280,7 +346,7 @@ function proxyRawRequest(
 		connected = true;
 		clearTimeout(timer);
 		if (!isUpgrade) pipeUpstreamHttpResponse(upstreamSocket, clientSocket, frameAncestors);
-		upstreamSocket.write(buildProxyRequestHead(parsed, target));
+		upstreamSocket.write(buildProxyRequestHead(parsed, surface));
 		if (remaining.length > 0) upstreamSocket.write(remaining);
 		clientSocket.pipe(upstreamSocket);
 		if (isUpgrade) upstreamSocket.pipe(clientSocket);
@@ -416,14 +482,14 @@ function authenticate(
 		const redirectLocation = `${url.pathname}${url.search}`;
 		return { status: "query-token", redirectLocation: redirectLocation || "/" };
 	}
-	const cookie = parseCookies(headers.get("cookie")).get(UI_ACCESS_COOKIE) ?? null;
+	const cookie = parseCookies(headers.get("cookie")).get(RUNTIME_BRIDGE_COOKIE) ?? null;
 	if (constantTimeEquals(cookie, token)) return { status: "authorized" };
 	return { status: "unauthorized" };
 }
 
 function requestUrl(requestTarget: string): URL | null {
 	try {
-		return new URL(requestTarget, "http://clawdi-runtime-ui.local");
+		return new URL(requestTarget, "http://clawdi-runtime-bridge.local");
 	} catch {
 		return null;
 	}
@@ -473,14 +539,14 @@ function constantTimeEquals(input: string | null | undefined, expected: string):
 }
 
 function sessionCookie(token: string): string {
-	return `${UI_ACCESS_COOKIE}=${encodeURIComponent(
+	return `${RUNTIME_BRIDGE_COOKIE}=${encodeURIComponent(
 		token,
 	)}; Secure; HttpOnly; SameSite=Strict; Path=/`;
 }
 
-function buildProxyRequestHead(parsed: ParsedHttpRequest, target: RuntimeUiBridgeTarget): string {
+function buildProxyRequestHead(parsed: ParsedHttpRequest, surface: RuntimeBridgeSurface): string {
 	const isUpgrade = isUpgradeRequest(parsed.headers);
-	const authority = targetAuthority(target);
+	const authority = upstreamAuthority(surface);
 	const origin = `http://${authority}`;
 	let originWritten = false;
 	let refererWritten = false;
@@ -549,7 +615,7 @@ function removeBridgeCookie(value: string): string {
 			if (!part) return false;
 			const index = part.indexOf("=");
 			const name = (index === -1 ? part : part.slice(0, index)).trim();
-			return name !== UI_ACCESS_COOKIE;
+			return name !== RUNTIME_BRIDGE_COOKIE;
 		})
 		.join("; ");
 }
@@ -563,9 +629,10 @@ function rewriteReferer(value: string, origin: string): string {
 	}
 }
 
-function targetAuthority(target: RuntimeUiBridgeTarget): string {
-	const host = isIP(target.targetHost) === 6 ? `[${target.targetHost}]` : target.targetHost;
-	return `${host}:${target.targetPort}`;
+function upstreamAuthority(surface: RuntimeBridgeSurface): string {
+	const host =
+		isIP(surface.upstreamHost) === 6 ? `[${surface.upstreamHost}]` : surface.upstreamHost;
+	return `${host}:${surface.upstreamPort}`;
 }
 
 function writeRedirectResponse(socket: Socket, location: string, token: string): void {

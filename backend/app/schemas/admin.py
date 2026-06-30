@@ -5,6 +5,7 @@ and are used by SaaS batch tooling + ops-side scripts. Kept in a
 separate file so they don't pollute user-facing schemas.
 """
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -15,6 +16,15 @@ AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
 _SUPPORTED_HOSTED_RUNTIMES = {"codex", "hermes", "openclaw"}
+_BRIDGE_SURFACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_BRIDGE_SURFACE_KEYS = {
+    "name",
+    "kind",
+    "listenHost",
+    "listenPort",
+    "upstreamHost",
+    "upstreamPort",
+}
 
 
 class AdminEnvironmentCreate(BaseModel):
@@ -76,6 +86,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     control_plane: dict[str, Any] | None = None
     clawdi_cli: dict[str, Any] | None = None
     runtimes: dict[str, Any] = Field(default_factory=dict)
+    bridge: dict[str, Any] | None = None
     live_sync: dict[str, Any] | None = None
     recovery: dict[str, Any] | None = None
     mitm_profiles: dict[str, Any] | None = None
@@ -99,6 +110,37 @@ class AdminRuntimeStateUpsert(BaseModel):
     def _validate_control_plane(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None and "apiUrl" in value:
             raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
+        return value
+
+    @field_validator("bridge")
+    @classmethod
+    def _validate_bridge(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        surfaces = value.get("surfaces")
+        if set(value) != {"surfaces"} or not isinstance(surfaces, list):
+            raise ValueError("bridge must contain only a surfaces array")
+        for index, surface in enumerate(surfaces):
+            if not isinstance(surface, dict):
+                raise ValueError(f"bridge.surfaces[{index}] must be an object")
+            unknown = sorted(set(surface) - _BRIDGE_SURFACE_KEYS)
+            if unknown:
+                raise ValueError(
+                    f"bridge.surfaces[{index}] has unsupported fields: {', '.join(unknown)}"
+                )
+            name = surface.get("name")
+            if not isinstance(name, str) or not _BRIDGE_SURFACE_NAME_RE.fullmatch(name):
+                raise ValueError(f"bridge.surfaces[{index}].name must be a lowercase surface id")
+            if surface.get("kind") != "control-ui":
+                raise ValueError(f"bridge.surfaces[{index}].kind must be control-ui")
+            for field in ("listenPort", "upstreamPort"):
+                port = surface.get(field)
+                if not isinstance(port, int) or isinstance(port, bool) or port < 1 or port > 65535:
+                    raise ValueError(f"bridge.surfaces[{index}].{field} must be a TCP port")
+            for field in ("listenHost", "upstreamHost"):
+                host = surface.get(field)
+                if host is not None and (not isinstance(host, str) or not host.strip()):
+                    raise ValueError(f"bridge.surfaces[{index}].{field} must be a non-empty string")
         return value
 
     @field_validator("mcp", "tools")

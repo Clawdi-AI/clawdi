@@ -45,6 +45,12 @@ export {
 	runtimeManifestFixturePath,
 } from "./manifest-source";
 
+import {
+	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
+	RUNTIME_BRIDGE_SURFACES_ENV,
+	RUNTIME_BRIDGE_TOKEN_ENV,
+	runtimeBridgeSurfaceSpecsForManifest,
+} from "./bridge";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import {
 	buildMitmProfileBundle,
@@ -62,7 +68,6 @@ import {
 	type SupportedRuntimeName,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { UI_ACCESS_TOKEN_ENV, UI_BRIDGE_LISTEN_HOST_ENV } from "./ui-bridge";
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -1376,10 +1381,11 @@ function daemonProgramRevision(manifest: RuntimeManifest): string {
 	});
 }
 
-function uiBridgeProgramRevision(manifest: RuntimeManifest): string {
+function runtimeBridgeProgramRevision(manifest: RuntimeManifest): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
-		uiBridge: "hosted-runtime-auth-bridge-v1",
+		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
+		runtimeBridge: "hosted-runtime-bridge-v1",
 	});
 }
 
@@ -1396,7 +1402,8 @@ function writeSupervisorConfig(
 	secretValues: Record<string, string> | undefined,
 ): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const uiAccessToken = hostedUiAccessToken();
+	const runtimeBridgeToken = hostedRuntimeBridgeToken();
+	const bridgeSurfaceSpecs = runtimeBridgeSurfaceSpecsForManifest(manifest);
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
@@ -1404,14 +1411,15 @@ function writeSupervisorConfig(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
-		[UI_ACCESS_TOKEN_ENV]: "",
-		[UI_BRIDGE_LISTEN_HOST_ENV]: process.env[UI_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
+		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
+		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
+		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
 		PATH: supervisorPath(paths),
 	};
 	const watcherEnvironment = supervisorEnvironment({
 		...commonEnvironment,
 		CLAWDI_AUTH_TOKEN: "",
-		[UI_ACCESS_TOKEN_ENV]: uiAccessToken,
+		[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
 	});
 	const daemonEnvironment = supervisorEnvironment({
 		...commonEnvironment,
@@ -1421,13 +1429,12 @@ function writeSupervisorConfig(
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
 	});
-	const supportedEnabled = enabledRuntimes.filter(isSupportedRuntimeName);
 	const supervisedEnabled = enabledRuntimes.filter((runtime) =>
 		shouldSuperviseRuntime(runtime, manifest),
 	);
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
-	const shouldRunUiBridge = supportedEnabled.length > 0;
+	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
 	const providerSecretEnv = hostedProviderSecretEnv(manifest);
 	const runtimeNeedsSystemBoundary =
 		hasEnabledMitmProfiles(
@@ -1509,16 +1516,17 @@ function writeSupervisorConfig(
 		);
 	}
 
-	if (shouldRunUiBridge) {
-		const uiBridgeEnvironment = supervisorEnvironment({
+	if (shouldRunBridge) {
+		const runtimeBridgeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
-			[UI_ACCESS_TOKEN_ENV]: uiAccessToken,
-			CLAWDI_RUNTIME_REV: uiBridgeProgramRevision(manifest),
+			[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
+			[RUNTIME_BRIDGE_SURFACES_ENV]: JSON.stringify(bridgeSurfaceSpecs),
+			CLAWDI_RUNTIME_REV: runtimeBridgeProgramRevision(manifest),
 		});
 		lines.push(
-			"[program:clawdi-ui-bridge]",
-			"command=/usr/bin/env clawdi runtime ui-bridge",
+			"[program:clawdi-runtime-bridge]",
+			"command=/usr/bin/env clawdi runtime bridge",
 			`directory=${workspaceRoot}`,
 			`user=${runtimeUser}`,
 			"autostart=true",
@@ -1531,7 +1539,7 @@ function writeSupervisorConfig(
 			"stdout_logfile_maxbytes=0",
 			"stderr_logfile=/dev/fd/2",
 			"stderr_logfile_maxbytes=0",
-			`environment=${uiBridgeEnvironment}`,
+			`environment=${runtimeBridgeEnvironment}`,
 			"",
 		);
 	}
@@ -1659,12 +1667,12 @@ function writeRuntimeCommandShimIndex(commands: Set<RuntimeName>, paths: Runtime
 	);
 }
 
-function hostedUiAccessToken(): string {
-	const direct = process.env[UI_ACCESS_TOKEN_ENV]?.trim();
+function hostedRuntimeBridgeToken(): string {
+	const direct = process.env[RUNTIME_BRIDGE_TOKEN_ENV]?.trim();
 	if (direct) return direct;
 	return readProcEnvironmentValue(
 		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH?.trim() || "/proc/1/environ",
-		UI_ACCESS_TOKEN_ENV,
+		RUNTIME_BRIDGE_TOKEN_ENV,
 	);
 }
 
@@ -1676,7 +1684,7 @@ function readProcEnvironmentValue(path: string, key: string): string {
 			if (part.startsWith(prefix)) return part.slice(prefix.length).trim();
 		}
 	} catch {
-		// Best effort: runtime managers can still run without hosted UI access.
+		// Best effort: runtime managers can still run without hosted bridge access.
 	}
 	return "";
 }

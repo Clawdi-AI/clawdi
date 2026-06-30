@@ -58,7 +58,8 @@ Environment:
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_RUNTIME_MODE      Explicit runtime mode override for hosted tests/operators
   CLAWDI_AUTH_TOKEN        Clawdi Cloud auth token; the only hosted container credential
-  UI_ACCESS_TOKEN          Hosted runtime UI bridge token for OpenClaw/Hermes dashboards
+  CLAWDI_RUNTIME_BRIDGE_TOKEN
+                           Hosted runtime bridge token for authenticated surfaces
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -724,11 +725,11 @@ runtimeCmd
 	);
 
 runtimeCmd
-	.command("ui-bridge")
-	.description("Run the hosted runtime authenticated UI bridge")
+	.command("bridge")
+	.description("Run the hosted runtime authenticated bridge")
 	.action(async () => {
-		const { runtimeUiBridge } = await import("./commands/runtime.js");
-		await runtimeUiBridge();
+		const { runtimeBridge } = await import("./commands/runtime.js");
+		await runtimeBridge();
 	});
 
 runtimeCmd

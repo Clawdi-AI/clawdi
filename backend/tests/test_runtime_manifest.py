@@ -133,6 +133,42 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_includes_declared_bridge_surfaces(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-bridge-{uuid4().hex[:8]}",
+        machine_name="Runtime bridge",
+        agent_type="openclaw",
+    )
+    bridge = {
+        "surfaces": [
+            {
+                "name": "openclaw",
+                "kind": "control-ui",
+                "listenPort": 28789,
+                "upstreamHost": "127.0.0.1",
+                "upstreamPort": 18789,
+            }
+        ]
+    }
+    await _write_runtime_state(admin_client, str(env.id), bridge=bridge)
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["manifest"]["bridge"] == bridge
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
     admin_client,
     db_session,
@@ -617,6 +653,85 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         "provider_id": "clawdi-managed",
         "runtimes": {"openclaw": {"enabled": True}},
         field: {},
+    }
+
+    response = await admin_client.put(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bridge",
+    [
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "shell",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "OpenClaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 0,
+                    "upstreamPort": 18789,
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                    "token": "must-not-be-here",
+                }
+            ]
+        },
+    ],
+)
+async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
+    admin_client,
+    db_session,
+    seed_user,
+    bridge,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"bridge-invalid-{uuid4().hex[:8]}",
+        machine_name="Runtime invalid bridge",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": f"dep_{uuid4().hex}",
+        "app_id": "app-test",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "provider_id": "clawdi-managed",
+        "runtimes": {"openclaw": {"enabled": True}},
+        "bridge": bridge,
     }
 
     response = await admin_client.put(

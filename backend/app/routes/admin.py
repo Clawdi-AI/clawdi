@@ -685,6 +685,7 @@ async def admin_upsert_runtime_state(
     state.control_plane = body.control_plane
     state.clawdi_cli = body.clawdi_cli
     state.runtimes = body.runtimes
+    state.bridge = body.bridge
     state.live_sync = body.live_sync
     state.recovery = body.recovery
     if state is not existing_state or body.mitm_profiles is not None:
@@ -710,6 +711,7 @@ async def admin_upsert_runtime_state(
             "previous_generation": previous_generation,
             "provider_id": body.provider_id,
             "enabled_runtimes": _enabled_runtime_names(body.runtimes),
+            "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
             "changed_fields": changed_fields,
@@ -846,6 +848,7 @@ def _runtime_state_changed_fields(
         "control_plane",
         "clawdi_cli",
         "runtimes",
+        "bridge",
         "live_sync",
         "recovery",
         "mitm_profiles",
