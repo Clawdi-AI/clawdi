@@ -11,6 +11,7 @@ import type {
 	SessionMessage,
 } from "./base";
 import { getCodexHome, SKIP_DIRS } from "./paths";
+import { readCommandVersion } from "./version";
 
 function codexDir() {
 	return getCodexHome();
@@ -98,13 +99,7 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async getVersion(): Promise<string | null> {
-		try {
-			const { execSync } = await import("node:child_process");
-			const out = execSync("codex --version", { encoding: "utf-8", stdio: "pipe" }).trim();
-			return out.split("\n")[0] || null;
-		} catch {
-			return null;
-		}
+		return readCommandVersion("codex", ["--version"]);
 	}
 
 	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {

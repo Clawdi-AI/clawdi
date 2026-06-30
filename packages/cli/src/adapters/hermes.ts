@@ -12,6 +12,7 @@ import type {
 	SessionMessage,
 } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
+import { readCommandVersion } from "./version";
 
 /**
  * Minimal SQLite shape that both `bun:sqlite` and Node's built-in
@@ -94,14 +95,7 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async getVersion(): Promise<string | null> {
-		try {
-			const { execSync } = await import("node:child_process");
-			const output = execSync("hermes --version", { encoding: "utf-8", stdio: "pipe" }).trim();
-			// Hermes outputs multi-line version info, take first line only
-			return output.split("\n")[0] || null;
-		} catch {
-			return null;
-		}
+		return readCommandVersion("hermes", ["--version"]);
 	}
 
 	async collectSessions(_opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {

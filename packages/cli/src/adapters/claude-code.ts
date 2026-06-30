@@ -11,6 +11,7 @@ import type {
 	SessionMessage,
 } from "./base";
 import { getClaudeHome, SKIP_DIRS } from "./paths";
+import { readCommandVersion } from "./version";
 
 function claudeDir() {
 	return getClaudeHome();
@@ -70,12 +71,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 	}
 
 	async getVersion(): Promise<string | null> {
-		try {
-			const { execSync } = await import("node:child_process");
-			return execSync("claude --version", { encoding: "utf-8", stdio: "pipe" }).trim();
-		} catch {
-			return null;
-		}
+		return readCommandVersion("claude", ["--version"]);
 	}
 
 	/**
