@@ -5,8 +5,12 @@
 .venv
 node_modules
 **/node_modules
-**/.next
 **/.turbo
+**/.output
+**/.nitro
+**/.tanstack
+**/.vite
+**/.vite-temp
 **/.pytest_cache
 **/.ruff_cache
 **/__pycache__
@@ -19,8 +23,6 @@ node_modules
 backend/.venv
 backend/data
 backend/tests
-apps/web/.next
-apps/web/next-env.d.ts
 
 *.log
 coverage

@@ -15,7 +15,7 @@ type RawEnv = Record<string, string | boolean | number | undefined>;
 
 const metaEnv = ((import.meta as ImportMeta & { env?: RawEnv }).env ?? {}) as RawEnv;
 const processEnv: RawEnv = typeof process === "undefined" ? {} : process.env;
-const runtimeEnv: RawEnv = { ...processEnv, ...metaEnv };
+const runtimeEnv: RawEnv = typeof process === "undefined" ? metaEnv : { ...metaEnv, ...processEnv };
 
 function readRawEnv(key: string): string | undefined {
 	const value = runtimeEnv[key];

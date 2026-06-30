@@ -74,7 +74,8 @@ top-level shells).
 
 ### Type scale
 
-Geist Sans (UI) + Geist Mono (data), wired in the root layout via next/font.
+Geist Sans (UI) + Geist Mono (data), self-hosted through Fontsource CSS imports
+in the Vite entry stylesheet.
 
 | Role | Classes |
 |---|---|
@@ -110,8 +111,9 @@ multi-hue colors; never use them for controls or status.
   `defaultTheme="system"` retained, dark stays a first-class toggle.
 - 2026-06-03 — Keep lucide-react as the only icon set; central re-export
   instead of a library migration.
-- 2026-06-03 — Geist stays via `next/font/google` (it self-hosts at build
-  time; no runtime Google requests).
+- 2026-06-30 — TanStack Start migration moved Geist to Fontsource CSS imports,
+  preserving self-hosted fonts without framework-specific font helpers or
+  runtime Google requests.
 - 2026-06-03 — shadcn `components/ui/*`: token/variant/recipe edits allowed,
   no structural/API rewrites.
 - 2026-06-03 — `--destructive` changed from near-black to a true red;

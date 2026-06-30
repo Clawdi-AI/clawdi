@@ -97,9 +97,9 @@
 	--sidebar-border: oklch(0.91 0.005 95);
 	--sidebar-ring: oklch(0.6171 0.1375 39.0427);
 
-	--font-sans: Geist, sans-serif;
+	--font-sans: "Geist Sans", sans-serif;
 	--font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-	--font-mono: Geist Mono, ui-monospace, monospace;
+	--font-mono: "Geist Mono", ui-monospace, monospace;
 
 	/* radius band: sm 6 / md 8 / lg 10 / xl 14 — no pills on containers */
 	--radius: 0.625rem;
