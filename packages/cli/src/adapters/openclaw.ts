@@ -11,6 +11,7 @@ import type {
 	SessionMessage,
 } from "./base";
 import { getOpenClawHome, SKIP_DIRS } from "./paths";
+import { readCommandVersion } from "./version";
 
 function openclawDir() {
 	return getOpenClawHome();
@@ -134,23 +135,9 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async getVersion(): Promise<string | null> {
-		const { execSync } = await import("node:child_process");
-		try {
-			return (
-				execSync("openclaw --version", { encoding: "utf-8", stdio: "pipe" })
-					.trim()
-					.split("\n")[0] || null
-			);
-		} catch {
-			try {
-				return (
-					execSync("openclaw --help", { encoding: "utf-8", stdio: "pipe" }).trim().split("\n")[0] ||
-					null
-				);
-			} catch {
-				return null;
-			}
-		}
+		return (
+			readCommandVersion("openclaw", ["--version"]) ?? readCommandVersion("openclaw", ["--help"])
+		);
 	}
 
 	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
