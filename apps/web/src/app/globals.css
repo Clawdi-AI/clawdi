@@ -2,3 +2,21 @@
 @import "tw-animate-css";
 @import "@clawdi/shared/style/theme.css";
 @import "@xterm/xterm/css/xterm.css";
+
+.hosted-terminal .xterm {
+	height: 100%;
+}
+
+.hosted-terminal[data-terminal-theme="dark"],
+.hosted-terminal[data-terminal-theme="dark"] .xterm,
+.hosted-terminal[data-terminal-theme="dark"] .xterm-viewport,
+.hosted-terminal[data-terminal-theme="dark"] .xterm-screen {
+	background-color: #0a0a0a;
+}
+
+.hosted-terminal[data-terminal-theme="light"],
+.hosted-terminal[data-terminal-theme="light"] .xterm,
+.hosted-terminal[data-terminal-theme="light"] .xterm-viewport,
+.hosted-terminal[data-terminal-theme="light"] .xterm-screen {
+	background-color: #ffffff;
+}

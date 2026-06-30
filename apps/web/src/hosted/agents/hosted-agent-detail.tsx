@@ -9,6 +9,7 @@ import {
 	Info,
 	Link2,
 	Link2Off,
+	type LucideIcon,
 	Maximize2,
 	MonitorPlay,
 	Plus,
@@ -492,13 +493,8 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 
 	return (
 		<LiveToolFrame
-			toolbar={
-				<div className="flex min-w-0 items-center gap-2 text-sm">
-					<MonitorPlay className="size-4 shrink-0 text-muted-foreground" />
-					<span className="shrink-0 font-medium">{label}</span>
-					<span className="min-w-0 truncate text-muted-foreground">Live runtime UI</span>
-				</div>
-			}
+			icon={MonitorPlay}
+			title={`${label} console`}
 			action={
 				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
 					<a href={url} target="_blank" rel="noopener noreferrer">
@@ -517,11 +513,11 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
 				allow="clipboard-read; clipboard-write"
 			/>
-			<div className="flex min-h-[420px] flex-1 items-center justify-center border border-dashed p-6 text-center sm:hidden">
+			<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
 				<p className="text-sm text-muted-foreground">
 					The console is best viewed full screen on a small screen.
 				</p>
-				<Button asChild variant="outline" size="sm" className="mt-3">
+				<Button asChild variant="outline" size="sm">
 					<a href={url} target="_blank" rel="noopener noreferrer">
 						Open {label} full screen
 						<Maximize2 className="size-3.5" />
@@ -535,18 +531,30 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 // ── Terminal ────────────────────────────────────────────────────────────────
 
 function LiveToolFrame({
-	toolbar,
+	icon: Icon,
+	title,
+	detail,
 	action,
 	children,
 }: {
-	toolbar: React.ReactNode;
+	icon: LucideIcon;
+	title: React.ReactNode;
+	detail?: React.ReactNode;
 	action?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-b bg-background md:rounded-b-xl">
-			<div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
-				{toolbar}
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+			<div className="flex h-12 shrink-0 items-center justify-between gap-3 px-4 lg:px-6">
+				<div className="flex min-w-0 items-center gap-2 text-sm">
+					<Icon className="size-4 shrink-0 text-muted-foreground" />
+					<span className="min-w-0 truncate font-medium">{title}</span>
+					{detail ? (
+						<span className="hidden min-w-0 truncate text-muted-foreground sm:inline">
+							{detail}
+						</span>
+					) : null}
+				</div>
 				{action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
 			</div>
 			{children}
@@ -656,13 +664,6 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		);
 	}
 
-	const terminalToolbar = (
-		<div className="flex min-w-0 items-center gap-2 text-sm">
-			<TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
-			<span className="shrink-0 font-medium">{label}</span>
-			<span className="min-w-0 truncate text-muted-foreground">Deployment terminal</span>
-		</div>
-	);
 	const displayStatus = websocketUrl
 		? terminalStatus
 		: terminalFailure
@@ -687,7 +688,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 
 	if (!websocketUrl) {
 		return (
-			<LiveToolFrame toolbar={terminalToolbar} action={terminalAction}>
+			<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
 				<div className="flex min-h-0 flex-1 items-center justify-center bg-background px-4 py-10">
 					<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
 						<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/40">
@@ -723,7 +724,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	}
 
 	return (
-		<LiveToolFrame toolbar={terminalToolbar} action={terminalAction}>
+		<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
 			<HostedTerminalPanel
 				key={websocketUrl}
 				websocketUrl={websocketUrl}
