@@ -72,13 +72,6 @@ const HostedSecondaryCTA = IS_HOSTED
 			})),
 		)
 	: null;
-const HostedAgentControls = IS_HOSTED
-	? dynamic(() =>
-			import("@/hosted/billing/agents/hosted-agent-controls").then((m) => ({
-				default: m.HostedAgentControls,
-			})),
-		)
-	: null;
 
 export default function DashboardPage() {
 	const api = useApi();
@@ -233,7 +226,6 @@ export default function DashboardPage() {
 					) : hasAgents ? (
 						<ConnectAnotherCard />
 					) : null}
-					{hostedAgentsEnabled && HostedAgentControls ? <HostedAgentControls /> : null}
 					<ResourcesCard
 						stats={stats}
 						projectCount={projects?.length}

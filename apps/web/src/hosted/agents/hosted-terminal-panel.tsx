@@ -4,7 +4,6 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useTheme } from "next-themes";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
 
 const TTYD_OUTPUT = "0";
 const TTYD_INPUT = "0";
@@ -128,17 +127,6 @@ function writeTerminalNotice(term: XTerm, message: string) {
 	term.write(`\r\n${TERMINAL_NOTICE_STYLE}[${message}]${TERMINAL_RESET_STYLE}\r\n`);
 }
 
-function applyTerminalDomTheme(container: HTMLDivElement | null, mode: TerminalThemeMode) {
-	if (!container) return;
-	const background = TERMINAL_THEMES[mode].background;
-	container.style.backgroundColor = background;
-	for (const element of container.querySelectorAll<HTMLElement>(
-		".xterm, .xterm-viewport, .xterm-screen",
-	)) {
-		element.style.backgroundColor = background;
-	}
-}
-
 export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerminalPanelProps) {
 	const { resolvedTheme } = useTheme();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -149,7 +137,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 	const terminalThemeMode: TerminalThemeMode = resolvedTheme === "dark" ? "dark" : "light";
 	const terminalTheme = TERMINAL_THEMES[terminalThemeMode];
 	const themeRef = useRef(terminalTheme);
-	const themeModeRef = useRef(terminalThemeMode);
 	const [status, setStatus] = useState<HostedTerminalStatus>("connecting");
 
 	useEffect(() => {
@@ -158,12 +145,10 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 
 	useEffect(() => {
 		themeRef.current = terminalTheme;
-		themeModeRef.current = terminalThemeMode;
 		if (termRef.current) {
 			termRef.current.options.theme = terminalTheme;
 		}
-		applyTerminalDomTheme(containerRef.current, terminalThemeMode);
-	}, [terminalTheme, terminalThemeMode]);
+	}, [terminalTheme]);
 
 	const connect = useCallback(async () => {
 		cleanupRef.current?.();
@@ -190,7 +175,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		term.loadAddon(fitAddon);
 		term.loadAddon(new WebLinksAddon());
 		term.open(container);
-		applyTerminalDomTheme(container, themeModeRef.current);
 		fitAddon.fit();
 
 		termRef.current = term;
@@ -206,7 +190,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 				ws = new WebSocket(target.url, target.protocols);
 			} catch {
 				if (target.authMode === "subprotocol" && target.token) {
-					writeTerminalNotice(term, "terminal websocket handshake failed; retrying");
 					openWebSocket(terminalWebSocketTarget(websocketUrl, "query"));
 					return;
 				}
@@ -240,7 +223,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 					wsRef.current = null;
 				}
 				if (!opened && target.authMode === "subprotocol" && target.token) {
-					writeTerminalNotice(term, "terminal websocket handshake closed; retrying");
 					setStatus("connecting");
 					openWebSocket(terminalWebSocketTarget(websocketUrl, "query"));
 					return;
@@ -249,6 +231,7 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 				writeTerminalNotice(term, terminalConnectionClosedMessage(event));
 			};
 			ws.onerror = () => {
+				if (!opened && target.authMode === "subprotocol" && target.token) return;
 				if (!disposed) setStatus("disconnected");
 			};
 		};
@@ -304,10 +287,8 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		<div data-hosted="true" className="flex min-h-0 flex-1 flex-col">
 			<div
 				ref={containerRef}
-				className={cn(
-					"min-h-0 flex-1 p-1 transition-colors",
-					terminalThemeMode === "dark" ? "bg-[#0a0a0a]" : "bg-background",
-				)}
+				data-terminal-theme={terminalThemeMode}
+				className="hosted-terminal min-h-0 flex-1 overflow-hidden p-2 transition-colors"
 			/>
 		</div>
 	);
