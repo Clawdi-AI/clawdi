@@ -14,8 +14,8 @@
 		},
 		"build": {
 			"dependsOn": ["^build"],
-			"env": ["NODE_ENV", "VITE_*", "CLERK_*", "CLAWDI_*", "VERCEL_*", "SKIP_ENV_VALIDATION"],
-			"outputs": [".output/**", "dist/**"]
+			"env": ["NODE_ENV"],
+			"outputs": ["dist/**"]
 		},
 		"typecheck": {
 			"dependsOn": ["^build"],
