@@ -1715,6 +1715,30 @@ function supervisorProgramSegment(value: string): string {
 	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
 }
 
+export function runtimeCommandShimScript(paths: RuntimePaths): string {
+	return [
+		"#!/usr/bin/env sh",
+		"set -eu",
+		"command_name=$" + "{0##*/}",
+		'shim_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+		"old_ifs=$" + "{IFS-}",
+		"IFS=:",
+		"clean_path=",
+		"for dir in $" + "{PATH-}; do",
+		'  [ "$dir" = "$shim_dir" ] && continue',
+		'  if [ -z "$clean_path" ]; then clean_path=$dir; else clean_path=$clean_path:$dir; fi',
+		"done",
+		"IFS=$old_ifs",
+		"export PATH=$clean_path",
+		"first_arg=$" + "{1-}",
+		'if [ "$command_name" = "openclaw" ] && { [ "$first_arg" = "update" ] || [ "$first_arg" = "--update" ]; }; then',
+		'  exec "$command_name" "$@"',
+		"fi",
+		`exec ${shellQuote(paths.cliManagedBin)} run -- "$command_name" "$@"`,
+		"",
+	].join("\n");
+}
+
 function hostedRuntimeBridgeToken(): string {
 	const direct = process.env[RUNTIME_BRIDGE_TOKEN_ENV]?.trim();
 	if (direct) return direct;
