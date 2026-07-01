@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { mitmProfileInputBundleSchema } from "./mitm-profiles";
-import { runtimeNameSchema, runtimeRunSettingsSchema } from "./run-config";
+import {
+	runtimeNameSchema,
+	runtimeRunSettingsSchema,
+	runtimeServiceNameSchema,
+} from "./run-config";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
@@ -30,6 +34,7 @@ const runtimeSchema = z
 		updateChannel: z.string().min(1).optional(),
 		install: installSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
+		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
 	})
 	.strict();
 
@@ -145,6 +150,7 @@ const hostedRuntimeEntrySchema = z
 		enabled: z.boolean(),
 		install: hostedRuntimeInstallSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
+		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
 		paths: z
 			.object({
 				home: z.string().min(1).optional(),

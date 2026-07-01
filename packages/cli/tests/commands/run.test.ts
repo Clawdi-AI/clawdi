@@ -139,6 +139,7 @@ describe("run command project folder selection", () => {
 		const child = buildRuntimeChildSpawn(
 			{
 				runtime: "openclaw",
+				service: null,
 				command: "/home/clawdi/.openclaw/bin/openclaw",
 				args: ["gateway", "run"],
 				cwd: "/home/clawdi/clawdi",
@@ -170,6 +171,7 @@ describe("run command project folder selection", () => {
 		const child = buildRuntimeChildSpawn(
 			{
 				runtime: "hermes",
+				service: null,
 				command: "/home/clawdi/.local/bin/hermes",
 				args: ["dashboard"],
 				cwd: "/home/clawdi/clawdi",
@@ -210,6 +212,7 @@ describe("run command project folder selection", () => {
 			buildRuntimeChildSpawn(
 				{
 					runtime: "openclaw",
+					service: null,
 					command: "openclaw",
 					args: [],
 					cwd: "/home/clawdi/clawdi",
@@ -266,6 +269,58 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.PATH?.startsWith(join(tmpRoot, "home", "clawdi", ".local", "bin"))).toBe(
 			true,
 		);
+	});
+
+	it("runs hosted runtime services from managed service run config", async () => {
+		unlinkSync(join(fakeClawdiHome, "auth.json"));
+		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
+		const runRoot = join(tmpRoot, "run", "clawdi");
+		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
+		const runConfigRoot = join(serviceStateRoot, "config", "run");
+		mkdirSync(runConfigRoot, { recursive: true });
+		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
+		writeFileSync(
+			join(runConfigRoot, "hermes+dashboard.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeRunConfig.v1",
+				runtime: "hermes",
+				service: "dashboard",
+				enabled: true,
+				generatedAt: "2026-07-01T00:00:00Z",
+				generation: 1,
+				instanceId: "iid_test",
+				command: "hermes",
+				defaultArgs: ["dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open"],
+				env: {
+					HERMES_CONFIG: "/home/clawdi/.hermes/config.toml",
+				},
+				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
+				cwd: projectRoot,
+				commandPath: hermesPath,
+				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
+			}),
+		);
+		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
+		const { calls, spawnImpl } = recordSpawn();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
+		process.env.CLAWDI_RUN_DIR = runRoot;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+
+		await run(["hermes"], { runtimeService: "hermes+dashboard" }, spawnImpl);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].command).toBe(hermesPath);
+		expect(calls[0].args).toEqual([
+			"dashboard",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"9119",
+			"--no-open",
+		]);
+		expect(calls[0].cwd).toBe(projectRoot);
+		expect(calls[0].env.HERMES_CONFIG).toBe("/home/clawdi/.hermes/config.toml");
 	});
 
 	it("rejects disabled hosted runtime commands before native binaries can run", async () => {

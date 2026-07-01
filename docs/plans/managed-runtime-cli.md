@@ -71,6 +71,7 @@ should not produce unnecessary config churn.
 Key generated outputs:
 
 - `config/run/<runtime>.json` for `clawdi run`;
+- `config/run/<runtime>+<service>.json` for runtime-owned auxiliary services;
 - `config/projections/<runtime>.json` for runtime-specific config projection;
 - `config/runtime-command-shims.json` plus symlinks under the service-state bin
   directory;
@@ -193,6 +194,7 @@ Runtime changes should include focused tests for:
 - command shim routing, PATH cleanup, stale-shim cleanup, and disabled-runtime
   behavior;
 - supervisor config rendering for watch, runtime bridge, daemon, and runtimes;
+- runtime-owned service rendering without generating user command shims;
 - terminal URL token transport and light/dark xterm theme behavior when web UI
   code changes.
 

@@ -111,6 +111,7 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.enabled` | Run config, supervisor entry, and command shim state |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
+| `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, supervised without user command shims |
 | `bridge.surfaces` | Authenticated runtime surface listen/upstream mappings |
 | `providers` | Runtime-scoped AI provider projections and secret refs |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
@@ -177,7 +178,7 @@ outputs include:
 | `cache/manifest.etag`, `cache/channels.etag` | Remote refresh cache validators |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `config/projections/<runtime>.json` | Runtime projection payload |
-| `config/run/<runtime>.json` | `clawdi run` launch config |
+| `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
 | `config/runtime-command-shims.json` | Active generated command shims |
 | `supervisor/supervisord.conf` | Process supervision plan |
 
@@ -218,6 +219,19 @@ command=/usr/bin/env clawdi run -- <runtime>
 ```
 
 The image does not need per-agent supervisor wrappers.
+
+Runtime-owned services use the same generated run-config and supervisor model,
+but they are not user commands and do not receive command shims. A manifest entry
+such as `runtimes.hermes.services.dashboard` writes
+`config/run/hermes+dashboard.json` and supervisor starts it through:
+
+```ini
+command=/usr/bin/env clawdi run --runtime-service hermes+dashboard -- hermes
+```
+
+This covers browser helper processes such as a runtime dashboard while keeping
+the user's shell PATH clean: typing `hermes` enters the managed Hermes runtime,
+not a dashboard alias.
 
 ## Provider And Channel Routing
 

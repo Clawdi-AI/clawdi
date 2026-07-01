@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
@@ -1242,6 +1242,12 @@ program
 	.option("--allow-conflicts", "Allow first-match wins for agent project conflicts")
 	.option("--no-project-folder", "Skip linked-folder Project lookup")
 	.option("--dry-run", "Show reference resolution plan without launching the command")
+	.addOption(
+		new Option(
+			"--runtime-service <runtime+service>",
+			"Run an internal hosted runtime service",
+		).hideHelp(),
+	)
 	.argument("<command...>", "Command to run")
 	.addHelpText(
 		"after",

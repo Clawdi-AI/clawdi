@@ -13,6 +13,12 @@ export const runtimeNameSchema = z
 	.refine((name) => name !== "clawdi", "Runtime name is reserved.");
 export type RuntimeName = z.infer<typeof runtimeNameSchema>;
 
+export const runtimeServiceNameSchema = z
+	.string()
+	.regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
+	.refine((name) => name !== "main", "Runtime service name is reserved.");
+export type RuntimeServiceName = z.infer<typeof runtimeServiceNameSchema>;
+
 const supportedRuntimeSchema = z.enum(["hermes", "openclaw"]);
 export type SupportedRuntimeName = z.infer<typeof supportedRuntimeSchema>;
 
@@ -34,6 +40,7 @@ const runtimeRunConfigSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeRunConfig.v1"),
 		runtime: runtimeNameSchema,
+		service: runtimeServiceNameSchema.nullable().default(null),
 		enabled: z.boolean(),
 		generatedAt: z.string().min(1),
 		generation: z.number().int().nonnegative(),
@@ -76,6 +83,7 @@ export type RuntimeRunConfigRead =
 
 export interface RuntimeRunInvocation {
 	runtime: string;
+	service: string | null;
 	command: string;
 	args: string[];
 	cwd?: string;
@@ -93,12 +101,24 @@ export function runtimeNameForCommand(command: string): RuntimeName | null {
 	return parsed.success ? parsed.data : null;
 }
 
-export function runtimeRunConfigPath(runtime: RuntimeName, paths = getRuntimePaths()): string {
-	return join(paths.runConfigRoot, `${runtime}.json`);
+export function runtimeRunConfigId(
+	runtime: RuntimeName,
+	service?: RuntimeServiceName | null,
+): string {
+	return service ? `${runtime}+${service}` : runtime;
+}
+
+export function runtimeRunConfigPath(
+	runtime: RuntimeName,
+	paths = getRuntimePaths(),
+	service?: RuntimeServiceName | null,
+): string {
+	return join(paths.runConfigRoot, `${runtimeRunConfigId(runtime, service)}.json`);
 }
 
 export function buildRuntimeRunConfig(input: {
 	runtime: RuntimeName;
+	service?: RuntimeServiceName | null;
 	enabled: boolean;
 	generatedAt: string;
 	generation: number;
@@ -118,6 +138,7 @@ export function buildRuntimeRunConfig(input: {
 	return {
 		schemaVersion: "clawdi.runtimeRunConfig.v1",
 		runtime: input.runtime,
+		service: input.service ?? null,
 		enabled: input.enabled,
 		generatedAt: input.generatedAt,
 		generation: input.generation,
@@ -136,7 +157,7 @@ export function buildRuntimeRunConfig(input: {
 }
 
 export function writeRuntimeRunConfig(config: RuntimeRunConfig, paths: RuntimePaths): string {
-	const path = runtimeRunConfigPath(config.runtime, paths);
+	const path = runtimeRunConfigPath(config.runtime, paths, config.service);
 	writePrivateFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
@@ -172,6 +193,36 @@ export function readRuntimeRunConfigForCommand(
 	}
 }
 
+export function readRuntimeServiceRunConfig(
+	runtime: string,
+	service: string,
+	paths = getRuntimePaths(),
+): RuntimeRunConfigRead {
+	const parsedRuntime = runtimeNameSchema.safeParse(runtime);
+	if (!parsedRuntime.success) return { status: "not-runtime", runtime: null };
+	const parsedService = runtimeServiceNameSchema.safeParse(service);
+	if (!parsedService.success) return { status: "not-runtime", runtime: null };
+
+	const path = runtimeRunConfigPath(parsedRuntime.data, paths, parsedService.data);
+	if (!existsSync(path)) {
+		return { status: "missing", runtime: parsedRuntime.data, path };
+	}
+
+	try {
+		const parsed = runtimeRunConfigSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+		if (!parsed.enabled)
+			return { status: "disabled", runtime: parsedRuntime.data, path, config: parsed };
+		return { status: "ok", runtime: parsedRuntime.data, path, config: parsed };
+	} catch (error) {
+		return {
+			status: "invalid",
+			runtime: parsedRuntime.data,
+			path,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 export function buildRuntimeRunInvocation(
 	read: Extract<RuntimeRunConfigRead, { status: "ok" }>,
 	args: string[],
@@ -199,6 +250,7 @@ export function buildRuntimeRunInvocation(
 			: read.config.command;
 	return {
 		runtime: read.runtime,
+		service: read.config.service,
 		command,
 		args: args.length > 1 ? args.slice(1) : read.config.defaultArgs,
 		cwd: read.config.cwd,

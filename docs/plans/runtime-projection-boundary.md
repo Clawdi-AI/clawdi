@@ -129,6 +129,8 @@ The CLI may own:
 - PATH cleanup inside the shim dispatcher;
 - disabled-runtime enforcement;
 - supervisor commands that start runtimes through `clawdi run -- <runtime>`;
+- runtime-owned auxiliary services through `clawdi run --runtime-service`,
+  without user command shims;
 - support for future runtime names when an explicit `run.command` is supplied.
 
 The CLI must not own:
