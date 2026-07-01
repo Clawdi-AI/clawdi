@@ -6,7 +6,7 @@ High-level map of what's actually in Clawdi Cloud today — updated as the code 
 
 ## One-paragraph overview
 
-Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a dashboard on the same backend, including hosted deployment surfaces such as Control UI and Terminal. The same CLI also owns the public managed runtime command surface for controlled environments: runtime manifests, convergence, command shims, `clawdi run`, local UI bridging, and diagnostics. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
+Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a dashboard on the same backend, including hosted deployment surfaces such as runtime UI and Terminal. The same CLI also owns the public managed runtime command surface for controlled environments: runtime manifests, convergence, command shims, `clawdi run`, local UI bridging, and diagnostics. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
 
 ---
 
@@ -39,7 +39,7 @@ Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads 
 │ (external service)   │                           │  - runtime init/watch│
 └──────────────────────┘                           │  - run configs/shims │
         ▲                                          │  - runtime bridge         │
-        │ Control UI + Terminal contracts          └──────────┬───────────┘
+        │ Runtime UI + Terminal contracts          └──────────┬───────────┘
         └─────────────────────────────────────────────────────▼
                                                    ┌──────────────────────┐
                                                    │ Agent runtimes       │
@@ -239,13 +239,14 @@ This keeps the image stable: the image does not need one wrapper script per
 agent. Disabled runtimes write disabled run config, and `clawdi run` reports the
 runtime as disabled instead of falling back to a native binary.
 
-### Control UI And Terminal
+### Runtime UI And Terminal
 
-Control UI and Terminal are separate hosted deployment surfaces:
+Runtime UI and Terminal are separate hosted deployment surfaces:
 
-- **Control UI** is the runtime's browser UI endpoint, proxied through the
-  runtime bridge as an explicitly declared `control-ui` surface. It is
-  runtime-specific, so the dashboard labels it as `<Runtime> Control UI`.
+- **Runtime UI** is the runtime's browser UI endpoint, proxied through the
+  runtime bridge as an explicitly declared `control-ui` surface kind. The
+  surface kind is an internal policy name; user-facing labels follow the
+  runtime's own wording, such as OpenClaw Control UI and Hermes Dashboard.
 - **Terminal** is a deployment shell, not an agent-specific surface. The
   dashboard requests a terminal session for the deployment and then opens one
   xterm WebSocket. The terminal uses tty-style frames (`0` for input/output,
@@ -259,7 +260,7 @@ the default runtime user.
 
 The runtime bridge is a general authenticated surface bridge, but each surface
 must be declared with listen/upstream targets and policy. The current hosted
-surface kind is browser Control UI traffic. Terminal stays separate because it
+surface kind is browser runtime UI traffic. Terminal stays separate because it
 grants shell execution rather than proxying a runtime web application.
 
 ### Ownership Boundaries

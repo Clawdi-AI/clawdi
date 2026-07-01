@@ -186,7 +186,7 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "console",
 		icon: MonitorPlay,
-		tooltip: "Open the hosted runtime Control UI",
+		tooltip: "Open the hosted runtime UI",
 	},
 	{
 		id: "terminal",
