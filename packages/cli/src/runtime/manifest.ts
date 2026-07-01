@@ -13,7 +13,6 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
-	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,6 +51,7 @@ import {
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
 import type { RuntimeManifestLoad } from "./manifest-source";
+import { applyMitmSidecarRuntimeEnv } from "./mitm-env";
 import {
 	buildMitmProfileBundle,
 	hasEnabledMitmProfiles,
@@ -62,12 +62,13 @@ import {
 	buildRuntimeRunConfig,
 	isSupportedRuntimeName,
 	type RuntimeName,
+	type RuntimeRunConfig,
 	type RuntimeServiceName,
-	runtimeCommandShimDir,
+	runtimeManagedBinDir,
 	runtimeNameSchema,
 	runtimeRunConfigId,
 	runtimeServiceNameSchema,
-	type SupportedRuntimeName,
+	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
 
@@ -333,18 +334,6 @@ function runtimeAppRoot(name: string, home: string): string | null {
 	if (name === "hermes") return join(home, ".hermes", "hermes-agent");
 	return null;
 }
-
-const SUPPORTED_RUNTIME_NAMES = [
-	"hermes",
-	"openclaw",
-] as const satisfies readonly SupportedRuntimeName[];
-
-const runtimeCommandShimIndexSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.runtimeCommandShims.v1"),
-		commands: z.array(runtimeNameSchema).default([]),
-	})
-	.strict();
 
 const liveSyncEnvironmentIndexSchema = z
 	.object({
@@ -965,14 +954,9 @@ function hostedMcpServerConfig(
 	manifest: RuntimeManifest,
 	authTokenFile: string,
 ): { command: string; args: string[] } {
-	const script = [
-		`export CLAWDI_API_URL=${shellQuote(manifest.controlPlane.apiUrl)}`,
-		`export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(authTokenFile)})"`,
-		"exec clawdi mcp",
-	].join("; ");
 	return {
-		command: "/bin/sh",
-		args: ["-lc", script],
+		command: "clawdi",
+		args: ["mcp", "--api-url", manifest.controlPlane.apiUrl, "--auth-token-file", authTokenFile],
 	};
 }
 
@@ -1402,20 +1386,146 @@ function daemonProgramRevision(manifest: RuntimeManifest): string {
 	});
 }
 
-function runtimeBridgeProgramRevision(manifest: RuntimeManifest): string {
-	return revisionHash({
-		clawdiCli: manifest.clawdiCli ?? null,
-		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
-		runtimeBridge: "hosted-runtime-bridge-v1",
-	});
-}
-
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+interface RuntimeSupervisorProgram {
+	runtime: RuntimeName;
+	service: RuntimeServiceName | null;
+	command: string;
+	args: string[];
+	cwd: string;
+	env: Record<string, string>;
+}
+
+interface RuntimeMitmSupervisorProgram {
+	profileBundlePath: string;
+	proxyUrl: string;
+	caFile: string;
+	secretFilePath: string | null;
+}
+
+function runtimeMitmSupervisorProgram(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	profileBundlePath: string | null,
+	secretFilePath: string | null,
+): RuntimeMitmSupervisorProgram | null {
+	if (!profileBundlePath) return null;
+	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
+	return {
+		profileBundlePath,
+		proxyUrl: `http://127.0.0.1:${port}`,
+		caFile: join(paths.runRoot, "mitm", "supervisor", "ca.pem"),
+		secretFilePath,
+	};
+}
+
+function buildRuntimeSupervisorProgram(input: {
+	config: RuntimeRunConfig;
+	paths: RuntimePaths;
+	secretValues: Record<string, string> | undefined;
+	mitm: RuntimeMitmSupervisorProgram | null;
+}): RuntimeSupervisorProgram | null {
+	if (!input.config.enabled) return null;
+
+	const currentPath = withoutPathEntry(
+		supervisorPath(input.paths),
+		runtimeManagedBinDir(input.paths),
+	);
+	const pathPrefix = input.config.prependPath.join(":");
+	const env: Record<string, string> = {
+		...input.config.env,
+		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
+	};
+	for (const [envName, ref] of Object.entries(input.config.secretEnv)) {
+		const value = runtimeSecretValue(input.secretValues ?? {}, ref);
+		if (!value) {
+			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
+		}
+		env[envName] = value;
+	}
+	if (input.mitm) {
+		applyMitmSidecarRuntimeEnv(env, {
+			proxyUrl: input.mitm.proxyUrl,
+			caFile: input.mitm.caFile,
+		});
+	}
+
+	const command =
+		input.config.commandPath && existsSync(input.config.commandPath)
+			? input.config.commandPath
+			: input.config.command;
+
+	return {
+		runtime: input.config.runtime,
+		service: input.config.service,
+		command,
+		args: input.config.defaultArgs,
+		cwd: input.config.cwd ?? input.paths.workspaceRoot,
+		env,
+	};
+}
+
+function runtimeSecretValue(secrets: Record<string, string>, ref: string): string | null {
+	const normalized = normalizeSecretRef(ref);
+	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
+	const candidates = [ref, normalized, raw].filter(
+		(candidate, index, values): candidate is string =>
+			Boolean(candidate) && values.indexOf(candidate) === index,
+	);
+	for (const candidate of candidates) {
+		const value = secrets[candidate];
+		if (typeof value === "string" && value.length > 0) return value;
+	}
+	return null;
+}
+
+function hashToUInt16(input: string): number {
+	return createHash("sha256").update(input).digest().readUInt16BE(0);
+}
+
+function runtimeSidecarProgramRevision(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
+		mitmProfiles: manifest.mitmProfiles ?? null,
+		secretValues: secretValues ?? {},
+		runtimeSidecar: "hosted-runtime-sidecar-v1",
+	});
+}
+
+function supervisorCommand(command: string, args: string[]): string {
+	return [command, ...args].map(shellQuote).join(" ");
+}
+
+function supervisorUserDirective(runtimeUser: string): string[] {
+	if (!runningAsRoot() || runtimeUser === "root") return [];
+	return [`user=${runtimeUser}`];
+}
+
+function runtimeSupervisorProgramName(program: RuntimeSupervisorProgram): string {
+	if (!program.service) return `clawdi-${supervisorProgramSegment(program.runtime)}`;
+	return runtimeServiceProgramName(program.runtime, program.service);
+}
+
+function runtimeSupervisorProgramRevision(
+	manifest: RuntimeManifest,
+	program: RuntimeSupervisorProgram,
+	secretValues: Record<string, string> | undefined,
+): string {
+	if (program.service)
+		return runtimeServiceProgramRevision(manifest, program.runtime, program.service);
+	return runtimeProgramRevision(manifest, program.runtime, secretValues);
+}
+
 function writeSupervisorConfig(
-	enabledRuntimes: string[],
+	runtimePrograms: RuntimeSupervisorProgram[],
+	mitmProgram: RuntimeMitmSupervisorProgram | null,
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	workspaceRoot: string,
@@ -1450,23 +1560,11 @@ function writeSupervisorConfig(
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
 	});
-	const supervisedEnabled = enabledRuntimes.filter((runtime) =>
-		shouldSuperviseRuntime(runtime, manifest),
-	);
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
-	const providerSecretEnv = hostedProviderSecretEnv(manifest);
-	const runtimeNeedsSystemBoundary =
-		hasEnabledMitmProfiles(
-			buildMitmProfileBundle({
-				generatedAt: new Date(0).toISOString(),
-				generation: manifest.generation,
-				instanceId: manifest.instanceId,
-				profiles: manifest.mitmProfiles,
-			}),
-		) ||
-		(supervisedEnabled.length > 0 && Object.keys(providerSecretEnv).length > 0);
+	const shouldRunMitm = mitmProgram !== null && runtimePrograms.length > 0;
+	const shouldRunSidecar = shouldRunBridge || shouldRunMitm;
 	const lines = [
 		"; Generated by clawdi runtime init. Do not edit inside hosted runtime.",
 		`; Desired-state generation: ${manifest.generation}`,
@@ -1480,7 +1578,7 @@ function writeSupervisorConfig(
 		"[unix_http_server]",
 		`file=${paths.runRoot}/supervisor.sock`,
 		"chmod=0700",
-		"chown=root:root",
+		...(runningAsRoot() ? ["chown=root:root"] : []),
 		"",
 		"[supervisorctl]",
 		`serverurl=unix://${paths.runRoot}/supervisor.sock`,
@@ -1490,7 +1588,7 @@ function writeSupervisorConfig(
 		"",
 	];
 
-	if (supervisedEnabled.length === 0 && !shouldRunDaemon) {
+	if (runtimePrograms.length === 0 && !shouldRunDaemon) {
 		lines.push("; No enabled agent runtimes in the current manifest.", "");
 	}
 
@@ -1515,12 +1613,9 @@ function writeSupervisorConfig(
 	}
 
 	if (shouldRunDaemon && daemonAuthTokenFile) {
-		const script = `export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(
-			daemonAuthTokenFile,
-		)})"; exec /usr/bin/env clawdi daemon run`;
 		lines.push(
 			"[program:clawdi-daemon]",
-			`command=/bin/sh -lc ${shellQuote(script)}`,
+			`command=/usr/bin/env clawdi daemon run --auth-token-file ${shellQuote(daemonAuthTokenFile)}`,
 			`directory=${workspaceRoot}`,
 			"autostart=true",
 			"autorestart=true",
@@ -1537,19 +1632,25 @@ function writeSupervisorConfig(
 		);
 	}
 
-	if (shouldRunBridge) {
-		const runtimeBridgeEnvironment = supervisorEnvironment({
+	if (shouldRunSidecar) {
+		const sidecarEnvironment = supervisorEnvironment({
 			...commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
-			[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
-			[RUNTIME_BRIDGE_SURFACES_ENV]: JSON.stringify(bridgeSurfaceSpecs),
-			CLAWDI_RUNTIME_REV: runtimeBridgeProgramRevision(manifest),
+			[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
+			[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
+			CLAWDI_MITM_PROFILE_BUNDLE: shouldRunMitm && mitmProgram ? mitmProgram.profileBundlePath : "",
+			CLAWDI_MITM_PROXY_URL: shouldRunMitm && mitmProgram ? mitmProgram.proxyUrl : "",
+			CLAWDI_MITM_CA_FILE: shouldRunMitm && mitmProgram ? mitmProgram.caFile : "",
+			CLAWDI_MITM_SECRET_FILE:
+				shouldRunMitm && mitmProgram ? (mitmProgram.secretFilePath ?? "") : "",
+			CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
 		});
 		lines.push(
-			"[program:clawdi-runtime-bridge]",
-			"command=/usr/bin/env clawdi runtime bridge",
+			"[program:clawdi-runtime-sidecar]",
+			"command=/usr/bin/env clawdi runtime sidecar",
 			`directory=${workspaceRoot}`,
-			`user=${runtimeUser}`,
+			...supervisorUserDirective(runtimeUser),
+			"priority=20",
 			"autostart=true",
 			"autorestart=true",
 			"startsecs=2",
@@ -1560,22 +1661,24 @@ function writeSupervisorConfig(
 			"stdout_logfile_maxbytes=0",
 			"stderr_logfile=/dev/fd/2",
 			"stderr_logfile_maxbytes=0",
-			`environment=${runtimeBridgeEnvironment}`,
+			`environment=${sidecarEnvironment}`,
 			"",
 		);
 	}
 
-	for (const runtime of supervisedEnabled) {
+	for (const program of runtimePrograms) {
 		const runtimeEnvironment = supervisorEnvironment({
 			...commonEnvironment,
+			...program.env,
 			CLAWDI_AUTH_TOKEN: "",
-			CLAWDI_RUNTIME_REV: runtimeProgramRevision(manifest, runtime, secretValues),
+			CLAWDI_RUNTIME_REV: runtimeSupervisorProgramRevision(manifest, program, secretValues),
 		});
 		lines.push(
-			`[program:clawdi-${runtime}]`,
-			`command=/usr/bin/env clawdi run -- ${runtime}`,
-			`directory=${workspaceRoot}`,
-			...(runtimeNeedsSystemBoundary ? [] : [`user=${runtimeUser}`]),
+			`[program:${runtimeSupervisorProgramName(program)}]`,
+			`command=${supervisorCommand(program.command, program.args)}`,
+			`directory=${program.cwd}`,
+			...supervisorUserDirective(runtimeUser),
+			"priority=30",
 			"autostart=true",
 			"autorestart=true",
 			"startsecs=2",
@@ -1589,34 +1692,12 @@ function writeSupervisorConfig(
 			`environment=${runtimeEnvironment}`,
 			"",
 		);
-		for (const service of runtimeServiceNames(manifest, runtime)) {
-			const serviceEnvironment = supervisorEnvironment({
-				...commonEnvironment,
-				CLAWDI_AUTH_TOKEN: "",
-				CLAWDI_RUNTIME_REV: runtimeServiceProgramRevision(manifest, runtime, service),
-			});
-			lines.push(
-				`[program:${runtimeServiceProgramName(runtime, service)}]`,
-				`command=/usr/bin/env clawdi run --runtime-service ${runtimeRunConfigId(runtimeNameSchema.parse(runtime), service)} -- ${runtime}`,
-				`directory=${workspaceRoot}`,
-				...(runtimeNeedsSystemBoundary ? [] : [`user=${runtimeUser}`]),
-				"autostart=true",
-				"autorestart=true",
-				"startsecs=2",
-				"startretries=5",
-				"stopasgroup=true",
-				"killasgroup=true",
-				"stdout_logfile=/dev/fd/1",
-				"stdout_logfile_maxbytes=0",
-				"stderr_logfile=/dev/fd/2",
-				"stderr_logfile_maxbytes=0",
-				`environment=${serviceEnvironment}`,
-				"",
-			);
-		}
 	}
 
-	writePrivateFileAtomic(paths.supervisorConfig, `${lines.join("\n")}\n`, { mode: 0o644 });
+	writePrivateFileAtomic(paths.supervisorConfig, `${lines.join("\n")}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
 	return paths.supervisorConfig;
 }
 
@@ -1626,111 +1707,12 @@ function shouldSuperviseRuntime(runtime: string, manifest: RuntimeManifest): boo
 	return isSupportedRuntimeName(runtime) || Boolean(desired.run?.command?.trim());
 }
 
-function runtimeServiceNames(manifest: RuntimeManifest, runtime: string): RuntimeServiceName[] {
-	const desired = manifest.runtimes[runtime];
-	if (!desired?.enabled) return [];
-	return Object.keys(desired.services ?? {})
-		.map((service) => runtimeServiceNameSchema.parse(service))
-		.sort();
-}
-
 function runtimeServiceProgramName(runtime: string, service: string): string {
 	return `clawdi-${supervisorProgramSegment(runtime)}-${supervisorProgramSegment(service)}`;
 }
 
 function supervisorProgramSegment(value: string): string {
 	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function writeRuntimeCommandShims(commands: Iterable<RuntimeName>, paths: RuntimePaths): void {
-	const binDir = runtimeCommandShimDir(paths);
-	const dispatcherPath = join(binDir, ".clawdi-runtime-command-shim");
-	const active = new Set(
-		[...commands]
-			.filter((command) => command !== "clawdi")
-			.filter((command) => runtimeNameSchema.safeParse(command).success)
-			.sort(),
-	);
-	const previous = readRuntimeCommandShimIndex(paths);
-	const staleCandidates = new Set<RuntimeName>([
-		...previous,
-		"codex",
-		...SUPPORTED_RUNTIME_NAMES,
-	] as RuntimeName[]);
-	for (const command of staleCandidates) {
-		if (!active.has(command)) rmSync(join(binDir, command), { force: true });
-	}
-	if (active.size === 0) {
-		rmSync(dispatcherPath, { force: true });
-		writeRuntimeCommandShimIndex(active, paths);
-		return;
-	}
-	writePrivateFileAtomic(dispatcherPath, runtimeCommandShimScript(paths), {
-		mode: 0o755,
-		dirMode: 0o755,
-	});
-	makeRuntimeUserOwned(dispatcherPath);
-	for (const command of active) {
-		const shimPath = join(binDir, command);
-		rmSync(shimPath, { force: true });
-		symlinkSync(".clawdi-runtime-command-shim", shimPath);
-		makeRuntimeUserOwned(shimPath);
-	}
-	writeRuntimeCommandShimIndex(active, paths);
-}
-
-export function runtimeCommandShimScript(paths: RuntimePaths): string {
-	return [
-		"#!/usr/bin/env sh",
-		"set -eu",
-		"command_name=$" + "{0##*/}",
-		'shim_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
-		"old_ifs=$" + "{IFS-}",
-		"IFS=:",
-		"clean_path=",
-		"for dir in $" + "{PATH-}; do",
-		'  [ "$dir" = "$shim_dir" ] && continue',
-		'  if [ -z "$clean_path" ]; then clean_path=$dir; else clean_path=$clean_path:$dir; fi',
-		"done",
-		"IFS=$old_ifs",
-		"export PATH=$clean_path",
-		"first_arg=$" + "{1-}",
-		'if [ "$command_name" = "openclaw" ] && { [ "$first_arg" = "update" ] || [ "$first_arg" = "--update" ]; }; then',
-		'  exec "$command_name" "$@"',
-		"fi",
-		`exec ${shellQuote(paths.cliManagedBin)} run -- "$command_name" "$@"`,
-		"",
-	].join("\n");
-}
-
-function runtimeCommandShimIndexPath(paths: RuntimePaths): string {
-	return join(paths.serviceStateRoot, "config", "runtime-command-shims.json");
-}
-
-function readRuntimeCommandShimIndex(paths: RuntimePaths): RuntimeName[] {
-	const path = runtimeCommandShimIndexPath(paths);
-	if (!existsSync(path)) return [];
-	try {
-		const parsed = runtimeCommandShimIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
-		return parsed.commands;
-	} catch {
-		return [];
-	}
-}
-
-function writeRuntimeCommandShimIndex(commands: Set<RuntimeName>, paths: RuntimePaths): void {
-	writePrivateFileAtomic(
-		runtimeCommandShimIndexPath(paths),
-		`${JSON.stringify(
-			{
-				schemaVersion: "clawdi.runtimeCommandShims.v1",
-				commands: [...commands].sort(),
-			},
-			null,
-			2,
-		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
-	);
 }
 
 function hostedRuntimeBridgeToken(): string {
@@ -1805,7 +1787,7 @@ export function convergeRuntimeManifest(
 	const installInventory: string[] = [];
 	const projections: string[] = [];
 	const runConfigs: string[] = [];
-	const commandShims = new Set<RuntimeName>();
+	const runtimeSupervisorPrograms: RuntimeSupervisorProgram[] = [];
 	const installErrors: string[] = [];
 
 	mkdirSync(workspaceRoot, { recursive: true });
@@ -1877,21 +1859,15 @@ export function convergeRuntimeManifest(
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
-	writeProviderHealthStatus(manifest, load.secretValues, paths);
-	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
-	const supervisorConfig = writeSupervisorConfig(
-		enabledRuntimes,
+	const mitmSupervisorProgram = runtimeMitmSupervisorProgram(
 		manifest,
 		paths,
-		workspaceRoot,
-		daemonAuthTokenFile,
-		load.secretValues,
+		mitmProfileBundlePath,
+		mitmSecretFile,
 	);
+	writeProviderHealthStatus(manifest, load.secretValues, paths);
+	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
-	for (const agent of desiredLiveSyncAgents(manifest)) {
-		const parsed = runtimeNameSchema.safeParse(agent.agentType);
-		if (parsed.success) commandShims.add(parsed.data);
-	}
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
@@ -1956,9 +1932,39 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
-		const runConfigPath = writeRuntimeRunConfig(
-			buildRuntimeRunConfig({
+		const runConfig = buildRuntimeRunConfig({
+			runtime: runtimeName,
+			enabled: runtime.enabled,
+			generatedAt,
+			generation: manifest.generation,
+			instanceId: manifest.instanceId,
+			commandPath: observation.commandPath,
+			appRoot: observation.appRoot,
+			workspaceRoot,
+			mitmProfileBundlePath,
+			settings: runtime.run,
+			secretFilePath: mitmSecretFile,
+			secretEnv: hostedProviderSecretEnv(manifest, name),
+		});
+		const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
+		runConfigs.push(runConfigPath);
+		writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
+		if (runtime.enabled && shouldSuperviseRuntime(name, manifest)) {
+			const program = buildRuntimeSupervisorProgram({
+				config: runConfig,
+				paths,
+				secretValues: load.secretValues,
+				mitm: mitmSupervisorProgram,
+			});
+			if (program) {
+				runtimeSupervisorPrograms.push(program);
+			}
+		}
+		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
+			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceRunConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
+				service,
 				enabled: runtime.enabled,
 				generatedAt,
 				generation: manifest.generation,
@@ -1966,37 +1972,22 @@ export function convergeRuntimeManifest(
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 				workspaceRoot,
-				mitmProfileBundlePath,
-				settings: runtime.run,
-				secretFilePath: mitmSecretFile,
-				secretEnv: hostedProviderSecretEnv(manifest, name),
-			}),
-			paths,
-		);
-		runConfigs.push(runConfigPath);
-		writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
-		commandShims.add(runtimeName);
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const serviceRunConfigPath = writeRuntimeRunConfig(
-				buildRuntimeRunConfig({
-					runtime: runtimeName,
-					service,
-					enabled: runtime.enabled,
-					generatedAt,
-					generation: manifest.generation,
-					instanceId: manifest.instanceId,
-					commandPath: observation.commandPath,
-					appRoot: observation.appRoot,
-					workspaceRoot,
-					settings: serviceSettings,
-					secretFilePath: null,
-					secretEnv: {},
-				}),
-				paths,
-			);
+				settings: serviceSettings,
+				secretFilePath: null,
+				secretEnv: {},
+			});
+			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
 			runConfigs.push(serviceRunConfigPath);
 			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
+			const program = buildRuntimeSupervisorProgram({
+				config: serviceRunConfig,
+				paths,
+				secretValues: load.secretValues,
+				mitm: mitmSupervisorProgram,
+			});
+			if (program) {
+				runtimeSupervisorPrograms.push(program);
+			}
 		}
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
@@ -2009,7 +2000,15 @@ export function convergeRuntimeManifest(
 	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
 	writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
 	projections.push(mcpProjection);
-	writeRuntimeCommandShims(commandShims, paths);
+	const supervisorConfig = writeSupervisorConfig(
+		runtimeSupervisorPrograms,
+		mitmSupervisorProgram,
+		manifest,
+		paths,
+		workspaceRoot,
+		daemonAuthTokenFile,
+		load.secretValues,
+	);
 
 	const bootFinished = join(instanceRoot, "boot-finished");
 	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);

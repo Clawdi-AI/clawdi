@@ -260,6 +260,55 @@ describe("runtime run config", () => {
 
 		expect(config.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
 	});
+
+	it("keeps built-in default args when run settings only add env", () => {
+		const config = buildRuntimeRunConfig({
+			runtime: "openclaw",
+			enabled: true,
+			generatedAt: "2026-07-01T00:00:00.000Z",
+			generation: 1,
+			instanceId: "iid_openclaw_env_only",
+			commandPath: "/home/clawdi/.openclaw/bin/openclaw",
+			appRoot: "/home/clawdi/.openclaw",
+			workspaceRoot: "/home/clawdi/clawdi",
+			settings: {
+				env: { OPENCLAW_MODE: "hosted" },
+				prependPath: [],
+			},
+		});
+
+		expect(config.defaultArgs).toEqual([
+			"gateway",
+			"run",
+			"--allow-unconfigured",
+			"--auth",
+			"none",
+			"--bind",
+			"loopback",
+			"--force",
+		]);
+		expect(config.env).toEqual({ OPENCLAW_MODE: "hosted" });
+	});
+
+	it("allows explicit empty args to override built-in defaults", () => {
+		const config = buildRuntimeRunConfig({
+			runtime: "openclaw",
+			enabled: true,
+			generatedAt: "2026-07-01T00:00:00.000Z",
+			generation: 1,
+			instanceId: "iid_openclaw_empty_args",
+			commandPath: "/home/clawdi/.openclaw/bin/openclaw",
+			appRoot: "/home/clawdi/.openclaw",
+			workspaceRoot: "/home/clawdi/clawdi",
+			settings: {
+				args: [],
+				env: {},
+				prependPath: [],
+			},
+		});
+
+		expect(config.defaultArgs).toEqual([]);
+	});
 });
 
 describe("host policy", () => {
@@ -526,7 +575,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("recovers hosted bridge token from pid1 env for runtime-watch and runtime bridge supervisor programs", async () => {
+	it("recovers hosted bridge token from pid1 env for runtime-watch and runtime sidecar bridge module", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -636,18 +685,19 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			convergeRuntimeManifest(loaded, getRuntimePaths());
-			const supervisorConfig = readFileSync(join(state, "supervisor", "supervisord.conf"), "utf-8");
+			const supervisorConfig = readFileSync(join(run, "supervisor", "supervisord.conf"), "utf-8");
 			const section = (name: string) =>
 				supervisorConfig.split(`[program:${name}]`)[1]?.split("\n[")[0] ?? "";
 
 			expect(section("clawdi-runtime-watch")).toContain(
 				'CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"',
 			);
-			expect(section("clawdi-runtime-bridge")).toContain(
+			expect(section("clawdi-runtime-sidecar")).toContain(
 				'CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"',
 			);
+			expect(supervisorConfig).not.toContain("[program:clawdi-runtime-bridge]");
 			expect(section("clawdi-openclaw")).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
-			expect(supervisorConfig).not.toContain("sk-runtime");
+			expect(section("clawdi-openclaw")).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
 		} finally {
 			restore();
 		}
@@ -869,6 +919,14 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
+		expect(patch.secrets).toEqual({
+			providers: {
+				default: { source: "env" },
+			},
+			defaults: {
+				env: "default",
+			},
+		});
 		expect(patch.models.providers.default).toMatchObject({
 			baseUrl: "https://ai-gateway.example.test/v1",
 			apiKey: {
@@ -1626,7 +1684,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		]);
 	});
 
-	it("adds direct provider passthrough only when managed channels enable the broker", () => {
+	it("adds direct provider passthrough only when managed channels enable the sidecar", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -1831,16 +1889,16 @@ fi
 				'"channels-etag-watch-1"\n',
 			);
 			expect(readFileSync(supervisorCalls, "utf-8")).toBe(
-				`-c ${join(state, "supervisor", "supervisord.conf")} status\n-c ${join(
-					state,
+				`-c ${join(run, "supervisor", "supervisord.conf")} status\n-c ${join(
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} reread\n-c ${join(
-					state,
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} update clawdi-daemon\n-c ${join(
-					state,
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} update clawdi-openclaw\n`,
@@ -1860,7 +1918,7 @@ fi
 				lastGoodExists: true,
 			});
 			expect(observed?.channels).toEqual({ etag: '"channels-etag-watch-1"' });
-			const supervisorConfig = readFileSync(join(state, "supervisor", "supervisord.conf"), "utf-8");
+			const supervisorConfig = readFileSync(join(run, "supervisor", "supervisord.conf"), "utf-8");
 			expect(supervisorConfig).toContain("[program:clawdi-runtime-watch]");
 			expect(supervisorConfig).not.toContain("file-runtime-token");
 		} finally {
@@ -2278,6 +2336,7 @@ EOF
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SUPERVISORCTL_PATH = join(bin, "supervisorctl");
 		const paths = getRuntimePaths();
+		mkdirSync(dirname(paths.supervisorConfig), { recursive: true });
 		writeFileSync(paths.supervisorConfig, "[supervisord]\n");
 		writeFileSync(join(run, "supervisor.sock"), "");
 		writeRuntimeBootStatus(
@@ -2369,6 +2428,7 @@ fi
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SUPERVISORCTL_PATH = supervisorctl;
 		const paths = getRuntimePaths();
+		mkdirSync(dirname(paths.supervisorConfig), { recursive: true });
 		writeFileSync(paths.supervisorConfig, "[supervisord]\n");
 		writeFileSync(join(run, "supervisor.sock"), "");
 		writeRuntimeWatchStatus(
@@ -2719,16 +2779,16 @@ fi
 			expect(activeTarget).not.toBe(sharedPrefixTarget);
 			expect(status.version).toBe("0.13.1-beta.0");
 			expect(readFileSync(supervisorCalls, "utf-8")).toBe(
-				`-c ${join(state, "supervisor", "supervisord.conf")} status\n-c ${join(
-					state,
+				`-c ${join(run, "supervisor", "supervisord.conf")} status\n-c ${join(
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} reread\n-c ${join(
-					state,
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} update clawdi-daemon\n-c ${join(
-					state,
+					run,
 					"supervisor",
 					"supervisord.conf",
 				)} update clawdi-openclaw\n`,
@@ -3085,9 +3145,7 @@ fi
 			expect(event.status).toBe("error");
 			expect(event.stage).toBe("cli-update");
 			expect(event.cliUpdate.status).toBe("error");
-			expect(event.convergence.supervisorConfig).toBe(
-				join(state, "supervisor", "supervisord.conf"),
-			);
+			expect(event.convergence.supervisorConfig).toBe(join(run, "supervisor", "supervisord.conf"));
 			expect(readFileSync(supervisorCalls, "utf-8")).toContain("update clawdi-daemon");
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
 				'"etag-cli-failed"\n',
@@ -3870,7 +3928,7 @@ exit 64
 		}
 	});
 
-	it("converges future runtimes from explicit run commands without image shims", async () => {
+	it("converges future runtimes from explicit run commands without image-level runtime wrappers", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3921,17 +3979,15 @@ exit 64
 		expect(runConfig.commandPath).toBeNull();
 		expect(runConfig.defaultArgs).toEqual(["serve", "--host", "127.0.0.1"]);
 		expect(runConfig.env).toEqual({ FUTURE_AGENT_MODE: "hosted" });
-		expect(readlinkSync(join(state, "bin", "future-agent"))).toBe(".clawdi-runtime-command-shim");
-		const dispatcher = readFileSync(join(state, "bin", ".clawdi-runtime-command-shim"), "utf-8");
-		expect(dispatcher).toContain("command_name=$" + "{0##*/}");
-		expect(dispatcher).toContain('run -- "$command_name" "$@"');
-		const shimIndex = JSON.parse(
-			readFileSync(join(state, "config", "runtime-command-shims.json"), "utf-8"),
-		);
-		expect(shimIndex.commands).toEqual(["future-agent"]);
+		expect(existsSync(join(state, "bin", "future-agent"))).toBe(false);
+		expect(existsSync(join(state, "bin", ".clawdi-runtime-command-shim"))).toBe(false);
 		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
 		expect(supervisorConfig).toContain("[program:clawdi-future-agent]");
-		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- future-agent");
+		expect(supervisorConfig).toContain(`command='${futureBin}' 'serve' '--host' '127.0.0.1'`);
+		expect(supervisorConfig).not.toContain("clawdi run -- future-agent");
+		expect(supervisorConfig).toContain('FUTURE_AGENT_MODE="hosted"');
+		expect(existsSync(join(run, "launch", "future-agent.sh"))).toBe(false);
+		expect(existsSync(join(run, "launch", "future-agent.env"))).toBe(false);
 		expect(supervisorConfig).not.toContain("[program:clawdi-runtime-bridge]");
 	});
 
@@ -4011,6 +4067,7 @@ exit 64
 
 		expect(convergence.outputs.workspaceRoot).toBe(join(home, "system-workspace"));
 		expect(hermesRunConfig.cwd).toBe(runtimeWorkspace);
+		expect(hermesRunConfig.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
 	});
 
 	it("projects hosted MCP desired state into OpenClaw and Hermes config", async () => {
@@ -4097,16 +4154,23 @@ exit 64
 		expect(convergence.installErrors).toEqual([]);
 		const authTokenFile = join(run, "secrets", "auth-token");
 		const openclawConfig = JSON.parse(readFileSync(openclawMcp, "utf-8"));
-		expect(openclawConfig.command).toBe("/bin/sh");
-		expect(openclawConfig.args[0]).toBe("-lc");
-		expect(openclawConfig.args[1]).toContain("CLAWDI_API_URL='https://cloud-api.test'");
-		expect(openclawConfig.args[1]).toContain(`cat '${authTokenFile}'`);
+		expect(openclawConfig.command).toBe("clawdi");
+		expect(openclawConfig.args).toEqual([
+			"mcp",
+			"--api-url",
+			"https://cloud-api.test",
+			"--auth-token-file",
+			authTokenFile,
+		]);
 		expect(JSON.stringify(openclawConfig)).not.toContain("deploy-key-secret");
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("mcp_servers:");
 		expect(hermesConfig).toContain("clawdi:");
-		expect(hermesConfig).toContain("command: /bin/sh");
-		expect(hermesConfig).toContain('CLAWDI_AUTH_TOKEN="$(cat');
+		expect(hermesConfig).toContain("command: clawdi");
+		expect(hermesConfig).toContain("- mcp");
+		expect(hermesConfig).toContain("- --api-url");
+		expect(hermesConfig).toContain("- https://cloud-api.test");
+		expect(hermesConfig).toContain("- --auth-token-file");
 		expect(hermesConfig).toContain(authTokenFile);
 		expect(hermesConfig).not.toContain("deploy-key-secret");
 		const mcpProjection = JSON.parse(
@@ -4167,7 +4231,7 @@ exit 64
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
 	});
 
-	it("does not add the hosted runtime bridge supervisor program without declared surfaces", () => {
+	it("does not add the hosted runtime sidecar without bridge surfaces or MITM profiles", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4204,9 +4268,10 @@ exit 64
 
 		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
 		expect(supervisorConfig).not.toContain("[program:clawdi-runtime-bridge]");
+		expect(supervisorConfig).not.toContain("[program:clawdi-runtime-sidecar]");
 	});
 
-	it("adds the hosted runtime bridge supervisor program for declared control UI surfaces", () => {
+	it("adds the hosted runtime sidecar bridge module for declared control UI surfaces", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4253,24 +4318,28 @@ exit 64
 		);
 
 		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
-		expect(supervisorConfig).toContain("[program:clawdi-runtime-bridge]");
-		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime bridge");
+		expect(supervisorConfig).not.toContain("[program:clawdi-runtime-bridge]");
+		expect(supervisorConfig).toContain("[program:clawdi-runtime-sidecar]");
+		expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime sidecar");
 		expect(supervisorConfig).toContain('CLAWDI_RUNTIME_BRIDGE_LISTEN_HOST="10.42.0.20"');
 		expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
-		const runtimeBridgeSection = supervisorConfig.split("[program:clawdi-openclaw]")[0];
+		const runtimeSidecarSection =
+			supervisorConfig.split("[program:clawdi-runtime-sidecar]")[1]?.split("\n[")[0] ?? "";
 		const openclawSection = supervisorConfig.split("[program:clawdi-openclaw]")[1] ?? "";
-		expect(runtimeBridgeSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-secret"');
-		expect(runtimeBridgeSection).toContain("CLAWDI_RUNTIME_BRIDGE_SURFACES='");
-		expect(runtimeBridgeSection).toContain('"name":"openclaw"');
-		expect(runtimeBridgeSection).toContain('"kind":"control-ui"');
-		expect(runtimeBridgeSection).toContain('"listenPort":28789');
-		expect(runtimeBridgeSection).not.toContain('"name":"hermes"');
+		expect(runtimeSidecarSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-secret"');
+		expect(runtimeSidecarSection).toContain("CLAWDI_RUNTIME_BRIDGE_SURFACES='");
+		expect(runtimeSidecarSection).toContain('"name":"openclaw"');
+		expect(runtimeSidecarSection).toContain('"kind":"control-ui"');
+		expect(runtimeSidecarSection).toContain('"listenPort":28789');
+		expect(runtimeSidecarSection).not.toContain('"name":"hermes"');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
 		expect(openclawSection).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES=""');
+		expect(openclawSection).toContain("command='openclaw' 'gateway' 'run'");
+		expect(openclawSection).not.toContain("clawdi run -- openclaw");
 		expect(openclawSection).not.toContain("bridge-secret");
 	});
 
-	it("keeps provider-secret runtime launchers at the system boundary", () => {
+	it("keeps provider-secret supervisor env in the ephemeral run-dir config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4322,19 +4391,158 @@ exit 64
 				source: "fixture-file",
 				sourcePath: "test://provider-secret-boundary",
 				offline: false,
-				secretValues: { "provider.default.apiKey": "sk-runtime" },
+				secretValues: {
+					"provider.default.apiKey": "sk-runtime",
+					"secret://provider.default.apiKey": "sk-runtime",
+				},
 			},
 			getRuntimePaths(),
 		);
 
 		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
-		const runtimeBridgeSection = supervisorConfig.split("[program:clawdi-openclaw]")[0];
+		const runtimeSidecarSection =
+			supervisorConfig.split("[program:clawdi-runtime-sidecar]")[1]?.split("\n[")[0] ?? "";
 		const openclawSection = supervisorConfig.split("[program:clawdi-openclaw]")[1] ?? "";
-		expect(runtimeBridgeSection).toContain("[program:clawdi-runtime-bridge]");
-		expect(runtimeBridgeSection).toContain("user=clawdi");
-		expect(openclawSection).toContain("command=/usr/bin/env clawdi run -- openclaw");
-		expect(openclawSection).not.toMatch(/^user=clawdi$/m);
-		expect(openclawSection).not.toContain("sk-runtime");
+		expect(convergence.outputs.supervisorConfig).toBe(join(run, "supervisor", "supervisord.conf"));
+		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
+		expect(supervisorConfig).not.toContain("[program:clawdi-runtime-bridge]");
+		expect(runtimeSidecarSection).toContain("command=/usr/bin/env clawdi runtime sidecar");
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(runtimeSidecarSection).toContain("user=clawdi");
+		} else {
+			expect(runtimeSidecarSection).not.toContain("user=clawdi");
+		}
+		expect(openclawSection).toContain("command='openclaw' 'gateway' 'run'");
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(openclawSection).toContain("user=clawdi");
+		} else {
+			expect(openclawSection).not.toContain("user=clawdi");
+		}
+		expect(openclawSection).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
+		expect(openclawSection).not.toContain(join(state, "bin"));
+	});
+
+	it("fails closed when direct supervisor launch cannot resolve a provider secret", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		expect(() =>
+			convergeRuntimeManifest(
+				{
+					manifest: {
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: "dep_provider_secret_missing",
+						environmentId: "env_provider_secret_missing",
+						instanceId: "iid_provider_secret_missing",
+						generation: 1,
+						issuedAt: "2026-06-26T00:00:00Z",
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						runtimes: {
+							openclaw: { enabled: true },
+						},
+						projection: {
+							providers: {
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://provider.test/v1",
+									model: "gpt-5.5",
+									apiMode: "openai_responses",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.default.apiKey",
+								},
+							},
+						},
+						recovery: {},
+					},
+					source: "fixture-file",
+					sourcePath: "test://provider-secret-missing",
+					offline: false,
+					secretValues: {},
+				},
+				getRuntimePaths(),
+			),
+		).toThrow(
+			"Runtime secret secret://provider.default.apiKey for CLAWDI_MANAGED_OPENAI_API_KEY is unavailable.",
+		);
+	});
+
+	it("supervises MITM as a sidecar and gives runtime programs only final proxy env", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const convergence = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_mitm_sidecar",
+					environmentId: "env_mitm_sidecar",
+					instanceId: "iid_mitm_sidecar",
+					generation: 1,
+					issuedAt: "2026-06-26T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+						hermes: { enabled: false },
+					},
+					mitmProfiles: {
+						profiles: [
+							{
+								id: "deny-metadata",
+								enabled: true,
+								kind: "deny",
+								match: {
+									scheme: "https",
+									host: "169.254.169.254",
+									pathPrefix: "/",
+								},
+								priority: 1,
+							},
+						],
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: "test://mitm-sidecar",
+				offline: false,
+				secretValues: {},
+			},
+			getRuntimePaths(),
+		);
+
+		const supervisorConfig = readFileSync(convergence.outputs.supervisorConfig, "utf-8");
+		const section = (name: string) =>
+			supervisorConfig.split(`[program:${name}]`)[1]?.split("\n[")[0] ?? "";
+		const mitmSection = section("clawdi-runtime-sidecar");
+		const openclawSection = section("clawdi-openclaw");
+		expect(mitmSection).toContain("command=/usr/bin/env clawdi runtime sidecar");
+		expect(mitmSection).toContain(
+			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
+		);
+		expect(mitmSection).toContain(
+			`CLAWDI_MITM_CA_FILE="${join(run, "mitm", "supervisor", "ca.pem")}"`,
+		);
+		expect(openclawSection).toContain("command='openclaw' 'gateway' 'run'");
+		expect(openclawSection).not.toContain("CLAWDI_MITM_PROFILE_BUNDLE");
+		expect(openclawSection).not.toContain("CLAWDI_MITM_SECRET_FILE");
+		expect(openclawSection).toContain('HTTPS_PROXY="http://127.0.0.1:');
+		expect(openclawSection).toContain('OPENCLAW_PROXY_URL="http://127.0.0.1:');
+		expect(openclawSection).toContain(
+			`NODE_EXTRA_CA_CERTS="${join(run, "mitm", "supervisor", "ca.pem")}"`,
+		);
+		expect(supervisorConfig).not.toContain("clawdi run -- openclaw");
 	});
 
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {
@@ -4416,7 +4624,7 @@ exit 64
 				},
 				getRuntimePaths(),
 			);
-			const supervisorConfig = readFileSync(join(state, "supervisor", "supervisord.conf"), "utf-8");
+			const supervisorConfig = readFileSync(join(run, "supervisor", "supervisord.conf"), "utf-8");
 			const match = supervisorConfig.match(
 				new RegExp(`\\[program:clawdi-${runtime}\\][\\s\\S]*?CLAWDI_RUNTIME_REV="([^"]+)"`),
 			);
@@ -4642,7 +4850,7 @@ exit 64
 			expect(convergence.outputs.mitmProfileBundle).toBe(null);
 			expect(convergence.outputs.mitmSecretFile).toBe(join(run, "secrets", "runtime-secrets.json"));
 			expect(convergence.outputs.supervisorConfig).toBe(
-				join(state, "supervisor", "supervisord.conf"),
+				join(run, "supervisor", "supervisord.conf"),
 			);
 			expect(existsSync(convergence.outputs.mitmSecretFile ?? "")).toBe(true);
 			expect(existsSync(convergence.outputs.supervisorConfig)).toBe(true);
@@ -4913,9 +5121,20 @@ exit 64
 			expect(supervisorConfig).toContain("[program:clawdi-runtime-watch]");
 			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi runtime watch");
 			expect(supervisorConfig).toContain("chmod=0700");
-			expect(supervisorConfig).toContain("chown=root:root");
+			if (typeof process.getuid === "function" && process.getuid() === 0) {
+				expect(supervisorConfig).toContain("chown=root:root");
+			} else {
+				expect(supervisorConfig).not.toContain("chown=root:root");
+			}
 			expect(supervisorConfig).toContain("[program:clawdi-daemon]");
-			expect(supervisorConfig).toContain("clawdi daemon run");
+			expect(supervisorConfig).toContain(
+				`command=/usr/bin/env clawdi daemon run --auth-token-file '${join(
+					run,
+					"secrets",
+					"auth-token",
+				)}'`,
+			);
+			expect(supervisorConfig).not.toContain("command=/bin/sh -lc");
 			expect(supervisorConfig).toContain('CLAWDI_SERVE_MODE="container"');
 			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
 			expect(supervisorConfig).toContain("https://cloud-api.test");

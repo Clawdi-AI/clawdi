@@ -6,26 +6,26 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, "..");
-const sourceDir = resolve(cliRoot, "native", "mitm-broker");
+const sourceDir = resolve(cliRoot, "native", "mitm-sidecar");
 const outdir = resolve(
 	cliRoot,
-	process.env.CLAWDI_MITM_BROKER_BUNDLE_OUTDIR || "dist-bin/clawdi-mitm-broker",
+	process.env.CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR || "dist-bin/clawdi-mitm-sidecar",
 );
 const binDir = join(outdir, "bin");
-const outfile = join(binDir, "clawdi-mitm-broker");
+const outfile = join(binDir, "clawdi-mitm-sidecar");
 
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(binDir, { recursive: true });
 
 const buildEnv = {
 	...process.env,
-	CGO_ENABLED: process.env.CLAWDI_MITM_BROKER_CGO_ENABLED || "0",
+	CGO_ENABLED: process.env.CLAWDI_MITM_SIDECAR_CGO_ENABLED || "0",
 };
-if (process.env.CLAWDI_MITM_BROKER_GOOS) {
-	buildEnv.GOOS = process.env.CLAWDI_MITM_BROKER_GOOS;
+if (process.env.CLAWDI_MITM_SIDECAR_GOOS) {
+	buildEnv.GOOS = process.env.CLAWDI_MITM_SIDECAR_GOOS;
 }
-if (process.env.CLAWDI_MITM_BROKER_GOARCH) {
-	buildEnv.GOARCH = process.env.CLAWDI_MITM_BROKER_GOARCH;
+if (process.env.CLAWDI_MITM_SIDECAR_GOARCH) {
+	buildEnv.GOARCH = process.env.CLAWDI_MITM_SIDECAR_GOARCH;
 }
 
 run("go", ["build", "-trimpath", "-ldflags", "-s -w", "-o", outfile, "."], {
@@ -39,10 +39,10 @@ writeFileSync(
 	join(outdir, "manifest.json"),
 	`${JSON.stringify(
 		{
-			schemaVersion: "clawdi.mitmBrokerBundle.v1",
+			schemaVersion: "clawdi.mitmSidecarBundle.v1",
 			kind: "native-go",
-			entrypoint: "bin/clawdi-mitm-broker",
-			source: "native/mitm-broker",
+			entrypoint: "bin/clawdi-mitm-sidecar",
+			source: "native/mitm-sidecar",
 			go: goVersion.status === 0 ? goVersion.stdout.trim() : null,
 			cgoEnabled: buildEnv.CGO_ENABLED,
 			goos: buildEnv.GOOS ?? null,
@@ -53,7 +53,7 @@ writeFileSync(
 	)}\n`,
 );
 
-console.log(`built native MITM broker bundle ${outdir}`);
+console.log(`built native MITM sidecar bundle ${outdir}`);
 
 function run(command, args, options = {}) {
 	const result = spawnSync(command, args, { encoding: "utf8", stdio: "pipe", ...options });

@@ -67,6 +67,19 @@ describe("registerServeCommand", () => {
 		expect(captured.last?.port).toBe("17654");
 	});
 
+	it("daemon run accepts an auth token file", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync([
+			"node",
+			"clawdi",
+			"daemon",
+			"run",
+			"--auth-token-file",
+			"/run/clawdi/secrets/auth-token",
+		]);
+		expect(captured.last?.authTokenFile).toBe("/run/clawdi/secrets/auth-token");
+	});
+
 	it("daemon run accepts the non-loopback HTTP RPC opt-in", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "daemon", "run", "--allow-remote"]);

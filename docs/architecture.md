@@ -6,7 +6,7 @@ High-level map of what's actually in Clawdi Cloud today — updated as the code 
 
 ## One-paragraph overview
 
-Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a dashboard on the same backend, including hosted deployment surfaces such as runtime UI and Terminal. The same CLI also owns the public managed runtime command surface for controlled environments: runtime manifests, convergence, command shims, `clawdi run`, local UI bridging, and diagnostics. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
+Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads per-agent data (Claude Code, Codex, Hermes, OpenClaw) from well-known directories, pushes sessions and skills to a FastAPI backend, pulls shared skills back down, and exposes a long-term memory store to each agent via the Model Context Protocol. Projects are the collaboration and data ownership boundary; each Agent has one fixed Agent Project plus optional attached Projects for read-time composition. The web app is a dashboard on the same backend, including hosted deployment surfaces such as Control UI and Terminal. The same CLI also owns the public managed runtime command surface for controlled environments: runtime manifests, convergence, support process state, explicit `clawdi run`, optional local UI bridging, and diagnostics. The memory store is the differentiator: it gives every connected agent the same cross-session, cross-machine context without the agents having to know about each other.
 
 ---
 
@@ -37,9 +37,9 @@ Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads 
 ┌──────────────────────┐  Runtime manifest / state ┌──────────────────────┐
 │ Hosted control plane │──────────────────────────▶│ Managed runtime CLI  │
 │ (external service)   │                           │  - runtime init/watch│
-└──────────────────────┘                           │  - run configs/shims │
-        ▲                                          │  - runtime bridge         │
-        │ Runtime UI + Terminal contracts          └──────────┬───────────┘
+└──────────────────────┘                           │  - run configs       │
+        ▲                                          │  - sidecar modules        │
+        │ Control UI + Terminal contracts          └──────────┬───────────┘
         └─────────────────────────────────────────────────────▼
                                                    ┌──────────────────────┐
                                                    │ Agent runtimes       │
@@ -167,12 +167,16 @@ Public contract: [`managed-runtime.md`](managed-runtime.md).
   packages, host policy, CLI bootstrap path, and PATH ordering, but runtime
   semantics come from the CLI and runtime manifest.
 - `clawdi runtime init --non-interactive` is the convergence boundary. It
-  validates desired state, installs or verifies runtimes through supported
-  installers, writes projections, writes run configs, writes command shims, and
-  renders supervisor config.
-- `clawdi run -- <command>` is the execution boundary. Runtime commands such as
-  `openclaw` and `hermes` resolve through generated run config. Ordinary shell
-  commands keep normal shell behavior.
+  validates desired state, installs or verifies runtimes when the CLI is used
+  in a local/single-container fallback, writes projections, writes run configs,
+  and prepares support process state.
+- The primary hosted runtime model is a Linux-like host. Supervisor starts
+  Clawdi support programs and official Hermes/OpenClaw programs directly from
+  the manifest-derived process plan. It does not go through `clawdi run`, a
+  generated shell script, or a PATH shim.
+- `clawdi run -- <command>` remains an explicit interactive/local execution
+  boundary. Shell commands such as `openclaw` and `hermes` resolve to official
+  binaries directly.
 - Runtime-specific behavior is manifest-driven. Known runtimes can use built-in
   install/projection support; future runtimes can be launched through an
   explicit `run.command` without adding per-agent wrappers to the image.
@@ -186,34 +190,71 @@ Public contract: [`managed-runtime.md`](managed-runtime.md).
 |---|---|
 | Contract schemas | `packages/cli/src/runtime/manifest-contract.ts` |
 | Datasource fetch, normalization, validation | `packages/cli/src/runtime/manifest-source.ts` |
-| Local convergence, projections, supervisor config, command shims | `packages/cli/src/runtime/manifest.ts` |
+| Local convergence, projections, and fallback process plan | `packages/cli/src/runtime/manifest.ts` |
 | Runtime path contract | `packages/cli/src/runtime/paths.ts` |
 | Host policy | `packages/cli/src/runtime/host-policy.ts` |
 | Runtime boot status and observed state | `packages/cli/src/runtime/state.ts`, `packages/cli/src/runtime/observed.ts` |
 | Run config and invocation | `packages/cli/src/runtime/run-config.ts`, `packages/cli/src/commands/run.ts` |
 | CLI self-management in hosted runtime | `packages/cli/src/runtime/cli-update.ts` |
 | Runtime bridge | `packages/cli/src/runtime/bridge.ts` |
-| Broker profile schema and profile generation | `packages/cli/src/runtime/mitm-profiles.ts`, `packages/cli/src/runtime/hosted-mitm-profiles.ts` |
-| Native broker launcher and env projection | `packages/cli/src/runtime/mitm-broker.ts`, `packages/cli/src/runtime/mitm-env.ts` |
-| Native broker implementation | `packages/cli/native/mitm-broker/` |
+| Sidecar profile schema and profile generation | `packages/cli/src/runtime/mitm-profiles.ts`, `packages/cli/src/runtime/hosted-mitm-profiles.ts` |
+| Runtime MITM sidecar invocation and env projection | `packages/cli/src/runtime/mitm-sidecar.ts`, `packages/cli/src/runtime/mitm-env.ts` |
+| Native MITM sidecar implementation | `packages/cli/native/mitm-sidecar/` |
 | Hosted deployment UI and terminal panel | `apps/web/src/hosted/agents/hosted-agent-detail.tsx`, `apps/web/src/hosted/agents/hosted-terminal-panel.tsx` |
 | Local mock deploy API | `backend/scripts/mock_deploy_api.py` |
 
 ### Runtime Flow
 
 ```mermaid
-flowchart TD
+flowchart TB
     CP[Hosted control plane] -->|hosted manifest response| Source[manifest-source]
     Source -->|normalized desired state| Init[clawdi runtime init]
-    Init --> Paths[/var/lib/clawdi state]
-    Init --> RunConfigs[config/run/<runtime>.json]
-    Init --> Shims[bin/<runtime> -> .clawdi-runtime-command-shim]
-    Init --> Supervisor[supervisord.conf]
-    Supervisor --> Watch[clawdi runtime watch]
-    Supervisor --> Bridge[clawdi runtime bridge]
-    Supervisor --> Runtime[clawdi run -- <runtime>]
-    Shims --> Runtime
-    Runtime --> Agent[Agent runtime process]
+
+    subgraph Durable["Durable non-secret state"]
+        State[/var/lib/clawdi]
+        RunConfigs[config/run/<runtime>.json]
+        Projections[config/projections/<runtime>.json]
+        Inventory[install-inventory/<runtime>.json]
+    end
+
+    subgraph Ephemeral["Ephemeral runtime state"]
+        SupervisorConfig[$CLAWDI_RUN_DIR/supervisor/supervisord.conf]
+        RuntimeSecrets[$CLAWDI_RUN_DIR/secrets/*]
+        MitmCA[$CLAWDI_RUN_DIR/mitm/supervisor/ca.pem + sidecar-private key]
+    end
+
+    subgraph Support["Clawdi support programs"]
+        Watch[clawdi runtime watch]
+        Daemon[clawdi daemon run]
+        Sidecar[optional runtime sidecar]
+        Bridge[bridge module]
+        Mitm[MITM module]
+    end
+
+    subgraph Runtimes["Official runtime programs"]
+        HermesGateway[hermes gateway run]
+        HermesDashboard[hermes dashboard]
+        OpenClaw[openclaw gateway run]
+    end
+
+    Init --> Durable
+    Init --> Ephemeral
+    SupervisorConfig --> Supervisor[supervisord or equivalent]
+    Watch --> Durable
+    Daemon --> Durable
+    Supervisor --> Watch
+    Supervisor --> Daemon
+    Supervisor --> Sidecar
+    Sidecar --> Bridge
+    Sidecar --> Mitm
+    Supervisor --> HermesGateway
+    Supervisor --> HermesDashboard
+    Supervisor --> OpenClaw
+    Bridge -->|Control UI HTTP/WebSocket| HermesDashboard
+    Bridge -->|Control UI HTTP/WebSocket| OpenClaw
+    Mitm -. proxy and CA env .-> HermesGateway
+    Mitm -. proxy and CA env .-> HermesDashboard
+    Mitm -. proxy and CA env .-> OpenClaw
 ```
 
 The hosted manifest schema is `clawdi.hosted-runtime.manifest.v1`. The CLI
@@ -223,30 +264,56 @@ environment identity, instance identity, generation, workspace root, control
 plane API origin, CLI package policy, runtime entries, provider projections,
 MCP/tool projections, MITM profiles, live-sync settings, and recovery policy.
 
-### Command Shims
+### Runtime Launch
 
-Runtime command shims live under the service state bin directory. The host
-environment puts that directory first on PATH, so typing a managed runtime name
-such as `openclaw` or `hermes` enters the dispatcher before any native binary.
-The dispatcher removes the shim directory from PATH and executes the managed CLI
-as:
+Hosted daemon runtimes are direct supervisor programs. Each `[program:*]` entry
+names the official binary, args, cwd, and env. Clawdi does not become a wrapper
+around the runtime command.
 
-```bash
-clawdi run -- "$command_name" "$@"
-```
+Interactive shell commands are not intercepted. If a user or an official UI
+runs `openclaw update`, the command resolves to OpenClaw's own binary and update
+flow. `clawdi run -- <command>` remains available only when the caller asks for
+that explicit Clawdi execution boundary.
 
-This keeps the image stable: the image does not need one wrapper script per
-agent. Disabled runtimes write disabled run config, and `clawdi run` reports the
-runtime as disabled instead of falling back to a native binary.
+When bridge surfaces or MITM profiles are enabled, supervisor starts one Clawdi
+runtime sidecar. Runtime programs receive only final proxy and trust env such as
+`HTTPS_PROXY`, `OPENCLAW_PROXY_URL`, and `NODE_EXTRA_CA_CERTS`; sidecar control
+env and secret-file paths stay out of the agent runtime process.
+
+The sidecar consolidates Clawdi-owned runtime-local support modules, but their
+authority boundaries stay explicit:
+
+- `clawdi daemon run` owns live sync and may use the Clawdi API auth token from
+  a short-lived file.
+- the sidecar bridge module owns inbound browser UI proxying for declared
+  Control UI surfaces and uses only the runtime bridge token.
+- the sidecar MITM module owns outbound MITM proxying, CA material, and
+  profile-level request rewriting. It starts only when explicit MITM profiles
+  are enabled and must not inherit the Clawdi auth token.
+
+The MITM module stores its root CA certificate and private key under
+`$CLAWDI_RUN_DIR` so sidecar restarts reuse the same trust root for already
+running runtimes. Runtime programs receive only the CA certificate path in trust
+environment variables; the private key path remains sidecar-private.
+
+Hermes dashboard and Hermes gateway both run as official Hermes commands when a
+deployment needs both. The dashboard is the browser Control UI surface. The
+gateway is supervised directly, but it is not a bridge target unless a
+deployment configures an actual HTTP/WebSocket listener for it. The Hermes
+official Docker image is useful prior art for that fan-out, but the Linux-like
+host preserves in-place official updater behavior. The sidecar bridge module is
+optional and exists only when Clawdi must own browser-facing auth, cookie,
+header, WebSocket, or path policy.
 
 ### Runtime UI And Terminal
 
 Runtime UI and Terminal are separate hosted deployment surfaces:
 
-- **Runtime UI** is the runtime's browser UI endpoint, proxied through the
-  runtime bridge as an explicitly declared `control-ui` surface kind. The
-  surface kind is an internal policy name; user-facing labels follow the
-  runtime's own wording, such as OpenClaw Control UI and Hermes Dashboard.
+- **Control UI** is the runtime's browser UI endpoint. It can be exposed through
+  the official runtime port when platform ingress owns auth and browser policy,
+  or through the sidecar bridge module as an explicitly declared `control-ui`
+  surface when Clawdi owns those controls. It is runtime-specific, so the
+  dashboard labels it as `<Runtime> Control UI`.
 - **Terminal** is a deployment shell, not an agent-specific surface. The
   dashboard requests a terminal session for the deployment and then opens one
   xterm WebSocket. The terminal uses tty-style frames (`0` for input/output,
@@ -258,10 +325,11 @@ contract is: authenticate the user, require the deployment to be running, bind
 the terminal token to that deployment, and bridge the WebSocket to a shell as
 the default runtime user.
 
-The runtime bridge is a general authenticated surface bridge, but each surface
-must be declared with listen/upstream targets and policy. The current hosted
-surface kind is browser runtime UI traffic. Terminal stays separate because it
-grants shell execution rather than proxying a runtime web application.
+The sidecar bridge module is a general authenticated surface bridge, but each
+surface must be declared with listen/upstream targets and policy. It is optional
+when official ports are exposed behind sufficient platform ingress auth.
+Terminal stays separate because it grants shell execution rather than proxying a
+runtime web application.
 
 ### Ownership Boundaries
 
@@ -269,11 +337,13 @@ grants shell execution rather than proxying a runtime web application.
   deployment selection, rollout, billing policy, and terminal session
   authorization.
 - The CLI owns manifest validation, local convergence, runtime install
-  orchestration, non-secret projections, run config, command shims, short-lived
-  secret projection, local UI bridging, diagnostics, and broker lifecycle.
+  orchestration where the CLI is the local convergence tool, non-secret
+  projections, run config, support process state, short-lived secret projection,
+  optional local UI bridging, diagnostics, and the Clawdi support modules.
 - The web dashboard owns the user-facing hosted deployment surfaces and calls
   only public API contracts.
-- OpenClaw and Hermes keep their official installer/updater authority.
+- OpenClaw and Hermes keep their official installer/updater and runtime process
+  authority.
 - Clawdi native Channels own shared channel protocol state.
 - User BYOK provider traffic must not be silently proxied.
 

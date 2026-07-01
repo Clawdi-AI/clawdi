@@ -27,6 +27,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
+import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
 	clearAuth,
 	clearPendingAuth,
@@ -82,6 +83,10 @@ interface RpcListenOpts {
 interface LegacyRunOpts {
 	agent?: unknown;
 	environmentId?: unknown;
+}
+
+interface AuthTokenFileOpts {
+	authTokenFile?: unknown;
 }
 
 interface ResolvedRpcListenConfig extends ControlRpcListenConfig {
@@ -178,9 +183,10 @@ function camelToFlag(name: string): string {
 }
 
 export async function serve(_opts: ServeOpts): Promise<void> {
-	const opts = _opts as RpcListenOpts & LegacyRunOpts;
+	const opts = _opts as RpcListenOpts & LegacyRunOpts & AuthTokenFileOpts;
 	const mode = (process.env.CLAWDI_SERVE_MODE ?? "host").toLowerCase();
 	const isContainer = mode === "container";
+	loadAuthTokenFile(optionalStringParam(opts.authTokenFile, "--auth-token-file"));
 	const legacyRun = resolveLegacyRunOpts(opts);
 
 	if (legacyRun && !isContainer) {

@@ -122,7 +122,7 @@ const headerSetterSchema = z
 			.strict(),
 	])
 	.describe(
-		"Rewrite headers can be literal public values or secretRef-backed values resolved only by the broker.",
+		"Rewrite headers can be literal public values or secretRef-backed values resolved only by the sidecar.",
 	);
 
 const mitmProfileMatchSchema = z

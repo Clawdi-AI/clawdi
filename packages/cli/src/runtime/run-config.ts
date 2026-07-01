@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
-import { buildMitmBrokerEnv } from "./mitm-env";
+import { buildMitmSidecarEnv } from "./mitm-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 
@@ -27,7 +27,7 @@ const envKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 export const runtimeRunSettingsSchema = z
 	.object({
 		command: z.string().min(1).optional(),
-		args: z.array(z.string()).default([]),
+		args: z.array(z.string()).optional(),
 		env: z.record(envKeySchema, z.string()).default({}),
 		cwd: z.string().min(1).optional(),
 		prependPath: z.array(z.string().min(1)).default([]),
@@ -144,7 +144,7 @@ export function buildRuntimeRunConfig(input: {
 		generation: input.generation,
 		instanceId: input.instanceId,
 		command: input.settings?.command ?? input.commandPath ?? input.runtime,
-		defaultArgs: input.settings?.args ?? defaultRuntimeArgs(input.runtime),
+		defaultArgs: input.settings?.args ?? (input.service ? [] : defaultRuntimeArgs(input.runtime)),
 		env: input.settings?.env ?? {},
 		secretEnv: input.secretEnv ?? {},
 		secretFilePath: input.secretFilePath ?? null,
@@ -230,7 +230,7 @@ export function buildRuntimeRunInvocation(
 	paths = getRuntimePaths(),
 ): RuntimeRunInvocation {
 	const pathPrefix = read.config.prependPath.join(":");
-	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", runtimeCommandShimDir(paths));
+	const currentPath = withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths));
 	const env = {
 		...baseEnv,
 		...read.config.env,
@@ -240,7 +240,7 @@ export function buildRuntimeRunInvocation(
 			: {}),
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
-	const brokerEnv = buildMitmBrokerEnv({
+	const sidecarEnv = buildMitmSidecarEnv({
 		env,
 		profileBundlePath: read.config.mitmProfileBundlePath,
 	});
@@ -254,12 +254,12 @@ export function buildRuntimeRunInvocation(
 		command,
 		args: args.length > 1 ? args.slice(1) : read.config.defaultArgs,
 		cwd: read.config.cwd,
-		env: brokerEnv,
+		env: sidecarEnv,
 		configPath: read.path,
 	};
 }
 
-export function runtimeCommandShimDir(paths = getRuntimePaths()): string {
+export function runtimeManagedBinDir(paths = getRuntimePaths()): string {
 	return join(paths.serviceStateRoot, "bin");
 }
 
@@ -309,7 +309,11 @@ function runtimeSecretEnv(
 
 function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
 	const normalized = normalizeSecretRef(ref);
-	const candidates = normalized && normalized !== ref ? [ref, normalized] : [ref];
+	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
+	const candidates = [ref, normalized, raw].filter(
+		(candidate, index, values): candidate is string =>
+			Boolean(candidate) && values.indexOf(candidate) === index,
+	);
 	for (const candidate of candidates) {
 		const value = secrets[candidate];
 		if (typeof value === "string" && value.length > 0) return value;

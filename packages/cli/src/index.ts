@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
 import { registerServeCommand } from "./commands/serve-cli.js";
+import { loadAuthTokenFile } from "./lib/auth-token-file.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
@@ -725,11 +726,11 @@ runtimeCmd
 	);
 
 runtimeCmd
-	.command("bridge")
-	.description("Run the hosted runtime authenticated bridge")
+	.command("sidecar")
+	.description("Run hosted runtime support modules")
 	.action(async () => {
-		const { runtimeBridge } = await import("./commands/runtime.js");
-		await runtimeBridge();
+		const { runtimeSidecar } = await import("./commands/runtime.js");
+		await runtimeSidecar();
 	});
 
 runtimeCmd
@@ -1221,7 +1222,12 @@ program
 program
 	.command("mcp")
 	.description("Start MCP server (stdio transport, used by agents)")
-	.action(async () => {
+	.option("--api-url <url>", "Override CLAWDI_API_URL for this MCP process")
+	.option("--auth-token-file <path>", "Read CLAWDI_AUTH_TOKEN from an owner-only file")
+	.action(async (opts: { apiUrl?: string; authTokenFile?: string }) => {
+		const apiUrl = opts.apiUrl?.trim();
+		if (apiUrl) process.env.CLAWDI_API_URL = apiUrl;
+		loadAuthTokenFile(opts.authTokenFile);
 		const { startMcpServer } = await import("./mcp/server.js");
 		await startMcpServer();
 	});

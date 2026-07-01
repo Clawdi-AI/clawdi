@@ -22,15 +22,15 @@ for (const field of dependencyFields) {
 }
 
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
-if (!packageFiles.includes("clawdi-mitm-broker")) {
-	problems.push('package.json files must include "clawdi-mitm-broker"');
+if (!packageFiles.includes("clawdi-mitm-sidecar")) {
+	problems.push('package.json files must include "clawdi-mitm-sidecar"');
 }
 
 try {
-	accessSync(join(cliRoot, "clawdi-mitm-broker", "bin", "clawdi-mitm-broker"), constants.X_OK);
+	accessSync(join(cliRoot, "clawdi-mitm-sidecar", "bin", "clawdi-mitm-sidecar"), constants.X_OK);
 } catch {
 	problems.push(
-		"clawdi-mitm-broker/bin/clawdi-mitm-broker is missing or not executable; run `CLAWDI_MITM_BROKER_BUNDLE_OUTDIR=clawdi-mitm-broker bun run build:mitm-broker` before publishing",
+		"clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar is missing or not executable; run `CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR=clawdi-mitm-sidecar bun run build:mitm-sidecar` before publishing",
 	);
 }
 

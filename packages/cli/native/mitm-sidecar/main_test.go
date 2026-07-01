@@ -151,7 +151,7 @@ func TestValidateProfileRejectsUnsafeRewrite(t *testing.T) {
 	}
 }
 
-func TestResponseHeaderStrippingMatchesCredentialBrokerPolicy(t *testing.T) {
+func TestResponseHeaderStrippingMatchesCredentialSidecarPolicy(t *testing.T) {
 	if !shouldStripResponseHeader("Connection") {
 		t.Fatalf("expected Connection to be stripped through hop-by-hop check")
 	}
@@ -534,6 +534,35 @@ func TestListenProxyLoopbackPolicy(t *testing.T) {
 	defer listener.Close()
 	if actual == "" {
 		t.Fatal("expected actual proxy URL")
+	}
+}
+
+func TestCertificateAuthorityPersistsAcrossSidecarRestarts(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	first, err := loadOrCreateCertificateAuthority(caFile)
+	if err != nil {
+		t.Fatalf("create CA: %v", err)
+	}
+	second, err := loadOrCreateCertificateAuthority(caFile)
+	if err != nil {
+		t.Fatalf("load CA: %v", err)
+	}
+	if string(first.rootPEM) != string(second.rootPEM) {
+		t.Fatal("expected CA certificate to be reused")
+	}
+	keyInfo, err := os.Stat(caFile + ".key")
+	if err != nil {
+		t.Fatalf("stat CA key: %v", err)
+	}
+	if keyInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("expected CA key mode 0600, got %o", keyInfo.Mode().Perm())
+	}
+	certInfo, err := os.Stat(caFile)
+	if err != nil {
+		t.Fatalf("stat CA cert: %v", err)
+	}
+	if certInfo.Mode().Perm() != 0o644 {
+		t.Fatalf("expected CA cert mode 0644, got %o", certInfo.Mode().Perm())
 	}
 }
 

@@ -216,16 +216,8 @@ describe("CLI smoke — src entry", () => {
 
 	it("runtime init performs first-install convergence from a fixture manifest", async () => {
 		const { tmpdir } = await import("node:os");
-		const {
-			chmodSync,
-			existsSync,
-			mkdirSync,
-			readFileSync,
-			readlinkSync,
-			rmSync,
-			statSync,
-			writeFileSync,
-		} = await import("node:fs");
+		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } =
+			await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-full-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
@@ -407,37 +399,29 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "config", "projections", "hermes.json"),
 				join(serviceStateRoot, "config", "run", "openclaw.json"),
 				join(serviceStateRoot, "config", "run", "hermes.json"),
-				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				join(runRoot, "supervisor", "supervisord.conf"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
-				join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"),
-				join(serviceStateRoot, "bin", "openclaw"),
-				join(serviceStateRoot, "bin", "hermes"),
-				join(serviceStateRoot, "bin", "codex"),
 				join(home, "clawdi"),
 				join(home, ".openclaw", "bin", "openclaw"),
 				join(home, ".local", "bin", "hermes"),
 			]) {
 				expect(existsSync(outputPath)).toBe(true);
 			}
-			const dispatcher = readFileSync(
+			for (const staleShimPath of [
 				join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"),
-				"utf-8",
-			);
-			expect(dispatcher).toContain("clean_path=");
-			expect(dispatcher).toContain("command_name=$" + "{0##*/}");
-			expect(dispatcher).toContain(
-				`exec '${join(serviceStateRoot, "bin", "clawdi")}' run -- "$command_name" "$@"`,
-			);
-			for (const command of ["openclaw", "hermes", "codex"]) {
-				expect(readlinkSync(join(serviceStateRoot, "bin", command))).toBe(
-					".clawdi-runtime-command-shim",
-				);
+				join(serviceStateRoot, "bin", "openclaw"),
+				join(serviceStateRoot, "bin", "hermes"),
+				join(serviceStateRoot, "bin", "codex"),
+				join(serviceStateRoot, "config", "runtime-command-shims.json"),
+				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				join(runRoot, "launch", "openclaw.sh"),
+				join(runRoot, "launch", "openclaw.env"),
+				join(runRoot, "launch", "hermes.sh"),
+				join(runRoot, "launch", "hermes.env"),
+			]) {
+				expect(existsSync(staleShimPath)).toBe(false);
 			}
-			const shimIndex = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "runtime-command-shims.json"), "utf-8"),
-			);
-			expect(shimIndex.commands).toEqual(["codex", "hermes", "openclaw"]);
 			expect(statSync(join(serviceStateRoot, "cache", "boot-status.json")).mode & 0o777).toBe(
 				0o644,
 			);
@@ -467,20 +451,31 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(managed.generation).toBe(7);
 			expect(JSON.stringify(managed)).not.toContain("auth-test-token");
 			const supervisorConfig = readFileSync(
-				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				join(runRoot, "supervisor", "supervisord.conf"),
 				"utf-8",
 			);
 			expect(supervisorConfig).toContain("[program:clawdi-hermes]");
 			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
-			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- hermes");
-			expect(supervisorConfig).toContain("command=/usr/bin/env clawdi run -- openclaw");
+			expect(supervisorConfig).toContain("[program:clawdi-runtime-sidecar]");
+			expect(supervisorConfig).toContain(
+				`command='${join(home, ".local", "bin", "hermes")}' 'gateway' 'run'`,
+			);
+			expect(supervisorConfig).toContain(
+				`command='${join(home, ".openclaw", "bin", "openclaw")}' 'gateway' 'run'`,
+			);
+			expect(supervisorConfig).not.toContain("clawdi run -- hermes");
+			expect(supervisorConfig).not.toContain("clawdi run -- openclaw");
 			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
 			const openclawStart = supervisorConfig.indexOf("[program:clawdi-openclaw]");
 			const openclawSection = supervisorConfig.slice(
 				openclawStart,
 				supervisorConfig.indexOf("\n\n", openclawStart),
 			);
-			expect(openclawSection).not.toContain("user=clawdi");
+			if (typeof process.getuid === "function" && process.getuid() === 0) {
+				expect(openclawSection).toContain("user=clawdi");
+			} else {
+				expect(openclawSection).not.toContain("user=clawdi");
+			}
 			expect(supervisorConfig).not.toContain("auth-test-token");
 			const inventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
@@ -645,8 +640,9 @@ chmod +x "$HOME/.local/bin/hermes"
 
 	it("runtime init installs only selected runtimes", async () => {
 		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } =
-			await import("node:fs");
+		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import(
+			"node:fs"
+		);
 		const root = join(tmpdir(), `clawdi-smoke-runtime-selection-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
@@ -733,21 +729,17 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(parsed.enabledRuntimes).toEqual(["openclaw"]);
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
 			expect(existsSync(join(home, ".local", "bin", "hermes"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "bin", "openclaw"))).toBe(true);
-			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(true);
+			expect(existsSync(join(serviceStateRoot, "bin", "openclaw"))).toBe(false);
+			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(false);
 			expect(existsSync(join(serviceStateRoot, "bin", "codex"))).toBe(false);
-			const dispatcher = readFileSync(
-				join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"),
-				"utf-8",
+			expect(existsSync(join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"))).toBe(false);
+			expect(existsSync(join(serviceStateRoot, "config", "runtime-command-shims.json"))).toBe(
+				false,
 			);
-			expect(dispatcher).toContain(
-				`exec '${join(serviceStateRoot, "bin", "clawdi")}' run -- "$command_name" "$@"`,
-			);
-			for (const command of ["openclaw", "hermes"]) {
-				expect(readlinkSync(join(serviceStateRoot, "bin", command))).toBe(
-					".clawdi-runtime-command-shim",
-				);
-			}
+			expect(existsSync(join(runRoot, "launch", "openclaw.sh"))).toBe(false);
+			expect(existsSync(join(runRoot, "launch", "openclaw.env"))).toBe(false);
+			expect(existsSync(join(runRoot, "launch", "hermes.sh"))).toBe(false);
+			expect(existsSync(join(runRoot, "launch", "hermes.env"))).toBe(false);
 
 			const openclawInventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
