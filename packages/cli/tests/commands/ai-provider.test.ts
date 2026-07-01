@@ -741,7 +741,7 @@ describe("ai-provider commands", () => {
 				schema_version: 1,
 				providers: [
 					{
-						id: "clawdi-managed",
+						id: "clawdi-managed-v2",
 						type: "custom_openai_compatible",
 						base_url: "https://sub2api.example.test/v1",
 						default_model: "gpt-5.5",
@@ -768,7 +768,7 @@ describe("ai-provider commands", () => {
 		const { output, restore } = captureConsole();
 		try {
 			await aiProviderImportCommand(catalogPath, { json: true });
-			await aiProviderTestCommand("clawdi-managed", { live: true, json: true });
+			await aiProviderTestCommand("clawdi-managed-v2", { live: true, json: true });
 		} finally {
 			restore();
 			restoreFetch();
@@ -777,7 +777,9 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(
-			captured.some((request) => request.path === "/api/ai-providers/clawdi-managed/auth/resolve"),
+			captured.some(
+				(request) => request.path === "/api/ai-providers/clawdi-managed-v2/auth/resolve",
+			),
 		).toBe(false);
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-runtime-managed");
@@ -1723,7 +1725,7 @@ describe("ai-provider commands", () => {
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-managed",
+					id: "clawdi-managed-v2",
 					type: "custom_openai_compatible",
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
@@ -1734,24 +1736,24 @@ describe("ai-provider commands", () => {
 					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-managed" },
+			defaults: { chat_provider_id: "clawdi-managed-v2" },
 		} as const;
 
 		const projection = buildAgentTargetProjection("openclaw", catalog);
 		const patch = JSON.parse(projection.files[0]!.content);
 
-		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed/gpt-5.5");
-		expect(patch.models.providers["clawdi-managed"].baseUrl).toBe(
+		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed-v2/gpt-5.5");
+		expect(patch.models.providers["clawdi-managed-v2"].baseUrl).toBe(
 			"https://sub2api.example.test/v1",
 		);
-		expect(patch.models.providers["clawdi-managed"].api).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed"].agentRuntime).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed"].models[0]).toMatchObject({
+		expect(patch.models.providers["clawdi-managed-v2"].api).toBeUndefined();
+		expect(patch.models.providers["clawdi-managed-v2"].agentRuntime).toBeUndefined();
+		expect(patch.models.providers["clawdi-managed-v2"].models[0]).toMatchObject({
 			id: "gpt-5.5",
 			name: "gpt-5.5",
 		});
-		expect(patch.models.providers["clawdi-managed"].models[0].api).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed"].apiKey).toEqual({
+		expect(patch.models.providers["clawdi-managed-v2"].models[0].api).toBeUndefined();
+		expect(patch.models.providers["clawdi-managed-v2"].apiKey).toEqual({
 			source: "env",
 			provider: "default",
 			id: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -1763,7 +1765,7 @@ describe("ai-provider commands", () => {
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-managed",
+					id: "clawdi-managed-v2",
 					type: "custom_openai_compatible",
 					label: "Clawdi AI",
 					base_url: "https://sub2api.example.test/v1",
@@ -1774,11 +1776,11 @@ describe("ai-provider commands", () => {
 					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-managed" },
+			defaults: { chat_provider_id: "clawdi-managed-v2" },
 		});
 
 		const patch = projection.files[0]?.content ?? "";
-		expect(patch).toContain('provider: "custom:clawdi-managed"');
+		expect(patch).toContain('provider: "custom:clawdi-managed-v2"');
 		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
 		expect(patch).toContain('transport: "chat_completions"');
 		expect(patch).toContain('default_model: "gpt-5.5"');
