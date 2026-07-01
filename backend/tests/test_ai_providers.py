@@ -138,7 +138,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     managed = await client.post(
         "/api/ai-providers",
         json={
-            "provider_id": "clawdi-managed",
+            "provider_id": "clawdi-managed-v2",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
             "default_model": "gpt-5.5",
@@ -149,7 +149,41 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
         },
     )
     assert managed.status_code == 200, managed.text
+    assert managed.json()["provider_id"] == "clawdi-managed-v2"
     assert managed.json()["api_mode"] == "openai_chat"
+
+    v1_managed = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "clawdi-managed",
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "default_model": "openai-codex/gpt-5.5",
+            "api_mode": "openai_responses",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "clawdi",
+            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        },
+    )
+    assert v1_managed.status_code == 200, v1_managed.text
+    assert v1_managed.json()["provider_id"] == "clawdi-managed"
+    assert v1_managed.json()["api_mode"] == "openai_responses"
+
+    v1_managed_wrong_mode = await client.post(
+        "/api/ai-providers",
+        json={
+            "provider_id": "clawdi-managed",
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "default_model": "openai-codex/gpt-5.5",
+            "api_mode": "openai_chat",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "clawdi",
+            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        },
+    )
+    assert v1_managed_wrong_mode.status_code == 422, v1_managed_wrong_mode.text
+    assert "must use api_mode openai_responses" in v1_managed_wrong_mode.text
 
     plaintext_extra = await client.post(
         "/api/ai-providers",
