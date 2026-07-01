@@ -1679,7 +1679,7 @@ function writeRuntimeCommandShims(commands: Iterable<RuntimeName>, paths: Runtim
 	writeRuntimeCommandShimIndex(active, paths);
 }
 
-function runtimeCommandShimScript(paths: RuntimePaths): string {
+export function runtimeCommandShimScript(paths: RuntimePaths): string {
 	return [
 		"#!/usr/bin/env sh",
 		"set -eu",
@@ -1694,6 +1694,10 @@ function runtimeCommandShimScript(paths: RuntimePaths): string {
 		"done",
 		"IFS=$old_ifs",
 		"export PATH=$clean_path",
+		"first_arg=$" + "{1-}",
+		'if [ "$command_name" = "openclaw" ] && { [ "$first_arg" = "update" ] || [ "$first_arg" = "--update" ]; }; then',
+		'  exec "$command_name" "$@"',
+		"fi",
 		`exec ${shellQuote(paths.cliManagedBin)} run -- "$command_name" "$@"`,
 		"",
 	].join("\n");
