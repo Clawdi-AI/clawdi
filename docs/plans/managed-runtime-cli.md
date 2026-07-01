@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public implementation notes |
-| Last updated | 2026-06-30 |
+| Last updated | 2026-07-01 |
 | Owner | CLI runtime layer |
 
 This note documents the open-source CLI surface for managed runtime
@@ -23,7 +23,10 @@ Related public contract: [`../managed-runtime.md`](../managed-runtime.md).
 - Avoid storing secrets in durable manifests, caches, shell startup files, or
   generated config.
 - Keep the runtime image stable by avoiding image-level per-agent wrappers.
-- Route managed runtime commands through generated run config and `clawdi run`.
+- Start hosted runtimes from direct supervisor entries that name official
+  Hermes/OpenClaw binaries.
+- Preserve official in-place updater paths by leaving shell commands on
+  official runtime binaries.
 
 ## Command Surface
 
@@ -33,7 +36,7 @@ Runtime commands are intentionally small:
 clawdi runtime init --non-interactive [--json]
 clawdi runtime init --manifest-file <path> [--json]
 clawdi runtime watch [--self-heal-ms <ms>]
-clawdi runtime bridge
+clawdi runtime sidecar
 clawdi runtime status [--json]
 clawdi runtime doctor [--json]
 clawdi run -- <command>
@@ -61,8 +64,9 @@ operator-provided manifest.
 3. Install or verify selected runtimes through their normal installers.
 4. Write non-secret run configuration.
 5. Project short-lived secret files only when needed for the current session.
-6. Write command shims for active runtime names.
-7. Render supervisor config.
+6. Render the ephemeral supervisor process plan with direct Clawdi support
+   programs and direct official runtime commands.
+7. Leave unrelated legacy wrapper or launcher files untouched.
 8. Record status and diagnostics.
 
 The command should be idempotent. Re-running it with the same desired state
@@ -73,10 +77,9 @@ Key generated outputs:
 - `config/run/<runtime>.json` for `clawdi run`;
 - `config/run/<runtime>+<service>.json` for runtime-owned auxiliary services;
 - `config/projections/<runtime>.json` for runtime-specific config projection;
-- `config/runtime-command-shims.json` plus symlinks under the service-state bin
-  directory;
-- `supervisor/supervisord.conf` with each runtime launched as
-  `clawdi run -- <runtime>`;
+- `$CLAWDI_RUN_DIR/supervisor/supervisord.conf` with Clawdi support programs
+  and official runtime commands;
+- `$CLAWDI_RUN_DIR/secrets/*` for short-lived auth and provider secret material;
 - `cache/manifest.last-good.json` and ETag files for recovery and refresh;
 - `install-inventory/<runtime>.json` for diagnostics.
 
@@ -86,9 +89,10 @@ last-good manifest only after successful convergence.
 
 ## Run Boundary
 
-`clawdi run -- <command>` is the activation boundary for managed configuration.
-It reads local run configuration, prepares the child process environment, and
-then executes the requested command.
+`clawdi run -- <command>` is the explicit local/debug execution boundary for
+managed configuration. It reads local run configuration, prepares the child
+process environment, and then executes the requested command when the caller
+opts into Clawdi env injection.
 
 Rules:
 
@@ -99,22 +103,16 @@ Rules:
 - keep request rewriting behind explicit runtime profiles.
 - delete `CLAWDI_AUTH_TOKEN` before launching agent child processes.
 
-In hosted mode, runtime command shims make managed runtimes feel native. The
-host PATH points at the shim directory first. A shim named `openclaw`, `hermes`,
-or another manifest runtime removes the shim directory from PATH, then calls:
+Hosted runtime mode does not install per-runtime command wrappers. The hosted
+terminal remains a real shell, so `openclaw`, `hermes`, and future runtime
+names resolve to official binaries on PATH. `clawdi run -- <command>` remains
+available only as an explicit Clawdi env-injection boundary.
 
-```bash
-clawdi run -- "$command_name" "$@"
-```
-
-This is the only per-runtime command wrapper. The image should not grow a new
-wrapper each time a runtime is added. Disabled run configs must fail closed:
-`clawdi run` reports the runtime as disabled and never falls back to a native
-binary later on PATH.
-
-For ordinary shell commands that are not managed runtime names, the hosted
-terminal remains a real shell. The command shim model only intercepts command
-names that `runtime init` generated.
+Hosted daemon startup uses supervisor directly, not `clawdi run` and not a
+Clawdi wrapper. The supervisor config is written under `$CLAWDI_RUN_DIR` with
+owner-only permissions because it can contain resolved, short-lived runtime env
+secrets. Durable `/var/lib/clawdi` state remains limited to non-secret desired
+state, inventory, projections, and cache files.
 
 ## Runtime Support Model
 
@@ -129,8 +127,25 @@ Rules:
 - unknown runtime names with install metadata are rejected unless the CLI has
   been upgraded to support them;
 - unknown runtime names without `run.command` are rejected;
-- unknown runtime names with `run.command` can be launched and shimmed without
+- unknown runtime names with `run.command` can be supervised without
   image changes.
+
+The support modules are not interchangeable:
+
+- `runtime watch` reconciles manifests and can use Clawdi API auth.
+- `daemon run` serves live sync only when live-sync agents are declared.
+- `runtime sidecar` hosts runtime-local support modules: the bridge module
+  proxies inbound browser Control UI surfaces, and the MITM module proxies
+  outbound runtime traffic only when MITM profiles are enabled.
+
+Their tokens, network direction, and failure domains must stay visible in
+manifest state, status, and logs. The sidecar must not become a hidden wrapper
+around official runtime commands.
+
+Hermes deployments that need both gateway and dashboard should declare two
+official Hermes supervisor programs. The official Hermes Docker image is useful
+prior art for this fan-out, but the Linux-like host keeps in-place
+`hermes update` available.
 
 ## Provider Projection
 
@@ -166,10 +181,10 @@ specific channel management remains outside this repository.
 
 ## Runtime UI And Terminal Notes
 
-`clawdi runtime bridge` is the local authenticated bridge for manifest-declared
-runtime surfaces. The current hosted surfaces use `kind: "control-ui"` and the
-dashboard labels each browser UI with the runtime's own wording, such as
-OpenClaw Control UI and Hermes Dashboard.
+The sidecar bridge module is the local authenticated bridge for
+manifest-declared runtime surfaces. The current hosted surfaces use
+`kind: "control-ui"` and the dashboard labels them as `<Runtime> Control UI`
+because each is a runtime-specific browser application.
 
 Bridge surfaces declare listen/upstream targets, protocol handling, auth
 behavior, and header rewrite rules explicitly. The bridge is not an arbitrary
@@ -190,11 +205,11 @@ Runtime changes should include focused tests for:
 - channel projection and secret redaction;
 - `runtime init` idempotence;
 - `runtime status` and `runtime doctor` JSON output;
-- `clawdi run -- <runtime>` environment construction.
-- command shim routing, PATH cleanup, stale-shim cleanup, and disabled-runtime
-  behavior;
-- supervisor config rendering for watch, runtime bridge, daemon, and runtimes;
-- runtime-owned service rendering without generating user command shims;
+- direct supervisor runtime command rendering;
+- interactive `clawdi run -- <command>` environment construction;
+- absence of newly generated runtime wrappers or launchers;
+- supervisor config rendering for watch, sidecar bridge/MITM modules, daemon,
+  runtimes, and runtime-owned services;
 - terminal URL token transport and light/dark xterm theme behavior when web UI
   code changes.
 

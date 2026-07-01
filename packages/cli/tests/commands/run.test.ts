@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { buildRuntimeChildSpawn, run } from "../../src/commands/run";
 import { setProjectFolderLink } from "../../src/lib/project-folders";
 import type {
-	RuntimeMitmBrokerFactory,
-	RuntimeMitmBrokerInput,
-} from "../../src/runtime/mitm-broker";
+	RuntimeMitmSidecarFactory,
+	RuntimeMitmSidecarInput,
+} from "../../src/runtime/mitm-sidecar";
 import { jsonResponse, mockFetch } from "./helpers";
 
 interface SpawnCall {
@@ -20,7 +20,7 @@ interface SpawnCall {
 	cwd?: string;
 }
 
-interface BrokerCall {
+interface SidecarCall {
 	runtime: string;
 	profileBundlePath: string;
 	proxyUrl?: string;
@@ -96,14 +96,14 @@ function recordSpawn(opts: { autoExit?: boolean } = {}): {
 	return { calls, children, spawnImpl };
 }
 
-function recordBroker(output?: { proxyUrl?: string; caFile?: string }): {
-	calls: BrokerCall[];
-	brokerFactory: RuntimeMitmBrokerFactory;
+function recordSidecar(output?: { proxyUrl?: string; caFile?: string }): {
+	calls: SidecarCall[];
+	sidecarFactory: RuntimeMitmSidecarFactory;
 	stopCount: () => number;
 } {
-	const calls: BrokerCall[] = [];
+	const calls: SidecarCall[] = [];
 	let stops = 0;
-	const brokerFactory: RuntimeMitmBrokerFactory = async (input: RuntimeMitmBrokerInput) => {
+	const sidecarFactory: RuntimeMitmSidecarFactory = async (input: RuntimeMitmSidecarInput) => {
 		calls.push({
 			runtime: input.runtime,
 			profileBundlePath: input.profileBundlePath,
@@ -120,7 +120,7 @@ function recordBroker(output?: { proxyUrl?: string; caFile?: string }): {
 			},
 		};
 	};
-	return { calls, brokerFactory, stopCount: () => stops };
+	return { calls, sidecarFactory, stopCount: () => stops };
 }
 
 function linkCurrentProjectFolder(): void {
@@ -182,7 +182,7 @@ describe("run command project folder selection", () => {
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
 					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/runtime-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
-					SSL_CERT_FILE: "/run/clawdi/mitm/brokers/test/ca.pem",
+					SSL_CERT_FILE: "/run/clawdi/mitm/sidecars/test/ca.pem",
 				},
 				configPath: "/var/lib/clawdi/config/run/hermes.json",
 			},
@@ -202,7 +202,7 @@ describe("run command project folder selection", () => {
 		expect(child.env.LOGNAME).toBe("clawdi");
 		expect(child.env.PATH).toBe("/home/clawdi/.local/bin:/usr/bin");
 		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
-		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm/brokers/test/ca.pem");
+		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm/sidecars/test/ca.pem");
 		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
@@ -416,16 +416,16 @@ describe("run command project folder selection", () => {
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
-		const broker = recordBroker();
+		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
 
-		await run(["openclaw"], {}, spawnImpl, broker.brokerFactory);
+		await run(["openclaw"], {}, spawnImpl, sidecar.sidecarFactory);
 
 		expect(calls).toHaveLength(1);
-		expect(broker.calls).toHaveLength(0);
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls[0].args).toEqual(["gateway", "run"]);
 		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
@@ -563,7 +563,7 @@ describe("run command project folder selection", () => {
 		expect(process.exitCode).toBe(143);
 	});
 
-	it("injects MITM broker env for hosted runtime commands with profile bundles", async () => {
+	it("injects MITM sidecar env for hosted runtime commands with profile bundles", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -599,20 +599,20 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
-		const broker = recordBroker();
+		const sidecar = recordSidecar();
 
-		await run(["hermes", "serve"], {}, spawnImpl, broker.brokerFactory);
+		await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(broker.calls).toHaveLength(1);
-		expect(broker.calls[0]).toMatchObject({
+		expect(sidecar.calls).toHaveLength(1);
+		expect(sidecar.calls[0]).toMatchObject({
 			runtime: "hermes",
 			profileBundlePath: mitmProfileBundle,
 			proxyUrl: "http://127.0.0.1:0",
 		});
-		const brokerCaFile = broker.calls[0].caFile;
-		expect(brokerCaFile?.startsWith(join(runRoot, "mitm", "brokers"))).toBe(true);
-		expect(brokerCaFile?.endsWith(join("", "ca.pem"))).toBe(true);
-		expect(broker.calls[0].authToken).toBeUndefined();
+		const sidecarCaFile = sidecar.calls[0].caFile;
+		expect(sidecarCaFile?.startsWith(join(runRoot, "mitm", "sidecars"))).toBe(true);
+		expect(sidecarCaFile?.endsWith(join("", "ca.pem"))).toBe(true);
+		expect(sidecar.calls[0].authToken).toBeUndefined();
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
@@ -626,21 +626,21 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.no_proxy).toBe(calls[0].env.NO_PROXY);
 		expect(calls[0].env.NODE_USE_ENV_PROXY).toBe("1");
 		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.SSL_CERT_FILE).toBe(brokerCaFile);
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(brokerCaFile);
-		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(brokerCaFile);
-		expect(calls[0].env.CURL_CA_BUNDLE).toBe(brokerCaFile);
-		expect(calls[0].env.GIT_SSL_CAINFO).toBe(brokerCaFile);
-		expect(calls[0].env.DENO_CERT).toBe(brokerCaFile);
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(brokerCaFile);
+		expect(calls[0].env.SSL_CERT_FILE).toBe(sidecarCaFile);
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(sidecarCaFile);
+		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(sidecarCaFile);
+		expect(calls[0].env.CURL_CA_BUNDLE).toBe(sidecarCaFile);
+		expect(calls[0].env.GIT_SSL_CAINFO).toBe(sidecarCaFile);
+		expect(calls[0].env.DENO_CERT).toBe(sidecarCaFile);
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(sidecarCaFile);
 		expect(calls[0].env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
-		expect(calls[0].env.CLAWDI_MITM_BROKER_PATH).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_BROKER_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SIDECAR_PATH).toBeUndefined();
+		expect(calls[0].env.CLAWDI_MITM_SIDECAR_BUNDLE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_ALLOW_REMOTE_PROXY).toBeUndefined();
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 	});
 
-	it("fails closed when a hosted runtime MITM broker fails to start", async () => {
+	it("fails closed when a hosted runtime MITM sidecar fails to start", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -685,7 +685,7 @@ describe("run command project folder selection", () => {
 		try {
 			await expect(
 				run(["hermes", "serve"], {}, spawnImpl, async () => {
-					throw new Error("MITM broker did not become ready");
+					throw new Error("MITM sidecar did not become ready");
 				}),
 			).rejects.toThrow("process.exit:1");
 		} finally {
@@ -696,7 +696,7 @@ describe("run command project folder selection", () => {
 		expect(calls).toHaveLength(0);
 	});
 
-	it("uses the broker's actual proxy and CA paths for hosted runtime commands", async () => {
+	it("uses the sidecar's actual proxy and CA paths for hosted runtime commands", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -737,7 +737,7 @@ describe("run command project folder selection", () => {
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
-		const broker = recordBroker({
+		const sidecar = recordSidecar({
 			proxyUrl: "http://127.0.0.1:19090",
 			caFile: join(runRoot, "actual-ca.pem"),
 		});
@@ -748,12 +748,12 @@ describe("run command project folder selection", () => {
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
 		try {
-			await run(["hermes", "serve"], {}, spawnImpl, broker.brokerFactory);
+			await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
 		} finally {
 			delete process.env.CLAWDI_MITM_PROXY_PORT;
 		}
 
-		expect(broker.calls).toHaveLength(1);
+		expect(sidecar.calls).toHaveLength(1);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
@@ -784,26 +784,26 @@ describe("run command project folder selection", () => {
 			}),
 		);
 		const { calls, spawnImpl } = recordSpawn();
-		const broker = recordBroker({
+		const sidecar = recordSidecar({
 			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+			caFile: join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
 		});
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
-		await run(["codex", "exec", "hello"], {}, spawnImpl, broker.brokerFactory);
+		await run(["codex", "exec", "hello"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(broker.calls).toHaveLength(1);
-		expect(broker.calls[0]).toMatchObject({
+		expect(sidecar.calls).toHaveLength(1);
+		expect(sidecar.calls[0]).toMatchObject({
 			runtime: "generic",
 			profileBundlePath: mitmProfileBundle,
 			proxyUrl: "http://127.0.0.1:0",
 			secretFile: join(runRoot, "secrets", "runtime-secrets.json"),
 		});
-		expect(broker.calls[0].caFile?.startsWith(join(runRoot, "mitm", "brokers"))).toBe(true);
-		expect(broker.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
+		expect(sidecar.calls[0].caFile?.startsWith(join(runRoot, "mitm", "sidecars"))).toBe(true);
+		expect(sidecar.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("codex");
 		expect(calls[0].args).toEqual(["exec", "hello"]);
@@ -813,10 +813,10 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19191");
 		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19191");
 		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(
-			join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+			join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
 		);
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(
-			join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+			join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
 		);
 	});
 
@@ -825,16 +825,16 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const { calls, spawnImpl } = recordSpawn();
-		const broker = recordBroker();
+		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.PATH = `${join(serviceStateRoot, "bin")}:/usr/local/bin:/usr/bin`;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
-		await run(["node", "--version"], {}, spawnImpl, broker.brokerFactory);
+		await run(["node", "--version"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(broker.calls).toHaveLength(0);
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("node");
 		expect(calls[0].args).toEqual(["--version"]);
@@ -879,9 +879,9 @@ describe("run command project folder selection", () => {
 			}),
 		);
 		const { calls, spawnImpl } = recordSpawn();
-		const broker = recordBroker({
+		const sidecar = recordSidecar({
 			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm", "brokers", "actual", "ca.pem"),
+			caFile: join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
 		});
 		const { captured, restore } = mockFetch([
 			{
@@ -898,15 +898,15 @@ describe("run command project folder selection", () => {
 				["codex", "exec", "hello"],
 				{ allVaultEnv: true, projectFolder: false },
 				spawnImpl,
-				broker.brokerFactory,
+				sidecar.sidecarFactory,
 			);
 		} finally {
 			restore();
 		}
 
 		expect(captured.map((request) => request.path)).toEqual(["/api/vault/resolve"]);
-		expect(broker.calls).toHaveLength(1);
-		expect(broker.calls[0].secretFile).toBe(join(runRoot, "secrets", "runtime-secrets.json"));
+		expect(sidecar.calls).toHaveLength(1);
+		expect(sidecar.calls[0].secretFile).toBe(join(runRoot, "secrets", "runtime-secrets.json"));
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
 		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();

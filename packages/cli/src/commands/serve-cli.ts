@@ -81,6 +81,7 @@ Environment:
 
 Examples:
   $ clawdi daemon run
+  $ clawdi daemon run --auth-token-file /run/clawdi/secrets/auth-token
   $ clawdi daemon run --host 127.0.0.1 --port 17654
   $ clawdi daemon ping
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
@@ -105,6 +106,7 @@ Examples:
 			.description("Run the sync daemon in the foreground")
 			.configureHelp({ showGlobalOptions: true })
 			.addHelpText("after", "\nControl RPC listens on loopback HTTP by default.")
+			.option("--auth-token-file <path>", "Read CLAWDI_AUTH_TOKEN from an owner-only file")
 			.option("--host <host>", "Control HTTP RPC host")
 			.option("--port <port>", "Control HTTP RPC port")
 			.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host"),

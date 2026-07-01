@@ -231,8 +231,21 @@ function buildOpenClawProjection(
 			]),
 	);
 	const usesNativeCodex = providers.some(usesNativeCodexOpenAiProvider);
+	const usesEnvSecrets = providers
+		.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
+		.some((provider) => Boolean(openClawApiKeyEnvForProvider(provider)));
 	const body = compactObject({
 		plugins: usesNativeCodex ? { entries: { codex: { enabled: true } } } : undefined,
+		secrets: usesEnvSecrets
+			? {
+					providers: {
+						default: { source: "env" },
+					},
+					defaults: {
+						env: "default",
+					},
+				}
+			: undefined,
 		agents: {
 			defaults: {
 				model: {

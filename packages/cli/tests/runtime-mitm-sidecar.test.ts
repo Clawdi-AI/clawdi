@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { startRuntimeMitmBroker } from "../src/runtime/mitm-broker";
+import { startRuntimeMitmSidecar } from "../src/runtime/mitm-sidecar";
 
 const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -19,14 +19,14 @@ afterEach(() => {
 	tmpRoot = "";
 });
 
-describe("runtime MITM broker launcher", () => {
-	it("starts a native broker executable and stops it", async () => {
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-launcher-"));
-		const fakeBroker = join(tmpRoot, "fake-broker");
+describe("runtime MITM sidecar launcher", () => {
+	it("starts a native sidecar executable and stops it", async () => {
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-launcher-"));
+		const fakeSidecar = join(tmpRoot, "fake-sidecar");
 		const stopped = join(tmpRoot, "stopped.txt");
-		const envOut = join(tmpRoot, "broker-env.txt");
+		const sidecarEnvOut = join(tmpRoot, "sidecar-env.txt");
 		writeFileSync(
-			fakeBroker,
+			fakeSidecar,
 			[
 				"#!/usr/bin/env sh",
 				"trap 'printf stopped > \"$STOPPED\"; exit 0' TERM INT",
@@ -42,7 +42,7 @@ describe("runtime MITM broker launcher", () => {
 				"",
 			].join("\n"),
 		);
-		chmodSync(fakeBroker, 0o755);
+		chmodSync(fakeSidecar, 0o755);
 		const profileBundlePath = join(tmpRoot, "profiles.json");
 		writeFileSync(
 			profileBundlePath,
@@ -55,33 +55,35 @@ describe("runtime MITM broker launcher", () => {
 			}),
 		);
 
-		const broker = await startRuntimeMitmBroker({
+		const sidecar = await startRuntimeMitmSidecar({
 			runtime: "hermes",
 			profileBundlePath,
 			env: {
-				CLAWDI_AUTH_TOKEN: "must-not-reach-broker-env",
-				CLAWDI_MITM_BROKER_PATH: fakeBroker,
+				CLAWDI_AUTH_TOKEN: "must-not-reach-sidecar-env",
+				CLAWDI_MITM_SIDECAR_PATH: fakeSidecar,
 				STOPPED: stopped,
-				ENV_OUT: envOut,
+				ENV_OUT: sidecarEnvOut,
 				CLAWDI_MITM_PROXY_URL: "http://127.0.0.1:0",
 				CLAWDI_MITM_CA_FILE: join(tmpRoot, "ca.pem"),
 				CLAWDI_MITM_SECRET_FILE: join(tmpRoot, "secrets.json"),
 			},
 		});
 
-		expect(broker.proxyUrl).toBe("http://127.0.0.1:19090");
-		expect(broker.caFile).toBe("/tmp/fake-ca.pem");
-		await broker.stop();
+		expect(sidecar.proxyUrl).toBe("http://127.0.0.1:19090");
+		expect(sidecar.caFile).toBe("/tmp/fake-ca.pem");
+		await sidecar.stop();
+		if (!sidecar.closed) throw new Error("expected sidecar closed promise");
+		await expect(sidecar.closed).resolves.toEqual({ code: 0, signal: null });
 		expect(readFileSync(stopped, "utf8")).toBe("stopped");
-		expect(readFileSync(envOut, "utf8")).toBe("auth=\nprofile=\nsecret=\n");
+		expect(readFileSync(sidecarEnvOut, "utf8")).toBe("auth=\nprofile=\nsecret=\n");
 	});
 
-	it("starts a bundled native broker launcher", async () => {
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-bundle-"));
+	it("starts a bundled native sidecar launcher", async () => {
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-bundle-"));
 		const bundle = join(tmpRoot, "bundle");
 		const bin = join(bundle, "bin");
 		mkdirSync(bin, { recursive: true });
-		const launcher = join(bin, "clawdi-mitm-broker");
+		const launcher = join(bin, "clawdi-mitm-sidecar");
 		const stopped = join(tmpRoot, "bundle-stopped.txt");
 		writeFileSync(
 			launcher,
@@ -106,56 +108,56 @@ describe("runtime MITM broker launcher", () => {
 			}),
 		);
 
-		const broker = await startRuntimeMitmBroker({
+		const sidecar = await startRuntimeMitmSidecar({
 			runtime: "hermes",
 			profileBundlePath,
 			env: {
-				CLAWDI_MITM_BROKER_BUNDLE: bundle,
+				CLAWDI_MITM_SIDECAR_BUNDLE: bundle,
 				STOPPED: stopped,
 				CLAWDI_MITM_PROXY_URL: "http://127.0.0.1:0",
 				CLAWDI_MITM_CA_FILE: join(tmpRoot, "ca.pem"),
 			},
 		});
 
-		expect(broker.proxyUrl).toBe("http://127.0.0.1:19191");
-		expect(broker.caFile).toBe("/tmp/bundle-ca.pem");
-		await broker.stop();
+		expect(sidecar.proxyUrl).toBe("http://127.0.0.1:19191");
+		expect(sidecar.caFile).toBe("/tmp/bundle-ca.pem");
+		await sidecar.stop();
 		expect(readFileSync(stopped, "utf8")).toBe("stopped");
 	});
 
-	it("rejects brokers that report not ready", async () => {
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-not-ready-"));
-		const fakeBroker = join(tmpRoot, "fake-broker");
+	it("rejects sidecars that report not ready", async () => {
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-not-ready-"));
+		const fakeSidecar = join(tmpRoot, "fake-sidecar");
 		writeFileSync(
-			fakeBroker,
+			fakeSidecar,
 			[
 				"#!/usr/bin/env sh",
 				'printf \'{"ready":false,"reason":"no-enabled-profiles"}\\n\'',
 				"",
 			].join("\n"),
 		);
-		chmodSync(fakeBroker, 0o755);
+		chmodSync(fakeSidecar, 0o755);
 		const profileBundlePath = join(tmpRoot, "profiles.json");
 		writeFileSync(profileBundlePath, "{}\n");
 
 		await expect(
-			startRuntimeMitmBroker({
+			startRuntimeMitmSidecar({
 				runtime: "hermes",
 				profileBundlePath,
 				env: {
-					CLAWDI_MITM_BROKER_PATH: fakeBroker,
+					CLAWDI_MITM_SIDECAR_PATH: fakeSidecar,
 					CLAWDI_MITM_PROXY_URL: "http://127.0.0.1:0",
 					CLAWDI_MITM_CA_FILE: join(tmpRoot, "ca.pem"),
 				},
 			}),
-		).rejects.toThrow("MITM broker did not become ready: no-enabled-profiles");
+		).rejects.toThrow("MITM sidecar did not become ready: no-enabled-profiles");
 	});
 
 	it("rejects non-loopback proxy listeners by default", async () => {
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-loopback-"));
-		const brokerEnv = resolveNativeBrokerEnv();
-		if (!brokerEnv) {
-			console.warn("Skipping native broker loopback test: Go is not available.");
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-loopback-"));
+		const sidecarEnv = resolveNativeSidecarEnv();
+		if (!sidecarEnv) {
+			console.warn("Skipping native sidecar loopback test: Go is not available.");
 			return;
 		}
 		const profileBundlePath = join(tmpRoot, "profiles.json");
@@ -179,11 +181,11 @@ describe("runtime MITM broker launcher", () => {
 		);
 
 		await expect(
-			startRuntimeMitmBroker({
+			startRuntimeMitmSidecar({
 				runtime: "hermes",
 				profileBundlePath,
 				env: {
-					...brokerEnv,
+					...sidecarEnv,
 					CLAWDI_MITM_PROXY_URL: "http://0.0.0.0:0",
 					CLAWDI_MITM_CA_FILE: join(tmpRoot, "ca.pem"),
 				},
@@ -191,11 +193,11 @@ describe("runtime MITM broker launcher", () => {
 		).rejects.toThrow("refusing to listen on non-loopback MITM proxy host 0.0.0.0");
 	}, 20_000);
 
-	it("rejects broker profiles with non-HTTP upstream URLs", async () => {
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-invalid-profile-"));
-		const brokerEnv = resolveNativeBrokerEnv();
-		if (!brokerEnv) {
-			console.warn("Skipping native broker profile validation test: Go is not available.");
+	it("rejects sidecar profiles with non-HTTP upstream URLs", async () => {
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-invalid-profile-"));
+		const sidecarEnv = resolveNativeSidecarEnv();
+		if (!sidecarEnv) {
+			console.warn("Skipping native sidecar profile validation test: Go is not available.");
 			return;
 		}
 		const profileBundlePath = join(tmpRoot, "profiles.json");
@@ -219,11 +221,11 @@ describe("runtime MITM broker launcher", () => {
 		);
 
 		await expect(
-			startRuntimeMitmBroker({
+			startRuntimeMitmSidecar({
 				runtime: "hermes",
 				profileBundlePath,
 				env: {
-					...brokerEnv,
+					...sidecarEnv,
 					CLAWDI_MITM_PROXY_URL: "http://127.0.0.1:0",
 					CLAWDI_MITM_CA_FILE: join(tmpRoot, "ca.pem"),
 				},
@@ -231,15 +233,15 @@ describe("runtime MITM broker launcher", () => {
 		).rejects.toThrow("rewrite.upstreamBaseUrl must use http, https, ws, or wss");
 	});
 
-	it("routes HTTPS CONNECT requests through the native broker", async () => {
+	it("routes HTTPS CONNECT requests through the native sidecar", async () => {
 		if (!commandExists("curl")) {
-			console.warn("Skipping native broker routing test: curl is not available.");
+			console.warn("Skipping native sidecar routing test: curl is not available.");
 			return;
 		}
-		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-broker-"));
-		const brokerEnv = resolveNativeBrokerEnv();
-		if (!brokerEnv) {
-			console.warn("Skipping native broker routing test: Go is not available.");
+		tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-mitm-sidecar-"));
+		const sidecarEnv = resolveNativeSidecarEnv();
+		if (!sidecarEnv) {
+			console.warn("Skipping native sidecar routing test: Go is not available.");
 			return;
 		}
 
@@ -461,11 +463,11 @@ describe("runtime MITM broker launcher", () => {
 			}),
 		);
 
-		const broker = await startRuntimeMitmBroker({
+		const sidecar = await startRuntimeMitmSidecar({
 			runtime: "hermes",
 			profileBundlePath,
 			env: {
-				...brokerEnv,
+				...sidecarEnv,
 				CLAWDI_MITM_PROXY_URL: "http://127.0.0.1:0",
 				CLAWDI_MITM_CA_FILE: caFile,
 				CLAWDI_MITM_SECRET_FILE: secretFile,
@@ -473,8 +475,8 @@ describe("runtime MITM broker launcher", () => {
 		});
 		try {
 			const routed = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "discord.com",
 				path: "/api/v10/users/@me",
 				headers: { authorization: "Bot scoped-agent-token" },
@@ -486,8 +488,8 @@ describe("runtime MITM broker launcher", () => {
 			]);
 
 			const telegram = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "api.telegram.org",
 				path: "/botscoped-agent-token/getMe",
 				headers: {},
@@ -499,8 +501,8 @@ describe("runtime MITM broker launcher", () => {
 			]);
 
 			const bluebubbles = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "bluebubbles.invalid",
 				path: "/api/v1/ping?password=scoped-agent-token",
 				headers: {},
@@ -516,8 +518,8 @@ describe("runtime MITM broker launcher", () => {
 			]);
 
 			const chatgptCodex = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "chatgpt.com",
 				path: "/backend-api/codex/responses",
 				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
@@ -534,8 +536,8 @@ describe("runtime MITM broker launcher", () => {
 			expect(upstreamHits).toHaveLength(3);
 
 			const openaiCodex = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "api.openai.com",
 				path: "/v1/responses",
 				headers: { authorization: "Bearer clawdi-mitm-placeholder" },
@@ -556,8 +558,8 @@ describe("runtime MITM broker launcher", () => {
 			expect(upstreamHits).toHaveLength(3);
 
 			const denied = await requestThroughProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "unmatched.example.test",
 				path: "/not-managed",
 				headers: {},
@@ -567,8 +569,8 @@ describe("runtime MITM broker launcher", () => {
 			expect(providerHits).toHaveLength(2);
 
 			const gateway = await requestWebSocketThroughNodeProxy({
-				proxyUrl: broker.proxyUrl,
-				caFile: broker.caFile,
+				proxyUrl: sidecar.proxyUrl,
+				caFile: sidecar.caFile,
 				host: "gateway.discord.gg",
 				path: "/?v=10&encoding=json",
 			});
@@ -580,7 +582,7 @@ describe("runtime MITM broker launcher", () => {
 				{ path: "/discord/gateway/?v=10&encoding=json", originalHost: "gateway.discord.gg" },
 			]);
 		} finally {
-			await broker.stop();
+			await sidecar.stop();
 			await close(upstream);
 			await close(websocketUpstream);
 		}
@@ -588,27 +590,27 @@ describe("runtime MITM broker launcher", () => {
 });
 
 function commandExists(command: string): boolean {
-	return spawnSync("sh", ["-lc", `command -v ${command}`], { stdio: "ignore" }).status === 0;
+	return spawnSync("sh", ["-c", `command -v ${command}`], { stdio: "ignore" }).status === 0;
 }
 
-function resolveNativeBrokerEnv(): Record<string, string> | null {
-	const bundle = process.env.CLAWDI_MITM_BROKER_BUNDLE?.trim();
-	if (bundle) return { CLAWDI_MITM_BROKER_BUNDLE: bundle };
+function resolveNativeSidecarEnv(): Record<string, string> | null {
+	const bundle = process.env.CLAWDI_MITM_SIDECAR_BUNDLE?.trim();
+	if (bundle) return { CLAWDI_MITM_SIDECAR_BUNDLE: bundle };
 
-	const explicit = process.env.CLAWDI_MITM_BROKER_PATH?.trim();
-	if (explicit) return { CLAWDI_MITM_BROKER_PATH: explicit };
+	const explicit = process.env.CLAWDI_MITM_SIDECAR_PATH?.trim();
+	if (explicit) return { CLAWDI_MITM_SIDECAR_PATH: explicit };
 
 	if (!commandExists("go")) return null;
-	const brokerPath = join(tmpRoot, "clawdi-mitm-broker");
-	const result = spawnSync("go", ["build", "-trimpath", "-o", brokerPath, "."], {
-		cwd: join(cliRoot, "native", "mitm-broker"),
+	const sidecarPath = join(tmpRoot, "clawdi-mitm-sidecar");
+	const result = spawnSync("go", ["build", "-trimpath", "-o", sidecarPath, "."], {
+		cwd: join(cliRoot, "native", "mitm-sidecar"),
 		encoding: "utf8",
 		stdio: "pipe",
 	});
 	if (result.status !== 0) {
-		throw new Error(`native broker build failed\n${result.stdout}${result.stderr}`);
+		throw new Error(`native sidecar build failed\n${result.stdout}${result.stderr}`);
 	}
-	return { CLAWDI_MITM_BROKER_PATH: brokerPath };
+	return { CLAWDI_MITM_SIDECAR_PATH: sidecarPath };
 }
 
 function listen(server: http.Server | net.Server, port: number, host: string): Promise<void> {

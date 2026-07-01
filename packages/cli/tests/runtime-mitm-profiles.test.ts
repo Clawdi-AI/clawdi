@@ -97,7 +97,7 @@ describe("runtime MITM profile schema", () => {
 		).toBe(false);
 	});
 
-	it("rejects path prefixes that the native broker would reject", () => {
+	it("rejects path prefixes that the native sidecar would reject", () => {
 		expect(
 			mitmProfileSchema.safeParse({
 				id: "bad-prefix",
@@ -109,7 +109,7 @@ describe("runtime MITM profile schema", () => {
 		).toBe(false);
 	});
 
-	it("does not enable the hosted broker for directly projected providers", () => {
+	it("does not enable the hosted sidecar for directly projected providers", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
@@ -139,7 +139,7 @@ describe("runtime MITM profile schema", () => {
 		expect(bundle.profiles).toEqual([]);
 	});
 
-	it("builds a direct provider allowlist only when another manifest feature enables the broker", () => {
+	it("builds a direct provider allowlist only when another manifest feature enables the sidecar", () => {
 		const direct = directProviderPassthroughProfile({
 			providers: {
 				default: {

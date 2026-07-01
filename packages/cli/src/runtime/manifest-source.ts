@@ -541,13 +541,14 @@ function hostedRuntimeRunSettings(
 ): RuntimeRunSettings | undefined {
 	if (!run && !runtimeWorkspace) return undefined;
 	const cwd = run?.cwd ?? runtimeWorkspace ?? workspaceRoot;
-	return {
-		command: run?.command,
-		args: run?.args ?? [],
+	const settings: RuntimeRunSettings = {
 		env: run?.env ?? {},
 		cwd,
 		prependPath: run?.prependPath ?? [],
 	};
+	if (run?.command !== undefined) settings.command = run.command;
+	if (run?.args !== undefined) settings.args = run.args;
+	return settings;
 }
 
 function hostedRuntimeServiceRunSettings(

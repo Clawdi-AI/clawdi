@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
 	type AiProvider,
@@ -697,7 +697,7 @@ async function createOAuthLoopbackServer(
 		resolveCallback = resolve;
 		rejectCallback = reject;
 	});
-	const server = createServer((req, res) => {
+	const requestHandler: RequestListener = (req, res) => {
 		const url = new URL(req.url ?? "/", redirectOrigin);
 		if (url.pathname !== options.path) {
 			writeOAuthCallbackResponse(res, 404, "Not found");
@@ -727,10 +727,10 @@ async function createOAuthLoopbackServer(
 				: "OAuth callback received. You can close this tab.",
 		);
 		resolveCallback(result);
-	});
+	};
 
-	const address = await listenOnPreferredPort(server, options);
-	redirectOrigin = `http://${options.host}:${address.port}`;
+	const listener = await listenOnPreferredPort(requestHandler, options);
+	redirectOrigin = `http://${options.host}:${listener.port}`;
 
 	timer = setTimeout(() => {
 		rejectCallback(new OAuthCallbackTimeoutError());
@@ -739,24 +739,23 @@ async function createOAuthLoopbackServer(
 	return {
 		redirectUri: `${redirectOrigin}${options.path}`,
 		wait: () => callbackPromise,
-		close: () =>
-			new Promise<void>((resolve) => {
-				if (timer) clearTimeout(timer);
-				server.close(() => resolve());
-			}),
+		close: async () => {
+			if (timer) clearTimeout(timer);
+			await closeOAuthLoopbackServers(listener.servers);
+		},
 		timedOut: (error: unknown) => error instanceof OAuthCallbackTimeoutError,
 	};
 }
 
 async function listenOnPreferredPort(
-	server: ReturnType<typeof createServer>,
+	requestHandler: RequestListener,
 	options: OAuthLoopbackOptions,
-): Promise<AddressInfo> {
+): Promise<{ port: number; servers: Server[] }> {
 	let lastError: unknown;
 	for (let index = 0; index < options.ports.length; index += 1) {
 		const port = options.ports[index];
 		try {
-			return await listenOnPort(server, options.host, port);
+			return await listenOnPort(requestHandler, options.host, port);
 		} catch (error) {
 			lastError = error;
 			if (errorCode(error) !== "EADDRINUSE" || index === options.ports.length - 1) {
@@ -768,9 +767,48 @@ async function listenOnPreferredPort(
 }
 
 async function listenOnPort(
-	server: ReturnType<typeof createServer>,
+	requestHandler: RequestListener,
 	host: string,
 	port: number,
+): Promise<{ port: number; servers: Server[] }> {
+	if (host === "localhost") {
+		return await listenOnLocalhostPort(requestHandler, port);
+	}
+	const server = createServer(requestHandler);
+	const address = await startOAuthLoopbackServer(server, host, port);
+	return { port: address.port, servers: [server] };
+}
+
+async function listenOnLocalhostPort(
+	requestHandler: RequestListener,
+	port: number,
+): Promise<{ port: number; servers: Server[] }> {
+	const ipv4Server = createServer(requestHandler);
+	const ipv6Server = createServer(requestHandler);
+	try {
+		const address = await startOAuthLoopbackServer(ipv4Server, "127.0.0.1", port);
+		try {
+			await startOAuthLoopbackServer(ipv6Server, "::1", port, { ipv6Only: true });
+		} catch (error) {
+			if (errorCode(error) === "EADDRNOTAVAIL" || errorCode(error) === "EAFNOSUPPORT") {
+				await closeOAuthLoopbackServers([ipv6Server]);
+				return { port: address.port, servers: [ipv4Server] };
+			}
+			await closeOAuthLoopbackServers([ipv4Server, ipv6Server]);
+			throw error;
+		}
+		return { port: address.port, servers: [ipv4Server, ipv6Server] };
+	} catch (error) {
+		await closeOAuthLoopbackServers([ipv4Server, ipv6Server]);
+		throw error;
+	}
+}
+
+async function startOAuthLoopbackServer(
+	server: Server,
+	host: string,
+	port: number,
+	options: { ipv6Only?: boolean } = {},
 ): Promise<AddressInfo> {
 	return await new Promise<AddressInfo>((resolve, reject) => {
 		const onError = (error: Error) => {
@@ -788,8 +826,23 @@ async function listenOnPort(
 		};
 		server.once("error", onError);
 		server.once("listening", onListening);
-		server.listen(port, host);
+		server.listen({ port, host, ...options });
 	});
+}
+
+async function closeOAuthLoopbackServers(servers: Server[]): Promise<void> {
+	await Promise.all(
+		servers.map(
+			(server) =>
+				new Promise<void>((resolve) => {
+					if (!server.listening) {
+						resolve();
+						return;
+					}
+					server.close(() => resolve());
+				}),
+		),
+	);
 }
 
 function errorCode(error: unknown): string | undefined {

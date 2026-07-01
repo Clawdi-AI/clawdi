@@ -142,12 +142,9 @@ func main() {
 	if err != nil {
 		exitf("load secrets: %v", err)
 	}
-	ca, err := newCertificateAuthority()
+	ca, err := loadOrCreateCertificateAuthority(caFile)
 	if err != nil {
 		exitf("create CA: %v", err)
-	}
-	if err := writePrivateFile(caFile, ca.rootPEM, 0o644); err != nil {
-		exitf("write CA: %v", err)
 	}
 
 	listener, actualProxyURL, err := listenProxy(proxyURL, allowRemoteProxy)
@@ -1249,6 +1246,56 @@ type certificateAuthority struct {
 	mu       sync.Mutex
 }
 
+func loadOrCreateCertificateAuthority(caFile string) (*certificateAuthority, error) {
+	keyFile := caFile + ".key"
+	if ca, err := loadCertificateAuthority(caFile, keyFile); err == nil {
+		return ca, nil
+	}
+	ca, err := newCertificateAuthority()
+	if err != nil {
+		return nil, err
+	}
+	if err := writePrivateFile(caFile, ca.rootPEM, 0o644); err != nil {
+		return nil, fmt.Errorf("write CA certificate: %w", err)
+	}
+	if err := writePrivateFile(keyFile, ca.rootKeyPEM(), 0o600); err != nil {
+		return nil, fmt.Errorf("write CA key: %w", err)
+	}
+	return ca, nil
+}
+
+func loadCertificateAuthority(caFile, keyFile string) (*certificateAuthority, error) {
+	certPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, err
+	}
+	keyPair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyPair.Certificate) == 0 {
+		return nil, fmt.Errorf("CA certificate file is empty")
+	}
+	rootCert, err := x509.ParseCertificate(keyPair.Certificate[0])
+	if err != nil {
+		return nil, err
+	}
+	rootKey, ok := keyPair.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("CA private key must be RSA")
+	}
+	return &certificateAuthority{
+		rootCert: rootCert,
+		rootKey:  rootKey,
+		rootPEM:  certPEM,
+		cache:    map[string]*tls.Certificate{},
+	}, nil
+}
+
 func newCertificateAuthority() (*certificateAuthority, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -1278,6 +1325,13 @@ func newCertificateAuthority() (*certificateAuthority, error) {
 		return nil, err
 	}
 	return &certificateAuthority{rootCert: parsed, rootKey: key, rootPEM: rootPEM, cache: map[string]*tls.Certificate{}}, nil
+}
+
+func (c *certificateAuthority) rootKeyPEM() []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(c.rootKey),
+	})
 }
 
 func (c *certificateAuthority) mintLeaf(host string) (*tls.Certificate, error) {

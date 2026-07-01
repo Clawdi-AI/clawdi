@@ -160,25 +160,25 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-go@v6
         with:
-          go-version-file: packages/cli/native/mitm-broker/go.mod
-          cache-dependency-path: packages/cli/native/mitm-broker/go.mod
+          go-version-file: packages/cli/native/mitm-sidecar/go.mod
+          cache-dependency-path: packages/cli/native/mitm-sidecar/go.mod
       # Smoke tests exercise the compiled bin wrapper, so build before testing.
       - name: Build CLI
         run: bun run --cwd packages/cli build
-      - name: Test native MITM broker
-        working-directory: packages/cli/native/mitm-broker
+      - name: Test native MITM sidecar
+        working-directory: packages/cli/native/mitm-sidecar
         run: go test ./...
       - name: Build standalone CLI binary
         run: bun run --cwd packages/cli build:binary
       - name: Smoke standalone CLI binary
         run: |
           packages/cli/dist-bin/clawdi --version
-          test -x packages/cli/dist-bin/clawdi-mitm-broker/bin/clawdi-mitm-broker
+          test -x packages/cli/dist-bin/clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar
       - name: Validate CLI publish payload
         run: |
-          CLAWDI_MITM_BROKER_BUNDLE_OUTDIR=clawdi-mitm-broker bun run --cwd packages/cli build:mitm-broker
+          CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR=clawdi-mitm-sidecar bun run --cwd packages/cli build:mitm-sidecar
           bun run --cwd packages/cli check:publish-manifest
-          test -x packages/cli/clawdi-mitm-broker/bin/clawdi-mitm-broker
+          test -x packages/cli/clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar
       - name: Test CLI
         run: bun test --isolate --max-concurrency=1 packages/cli
 

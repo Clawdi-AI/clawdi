@@ -27,16 +27,16 @@ import {
 	VAULT_PROJECT_ACCESS_HINT,
 } from "../lib/vault-errors";
 import {
-	type RuntimeMitmBroker,
-	type RuntimeMitmBrokerFactory,
-	shouldStartRuntimeMitmBroker,
-	startRuntimeMitmBroker,
-} from "../runtime/mitm-broker";
-import {
-	applyMitmBrokerRuntimeEnv,
-	buildMitmBrokerEnv,
-	stripMitmBrokerControlEnv,
+	applyMitmSidecarRuntimeEnv,
+	buildMitmSidecarEnv,
+	stripMitmSidecarControlEnv,
 } from "../runtime/mitm-env";
+import {
+	type RuntimeMitmSidecar,
+	type RuntimeMitmSidecarFactory,
+	shouldStartRuntimeMitmSidecar,
+	startRuntimeMitmSidecar,
+} from "../runtime/mitm-sidecar";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeRunInvocation,
@@ -44,7 +44,7 @@ import {
 	type RuntimeRunInvocation,
 	readRuntimeRunConfigForCommand,
 	readRuntimeServiceRunConfig,
-	runtimeCommandShimDir,
+	runtimeManagedBinDir,
 	withoutPathEntry,
 } from "../runtime/run-config";
 
@@ -83,7 +83,7 @@ export async function run(
 	args: string[],
 	opts: RunOpts = {},
 	spawnImpl: SpawnFn = spawn,
-	brokerFactory: RuntimeMitmBrokerFactory = startRuntimeMitmBroker,
+	sidecarFactory: RuntimeMitmSidecarFactory = startRuntimeMitmSidecar,
 ) {
 	if (args.length === 0 && !opts.runtimeService) {
 		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
@@ -102,7 +102,7 @@ export async function run(
 				paths,
 			),
 			spawnImpl,
-			brokerFactory,
+			sidecarFactory,
 		);
 		return;
 	}
@@ -122,7 +122,7 @@ export async function run(
 		await spawnRuntimeInvocation(
 			buildRuntimeRunInvocation(hostedRuntimeRun, args, baseProcessEnv, paths),
 			spawnImpl,
-			brokerFactory,
+			sidecarFactory,
 		);
 		return;
 	}
@@ -135,7 +135,7 @@ export async function run(
 		process.exit(1);
 	}
 	if (hostedGenericRun && !requiresCloudResolution(opts)) {
-		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl, brokerFactory);
+		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl, sidecarFactory);
 		return;
 	}
 	if (!isLoggedIn()) {
@@ -224,14 +224,14 @@ export async function run(
 		await spawnRuntimeInvocation(
 			buildRuntimeRunInvocation(hostedRuntimeRun, args, childEnv, paths),
 			spawnImpl,
-			brokerFactory,
+			sidecarFactory,
 		);
 		return;
 	}
 
 	const hostedGenericLoggedInRun = hostedGenericRunInvocation(args, childEnv);
 	if (hostedGenericLoggedInRun) {
-		await spawnRuntimeInvocation(hostedGenericLoggedInRun, spawnImpl, brokerFactory);
+		await spawnRuntimeInvocation(hostedGenericLoggedInRun, spawnImpl, sidecarFactory);
 		return;
 	}
 
@@ -320,10 +320,10 @@ function hostedGenericRunInvocation(
 		command,
 		args: commandArgs,
 		cwd: process.cwd(),
-		env: buildMitmBrokerEnv({
+		env: buildMitmSidecarEnv({
 			env: {
 				...baseEnv,
-				PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeCommandShimDir(paths)),
+				PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
 			},
 			profileBundlePath: mitmProfileBundle,
 			secretFile: paths.managedSecretFile,
@@ -347,26 +347,26 @@ function hostedRuntimeRunError(
 async function spawnRuntimeInvocation(
 	invocation: RuntimeRunInvocation,
 	spawnImpl: SpawnFn,
-	brokerFactory: RuntimeMitmBrokerFactory,
+	sidecarFactory: RuntimeMitmSidecarFactory,
 ): Promise<void> {
 	delete invocation.env.CLAWDI_AUTH_TOKEN;
-	let broker: RuntimeMitmBroker | null = null;
-	if (shouldStartRuntimeMitmBroker(invocation.env)) {
+	let sidecar: RuntimeMitmSidecar | null = null;
+	if (shouldStartRuntimeMitmSidecar(invocation.env)) {
 		try {
-			broker = await brokerFactory({
+			sidecar = await sidecarFactory({
 				runtime: invocation.runtime,
 				env: invocation.env,
 				profileBundlePath: invocation.env.CLAWDI_MITM_PROFILE_BUNDLE ?? invocation.configPath,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			console.log(chalk.red(`Failed to start MITM broker for ${invocation.runtime}: ${message}`));
+			console.log(chalk.red(`Failed to start MITM sidecar for ${invocation.runtime}: ${message}`));
 			process.exit(1);
 		}
 	}
-	if (broker) {
-		applyMitmBrokerRuntimeEnv(invocation.env, broker);
-		stripMitmBrokerControlEnv(invocation.env);
+	if (sidecar) {
+		applyMitmSidecarRuntimeEnv(invocation.env, sidecar);
+		stripMitmSidecarControlEnv(invocation.env);
 	}
 	let childSpawn: RuntimeChildSpawn;
 	try {
@@ -374,7 +374,7 @@ async function spawnRuntimeInvocation(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.log(chalk.red(`Failed to prepare ${invocation.runtime}: ${message}`));
-		await broker?.stop();
+		await sidecar?.stop();
 		process.exit(1);
 	}
 	const child = spawnImpl(childSpawn.command, childSpawn.args, {
@@ -385,7 +385,7 @@ async function spawnRuntimeInvocation(
 
 	const code = await waitForChildExit(child, invocation.runtime);
 	try {
-		await broker?.stop();
+		await sidecar?.stop();
 	} finally {
 		process.exitCode = code;
 	}

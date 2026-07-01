@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
@@ -75,11 +75,13 @@ describe("runtime manifest services", () => {
 
 		const supervisor = readFileSync(paths.supervisorConfig, "utf8");
 		expect(supervisor).toContain("[program:clawdi-hermes]");
-		expect(supervisor).toContain("command=/usr/bin/env clawdi run -- hermes");
+		expect(supervisor).toContain("command='hermes' 'gateway' 'run'");
 		expect(supervisor).toContain("[program:clawdi-hermes-dashboard]");
 		expect(supervisor).toContain(
-			"command=/usr/bin/env clawdi run --runtime-service hermes+dashboard -- hermes",
+			"command='hermes' 'dashboard' '--host' '127.0.0.1' '--port' '9119' '--no-open'",
 		);
+		expect(supervisor).not.toContain("clawdi run -- hermes");
+		expect(supervisor).not.toContain("clawdi run --runtime-service");
 
 		const serviceConfig = JSON.parse(
 			readFileSync(join(paths.runConfigRoot, "hermes+dashboard.json"), "utf8"),
@@ -101,9 +103,9 @@ describe("runtime manifest services", () => {
 		]);
 		expect(serviceConfig.mitmProfileBundlePath).toBeNull();
 
-		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes"))).toBe(true);
-		expect(readlinkSync(join(paths.serviceStateRoot, "bin", "hermes"))).toBe(
-			".clawdi-runtime-command-shim",
+		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes"))).toBe(false);
+		expect(existsSync(join(paths.serviceStateRoot, "bin", ".clawdi-runtime-command-shim"))).toBe(
+			false,
 		);
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes+dashboard"))).toBe(false);
 	});

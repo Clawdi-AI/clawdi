@@ -4,7 +4,7 @@ import { join } from "node:path";
 const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
 const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
 
-export const mitmBrokerEnvKeys = [
+export const mitmSidecarEnvKeys = [
 	"CLAWDI_MITM_ENABLED",
 	"CLAWDI_MITM_PROFILE_BUNDLE",
 	"CLAWDI_MITM_PROXY_URL",
@@ -13,8 +13,8 @@ export const mitmBrokerEnvKeys = [
 	"CLAWDI_MITM_CA_FILE",
 	"CLAWDI_MITM_CA_PATH",
 	"CLAWDI_MITM_SECRET_FILE",
-	"CLAWDI_MITM_BROKER_PATH",
-	"CLAWDI_MITM_BROKER_BUNDLE",
+	"CLAWDI_MITM_SIDECAR_PATH",
+	"CLAWDI_MITM_SIDECAR_BUNDLE",
 	"CLAWDI_MITM_ALLOW_REMOTE_PROXY",
 	"HTTPS_PROXY",
 	"HTTP_PROXY",
@@ -34,7 +34,7 @@ export const mitmBrokerEnvKeys = [
 	"no_proxy",
 ] as const;
 
-export interface MitmBrokerEnvInput {
+export interface MitmSidecarEnvInput {
 	env: NodeJS.ProcessEnv;
 	profileBundlePath: string | null;
 	proxyUrl?: string;
@@ -42,10 +42,10 @@ export interface MitmBrokerEnvInput {
 	secretFile?: string;
 }
 
-export function buildMitmBrokerEnv(input: MitmBrokerEnvInput): NodeJS.ProcessEnv {
+export function buildMitmSidecarEnv(input: MitmSidecarEnvInput): NodeJS.ProcessEnv {
 	if (!input.profileBundlePath) return { ...input.env };
 
-	const env = stripMitmBrokerEnv(input.env);
+	const env = stripMitmSidecarEnv(input.env);
 	const proxyUrl = input.proxyUrl ?? resolveProxyUrl(input.env);
 	const caPath = input.caPath ?? resolveCaPath(input.env);
 	const secretFile = input.secretFile ?? resolveSecretFile(input.env);
@@ -75,21 +75,21 @@ export function buildMitmBrokerEnv(input: MitmBrokerEnvInput): NodeJS.ProcessEnv
 	return env;
 }
 
-export function stripMitmBrokerEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function stripMitmSidecarEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...source };
-	for (const key of mitmBrokerEnvKeys) {
+	for (const key of mitmSidecarEnvKeys) {
 		delete env[key];
 	}
 	return env;
 }
 
-export function stripMitmBrokerControlEnv(env: NodeJS.ProcessEnv): void {
+export function stripMitmSidecarControlEnv(env: NodeJS.ProcessEnv): void {
 	for (const key of Object.keys(env)) {
 		if (key.startsWith("CLAWDI_MITM_")) delete env[key];
 	}
 }
 
-export function applyMitmBrokerRuntimeEnv(
+export function applyMitmSidecarRuntimeEnv(
 	env: NodeJS.ProcessEnv,
 	output: { proxyUrl: string; caFile: string },
 ): void {
@@ -124,7 +124,7 @@ function resolveCaPath(env: NodeJS.ProcessEnv): string {
 	return (
 		env.CLAWDI_MITM_CA_FILE?.trim() ||
 		env.CLAWDI_MITM_CA_PATH?.trim() ||
-		join(resolveMitmRunRoot(env), "brokers", randomUUID(), "ca.pem")
+		join(resolveMitmRunRoot(env), "sidecars", randomUUID(), "ca.pem")
 	);
 }
 

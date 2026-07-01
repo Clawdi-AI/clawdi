@@ -3,40 +3,41 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { stripMitmBrokerControlEnv } from "./mitm-env";
+import { stripMitmSidecarControlEnv } from "./mitm-env";
 
-export interface RuntimeMitmBrokerInput {
+export interface RuntimeMitmSidecarInput {
 	runtime: string;
 	env: NodeJS.ProcessEnv;
 	profileBundlePath: string;
 }
 
-export interface RuntimeMitmBroker {
+export interface RuntimeMitmSidecar {
 	proxyUrl: string;
 	caFile: string;
+	closed?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	stop: () => Promise<void>;
 }
 
-export type RuntimeMitmBrokerFactory = (
-	input: RuntimeMitmBrokerInput,
-) => Promise<RuntimeMitmBroker>;
+export type RuntimeMitmSidecarFactory = (
+	input: RuntimeMitmSidecarInput,
+) => Promise<RuntimeMitmSidecar>;
 
-export function shouldStartRuntimeMitmBroker(env: NodeJS.ProcessEnv): boolean {
+export function shouldStartRuntimeMitmSidecar(env: NodeJS.ProcessEnv): boolean {
 	return env.CLAWDI_MITM_ENABLED === "1" && Boolean(env.CLAWDI_MITM_PROFILE_BUNDLE?.trim());
 }
 
-export async function startRuntimeMitmBroker(
-	input: RuntimeMitmBrokerInput,
-): Promise<RuntimeMitmBroker> {
-	const invocation = resolveBrokerInvocation(input.env);
+export async function startRuntimeMitmSidecar(
+	input: RuntimeMitmSidecarInput,
+): Promise<RuntimeMitmSidecar> {
+	const invocation = resolveSidecarInvocation(input.env);
 	if (!invocation) {
 		throw new Error(
-			"Native MITM broker bundle not found. Expected clawdi-mitm-broker/bin/clawdi-mitm-broker beside the clawdi package entrypoint, or set CLAWDI_MITM_BROKER_BUNDLE or CLAWDI_MITM_BROKER_PATH.",
+			"Native MITM sidecar bundle not found. Expected clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar beside the clawdi package entrypoint, or set CLAWDI_MITM_SIDECAR_BUNDLE or CLAWDI_MITM_SIDECAR_PATH.",
 		);
 	}
 	const caFile = input.env.CLAWDI_MITM_CA_FILE?.trim();
 	if (!caFile) {
-		throw new Error("CLAWDI_MITM_CA_FILE is required when starting the native MITM broker.");
+		throw new Error("CLAWDI_MITM_CA_FILE is required when starting the native MITM sidecar.");
 	}
 
 	const args = [
@@ -55,37 +56,39 @@ export async function startRuntimeMitmBroker(
 	}
 
 	const child = spawn(invocation.command, args, {
-		env: brokerProcessEnv(input.env),
+		env: sidecarProcessEnv(input.env),
 		stdio: ["ignore", "pipe", "pipe"],
 	});
+	const closed = waitForSidecarClose(child);
 	child.stderr.on("data", (chunk) => {
 		if (input.env.CLAWDI_DEBUG === "1") process.stderr.write(chunk);
 	});
 
-	const ready = await waitForBrokerReady(child);
+	const ready = await waitForSidecarReady(child);
 	return {
 		proxyUrl: ready.proxyUrl,
 		caFile: ready.caFile,
+		closed,
 		stop: async () => {
 			await stopChild(child);
 		},
 	};
 }
 
-function brokerProcessEnv(inputEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function sidecarProcessEnv(inputEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const env = { ...process.env, ...inputEnv };
 	delete env.CLAWDI_AUTH_TOKEN;
-	stripMitmBrokerControlEnv(env);
+	stripMitmSidecarControlEnv(env);
 	return env;
 }
 
-function resolveBrokerInvocation(env: NodeJS.ProcessEnv): { command: string } | null {
-	const explicit = env.CLAWDI_MITM_BROKER_PATH?.trim();
+function resolveSidecarInvocation(env: NodeJS.ProcessEnv): { command: string } | null {
+	const explicit = env.CLAWDI_MITM_SIDECAR_PATH?.trim();
 	if (explicit) return { command: explicit };
 
-	const explicitBundle = env.CLAWDI_MITM_BROKER_BUNDLE?.trim();
+	const explicitBundle = env.CLAWDI_MITM_SIDECAR_BUNDLE?.trim();
 	if (explicitBundle) {
-		const executable = join(explicitBundle, "bin", "clawdi-mitm-broker");
+		const executable = join(explicitBundle, "bin", "clawdi-mitm-sidecar");
 		if (existsSync(executable)) return { command: executable };
 	}
 
@@ -98,7 +101,7 @@ function resolveBrokerInvocation(env: NodeJS.ProcessEnv): { command: string } | 
 		join(here, "..", ".."),
 	]);
 	for (const baseDir of baseDirs) {
-		const executable = join(baseDir, "clawdi-mitm-broker", "bin", "clawdi-mitm-broker");
+		const executable = join(baseDir, "clawdi-mitm-sidecar", "bin", "clawdi-mitm-sidecar");
 		if (existsSync(executable)) return { command: executable };
 	}
 
@@ -109,7 +112,7 @@ function unique(values: string[]): string[] {
 	return Array.from(new Set(values.filter(Boolean)));
 }
 
-function waitForBrokerReady(
+function waitForSidecarReady(
 	child: ChildProcessByStdio<null, Readable, Readable>,
 ): Promise<{ proxyUrl: string; caFile: string }> {
 	return new Promise((resolve, reject) => {
@@ -124,7 +127,7 @@ function waitForBrokerReady(
 		};
 		const timer = setTimeout(() => {
 			child.kill("SIGKILL");
-			settle(() => reject(new Error(`MITM broker did not become ready\n${stderr.trim()}`)));
+			settle(() => reject(new Error(`MITM sidecar did not become ready\n${stderr.trim()}`)));
 		}, 15_000);
 
 		child.stdout.setEncoding("utf8");
@@ -137,7 +140,7 @@ function waitForBrokerReady(
 				const parsed: unknown = JSON.parse(line);
 				if (isRecord(parsed) && parsed.ready === false) {
 					const reason = typeof parsed.reason === "string" ? `: ${parsed.reason}` : "";
-					settle(() => reject(new Error(`MITM broker did not become ready${reason}`)));
+					settle(() => reject(new Error(`MITM sidecar did not become ready${reason}`)));
 					return;
 				}
 				if (
@@ -151,7 +154,7 @@ function waitForBrokerReady(
 					settle(() => resolve({ proxyUrl, caFile }));
 					return;
 				}
-				settle(() => reject(new Error(`MITM broker emitted invalid ready payload: ${line}`)));
+				settle(() => reject(new Error(`MITM sidecar emitted invalid ready payload: ${line}`)));
 			} catch (error) {
 				settle(() => reject(error));
 			}
@@ -166,7 +169,7 @@ function waitForBrokerReady(
 			const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
 			settle(() =>
 				reject(
-					new Error(`MITM broker exited before ready: code=${code} signal=${signal}\n${detail}`),
+					new Error(`MITM sidecar exited before ready: code=${code} signal=${signal}\n${detail}`),
 				),
 			);
 		});
@@ -188,6 +191,16 @@ function stopChild(child: ChildProcessByStdio<null, Readable, Readable>): Promis
 			resolve();
 		});
 		child.kill("SIGTERM");
+	});
+}
+
+function waitForSidecarClose(
+	child: ChildProcessByStdio<null, Readable, Readable>,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+	return new Promise((resolve) => {
+		child.once("close", (code, signal) => {
+			resolve({ code, signal });
+		});
 	});
 }
 

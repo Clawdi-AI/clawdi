@@ -10,7 +10,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
-import { startRuntimeBridge } from "../runtime/bridge";
+import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -28,6 +28,7 @@ import {
 	type RuntimeManifestNotModified,
 	runtimeSourceAuthEnv,
 } from "../runtime/manifest-source";
+import { startRuntimeMitmSidecar } from "../runtime/mitm-sidecar";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -1962,21 +1963,72 @@ function nextCliInstallBackoffMs(previousMs: number): number {
 	return Math.min(previousMs * 2, 300_000);
 }
 
-export async function runtimeBridge(): Promise<void> {
+export async function runtimeSidecar(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime bridge is only available in hosted runtime mode");
+		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
-	const bridge = await startRuntimeBridge();
-	console.error(
-		`runtime bridge listening on ${bridge.surfaces
-			.map(
-				(surface) =>
-					`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-			)
-			.join(", ")}`,
+	const profileBundlePath = process.env.CLAWDI_MITM_PROFILE_BUNDLE?.trim();
+	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
+	const shouldStartMitm = Boolean(profileBundlePath);
+	if (!shouldStartBridge && !shouldStartMitm) {
+		throw new Error(
+			`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV} or CLAWDI_MITM_PROFILE_BUNDLE.`,
+		);
+	}
+
+	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
+	let mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null = null;
+	try {
+		if (shouldStartBridge) {
+			bridge = await startRuntimeBridge();
+			console.error(
+				`runtime sidecar bridge module listening on ${bridge.surfaces
+					.map(
+						(surface) =>
+							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
+					)
+					.join(", ")}`,
+			);
+		}
+		if (shouldStartMitm && profileBundlePath) {
+			mitm = await startRuntimeMitmSidecar({
+				runtime: "supervisor",
+				env: process.env,
+				profileBundlePath,
+			});
+			console.error(`runtime sidecar MITM module listening on ${mitm.proxyUrl}`);
+		}
+	} catch (error) {
+		await stopRuntimeSidecarModules(bridge, mitm);
+		throw error;
+	}
+
+	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
+	const waiters: Array<
+		Promise<
+			| { kind: "shutdown" }
+			| { kind: "mitm-closed"; code: number | null; signal: NodeJS.Signals | null }
+		>
+	> = [shutdown];
+	if (mitm?.closed) {
+		waiters.push(mitm.closed.then((result) => ({ kind: "mitm-closed" as const, ...result })));
+	}
+	const result = await Promise.race(waiters);
+	if (result.kind === "shutdown") {
+		await stopRuntimeSidecarModules(bridge, mitm);
+		return;
+	}
+	await stopRuntimeSidecarModules(bridge, mitm);
+	throw new Error(
+		`runtime sidecar MITM module exited unexpectedly: code=${result.code} signal=${result.signal}`,
 	);
-	await waitForShutdownSignal();
-	await bridge.close();
+}
+
+async function stopRuntimeSidecarModules(
+	bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null,
+	mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null,
+): Promise<void> {
+	await Promise.allSettled([mitm?.stop(), bridge?.close()].filter(Boolean));
 }
 
 function waitForShutdownSignal(): Promise<void> {

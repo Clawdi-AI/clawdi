@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public roadmap |
-| Last updated | 2026-06-30 |
+| Last updated | 2026-07-01 |
 | Owner | CLI runtime layer |
 
 This roadmap tracks the open-source CLI work needed for managed runtime
@@ -14,19 +14,22 @@ this repository.
 ## Current Capabilities
 
 - Runtime policy and desired-state validation.
-- `clawdi runtime init/watch/bridge/status/doctor` command surface.
+- `clawdi runtime init/watch/sidecar/status/doctor` command surface.
 - Local fixture manifests for tests and diagnostics.
 - Deterministic provider and channel projection.
 - Non-secret desired-state cache and secret redaction.
-- Runtime launch through `clawdi run -- <command>`.
-- Generated command shims for managed runtime names.
+- Explicit local/runtime debug launch through `clawdi run -- <command>`.
+- Direct supervisor launch for managed daemon runtime processes.
+- Clawdi support program boundaries for manifest watch, live sync, optional
+  bridge, optional MITM, status, and diagnostics.
 - Stable-image contract: runtime behavior is driven by manifest + CLI, not
   image-level per-agent wrappers.
-- Supervisor rendering that launches runtimes through `clawdi run -- <runtime>`.
-- Runtime bridge for browser runtime UI surfaces.
+- Supervisor rendering that starts official runtime binaries directly with
+  manifest-derived args, cwd, and env.
+- Sidecar bridge module for Control UI surfaces.
 - Hosted Terminal dashboard contract with xterm, tty-style framing, and
   WebSocket subprotocol token transport.
-- Broker profile validation and local broker lifecycle tests.
+- Sidecar profile validation and local sidecar lifecycle tests.
 
 ## Active Work
 
@@ -38,8 +41,16 @@ this repository.
    `google_generate_content`.
 4. Keep target-runtime transport names inside projection code only.
 5. Improve diagnostics without printing secrets.
-6. Expand focused tests for provider, channel, run-environment, command-shim,
-   runtime UI, and Terminal projection.
+6. Expand focused tests for provider, channel, run-environment, direct
+   supervisor rendering, runtime-owned services, Control UI, and Terminal
+   projection.
+
+## Reference Research
+
+Official Hermes/OpenClaw Docker images remain useful references for process
+shape, ports, health checks, and safe network defaults. They are not the primary
+hosted update model while official in-place UI updates remain a requirement,
+because Docker installs update by image rollout.
 
 ## Non-Goals
 
