@@ -508,6 +508,12 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 								}
 							: undefined,
 					run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
+					services: Object.fromEntries(
+						Object.entries(runtime.services ?? {}).map(([service, run]) => [
+							service,
+							hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
+						]),
+					),
 				},
 			]),
 		),
@@ -542,6 +548,21 @@ function hostedRuntimeRunSettings(
 		cwd,
 		prependPath: run?.prependPath ?? [],
 	};
+}
+
+function hostedRuntimeServiceRunSettings(
+	run: RuntimeRunSettings,
+	runtimeWorkspace: string | undefined,
+	workspaceRoot: string,
+): RuntimeRunSettings {
+	return (
+		hostedRuntimeRunSettings(run, runtimeWorkspace, workspaceRoot) ?? {
+			args: [],
+			env: {},
+			cwd: runtimeWorkspace ?? workspaceRoot,
+			prependPath: [],
+		}
+	);
 }
 
 function hostedControlPlaneApiUrl(hosted: HostedRuntimeManifest): string {

@@ -43,6 +43,7 @@ import {
 	type RuntimeRunConfigRead,
 	type RuntimeRunInvocation,
 	readRuntimeRunConfigForCommand,
+	readRuntimeServiceRunConfig,
 	runtimeCommandShimDir,
 	withoutPathEntry,
 } from "../runtime/run-config";
@@ -56,6 +57,7 @@ interface RunOpts {
 	allVaultEnv?: boolean;
 	allowConflicts?: boolean;
 	dryRun?: boolean;
+	runtimeService?: string;
 }
 
 interface SelectedProject {
@@ -83,13 +85,37 @@ export async function run(
 	spawnImpl: SpawnFn = spawn,
 	brokerFactory: RuntimeMitmBrokerFactory = startRuntimeMitmBroker,
 ) {
-	if (args.length === 0) {
+	if (args.length === 0 && !opts.runtimeService) {
 		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
 		process.exit(1);
 	}
 
-	const hostedRuntimeRun = hostedRuntimeRunConfig(args[0]);
 	const baseProcessEnv = { ...process.env };
+	const hostedServiceRun = hostedRuntimeServiceRunConfig(opts.runtimeService);
+	if (hostedServiceRun.status === "ok" && !requiresCloudResolution(opts)) {
+		const paths = getRuntimePaths({ mode: "hosted" });
+		await spawnRuntimeInvocation(
+			buildRuntimeRunInvocation(
+				hostedServiceRun,
+				[hostedServiceRun.runtime],
+				baseProcessEnv,
+				paths,
+			),
+			spawnImpl,
+			brokerFactory,
+		);
+		return;
+	}
+	if (
+		hostedServiceRun.status !== "not-runtime" &&
+		hostedServiceRun.status !== "ok" &&
+		!requiresCloudResolution(opts)
+	) {
+		console.log(chalk.red(hostedRuntimeRunError(hostedServiceRun)));
+		process.exit(1);
+	}
+
+	const hostedRuntimeRun = hostedRuntimeRunConfig(args[0]);
 	const hostedGenericRun = hostedGenericRunInvocation(args, baseProcessEnv);
 	if (hostedRuntimeRun.status === "ok" && !requiresCloudResolution(opts)) {
 		const paths = getRuntimePaths({ mode: "hosted" });
@@ -265,9 +291,18 @@ function requiresCloudResolution(opts: RunOpts): boolean {
 	);
 }
 
-function hostedRuntimeRunConfig(command: string): RuntimeRunConfigRead {
+function hostedRuntimeRunConfig(command: string | undefined): RuntimeRunConfigRead {
 	if (detectRuntimeMode() !== "hosted") return { status: "not-runtime", runtime: null };
+	if (!command) return { status: "not-runtime", runtime: null };
 	return readRuntimeRunConfigForCommand(command, getRuntimePaths({ mode: "hosted" }));
+}
+
+function hostedRuntimeServiceRunConfig(selector: string | undefined): RuntimeRunConfigRead {
+	if (detectRuntimeMode() !== "hosted") return { status: "not-runtime", runtime: null };
+	if (!selector) return { status: "not-runtime", runtime: null };
+	const [runtime, service, ...rest] = selector.split("+");
+	if (!runtime || !service || rest.length > 0) return { status: "not-runtime", runtime: null };
+	return readRuntimeServiceRunConfig(runtime, service, getRuntimePaths({ mode: "hosted" }));
 }
 
 function hostedGenericRunInvocation(
@@ -281,6 +316,7 @@ function hostedGenericRunInvocation(
 	const mitmProfileBundle = existsSync(paths.mitmProfileBundle) ? paths.mitmProfileBundle : null;
 	return {
 		runtime: "generic",
+		service: null,
 		command,
 		args: commandArgs,
 		cwd: process.cwd(),

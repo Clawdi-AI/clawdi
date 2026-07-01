@@ -62,9 +62,11 @@ import {
 	buildRuntimeRunConfig,
 	isSupportedRuntimeName,
 	type RuntimeName,
+	type RuntimeServiceName,
 	runtimeCommandShimDir,
 	runtimeNameSchema,
-	runtimeRunConfigPath,
+	runtimeRunConfigId,
+	runtimeServiceNameSchema,
 	type SupportedRuntimeName,
 	writeRuntimeRunConfig,
 } from "./run-config";
@@ -1088,19 +1090,24 @@ function clearMitmProfileBundle(paths: RuntimePaths): null {
 	return null;
 }
 
-function removeStaleRuntimeRunConfigs(
-	writtenRuntimes: Set<RuntimeName>,
-	paths: RuntimePaths,
-): void {
+function removeStaleRuntimeRunConfigs(writtenRunConfigIds: Set<string>, paths: RuntimePaths): void {
 	if (!existsSync(paths.runConfigRoot)) return;
 	for (const entry of readdirSync(paths.runConfigRoot)) {
 		if (!entry.endsWith(".json")) continue;
-		const runtime = entry.slice(0, -".json".length);
-		if (!runtimeNameSchema.safeParse(runtime).success) continue;
-		if (!writtenRuntimes.has(runtime)) {
-			rmSync(runtimeRunConfigPath(runtime, paths), { force: true });
+		const id = entry.slice(0, -".json".length);
+		if (!runtimeRunConfigIdIsValid(id)) continue;
+		if (!writtenRunConfigIds.has(id)) {
+			rmSync(join(paths.runConfigRoot, entry), { force: true });
 		}
 	}
+}
+
+function runtimeRunConfigIdIsValid(id: string): boolean {
+	const [runtime, service, ...rest] = id.split("+");
+	if (rest.length > 0) return false;
+	if (!runtimeNameSchema.safeParse(runtime).success) return false;
+	if (service === undefined) return true;
+	return runtimeServiceNameSchema.safeParse(service).success;
 }
 
 const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
@@ -1373,6 +1380,20 @@ function runtimeProgramRevision(
 	});
 }
 
+function runtimeServiceProgramRevision(
+	manifest: RuntimeManifest,
+	runtime: string,
+	service: string,
+): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		controlPlane: manifest.controlPlane,
+		runtime: runtime,
+		service,
+		settings: manifest.runtimes[runtime]?.services?.[service] ?? null,
+	});
+}
+
 function daemonProgramRevision(manifest: RuntimeManifest): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
@@ -1568,6 +1589,31 @@ function writeSupervisorConfig(
 			`environment=${runtimeEnvironment}`,
 			"",
 		);
+		for (const service of runtimeServiceNames(manifest, runtime)) {
+			const serviceEnvironment = supervisorEnvironment({
+				...commonEnvironment,
+				CLAWDI_AUTH_TOKEN: "",
+				CLAWDI_RUNTIME_REV: runtimeServiceProgramRevision(manifest, runtime, service),
+			});
+			lines.push(
+				`[program:${runtimeServiceProgramName(runtime, service)}]`,
+				`command=/usr/bin/env clawdi run --runtime-service ${runtimeRunConfigId(runtimeNameSchema.parse(runtime), service)} -- ${runtime}`,
+				`directory=${workspaceRoot}`,
+				...(runtimeNeedsSystemBoundary ? [] : [`user=${runtimeUser}`]),
+				"autostart=true",
+				"autorestart=true",
+				"startsecs=2",
+				"startretries=5",
+				"stopasgroup=true",
+				"killasgroup=true",
+				"stdout_logfile=/dev/fd/1",
+				"stdout_logfile_maxbytes=0",
+				"stderr_logfile=/dev/fd/2",
+				"stderr_logfile_maxbytes=0",
+				`environment=${serviceEnvironment}`,
+				"",
+			);
+		}
 	}
 
 	writePrivateFileAtomic(paths.supervisorConfig, `${lines.join("\n")}\n`, { mode: 0o644 });
@@ -1578,6 +1624,22 @@ function shouldSuperviseRuntime(runtime: string, manifest: RuntimeManifest): boo
 	const desired = manifest.runtimes[runtime];
 	if (!desired?.enabled) return false;
 	return isSupportedRuntimeName(runtime) || Boolean(desired.run?.command?.trim());
+}
+
+function runtimeServiceNames(manifest: RuntimeManifest, runtime: string): RuntimeServiceName[] {
+	const desired = manifest.runtimes[runtime];
+	if (!desired?.enabled) return [];
+	return Object.keys(desired.services ?? {})
+		.map((service) => runtimeServiceNameSchema.parse(service))
+		.sort();
+}
+
+function runtimeServiceProgramName(runtime: string, service: string): string {
+	return `clawdi-${supervisorProgramSegment(runtime)}-${supervisorProgramSegment(service)}`;
+}
+
+function supervisorProgramSegment(value: string): string {
+	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
 }
 
 function writeRuntimeCommandShims(commands: Iterable<RuntimeName>, paths: RuntimePaths): void {
@@ -1821,7 +1883,7 @@ export function convergeRuntimeManifest(
 		daemonAuthTokenFile,
 		load.secretValues,
 	);
-	const writtenRunConfigRuntimes = new Set<RuntimeName>();
+	const writtenRunConfigIds = new Set<string>();
 	for (const agent of desiredLiveSyncAgents(manifest)) {
 		const parsed = runtimeNameSchema.safeParse(agent.agentType);
 		if (parsed.success) commandShims.add(parsed.data);
@@ -1908,8 +1970,30 @@ export function convergeRuntimeManifest(
 			paths,
 		);
 		runConfigs.push(runConfigPath);
-		writtenRunConfigRuntimes.add(runtimeName);
+		writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
 		commandShims.add(runtimeName);
+		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
+			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceRunConfigPath = writeRuntimeRunConfig(
+				buildRuntimeRunConfig({
+					runtime: runtimeName,
+					service,
+					enabled: runtime.enabled,
+					generatedAt,
+					generation: manifest.generation,
+					instanceId: manifest.instanceId,
+					commandPath: observation.commandPath,
+					appRoot: observation.appRoot,
+					workspaceRoot,
+					settings: serviceSettings,
+					secretFilePath: null,
+					secretEnv: {},
+				}),
+				paths,
+			);
+			runConfigs.push(serviceRunConfigPath);
+			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
+		}
 
 		const semaphorePath = join(semRoot, `${name}.enabled`);
 		if (runtime.enabled) {
@@ -1925,7 +2009,7 @@ export function convergeRuntimeManifest(
 
 	const bootFinished = join(instanceRoot, "boot-finished");
 	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
-	removeStaleRuntimeRunConfigs(writtenRunConfigRuntimes, paths);
+	removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
 	if (installErrors.length === 0) {
 		manifestLastGood = writeLastGoodManifest(manifest, paths);
 	}
