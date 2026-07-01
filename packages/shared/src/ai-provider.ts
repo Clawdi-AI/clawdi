@@ -120,8 +120,14 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderType, string>> = {
 	mistral: "https://api.mistral.ai/v1",
 };
 
-const CLAWDI_MANAGED_PROVIDER_ID = "clawdi-managed";
-const CLAWDI_MANAGED_API_MODE = "openai_chat";
+const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
+const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
+const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-managed-v2";
+const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
+const CLAWDI_MANAGED_PROVIDER_IDS = new Set([
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_PROVIDER_ID,
+]);
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
 
 export function isAiProviderId(input: string): boolean {
@@ -227,7 +233,7 @@ function validateProvider(
 	if (!isHttpUrl(provider.base_url)) {
 		errors.push(`Provider ${prefix} has invalid base_url.`);
 	}
-	if (isLegacyOpenAiCodexModelRef(provider.default_model)) {
+	if (isLegacyOpenAiCodexModelRef(provider.default_model) && !isLegacyManagedProvider(provider)) {
 		errors.push(
 			`Provider ${prefix} default_model must use the OpenAI model id without the legacy openai-codex prefix.`,
 		);
@@ -262,24 +268,25 @@ function validateManagedProviderContract(
 	errors: string[],
 ): void {
 	const isManagedContract =
-		provider.id === CLAWDI_MANAGED_PROVIDER_ID || provider.managed_by === "clawdi";
+		CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.managed_by === "clawdi";
 	if (!isManagedContract) return;
 
-	if (provider.id !== CLAWDI_MANAGED_PROVIDER_ID) {
-		errors.push(`Provider ${prefix} managed_by clawdi must use id ${CLAWDI_MANAGED_PROVIDER_ID}.`);
+	const expectedApiMode = clawdiManagedApiMode(provider.id);
+	if (!expectedApiMode) {
+		errors.push(
+			`Provider ${prefix} managed_by clawdi must use id ${Array.from(CLAWDI_MANAGED_PROVIDER_IDS)
+				.sort()
+				.join(" or ")}.`,
+		);
 	}
 	if (provider.managed_by !== "clawdi") {
-		errors.push(
-			`Provider ${prefix} with id ${CLAWDI_MANAGED_PROVIDER_ID} must be managed_by clawdi.`,
-		);
+		errors.push(`Provider ${prefix} with Clawdi-managed id must be managed_by clawdi.`);
 	}
 	if (provider.type !== "custom_openai_compatible") {
 		errors.push(`Provider ${prefix} managed_by clawdi must use custom_openai_compatible.`);
 	}
-	if (provider.api_mode !== CLAWDI_MANAGED_API_MODE) {
-		errors.push(
-			`Provider ${prefix} managed_by clawdi must use api_mode ${CLAWDI_MANAGED_API_MODE}.`,
-		);
+	if (expectedApiMode && provider.api_mode !== expectedApiMode) {
+		errors.push(`Provider ${prefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
 	}
 	if (provider.runtime_env_name !== CLAWDI_MANAGED_RUNTIME_ENV) {
 		errors.push(
@@ -290,6 +297,16 @@ function validateManagedProviderContract(
 	if (!isRecord(auth) || auth.type !== "api_key" || auth.source !== "managed") {
 		errors.push(`Provider ${prefix} managed_by clawdi must use managed api_key auth.`);
 	}
+}
+
+function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
+	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
+	if (providerId === CLAWDI_MANAGED_V2_PROVIDER_ID) return CLAWDI_MANAGED_V2_API_MODE;
+	return null;
+}
+
+function isLegacyManagedProvider(provider: AiProvider): boolean {
+	return provider.managed_by === "clawdi" && provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID;
 }
 
 function validateAuth(

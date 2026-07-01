@@ -10,12 +10,28 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.user import User
 from app.services.vault_crypto import encrypt
 
-MANAGED_AI_PROVIDER_ID = "clawdi-managed"
-MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
+V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
+V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
+V2_MANAGED_AI_PROVIDER_ID = "clawdi-managed-v2"
+V2_MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
+
+# The admin managed-provider path is owned by hosted v2. V1 writes its provider
+# through the user AI Provider endpoint with the v1-specific id/mode above.
+MANAGED_AI_PROVIDER_ID = V2_MANAGED_AI_PROVIDER_ID
+MANAGED_AI_PROVIDER_API_MODE = V2_MANAGED_AI_PROVIDER_API_MODE
+MANAGED_AI_PROVIDER_IDS = frozenset({V1_MANAGED_AI_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID})
 MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 MANAGED_AI_PROVIDER_TYPE = "custom_openai_compatible"
 MANAGED_AI_PROVIDER_LABEL = "Clawdi managed"
 MANAGED_AI_PROVIDER_PROFILE = "default"
+
+
+def managed_provider_api_mode(provider_id: str) -> str | None:
+    if provider_id == V1_MANAGED_AI_PROVIDER_ID:
+        return V1_MANAGED_AI_PROVIDER_API_MODE
+    if provider_id == V2_MANAGED_AI_PROVIDER_ID:
+        return V2_MANAGED_AI_PROVIDER_API_MODE
+    return None
 
 
 def validate_managed_provider_base_url(base_url: str) -> None:

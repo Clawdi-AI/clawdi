@@ -19,9 +19,11 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.managed_ai_provider import (
-    MANAGED_AI_PROVIDER_API_MODE,
     MANAGED_AI_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    V1_MANAGED_AI_PROVIDER_ID,
+    managed_provider_api_mode,
 )
 from app.services.vault_crypto import decrypt
 
@@ -253,7 +255,7 @@ def _provider_manifest_entry(
     api_mode = provider.api_mode
     runtime_env_name = provider.runtime_env_name
     if is_managed:
-        api_mode = MANAGED_AI_PROVIDER_API_MODE
+        api_mode = managed_provider_api_mode(provider.provider_id) or provider.api_mode
         runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     selected_model = model or provider.default_model
     if selected_model:
@@ -293,7 +295,7 @@ def _provider_secret_ref(runtime_name: str) -> str:
 
 
 def _is_clawdi_managed_provider(provider: AiProvider) -> bool:
-    return provider.provider_id == MANAGED_AI_PROVIDER_ID or (
+    return provider.provider_id in MANAGED_AI_PROVIDER_IDS or (
         provider.managed_by == "clawdi"
         and provider.auth_type == "api_key"
         and (provider.auth_metadata or {}).get("source") == "managed"
@@ -359,12 +361,16 @@ async def _select_provider(
         )
         return result.scalar_one_or_none()
 
-    result = await db.execute(
-        select(AiProvider).where(*filters, AiProvider.provider_id == MANAGED_AI_PROVIDER_ID)
-    )
-    managed = result.scalar_one_or_none()
-    if managed is not None:
-        return managed
+    for managed_provider_id in (MANAGED_AI_PROVIDER_ID, V1_MANAGED_AI_PROVIDER_ID):
+        result = await db.execute(
+            select(AiProvider).where(
+                *filters,
+                AiProvider.provider_id == managed_provider_id,
+            )
+        )
+        managed = result.scalar_one_or_none()
+        if managed is not None:
+            return managed
 
     result = await db.execute(select(AiProvider).where(*filters).order_by(AiProvider.provider_id))
     return result.scalars().first()

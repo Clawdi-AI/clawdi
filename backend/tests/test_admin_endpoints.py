@@ -465,7 +465,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
 
     raw_key = "sk-admin-managed-secret"
     r = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed",
+        "/api/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -530,7 +530,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     from app.services.vault_crypto import decrypt
 
     first = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed",
+        "/api/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -541,7 +541,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     assert first.status_code == 200, first.text
     second_key = "sk-second-admin-managed-secret"
     second = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed",
+        "/api/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -554,24 +554,32 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     assert second_key not in second.text
 
     providers = (
-        await db_session.execute(
-            select(AiProvider).where(
-                AiProvider.owner_user_id == seed_user.id,
-                AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+        (
+            await db_session.execute(
+                select(AiProvider).where(
+                    AiProvider.owner_user_id == seed_user.id,
+                    AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(providers) == 1
     assert providers[0].default_model == "gpt-5.4"
 
     payloads = (
-        await db_session.execute(
-            select(AiProviderAuthPayload).where(
-                AiProviderAuthPayload.owner_user_id == seed_user.id,
-                AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+        (
+            await db_session.execute(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id == seed_user.id,
+                    AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(payloads) == 1
     assert decrypt(payloads[0].encrypted_payload, payloads[0].nonce) == second_key
 
@@ -580,7 +588,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
 async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_client, seed_user):
     raw_key = "sk-invalid-url-secret"
     r = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed",
+        "/api/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,

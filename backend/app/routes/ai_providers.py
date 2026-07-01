@@ -38,9 +38,9 @@ from app.schemas.ai_provider import (
     AiProviderValidationResponse,
 )
 from app.services.managed_ai_provider import (
-    MANAGED_AI_PROVIDER_API_MODE,
-    MANAGED_AI_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    managed_provider_api_mode,
 )
 from app.services.vault_crypto import decrypt, encrypt
 
@@ -880,7 +880,11 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
-    if body.default_model and body.default_model.startswith("openai-codex/"):
+    if (
+        body.default_model
+        and body.default_model.startswith("openai-codex/")
+        and not _is_legacy_managed_provider(body)
+    ):
         errors.append(
             "default_model must use the OpenAI model id without the legacy openai-codex prefix"
         )
@@ -895,19 +899,21 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
 
 
 def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
-    is_managed_contract = body.provider_id == MANAGED_AI_PROVIDER_ID or body.managed_by == "clawdi"
+    is_managed_contract = body.provider_id in MANAGED_AI_PROVIDER_IDS or body.managed_by == "clawdi"
     if not is_managed_contract:
         return []
 
     errors: list[str] = []
-    if body.provider_id != MANAGED_AI_PROVIDER_ID:
-        errors.append(f"managed Clawdi provider must use provider_id {MANAGED_AI_PROVIDER_ID}")
+    expected_api_mode = managed_provider_api_mode(body.provider_id)
+    if expected_api_mode is None:
+        allowed_ids = ", ".join(sorted(MANAGED_AI_PROVIDER_IDS))
+        errors.append(f"managed Clawdi provider must use provider_id one of: {allowed_ids}")
     if body.managed_by != "clawdi":
-        errors.append("clawdi-managed provider must be managed_by clawdi")
+        errors.append("managed Clawdi provider must be managed_by clawdi")
     if body.type != "custom_openai_compatible":
         errors.append("managed Clawdi provider must use custom_openai_compatible")
-    if body.api_mode != MANAGED_AI_PROVIDER_API_MODE:
-        errors.append(f"managed Clawdi provider must use api_mode {MANAGED_AI_PROVIDER_API_MODE}")
+    if expected_api_mode is not None and body.api_mode != expected_api_mode:
+        errors.append(f"managed Clawdi provider must use api_mode {expected_api_mode}")
     if body.auth.type != "api_key" or body.auth.source != "managed":
         errors.append("managed Clawdi provider must use managed api_key auth")
     if body.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV:
@@ -915,6 +921,12 @@ def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
             f"managed Clawdi provider must use runtime_env_name {MANAGED_AI_PROVIDER_RUNTIME_ENV}"
         )
     return errors
+
+
+def _is_legacy_managed_provider(body: AiProviderUpsert) -> bool:
+    return managed_provider_api_mode(body.provider_id) == "openai_responses" and (
+        body.managed_by == "clawdi"
+    )
 
 
 def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:

@@ -238,7 +238,7 @@ async def admin_revoke_api_key(
 
 
 @router.put(
-    "/ai-providers/clawdi-managed",
+    f"/ai-providers/{MANAGED_AI_PROVIDER_ID}",
     response_model=AdminManagedAiProviderResponse,
 )
 async def admin_upsert_clawdi_managed_ai_provider(
