@@ -44,7 +44,7 @@ jobs:
       any: ${{ steps.filter.outputs.any }}
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -83,7 +83,7 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -144,7 +144,7 @@ jobs:
       CLERK_PEM_PUBLIC_KEY: ""
       CORS_ORIGINS: '["http://localhost:3000"]'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
