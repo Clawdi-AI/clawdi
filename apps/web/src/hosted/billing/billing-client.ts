@@ -117,8 +117,7 @@ export function useBillingClient() {
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/me")),
-			getLegacyAgentEnvironments: async () =>
-				unwrapDeploy(await api.GET("/legacy/agent-environments")),
+			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/agent-environments")),
 
 			listDeployments: async () => unwrapDeploy(await api.GET("/v2/deployments")),
 			createDeployment: async (body: DeployRequest) =>
