@@ -9,8 +9,10 @@ import {
 	HostedUnavailableBanner,
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
+import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 const LEGACY_HOSTED_COMPUTE_ID = "legacy-hosted-dashboard";
@@ -68,10 +70,14 @@ export function HostedAgentsSection({
 		includeDeployments: showCloudDeployments,
 		includeLegacyDashboard: showLegacyDashboard,
 	});
+	const legacyEnvIds = useLegacyEnvIds();
+	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
+	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
 	const legacyConnectedTiles = legacyConnectedTilesForAccess({
 		showLegacyAgents,
 		showCloudDeployments,
 		hosted,
+		legacyEnvIds,
 		cloudEnvs,
 	});
 	// Drop self-managed tiles whose env is already represented by a
@@ -82,9 +88,9 @@ export function HostedAgentsSection({
 	// `claimedEnvIds` is lower-cased at insertion in `useHostedAgentTiles`
 	// (see comment there); compare on the lower-cased tile id so an
 	// uppercase / mixed-case env_id on either side still matches.
-	const dedupedSelfManaged = selfManagedTiles.filter(
-		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
-	);
+	const dedupedSelfManaged = ownershipLoading
+		? []
+		: selfManagedTiles.filter((t) => !isOwnedEnvId(t.id, hosted.claimedEnvIds, legacyEnvIds));
 	const agentTiles: AgentTile[] = [...hosted.tiles, ...legacyConnectedTiles, ...dedupedSelfManaged];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in
@@ -96,6 +102,7 @@ export function HostedAgentsSection({
 		hosted.tiles.length === 0 &&
 		legacyConnectedTiles.length === 0 &&
 		!hosted.isLoading &&
+		!legacyOwnershipLoading &&
 		!hosted.error;
 	return (
 		<div data-hosted="true">
@@ -105,7 +112,10 @@ export function HostedAgentsSection({
 				<AgentsCard
 					agents={agentTiles}
 					isLoading={envsLoading}
-					hostedStatus={{ isLoading: hosted.isLoading, error: hosted.error }}
+					hostedStatus={{
+						isLoading: ownershipLoading,
+						error: hosted.error,
+					}}
 				/>
 			)}
 		</div>
@@ -116,11 +126,13 @@ function legacyConnectedTilesForAccess({
 	showLegacyAgents,
 	showCloudDeployments,
 	hosted,
+	legacyEnvIds,
 	cloudEnvs,
 }: {
 	showLegacyAgents: boolean;
 	showCloudDeployments: boolean;
 	hosted: ReturnType<typeof useHostedAgentTiles>;
+	legacyEnvIds: ReadonlySet<string> | null;
 	cloudEnvs: Env[];
 }): AgentTile[] {
 	if (!showLegacyAgents) return [];
@@ -132,7 +144,17 @@ function legacyConnectedTilesForAccess({
 	// When Cloud deployments are enabled, wait for the deployment query before
 	// projecting legacy environments so a Cloud-claimed env is not briefly duplicated.
 	if (showCloudDeployments && hosted.isLoading) return [];
-	return legacyConnectedAgentTiles(cloudEnvs, hosted.claimedEnvIds);
+	if (!legacyEnvIds) return [];
+	return legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, hosted.claimedEnvIds);
+}
+
+function isOwnedEnvId(
+	id: string,
+	claimedEnvIds: ReadonlySet<string>,
+	legacyEnvIds: ReadonlySet<string> | null,
+): boolean {
+	const envId = normalizeAgentEnvId(id);
+	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds?.has(envId)));
 }
 
 /**
@@ -167,15 +189,19 @@ export function HostedSecondaryCTA({
 		includeDeployments: showCloudDeployments,
 		includeLegacyDashboard: showLegacyDashboard,
 	});
+	const legacyEnvIds = useLegacyEnvIds();
+	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
+	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
 	const legacyConnectedTiles = legacyConnectedTilesForAccess({
 		showLegacyAgents,
 		showCloudDeployments,
 		hosted,
+		legacyEnvIds,
 		cloudEnvs,
 	});
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.
-	if (envsLoading || hosted.isLoading) return null;
+	if (envsLoading || ownershipLoading) return null;
 	const hasAnyAgent =
 		selfManagedCount > 0 || hosted.tiles.length > 0 || legacyConnectedTiles.length > 0;
 	return hasAnyAgent ? <OnboardingCard variant="additional-agent" /> : null;
@@ -209,15 +235,19 @@ export function HostedAgentsByCompute({
 		includeDeployments: showCloudDeployments,
 		includeLegacyDashboard: showLegacyDashboard,
 	});
+	const legacyEnvIds = useLegacyEnvIds();
+	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
+	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
 	const legacyConnectedTiles = legacyConnectedTilesForAccess({
 		showLegacyAgents,
 		showCloudDeployments,
 		hosted,
+		legacyEnvIds,
 		cloudEnvs,
 	});
-	const dedupedSelfManaged = selfManagedTiles.filter(
-		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
-	);
+	const dedupedSelfManaged = ownershipLoading
+		? []
+		: selfManagedTiles.filter((t) => !isOwnedEnvId(t.id, hosted.claimedEnvIds, legacyEnvIds));
 	const hostedTiles = hosted.tiles;
 	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
 
@@ -241,6 +271,7 @@ export function HostedAgentsByCompute({
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0 &&
 		!hosted.isLoading &&
+		!legacyOwnershipLoading &&
 		!hosted.error;
 	if (isEmptyState) {
 		return (
@@ -250,7 +281,7 @@ export function HostedAgentsByCompute({
 		);
 	}
 
-	if ((envsLoading || hosted.isLoading) && groups.length === 0 && connectedTiles.length === 0) {
+	if ((envsLoading || ownershipLoading) && groups.length === 0 && connectedTiles.length === 0) {
 		return (
 			<div data-hosted="true">
 				<AgentsCard agents={[]} isLoading />

@@ -11,7 +11,6 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 	agentTypeLabel,
-	isHostedAgentEnvironment,
 } from "@/components/dashboard/agent-label";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
@@ -21,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -49,6 +49,7 @@ export function AgentSettingsPanel({
 	const api = useApi();
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const ownership = useAgentOwnership();
 	const uploadAvatar = useAgentAvatarUploader();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const [draftName, setDraftName] = useState("");
@@ -177,14 +178,19 @@ export function AgentSettingsPanel({
 	const currentCustomName = agent.display_name ?? null;
 	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
-	const isHosted = isHostedAgentEnvironment(agent);
+	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
+	// Disconnect deregisters the environment — destructive, so it must wait
+	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
+	// is still resolving, a live hosted/legacy agent would otherwise briefly
+	// classify as connected and expose a working Disconnect.
+	const disconnectUnavailable = ownership === null || ownershipKind !== "connected";
 	const isBusy =
 		updateIdentity.isPending ||
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = agentDisplayName(agent);
-	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
+	const displayName = agentDisplayName(agent, { ownershipKind });
+	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null }, { ownershipKind });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 
@@ -210,7 +216,12 @@ export function AgentSettingsPanel({
 					<div className="max-w-full truncate text-lg font-semibold leading-7">{displayName}</div>
 					<div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground sm:justify-start">
 						<span>{runtimeLabel}</span>
-						<AgentSourceBadgeForEnvironment env={agent} compact showConnected />
+						<AgentSourceBadgeForEnvironment
+							env={agent}
+							ownershipKind={ownershipKind}
+							compact
+							showConnected
+						/>
 					</div>
 				</div>
 			</div>
@@ -309,7 +320,7 @@ export function AgentSettingsPanel({
 				</div>
 			</SettingsSection>
 
-			{!isHosted ? (
+			{!disconnectUnavailable ? (
 				<SettingsSection
 					title="Disconnect"
 					description="Remove this connected agent from your dashboard."

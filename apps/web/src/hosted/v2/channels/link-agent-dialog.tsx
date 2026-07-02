@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
 	agentTextLabel,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -29,6 +30,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChannelError, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useEnvironments, useLinkAgent } from "@/hosted/v2/channels/channels-hooks";
+import {
+	type AgentOwnershipKind,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 
 type Environment = components["schemas"]["EnvironmentResponse"];
 
@@ -50,6 +56,7 @@ export function LinkAgentDialog({
 }) {
 	const envs = useEnvironments();
 	const link = useLinkAgent(accountId);
+	const ownership = useAgentOwnership();
 	// Empty string is the "no selection" sentinel: keeps the Select controlled
 	// (never flips undefined↔string, which warns), and reads as falsy so submit
 	// stays gated. Radix renders the placeholder for value="".
@@ -119,11 +126,18 @@ export function LinkAgentDialog({
 								<SelectValue placeholder="Choose an agent" />
 							</SelectTrigger>
 							<SelectContent>
-								{agents.map((env) => (
-									<SelectItem key={env.id} value={env.id} textValue={agentOptionLabel(env)}>
-										<AgentOption env={env} />
-									</SelectItem>
-								))}
+								{agents.map((env) => {
+									const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
+									return (
+										<SelectItem
+											key={env.id}
+											value={env.id}
+											textValue={agentOptionLabel(env, ownershipKind)}
+										>
+											<AgentOption env={env} ownershipKind={ownershipKind} />
+										</SelectItem>
+									);
+								})}
 							</SelectContent>
 						</Select>
 					</div>
@@ -148,20 +162,28 @@ export function LinkAgentDialog({
 	);
 }
 
-function agentOptionLabel(env: {
-	machine_name?: string | null;
-	display_name?: string | null;
-	agent_type?: string | null;
-	hosted_managed?: boolean | null;
-	hosted_deployment_id?: string | null;
-}): string {
-	return agentTextLabel(env);
+function agentOptionLabel(
+	env: {
+		id?: string | null;
+		machine_name?: string | null;
+		display_name?: string | null;
+		agent_type?: string | null;
+	},
+	ownershipKind: AgentOwnershipKind,
+): string {
+	return agentTextLabel(env, { ownershipKind });
 }
 
-function AgentOption({ env }: { env: Environment }) {
+function AgentOption({
+	env,
+	ownershipKind,
+}: {
+	env: Environment;
+	ownershipKind: AgentOwnershipKind;
+}) {
 	return (
 		<AgentLabel
-			machineName={env.machine_name}
+			machineName={agentDisplayName(env, { ownershipKind })}
 			displayName={env.display_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}

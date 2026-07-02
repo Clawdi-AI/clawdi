@@ -34,7 +34,9 @@ export function AgentDetailClient({
 			</Suspense>
 		);
 	}
-	const showSourceBadge = IS_HOSTED_BUILD ? hostedAccess.canUseCloudAgents : true;
+	const showSourceBadge = IS_HOSTED_BUILD
+		? hostedAccess.canUseCloudAgents || hostedAccess.canUseLegacyHostedDashboard
+		: true;
 	return (
 		<ConnectedAgentDetail
 			environmentId={environmentId}

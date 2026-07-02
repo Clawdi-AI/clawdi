@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -56,7 +56,6 @@ import {
 	agentTypeLabel,
 	compareAgentEnvironments,
 	displayMachineName,
-	isHostedAgentEnvironment,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
@@ -89,6 +88,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
 import {
+	type AgentOwnershipKind,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
+import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
@@ -116,42 +120,12 @@ import {
 } from "@/lib/settings-routes";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
-const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+type AgentChromeKind = AgentOwnershipKind;
 
-// `hosted_managed` alone can't classify an agent for sidebar chrome: legacy
-// v1 environments carry it too, but only envs claimed by a Cloud deploy-API
-// deployment are Cloud agents (same join `AgentHome` uses for the detail
-// page). The deploy-API client is hosted-only code, so a gated lazy sensor
-// feeds the claimed-id set into context and every chrome site derives its
-// cloud/legacy/connected decision from it.
-const HostedClaimedEnvsSensor = IS_HOSTED_BUILD
-	? lazy(() =>
-			import("@/hosted/agents/claimed-envs-sensor").then((m) => ({
-				default: m.HostedClaimedEnvsSensor,
-			})),
-		)
-	: null;
-
-/** `null` = deploy lookup unavailable or still resolving. */
-const ClaimedCloudEnvIdsContext = createContext<ReadonlySet<string> | null>(null);
-
-type AgentChromeKind = "cloud" | "legacy" | "connected";
-
-function useAgentChromeKind(
-	agent: SidebarEnvironment | null,
-	showCloudFeatures: boolean,
-): AgentChromeKind {
-	const claimedCloudEnvIds = useContext(ClaimedCloudEnvIdsContext);
-	if (!IS_HOSTED || !agent || !isHostedAgentEnvironment(agent)) return "connected";
-	// Without Cloud access no env can be a Cloud agent, so every
-	// hosted_managed env is a legacy v1 agent — matching the dashboard
-	// grid, which projects them all as legacy tiles for v1-only users.
-	if (!showCloudFeatures) return "legacy";
-	// Deploy lookup still resolving → keep the Cloud presentation rather
-	// than flashing legacy chrome on every load (Cloud is the common case
-	// for users who have Cloud access).
-	if (!claimedCloudEnvIds) return "cloud";
-	return claimedCloudEnvIds.has(agent.id.toLowerCase()) ? "cloud" : "legacy";
+function useAgentChromeKind(agent: SidebarEnvironment | null): AgentChromeKind {
+	const ownership = useAgentOwnership();
+	if (!IS_HOSTED || !agent) return "connected";
+	return agentOwnershipKindFromId(agent.id, ownership);
 }
 
 /** Tinted chip around a nav icon — the identity-palette hue carries the
@@ -528,15 +502,13 @@ function AgentSectionList({
 function AgentFocusSections({
 	agent,
 	activeSection,
-	showCloudFeatures,
 	onNavigate,
 }: {
 	agent: SidebarEnvironment;
 	activeSection: AgentSectionId;
-	showCloudFeatures: boolean;
 	onNavigate?: () => void;
 }) {
-	const kind = useAgentChromeKind(agent, showCloudFeatures);
+	const kind = useAgentChromeKind(agent);
 	return (
 		<AgentSectionList
 			agentId={agent.id}
@@ -631,7 +603,6 @@ function SidebarMainNavigation({
 			<AgentFocusSections
 				agent={activeAgent}
 				activeSection={activeSection}
-				showCloudFeatures={showCloudFeatures}
 				onNavigate={onNavigate}
 			/>
 		);
@@ -819,7 +790,6 @@ function RailFocusButton({
 function SortableAgentRailItem({
 	agent,
 	active,
-	showCloudFeatures,
 	onNavigate,
 	onClickCapture,
 	onPointerDownCapture,
@@ -828,7 +798,6 @@ function SortableAgentRailItem({
 }: {
 	agent: SidebarEnvironment;
 	active: boolean;
-	showCloudFeatures: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
 	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
 	onPointerDownCapture: React.PointerEventHandler<HTMLAnchorElement>;
@@ -838,12 +807,12 @@ function SortableAgentRailItem({
 	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: agent.id,
 	});
-	const kind = useAgentChromeKind(agent, showCloudFeatures);
+	const kind = useAgentChromeKind(agent);
 	const label =
 		kind === "legacy"
-			? `Legacy · ${agentTextLabel(agent, { includeSource: false })}`
-			: agentTextLabel(agent, { includeSource: kind === "cloud" });
-	const caption = displayMachineName(agentDisplayName(agent));
+			? `Legacy · ${agentTextLabel(agent, { includeSource: false, ownershipKind: kind })}`
+			: agentTextLabel(agent, { includeSource: kind === "cloud", ownershipKind: kind });
+	const caption = displayMachineName(agentDisplayName(agent, { ownershipKind: kind }));
 	const href = agentSectionHref(agent.id);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
@@ -904,7 +873,6 @@ function FocusRailContent({
 	agents,
 	activeAgentId,
 	user,
-	showCloudFeatures,
 	onSearch,
 	onSettings,
 	settingsOpen,
@@ -914,7 +882,6 @@ function FocusRailContent({
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
 	user: ReturnType<typeof useCurrentUser>["user"];
-	showCloudFeatures: boolean;
 	onSearch: () => void;
 	onSettings: () => void;
 	settingsOpen: boolean;
@@ -1125,7 +1092,6 @@ function FocusRailContent({
 									key={agent.id}
 									agent={agent}
 									active={activeAgentId === agent.id}
-									showCloudFeatures={showCloudFeatures}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}
 									onPointerDownCapture={recordRailPointerStart}
@@ -1196,7 +1162,7 @@ function FocusHeader({
 	activeAgentId: string | null;
 	showCloudFeatures: boolean;
 }) {
-	const kind = useAgentChromeKind(activeAgent, showCloudFeatures);
+	const kind = useAgentChromeKind(activeAgent);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1221,7 +1187,7 @@ function FocusHeader({
 		);
 	}
 
-	const name = agentDisplayName(activeAgent);
+	const name = agentDisplayName(activeAgent, { ownershipKind: kind });
 	const displayName = displayMachineName(name);
 	const meta = agentHeaderMeta(activeAgent, kind);
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
@@ -1230,7 +1196,7 @@ function FocusHeader({
 			<div className="flex min-w-0 items-center gap-2" title={title}>
 				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
 				{kind === "cloud" ? (
-					<AgentSourceBadgeForEnvironment env={activeAgent} compact />
+					<AgentSourceBadgeForEnvironment env={activeAgent} ownershipKind={kind} compact />
 				) : kind === "legacy" ? (
 					<LegacyAgentBadge compact />
 				) : null}
@@ -1272,7 +1238,6 @@ function RailSidebar({
 	agents,
 	activeAgentId,
 	user,
-	showCloudFeatures,
 	onSearch,
 	onSettings,
 	settingsOpen,
@@ -1280,7 +1245,6 @@ function RailSidebar({
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
 	user: ReturnType<typeof useCurrentUser>["user"];
-	showCloudFeatures: boolean;
 	onSearch: () => void;
 	onSettings: () => void;
 	settingsOpen: boolean;
@@ -1296,7 +1260,6 @@ function RailSidebar({
 				agents={agents}
 				activeAgentId={activeAgentId}
 				user={user}
-				showCloudFeatures={showCloudFeatures}
 				onSearch={onSearch}
 				onSettings={onSettings}
 				settingsOpen={settingsOpen}
@@ -1511,7 +1474,6 @@ export function AppSidebar({
 		setMounted(true);
 	}, []);
 	const showCloudFeatures = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
-	const [claimedCloudEnvIds, setClaimedCloudEnvIds] = useState<ReadonlySet<string> | null>(null);
 	const showLegacyHostedDashboard =
 		mounted &&
 		IS_HOSTED &&
@@ -1559,18 +1521,12 @@ export function AppSidebar({
 	};
 
 	return (
-		<ClaimedCloudEnvIdsContext.Provider value={claimedCloudEnvIds}>
-			{HostedClaimedEnvsSensor && showCloudFeatures ? (
-				<Suspense fallback={null}>
-					<HostedClaimedEnvsSensor onChange={setClaimedCloudEnvIds} />
-				</Suspense>
-			) : null}
+		<>
 			{!isMobile ? (
 				<RailSidebar
 					agents={agents}
 					activeAgentId={activeAgentId}
 					user={user}
-					showCloudFeatures={showCloudFeatures}
 					onSearch={openSearch}
 					onSettings={openSettingsFromSidebar}
 					settingsOpen={settingsOpen}
@@ -1610,7 +1566,6 @@ export function AppSidebar({
 								agents={agents}
 								activeAgentId={activeAgentId}
 								user={user}
-								showCloudFeatures={showCloudFeatures}
 								onSearch={openSearch}
 								onSettings={openSettingsFromSidebar}
 								settingsOpen={settingsOpen}
@@ -1638,6 +1593,6 @@ export function AppSidebar({
 				onSectionChange={changeSettingsSection}
 				onOpenChange={setSettingsOpen}
 			/>
-		</ClaimedCloudEnvIdsContext.Provider>
+		</>
 	);
 }

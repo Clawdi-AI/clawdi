@@ -19,11 +19,13 @@ describe("cleanMachineName", () => {
 describe("agentDisplayName", () => {
 	test("uses runtime as the default Cloud agent name", () => {
 		expect(
-			agentDisplayName({
-				machine_name: "Shared Hosted Compute",
-				agent_type: "openclaw",
-				hosted_managed: true,
-			}),
+			agentDisplayName(
+				{
+					machine_name: "Shared Hosted Compute",
+					agent_type: "openclaw",
+				},
+				{ ownershipKind: "cloud" },
+			),
 		).toBe("OpenClaw");
 	});
 
@@ -35,12 +37,14 @@ describe("agentDisplayName", () => {
 
 	test("prefers user display name for every source", () => {
 		expect(
-			agentDisplayName({
-				display_name: "Launch runner",
-				machine_name: "Shared Hosted Compute",
-				agent_type: "hermes",
-				hosted_managed: true,
-			}),
+			agentDisplayName(
+				{
+					display_name: "Launch runner",
+					machine_name: "Shared Hosted Compute",
+					agent_type: "hermes",
+				},
+				{ ownershipKind: "legacy" },
+			),
 		).toBe("Launch runner");
 	});
 });

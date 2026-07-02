@@ -1,6 +1,11 @@
 import { Cloud, History, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
+import {
+	type AgentOwnershipKind,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 import { cn } from "@/lib/utils";
 
 /** Single-line, inline-flow agent identity for meta rows where
@@ -77,30 +82,21 @@ export function agentTypeLabel(type: string | null | undefined): string {
 
 export type AgentSourceKind = "hosted" | "connected";
 
-export function isHostedAgentEnvironment(env: {
-	hosted_managed?: boolean | null;
-	hosted_deployment_id?: string | null;
-}): boolean {
-	return env.hosted_managed === true || Boolean(env.hosted_deployment_id);
+function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind {
+	return kind === "cloud" ? "hosted" : "connected";
 }
 
-export function agentSourceFromEnvironment(env: {
-	hosted_managed?: boolean | null;
-	hosted_deployment_id?: string | null;
-}): AgentSourceKind {
-	return isHostedAgentEnvironment(env) ? "hosted" : "connected";
-}
-
-export function agentDisplayName(env: {
-	display_name?: string | null;
-	machine_name?: string | null;
-	agent_type?: string | null;
-	hosted_managed?: boolean | null;
-	hosted_deployment_id?: string | null;
-}): string {
+export function agentDisplayName(
+	env: {
+		display_name?: string | null;
+		machine_name?: string | null;
+		agent_type?: string | null;
+	},
+	{ ownershipKind = "connected" }: { ownershipKind?: AgentOwnershipKind } = {},
+): string {
 	const custom = cleanMachineName(env.display_name);
 	if (custom) return custom;
-	if (isHostedAgentEnvironment(env)) return agentTypeLabel(env.agent_type);
+	if (ownershipKind !== "connected") return agentTypeLabel(env.agent_type);
 	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
 }
 
@@ -182,21 +178,28 @@ export function LegacyAgentBadge({
 
 export function AgentSourceBadgeForEnvironment({
 	env,
+	ownershipKind,
 	compact,
 	iconOnly,
 	showConnected = false,
 	className,
 }: {
 	env: {
-		hosted_managed?: boolean | null;
-		hosted_deployment_id?: string | null;
+		id?: string | null;
 	};
+	ownershipKind?: AgentOwnershipKind;
 	compact?: boolean;
 	iconOnly?: boolean;
 	showConnected?: boolean;
 	className?: string;
 }) {
-	const source = agentSourceFromEnvironment(env);
+	const ownership = useAgentOwnership();
+	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
+	if (kind === "legacy") {
+		if (iconOnly) return null;
+		return <LegacyAgentBadge compact={compact} className={className} />;
+	}
+	const source = sourceFromOwnershipKind(kind);
 	if (source === "connected" && !showConnected) return null;
 	return (
 		<AgentSourceBadge source={source} compact={compact} iconOnly={iconOnly} className={className} />
@@ -205,17 +208,19 @@ export function AgentSourceBadgeForEnvironment({
 
 export function agentTextLabel(
 	env: {
+		id?: string | null;
 		display_name?: string | null;
 		machine_name?: string | null;
 		agent_type?: string | null;
-		hosted_managed?: boolean | null;
-		hosted_deployment_id?: string | null;
 	},
-	{ includeSource = true }: { includeSource?: boolean } = {},
+	{
+		includeSource = true,
+		ownershipKind = "connected",
+	}: { includeSource?: boolean; ownershipKind?: AgentOwnershipKind } = {},
 ): string {
-	const identity = agentDisplayName(env);
+	const identity = agentDisplayName(env, { ownershipKind });
 	const runtime = agentTypeLabel(env.agent_type);
-	const source = agentSourceFromEnvironment(env);
+	const source = sourceFromOwnershipKind(ownershipKind);
 	const parts = [
 		includeSource && source === "hosted" ? agentSourceLabel(source) : null,
 		identity,
@@ -230,8 +235,6 @@ export function compareAgentEnvironments(
 		display_name?: string | null;
 		machine_name?: string | null;
 		agent_type?: string | null;
-		hosted_managed?: boolean | null;
-		hosted_deployment_id?: string | null;
 		sort_order?: number | null;
 	},
 	b: {
@@ -239,8 +242,6 @@ export function compareAgentEnvironments(
 		display_name?: string | null;
 		machine_name?: string | null;
 		agent_type?: string | null;
-		hosted_managed?: boolean | null;
-		hosted_deployment_id?: string | null;
 		sort_order?: number | null;
 	},
 ): number {

@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/agent-environments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Legacy Agent Environments */
+        get: operations["list_v1_agent_environments_agent_environments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -355,6 +372,14 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * V1AgentEnvironmentsResponse
+         * @description Cloud-api environment ids claimed by the user's live v1 deployments.
+         */
+        V1AgentEnvironmentsResponse: {
+            /** Environment Ids */
+            environment_ids: string[];
         };
         /** V1UserFeatureResolution */
         V1UserFeatureResolution: {
@@ -1066,6 +1091,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_v1_agent_environments_agent_environments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V1AgentEnvironmentsResponse"];
+                };
+            };
+        };
+    };
     me_me_get: {
         parameters: {
             query?: never;

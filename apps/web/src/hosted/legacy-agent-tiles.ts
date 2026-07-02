@@ -1,11 +1,7 @@
 import type { components } from "@clawdi/shared/api";
 import { cleanMachineName } from "@/components/dashboard/agent-label";
-import {
-	type AgentTile,
-	formatRuntime,
-	isAgentActive,
-	isHostedManagedEnv,
-} from "@/components/dashboard/agents-card";
+import { type AgentTile, formatRuntime, isAgentActive } from "@/components/dashboard/agents-card";
+import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { relativeTime } from "@/lib/utils";
@@ -31,12 +27,15 @@ type Env = components["schemas"]["EnvironmentResponse"];
  */
 export function legacyConnectedAgentTiles(
 	environments: Env[] | undefined,
+	legacyEnvIds: ReadonlySet<string>,
 	claimedEnvIds?: ReadonlySet<string>,
 ): AgentTile[] {
 	const manageHref = legacyHostedDashboardUrl() ?? undefined;
 	return (environments ?? [])
-		.filter(isHostedManagedEnv)
-		.filter((env) => !claimedEnvIds?.has(env.id.toLowerCase()))
+		.filter((env) => {
+			const envId = normalizeAgentEnvId(env.id);
+			return Boolean(envId && legacyEnvIds.has(envId) && !claimedEnvIds?.has(envId));
+		})
 		.map((env) => ({
 			id: env.id,
 			source: "legacy-hosted" as const,

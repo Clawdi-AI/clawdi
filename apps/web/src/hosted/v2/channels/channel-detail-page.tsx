@@ -20,6 +20,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
 	agentTextLabel,
 } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
@@ -69,6 +70,11 @@ import {
 	useWhatsappTenantCreds,
 } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
+import {
+	type AgentOwnership,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 
 function formatWhen(iso: string | null | undefined): string {
 	if (!iso) return "—";
@@ -92,16 +98,28 @@ function findEnv(envs: EnvironmentList, agentId: string): Environment | null {
 }
 
 /** "machine · agent-type" label for an agent id, falling back to the raw id. */
-function envName(envs: EnvironmentList, agentId: string, includeSource = true): string {
+function envName(
+	envs: EnvironmentList,
+	agentId: string,
+	ownership: AgentOwnership | null,
+	includeSource = true,
+): string {
 	const env = findEnv(envs, agentId);
-	return env ? agentTextLabel(env, { includeSource }) : agentId;
+	return env
+		? agentTextLabel(env, {
+				includeSource,
+				ownershipKind: agentOwnershipKindFromId(env.id, ownership),
+			})
+		: agentId;
 }
 
 function AgentName({ env, fallback }: { env: Environment | null; fallback: string }) {
+	const ownership = useAgentOwnership();
 	if (!env) return <span className="truncate text-sm font-medium">{fallback}</span>;
+	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
-			machineName={env.machine_name}
+			machineName={agentDisplayName(env, { ownershipKind })}
 			displayName={env.display_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
@@ -375,6 +393,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const creds = useWhatsappTenantCreds(accountId);
 	const create = useCreateWhatsappTenantCred(accountId);
 	const revoke = useRevokeWhatsappTenantCred(accountId);
+	const ownership = useAgentOwnership();
 	const [linkId, setLinkId] = useState("");
 
 	const linkItems = links.data ?? [];
@@ -428,7 +447,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 											<SelectItem
 												key={l.id}
 												value={l.id}
-												textValue={envName(envs.data, l.agent_id)}
+												textValue={envName(envs.data, l.agent_id, ownership)}
 											>
 												<AgentName env={env} fallback={l.agent_id} />
 											</SelectItem>
@@ -478,7 +497,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 									</div>
 								)}
 								<div className="text-xs text-muted-foreground">
-									{envName(envs.data, d.agent_id)} · added {formatWhen(d.created_at)}
+									{envName(envs.data, d.agent_id, ownership)} · added {formatWhen(d.created_at)}
 								</div>
 							</div>
 							<ConfirmAction
@@ -517,6 +536,7 @@ const TTL_OPTIONS = [
 function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const envs = useEnvironments();
 	const create = useCreatePairCode(accountId);
+	const ownership = useAgentOwnership();
 	// "" = no agent chosen (use the channel's linked agent). Sentinel keeps the
 	// Select controlled; mapped back to undefined in the request below.
 	const [agentId, setAgentId] = useState("");
@@ -550,7 +570,11 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							</SelectTrigger>
 							<SelectContent>
 								{(envs.data ?? []).map((env) => (
-									<SelectItem key={env.id} value={env.id} textValue={envName(envs.data, env.id)}>
+									<SelectItem
+										key={env.id}
+										value={env.id}
+										textValue={envName(envs.data, env.id, ownership)}
+									>
 										<AgentName env={env} fallback={env.id} />
 									</SelectItem>
 								))}

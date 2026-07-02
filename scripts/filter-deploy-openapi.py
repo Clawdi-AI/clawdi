@@ -37,6 +37,7 @@ from typing import Any
 # Endpoints the OSS dashboard actually calls. Adding a new operation here is the
 # SINGLE knob for widening the schema surface.
 KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
+    "/agent-environments": {"get"},
     "/me": {"get"},
     "/v2/deployments": {"get", "post"},
     "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},
