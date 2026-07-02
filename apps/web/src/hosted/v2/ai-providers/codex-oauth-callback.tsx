@@ -7,7 +7,7 @@ import {
 	CODEX_OAUTH_STORAGE_KEY,
 	type CodexOAuthResult,
 	parseCodexCallback,
-} from "@/v2/ai-providers/codex-oauth";
+} from "@/hosted/v2/ai-providers/codex-oauth";
 
 /**
  * The Codex OAuth landing page. ChatGPT redirects here with `?code&state`;
@@ -56,7 +56,11 @@ export function CodexOAuthCallback() {
 	}, []);
 
 	return (
-		<div data-v2="true" className="flex min-h-dvh items-center justify-center bg-background p-6">
+		<div
+			data-hosted="true"
+			data-v2="true"
+			className="flex min-h-dvh items-center justify-center bg-background p-6"
+		>
 			<div className="w-full max-w-sm rounded-lg border bg-card p-6 text-center">
 				<span
 					className={`mx-auto flex size-10 items-center justify-center rounded-full ${

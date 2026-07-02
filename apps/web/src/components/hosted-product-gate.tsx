@@ -4,9 +4,9 @@ import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IS_HOSTED } from "@/lib/hosted";
-import { useV2Access } from "@/lib/v2-access";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
-export function V2Gate({
+export function HostedProductGate({
 	children,
 	fallbackHref = "/",
 }: {
@@ -14,8 +14,8 @@ export function V2Gate({
 	fallbackHref?: string;
 }) {
 	const router = useRouter();
-	const access = useV2Access();
-	const allowed = IS_HOSTED && access.canUseV2;
+	const access = useHostedProductAccess();
+	const allowed = IS_HOSTED && access.canUseCloudAgents;
 	const denied = !access.isLoading && !allowed;
 
 	useEffect(() => {

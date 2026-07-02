@@ -26,6 +26,7 @@ import {
 	CircleHelp,
 	Cloud,
 	ExternalLink,
+	History,
 	Layers,
 	LayoutDashboard,
 	Link2,
@@ -43,7 +44,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useEffect, useRef, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -56,6 +57,7 @@ import {
 	compareAgentEnvironments,
 	displayMachineName,
 	isHostedAgentEnvironment,
+	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
@@ -95,6 +97,11 @@ import {
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import {
+	isLegacyHostedDashboardConfigured,
+	legacyHostedDashboardUrl,
+} from "@/lib/legacy-hosted-dashboard";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	projectResourceDefinitionsForGroup,
@@ -108,7 +115,44 @@ import {
 	type SettingsSectionId,
 } from "@/lib/settings-routes";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
-import { useV2Access } from "@/lib/v2-access";
+
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+// `hosted_managed` alone can't classify an agent for sidebar chrome: legacy
+// v1 environments carry it too, but only envs claimed by a Cloud deploy-API
+// deployment are Cloud agents (same join `AgentHome` uses for the detail
+// page). The deploy-API client is hosted-only code, so a gated lazy sensor
+// feeds the claimed-id set into context and every chrome site derives its
+// cloud/legacy/connected decision from it.
+const HostedClaimedEnvsSensor = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/agents/claimed-envs-sensor").then((m) => ({
+				default: m.HostedClaimedEnvsSensor,
+			})),
+		)
+	: null;
+
+/** `null` = deploy lookup unavailable or still resolving. */
+const ClaimedCloudEnvIdsContext = createContext<ReadonlySet<string> | null>(null);
+
+type AgentChromeKind = "cloud" | "legacy" | "connected";
+
+function useAgentChromeKind(
+	agent: SidebarEnvironment | null,
+	showCloudFeatures: boolean,
+): AgentChromeKind {
+	const claimedCloudEnvIds = useContext(ClaimedCloudEnvIdsContext);
+	if (!IS_HOSTED || !agent || !isHostedAgentEnvironment(agent)) return "connected";
+	// Without Cloud access no env can be a Cloud agent, so every
+	// hosted_managed env is a legacy v1 agent — matching the dashboard
+	// grid, which projects them all as legacy tiles for v1-only users.
+	if (!showCloudFeatures) return "legacy";
+	// Deploy lookup still resolving → keep the Cloud presentation rather
+	// than flashing legacy chrome on every load (Cloud is the common case
+	// for users who have Cloud access).
+	if (!claimedCloudEnvIds) return "cloud";
+	return claimedCloudEnvIds.has(agent.id.toLowerCase()) ? "cloud" : "legacy";
+}
 
 /** Tinted chip around a nav icon — the identity-palette hue carries the
  * "vivid, colourful" art direction into the app chrome itself, and each
@@ -237,6 +281,7 @@ type SidebarNavItem = {
 	tint: string;
 	tooltip: string;
 	active: boolean;
+	external?: boolean;
 };
 
 type AgentSectionDefinition = {
@@ -301,12 +346,22 @@ function SidebarNavSection({
 						return (
 							<SidebarMenuItem key={item.id}>
 								<SidebarMenuButton asChild isActive={item.active} tooltip={item.tooltip}>
-									<Link to={item.href} onClick={onNavigate}>
-										<NavIconChip tint={item.tint}>
-											<Icon />
-										</NavIconChip>
-										<span>{item.label}</span>
-									</Link>
+									{item.external ? (
+										<a href={item.href} onClick={onNavigate}>
+											<NavIconChip tint={item.tint}>
+												<Icon />
+											</NavIconChip>
+											<span>{item.label}</span>
+											<ExternalLink className="ml-auto size-3 text-muted-foreground" />
+										</a>
+									) : (
+										<Link to={item.href} onClick={onNavigate}>
+											<NavIconChip tint={item.tint}>
+												<Icon />
+											</NavIconChip>
+											<span>{item.label}</span>
+										</Link>
+									)}
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						);
@@ -350,11 +405,13 @@ function ConsolePrimarySection({
 
 function ConsoleResourcesSection({
 	pathname,
-	showV2Features,
+	showCloudFeatures,
+	showLegacyHostedDashboard,
 	onNavigate,
 }: {
 	pathname: string;
-	showV2Features: boolean;
+	showCloudFeatures: boolean;
+	showLegacyHostedDashboard: boolean;
 	onNavigate?: () => void;
 }) {
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
@@ -372,7 +429,23 @@ function ConsoleResourcesSection({
 		}),
 	);
 
-	if (showV2Features) {
+	if (showLegacyHostedDashboard) {
+		const url = legacyHostedDashboardUrl();
+		if (url) {
+			resourceItems.push({
+				id: "hosted-dashboard",
+				label: "Hosted Dashboard",
+				href: url,
+				icon: Cloud,
+				tint: "bg-identity-5-bg text-identity-5-fg",
+				tooltip: "Legacy hosted dashboard",
+				active: false,
+				external: true,
+			});
+		}
+	}
+
+	if (showCloudFeatures) {
 		resourceItems.push(
 			{
 				id: "channels",
@@ -455,19 +528,19 @@ function AgentSectionList({
 function AgentFocusSections({
 	agent,
 	activeSection,
-	showV2Features,
+	showCloudFeatures,
 	onNavigate,
 }: {
 	agent: SidebarEnvironment;
 	activeSection: AgentSectionId;
-	showV2Features: boolean;
+	showCloudFeatures: boolean;
 	onNavigate?: () => void;
 }) {
-	const hosted = showV2Features && isHostedAgentEnvironment(agent);
+	const kind = useAgentChromeKind(agent, showCloudFeatures);
 	return (
 		<AgentSectionList
 			agentId={agent.id}
-			sections={hosted ? HOSTED_AGENT_SECTIONS : CONNECTED_AGENT_SECTIONS}
+			sections={kind === "cloud" ? HOSTED_AGENT_SECTIONS : CONNECTED_AGENT_SECTIONS}
 			activeSection={activeSection}
 			onNavigate={onNavigate}
 		/>
@@ -536,7 +609,8 @@ function AgentFocusLoadingSections({
 
 function SidebarMainNavigation({
 	pathname,
-	showV2Features,
+	showCloudFeatures,
+	showLegacyHostedDashboard,
 	activeAgentId,
 	activeAgent,
 	agentsLoaded,
@@ -544,7 +618,8 @@ function SidebarMainNavigation({
 	onNavigate,
 }: {
 	pathname: string;
-	showV2Features: boolean;
+	showCloudFeatures: boolean;
+	showLegacyHostedDashboard: boolean;
 	activeAgentId: string | null;
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
@@ -556,14 +631,14 @@ function SidebarMainNavigation({
 			<AgentFocusSections
 				agent={activeAgent}
 				activeSection={activeSection}
-				showV2Features={showV2Features}
+				showCloudFeatures={showCloudFeatures}
 				onNavigate={onNavigate}
 			/>
 		);
 	}
 
 	if (activeAgentId) {
-		if (showV2Features && agentsLoaded) {
+		if (showCloudFeatures && agentsLoaded) {
 			return (
 				<AgentFocusHostedFallbackSections
 					agentId={activeAgentId}
@@ -586,7 +661,8 @@ function SidebarMainNavigation({
 			<ConsolePrimarySection pathname={pathname} onNavigate={onNavigate} />
 			<ConsoleResourcesSection
 				pathname={pathname}
-				showV2Features={showV2Features}
+				showCloudFeatures={showCloudFeatures}
+				showLegacyHostedDashboard={showLegacyHostedDashboard}
 				onNavigate={onNavigate}
 			/>
 		</>
@@ -596,7 +672,8 @@ function SidebarMainNavigation({
 type FocusNavigationPaneProps = {
 	className?: string;
 	pathname: string;
-	showV2Features: boolean;
+	showCloudFeatures: boolean;
+	showLegacyHostedDashboard: boolean;
 	activeAgentId: string | null;
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
@@ -607,7 +684,8 @@ type FocusNavigationPaneProps = {
 function FocusNavigationPane({
 	className,
 	pathname,
-	showV2Features,
+	showCloudFeatures,
+	showLegacyHostedDashboard,
 	activeAgentId,
 	activeAgent,
 	agentsLoaded,
@@ -620,13 +698,14 @@ function FocusNavigationPane({
 				<FocusHeader
 					activeAgent={activeAgent}
 					activeAgentId={activeAgentId}
-					showV2Features={showV2Features}
+					showCloudFeatures={showCloudFeatures}
 				/>
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarMainNavigation
 					pathname={pathname}
-					showV2Features={showV2Features}
+					showCloudFeatures={showCloudFeatures}
+					showLegacyHostedDashboard={showLegacyHostedDashboard}
 					activeAgentId={activeAgentId}
 					activeAgent={activeAgent}
 					agentsLoaded={agentsLoaded}
@@ -740,6 +819,7 @@ function RailFocusButton({
 function SortableAgentRailItem({
 	agent,
 	active,
+	showCloudFeatures,
 	onNavigate,
 	onClickCapture,
 	onPointerDownCapture,
@@ -748,6 +828,7 @@ function SortableAgentRailItem({
 }: {
 	agent: SidebarEnvironment;
 	active: boolean;
+	showCloudFeatures: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
 	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
 	onPointerDownCapture: React.PointerEventHandler<HTMLAnchorElement>;
@@ -757,8 +838,11 @@ function SortableAgentRailItem({
 	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: agent.id,
 	});
-	const hosted = isHostedAgentEnvironment(agent);
-	const label = agentTextLabel(agent);
+	const kind = useAgentChromeKind(agent, showCloudFeatures);
+	const label =
+		kind === "legacy"
+			? `Legacy · ${agentTextLabel(agent, { includeSource: false })}`
+			: agentTextLabel(agent, { includeSource: kind === "cloud" });
 	const caption = displayMachineName(agentDisplayName(agent));
 	const href = agentSectionHref(agent.id);
 	const style: React.CSSProperties = {
@@ -795,12 +879,19 @@ function SortableAgentRailItem({
 			>
 				<span className="relative inline-flex rounded-md">
 					<AgentIcon agent={agent.agent_type} size="rail" avatarUrl={agent.avatar_url} />
-					{hosted ? (
+					{kind === "cloud" ? (
 						<span
 							title="Clawdi Cloud agent"
 							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-sidebar dark:bg-sky-400 dark:text-sky-950"
 						>
 							<Cloud aria-hidden="true" className="size-2.5" />
+						</span>
+					) : kind === "legacy" ? (
+						<span
+							title="Legacy agent"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-amber-500 text-white ring-2 ring-sidebar dark:bg-amber-400 dark:text-amber-950"
+						>
+							<History aria-hidden="true" className="size-2.5" />
 						</span>
 					) : null}
 				</span>
@@ -813,6 +904,7 @@ function FocusRailContent({
 	agents,
 	activeAgentId,
 	user,
+	showCloudFeatures,
 	onSearch,
 	onSettings,
 	settingsOpen,
@@ -822,6 +914,7 @@ function FocusRailContent({
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
 	user: ReturnType<typeof useCurrentUser>["user"];
+	showCloudFeatures: boolean;
 	onSearch: () => void;
 	onSettings: () => void;
 	settingsOpen: boolean;
@@ -1032,6 +1125,7 @@ function FocusRailContent({
 									key={agent.id}
 									agent={agent}
 									active={activeAgentId === agent.id}
+									showCloudFeatures={showCloudFeatures}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}
 									onPointerDownCapture={recordRailPointerStart}
@@ -1066,23 +1160,27 @@ function agentVersionLabel(version: string | null | undefined): string | null {
 
 function agentHeaderMeta(
 	agent: SidebarEnvironment,
-	hosted: boolean,
+	kind: AgentChromeKind,
 ): {
 	visibleLabel: string;
 	detailLabel: string;
 	activityLabel: string;
 } {
-	const sourceDetail = hosted ? agentSourceKindLabel("hosted") : null;
+	const sourceDetail =
+		kind === "cloud" ? agentSourceKindLabel("hosted") : kind === "legacy" ? "Legacy" : null;
+	// Legacy v1 agents run in a hosted runtime image too, so both hosted
+	// kinds get the "runtime" suffix.
+	const runtime = kind !== "connected";
 	const typeLabel = agentTypeLabel(agent.agent_type);
 	const version = agentVersionLabel(agent.agent_version);
 	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
 	const activityLabel = relativeSeen ? `last seen ${relativeSeen}` : "never seen";
-	const visible = [hosted ? `${typeLabel} runtime` : typeLabel, agent.os?.trim() || null].filter(
+	const visible = [runtime ? `${typeLabel} runtime` : typeLabel, agent.os?.trim() || null].filter(
 		(item): item is string => Boolean(item),
 	);
 	const detail = [
 		sourceDetail,
-		hosted ? `${typeLabel} runtime` : typeLabel,
+		runtime ? `${typeLabel} runtime` : typeLabel,
 		version,
 		agent.os?.trim() || null,
 	].filter((item): item is string => Boolean(item));
@@ -1092,12 +1190,13 @@ function agentHeaderMeta(
 function FocusHeader({
 	activeAgent,
 	activeAgentId,
-	showV2Features,
+	showCloudFeatures,
 }: {
 	activeAgent: SidebarEnvironment | null;
 	activeAgentId: string | null;
-	showV2Features: boolean;
+	showCloudFeatures: boolean;
 }) {
+	const kind = useAgentChromeKind(activeAgent, showCloudFeatures);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1113,7 +1212,7 @@ function FocusHeader({
 		return (
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold leading-5">
-					{showV2Features ? "Clawdi Cloud agent" : "Agent"}
+					{showCloudFeatures ? "Clawdi Cloud agent" : "Agent"}
 				</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
 					{activeAgentId ? activeAgentId.slice(0, 8) : "Loading navigation"}
@@ -1124,14 +1223,17 @@ function FocusHeader({
 
 	const name = agentDisplayName(activeAgent);
 	const displayName = displayMachineName(name);
-	const hosted = showV2Features && isHostedAgentEnvironment(activeAgent);
-	const meta = agentHeaderMeta(activeAgent, hosted);
+	const meta = agentHeaderMeta(activeAgent, kind);
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={title}>
 				<span className="truncate text-sm font-semibold leading-5">{displayName}</span>
-				<AgentSourceBadgeForEnvironment env={activeAgent} compact />
+				{kind === "cloud" ? (
+					<AgentSourceBadgeForEnvironment env={activeAgent} compact />
+				) : kind === "legacy" ? (
+					<LegacyAgentBadge compact />
+				) : null}
 			</div>
 			{meta.visibleLabel ? (
 				<div
@@ -1142,10 +1244,19 @@ function FocusHeader({
 				</div>
 			) : null}
 			<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+				{/* Legacy agents share the hosted copy variant (supervised
+				 * daemon, no CLI steps); their lifecycle lives in the legacy
+				 * dashboard, so remediation points there when configured. */}
 				<DaemonStatusBadge
 					env={activeAgent}
-					source={hosted ? "on-clawdi" : "self-managed"}
-					manageHref={hosted ? agentSectionHref(activeAgent.id, "settings") : undefined}
+					source={kind !== "connected" ? "on-clawdi" : "self-managed"}
+					manageHref={
+						kind === "cloud"
+							? agentSectionHref(activeAgent.id, "settings")
+							: kind === "legacy"
+								? (legacyHostedDashboardUrl() ?? undefined)
+								: undefined
+					}
 					compact
 					tooltipDetail={meta.detailLabel}
 				/>
@@ -1161,6 +1272,7 @@ function RailSidebar({
 	agents,
 	activeAgentId,
 	user,
+	showCloudFeatures,
 	onSearch,
 	onSettings,
 	settingsOpen,
@@ -1168,6 +1280,7 @@ function RailSidebar({
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
 	user: ReturnType<typeof useCurrentUser>["user"];
+	showCloudFeatures: boolean;
 	onSearch: () => void;
 	onSettings: () => void;
 	settingsOpen: boolean;
@@ -1183,6 +1296,7 @@ function RailSidebar({
 				agents={agents}
 				activeAgentId={activeAgentId}
 				user={user}
+				showCloudFeatures={showCloudFeatures}
 				onSearch={onSearch}
 				onSettings={onSettings}
 				settingsOpen={settingsOpen}
@@ -1391,12 +1505,18 @@ export function AppSidebar({
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile } = useSidebar();
 	const api = useApi();
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showV2Features = mounted && IS_HOSTED && v2Access.canUseV2;
+	const showCloudFeatures = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
+	const [claimedCloudEnvIds, setClaimedCloudEnvIds] = useState<ReadonlySet<string> | null>(null);
+	const showLegacyHostedDashboard =
+		mounted &&
+		IS_HOSTED &&
+		hostedAccess.canUseLegacyHostedDashboard &&
+		isLegacyHostedDashboardConfigured();
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
@@ -1439,12 +1559,18 @@ export function AppSidebar({
 	};
 
 	return (
-		<>
+		<ClaimedCloudEnvIdsContext.Provider value={claimedCloudEnvIds}>
+			{HostedClaimedEnvsSensor && showCloudFeatures ? (
+				<Suspense fallback={null}>
+					<HostedClaimedEnvsSensor onChange={setClaimedCloudEnvIds} />
+				</Suspense>
+			) : null}
 			{!isMobile ? (
 				<RailSidebar
 					agents={agents}
 					activeAgentId={activeAgentId}
 					user={user}
+					showCloudFeatures={showCloudFeatures}
 					onSearch={openSearch}
 					onSettings={openSettingsFromSidebar}
 					settingsOpen={settingsOpen}
@@ -1465,7 +1591,8 @@ export function AppSidebar({
 				{!isMobile ? (
 					<FocusNavigationPane
 						pathname={pathname}
-						showV2Features={showV2Features}
+						showCloudFeatures={showCloudFeatures}
+						showLegacyHostedDashboard={showLegacyHostedDashboard}
 						activeAgentId={activeAgentId}
 						activeAgent={activeAgent ?? null}
 						agentsLoaded={agentsLoaded}
@@ -1483,6 +1610,7 @@ export function AppSidebar({
 								agents={agents}
 								activeAgentId={activeAgentId}
 								user={user}
+								showCloudFeatures={showCloudFeatures}
 								onSearch={openSearch}
 								onSettings={openSettingsFromSidebar}
 								settingsOpen={settingsOpen}
@@ -1493,7 +1621,8 @@ export function AppSidebar({
 						<FocusNavigationPane
 							className="min-w-0"
 							pathname={pathname}
-							showV2Features={showV2Features}
+							showCloudFeatures={showCloudFeatures}
+							showLegacyHostedDashboard={showLegacyHostedDashboard}
 							activeAgentId={activeAgentId}
 							activeAgent={activeAgent ?? null}
 							agentsLoaded={agentsLoaded}
@@ -1509,6 +1638,6 @@ export function AppSidebar({
 				onSectionChange={changeSettingsSection}
 				onOpenChange={setSettingsOpen}
 			/>
-		</>
+		</ClaimedCloudEnvIdsContext.Provider>
 	);
 }

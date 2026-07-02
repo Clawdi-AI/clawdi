@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { AgentSourceBadge } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge, LegacyAgentBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
 	type AgentTile,
@@ -9,9 +9,11 @@ import {
 	HostedUnavailableBanner,
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 
 type Env = components["schemas"]["EnvironmentResponse"];
+const LEGACY_HOSTED_COMPUTE_ID = "legacy-hosted-dashboard";
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
@@ -41,6 +43,9 @@ export function HostedAgentsSection({
 	envsLoading,
 	selfManagedCount,
 	cloudEnvs,
+	showCloudDeployments = true,
+	showLegacyDashboard = false,
+	showLegacyAgents = showLegacyDashboard,
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
@@ -54,8 +59,21 @@ export function HostedAgentsSection({
 	 * matched-env lookup falls back to null and the tile still renders.
 	 */
 	cloudEnvs: Env[];
+	showCloudDeployments?: boolean;
+	showLegacyDashboard?: boolean;
+	showLegacyAgents?: boolean;
 }) {
-	const hosted = useHostedAgentTiles({ cloudEnvs });
+	const hosted = useHostedAgentTiles({
+		cloudEnvs,
+		includeDeployments: showCloudDeployments,
+		includeLegacyDashboard: showLegacyDashboard,
+	});
+	const legacyConnectedTiles = legacyConnectedTilesForAccess({
+		showLegacyAgents,
+		showCloudDeployments,
+		hosted,
+		cloudEnvs,
+	});
 	// Drop self-managed tiles whose env is already represented by a
 	// hosted tile. Without this, a hosted deployment's cloud-api env (created
 	// by the admin endpoint) would render twice — once with the
@@ -67,7 +85,7 @@ export function HostedAgentsSection({
 	const dedupedSelfManaged = selfManagedTiles.filter(
 		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
 	);
-	const agentTiles: AgentTile[] = [...hosted.tiles, ...dedupedSelfManaged];
+	const agentTiles: AgentTile[] = [...hosted.tiles, ...legacyConnectedTiles, ...dedupedSelfManaged];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -76,6 +94,7 @@ export function HostedAgentsSection({
 		!envsLoading &&
 		selfManagedCount === 0 &&
 		hosted.tiles.length === 0 &&
+		legacyConnectedTiles.length === 0 &&
 		!hosted.isLoading &&
 		!hosted.error;
 	return (
@@ -93,6 +112,29 @@ export function HostedAgentsSection({
 	);
 }
 
+function legacyConnectedTilesForAccess({
+	showLegacyAgents,
+	showCloudDeployments,
+	hosted,
+	cloudEnvs,
+}: {
+	showLegacyAgents: boolean;
+	showCloudDeployments: boolean;
+	hosted: ReturnType<typeof useHostedAgentTiles>;
+	cloudEnvs: Env[];
+}): AgentTile[] {
+	if (!showLegacyAgents) return [];
+	// Visible taxonomy in hosted builds:
+	// - Cloud deploy API records render as Clawdi Cloud agent tiles.
+	// - v1 hosted environments render like connected agents in this dashboard.
+	// - the v1 management app is exposed as one separate Legacy dashboard entry.
+	//
+	// When Cloud deployments are enabled, wait for the deployment query before
+	// projecting legacy environments so a Cloud-claimed env is not briefly duplicated.
+	if (showCloudDeployments && hosted.isLoading) return [];
+	return legacyConnectedAgentTiles(cloudEnvs, hosted.claimedEnvIds);
+}
+
 /**
  * Right-column "Connect another" CTA — only renders once we know
  * the user has at least one agent (hosted OR self-managed). Shares
@@ -106,19 +148,36 @@ export function HostedSecondaryCTA({
 	selfManagedCount,
 	envsLoading,
 	cloudEnvs,
+	showCloudDeployments = true,
+	showLegacyDashboard = false,
+	showLegacyAgents = showLegacyDashboard,
 }: {
 	selfManagedCount: number;
 	envsLoading: boolean;
 	cloudEnvs: Env[];
+	showCloudDeployments?: boolean;
+	showLegacyDashboard?: boolean;
+	showLegacyAgents?: boolean;
 }) {
 	// Reuses the same hosted deployments TanStack Query cache
 	// as `HostedAgentsSection` so passing cloudEnvs here is just
 	// re-running the join, not re-fetching.
-	const hosted = useHostedAgentTiles({ cloudEnvs });
+	const hosted = useHostedAgentTiles({
+		cloudEnvs,
+		includeDeployments: showCloudDeployments,
+		includeLegacyDashboard: showLegacyDashboard,
+	});
+	const legacyConnectedTiles = legacyConnectedTilesForAccess({
+		showLegacyAgents,
+		showCloudDeployments,
+		hosted,
+		cloudEnvs,
+	});
 	// Loading: don't flash an empty slot then pop in. Wait for both
 	// sources to settle before deciding whether to show the CTA.
 	if (envsLoading || hosted.isLoading) return null;
-	const hasAnyAgent = selfManagedCount > 0 || hosted.tiles.length > 0;
+	const hasAnyAgent =
+		selfManagedCount > 0 || hosted.tiles.length > 0 || legacyConnectedTiles.length > 0;
 	return hasAnyAgent ? <OnboardingCard variant="additional-agent" /> : null;
 }
 
@@ -133,21 +192,39 @@ export function HostedAgentsByCompute({
 	envsLoading,
 	selfManagedCount,
 	cloudEnvs,
+	showCloudDeployments = true,
+	showLegacyDashboard = false,
+	showLegacyAgents = showLegacyDashboard,
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
 	selfManagedCount: number;
 	cloudEnvs: Env[];
+	showCloudDeployments?: boolean;
+	showLegacyDashboard?: boolean;
+	showLegacyAgents?: boolean;
 }) {
-	const hosted = useHostedAgentTiles({ cloudEnvs });
+	const hosted = useHostedAgentTiles({
+		cloudEnvs,
+		includeDeployments: showCloudDeployments,
+		includeLegacyDashboard: showLegacyDashboard,
+	});
+	const legacyConnectedTiles = legacyConnectedTilesForAccess({
+		showLegacyAgents,
+		showCloudDeployments,
+		hosted,
+		cloudEnvs,
+	});
 	const dedupedSelfManaged = selfManagedTiles.filter(
 		(t) => !hosted.claimedEnvIds.has(t.id.toLowerCase()),
 	);
+	const hostedTiles = hosted.tiles;
+	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
 
 	// Bucket hosted runtime-tiles by their shared compute, preserving order.
 	const groups: { key: string; name: string; tiles: AgentTile[] }[] = [];
 	const byKey = new Map<string, { key: string; name: string; tiles: AgentTile[] }>();
-	for (const tile of hosted.tiles) {
+	for (const tile of hostedTiles) {
 		const key = tile.computeId ?? tile.id;
 		let group = byKey.get(key);
 		if (!group) {
@@ -161,7 +238,8 @@ export function HostedAgentsByCompute({
 	const isEmptyState =
 		!envsLoading &&
 		selfManagedCount === 0 &&
-		hosted.tiles.length === 0 &&
+		hostedTiles.length === 0 &&
+		connectedTiles.length === 0 &&
 		!hosted.isLoading &&
 		!hosted.error;
 	if (isEmptyState) {
@@ -172,7 +250,7 @@ export function HostedAgentsByCompute({
 		);
 	}
 
-	if ((envsLoading || hosted.isLoading) && groups.length === 0 && dedupedSelfManaged.length === 0) {
+	if ((envsLoading || hosted.isLoading) && groups.length === 0 && connectedTiles.length === 0) {
 		return (
 			<div data-hosted="true">
 				<AgentsCard agents={[]} isLoading />
@@ -186,21 +264,27 @@ export function HostedAgentsByCompute({
 				<section key={group.key} className="space-y-2">
 					<div className="flex items-center gap-2 px-0.5">
 						<span className="text-sm font-medium">{group.name}</span>
-						<AgentSourceBadge source="hosted" compact />
+						{group.key === LEGACY_HOSTED_COMPUTE_ID ? (
+							<LegacyAgentBadge compact />
+						) : (
+							<AgentSourceBadge source="hosted" compact />
+						)}
 						<span className="text-xs text-muted-foreground">
-							{group.tiles.length} runtime{group.tiles.length === 1 ? "" : "s"}
+							{group.key === LEGACY_HOSTED_COMPUTE_ID
+								? "Legacy app"
+								: `${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
 						</span>
 					</div>
 					<AgentTileGrid tiles={group.tiles} />
 				</section>
 			))}
 
-			{dedupedSelfManaged.length > 0 ? (
+			{connectedTiles.length > 0 ? (
 				<section className="space-y-2">
 					<div className="flex items-center gap-2 px-0.5">
 						<span className="text-sm font-medium">Other agents</span>
 					</div>
-					<AgentTileGrid tiles={dedupedSelfManaged} />
+					<AgentTileGrid tiles={connectedTiles} />
 				</section>
 			) : null}
 

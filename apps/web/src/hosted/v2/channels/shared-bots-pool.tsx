@@ -8,12 +8,12 @@ import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
+import type { ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
+import { AccessBadge, ChannelError } from "@/hosted/v2/channels/channel-ui";
+import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
+import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { cn } from "@/lib/utils";
-import { CHANNEL_PROVIDERS, providerMeta } from "@/v2/channels/channel-providers";
-import type { ChannelBotPoolItem } from "@/v2/channels/channel-types";
-import { AccessBadge, ChannelError } from "@/v2/channels/channel-ui";
-import { useBotPool } from "@/v2/channels/channels-hooks";
-import { LinkAgentDialog } from "@/v2/channels/link-agent-dialog";
 
 /**
  * Shared bot pool — public bots the user can link an agent to instantly (no
@@ -26,7 +26,7 @@ export function SharedBotsPool() {
 
 	if (pool.isLoading) {
 		return (
-			<div data-v2="true" className="space-y-3">
+			<div data-hosted="true" data-v2="true" className="space-y-3">
 				{[0, 1, 2].map((i) => (
 					<Skeleton key={i} className="h-20 w-full rounded-lg" />
 				))}
@@ -36,7 +36,7 @@ export function SharedBotsPool() {
 
 	if (pool.error) {
 		return (
-			<div data-v2="true">
+			<div data-hosted="true" data-v2="true">
 				<ChannelError
 					error={pool.error}
 					onRetry={() => pool.refetch()}
@@ -54,7 +54,7 @@ export function SharedBotsPool() {
 
 	if (sections.length === 0) {
 		return (
-			<div data-v2="true">
+			<div data-hosted="true" data-v2="true">
 				<EmptyState
 					icon={Users}
 					title="No shared bots available"
@@ -65,7 +65,7 @@ export function SharedBotsPool() {
 	}
 
 	return (
-		<div data-v2="true" className="space-y-6">
+		<div data-hosted="true" data-v2="true" className="space-y-6">
 			{sections.map((section) => {
 				const meta = providerMeta(section.provider);
 				return (

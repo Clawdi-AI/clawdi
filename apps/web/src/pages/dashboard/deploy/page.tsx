@@ -1,8 +1,8 @@
 "use client";
 
 import { lazy, Suspense } from "react";
+import { HostedProductGate } from "@/components/hosted-product-gate";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
-import { V2Gate } from "@/components/v2-gate";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -14,12 +14,12 @@ const DeployWizard = IS_HOSTED_BUILD
 
 export default function Page() {
 	return (
-		<V2Gate fallbackHref="/">
+		<HostedProductGate fallbackHref="/">
 			{DeployWizard ? (
 				<Suspense fallback={<HostedRouteSkeleton />}>
 					<DeployWizard />
 				</Suspense>
 			) : null}
-		</V2Gate>
+		</HostedProductGate>
 	);
 }

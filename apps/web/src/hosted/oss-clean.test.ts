@@ -6,10 +6,10 @@ import { dirname, join, relative } from "node:path";
 /**
  * OSS-clean invariant tests.
  *
- * The hosted/ and v2/ directories must stay quarantined: hosted components set
- * `data-hosted="true"`, v2 components set `data-v2="true"`, and every
- * consumer outside those quarantines is gated by the hosted build flag somewhere in the
- * same file.
+ * The hosted/ directory must stay quarantined: hosted components set
+ * `data-hosted="true"`, hosted/v2 components also set `data-v2="true"`,
+ * and every consumer outside that quarantine is gated by the hosted build
+ * flag somewhere in the same file.
  *
  * Static regex / file-walk checks instead of React render tests —
  * apps/web has no jsdom / @testing-library setup and adding it for
@@ -20,10 +20,10 @@ import { dirname, join, relative } from "node:path";
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
-const V2_DIR = join(SRC_DIR, "v2");
+const HOSTED_V2_DIR = join(HOSTED_DIR, "v2");
 const PAGES_DIR = join(SRC_DIR, "pages");
 const GATED_ROUTE_DYNAMIC_IMPORT =
-	/\bimport\s*\(\s*["'](@\/(?:v2\/|hosted\/billing\/)[^"']+)["']\s*\)/g;
+	/\bimport\s*\(\s*["'](@\/hosted\/(?:v2\/|billing\/)[^"']+)["']\s*\)/g;
 
 function listTsx(dir: string): string[] {
 	const out: string[] = [];
@@ -44,7 +44,7 @@ function walkSrcExceptQuarantined(dir: string, out: string[] = []): string[] {
 		const full = join(dir, entry);
 		const st = statSync(full);
 		if (st.isDirectory()) {
-			if (full === HOSTED_DIR || full === V2_DIR) continue;
+			if (full === HOSTED_DIR) continue;
 			walkSrcExceptQuarantined(full, out);
 		} else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
 			out.push(full);
@@ -53,18 +53,21 @@ function walkSrcExceptQuarantined(dir: string, out: string[] = []): string[] {
 	return out;
 }
 
-function hasV2Gate(file: string): boolean {
+function hasHostedProductGate(file: string): boolean {
 	const src = readFileSync(file, "utf8");
-	return src.includes('from "@/components/v2-gate"') && /<V2Gate(?:\s|>)/.test(src);
+	return (
+		src.includes('from "@/components/hosted-product-gate"') &&
+		/<HostedProductGate(?:\s|>)/.test(src)
+	);
 }
 
-function nearestV2GateFile(routeFile: string): string | null {
-	if (hasV2Gate(routeFile)) return routeFile;
+function nearestHostedProductGateFile(routeFile: string): string | null {
+	if (hasHostedProductGate(routeFile)) return routeFile;
 
 	let dir = dirname(routeFile);
 	while (dir.startsWith(PAGES_DIR)) {
 		const layoutFile = join(dir, "layout.tsx");
-		if (layoutFile !== routeFile && existsSync(layoutFile) && hasV2Gate(layoutFile)) {
+		if (layoutFile !== routeFile && existsSync(layoutFile) && hasHostedProductGate(layoutFile)) {
 			return layoutFile;
 		}
 		const parent = dirname(dir);
@@ -75,13 +78,13 @@ function nearestV2GateFile(routeFile: string): string | null {
 	return null;
 }
 
-function routeUsesV2OnlyModule(src: string): boolean {
+function routeUsesHostedProductOnlyModule(src: string): boolean {
 	for (const match of src.matchAll(GATED_ROUTE_DYNAMIC_IMPORT)) {
 		const target = match[1];
-		if (target.startsWith("@/v2/")) return true;
-		// Hosted billing routes are per-user v2 surfaces, except the agents
-		// dashboard control strip. That strip is an IS_HOSTED-only dashboard
-		// adornment and not a standalone v2 route.
+		if (target.startsWith("@/hosted/v2/")) return true;
+		// Hosted billing routes are per-user hosted product surfaces, except
+		// the agents dashboard control strip. That strip is an IS_HOSTED-only
+		// dashboard adornment and not a standalone hosted product route.
 		if (target.startsWith("@/hosted/billing/") && !target.startsWith("@/hosted/billing/agents/")) {
 			return true;
 		}
@@ -89,16 +92,16 @@ function routeUsesV2OnlyModule(src: string): boolean {
 	return false;
 }
 
-function discoverV2OnlyRouteFiles(): string[] {
+function discoverHostedProductOnlyRouteFiles(): string[] {
 	const gateFiles = new Set<string>();
 	const ungatedRouteFiles: string[] = [];
 
 	for (const file of listTsx(PAGES_DIR)) {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
 		const src = readFileSync(file, "utf8");
-		if (!routeUsesV2OnlyModule(src)) continue;
+		if (!routeUsesHostedProductOnlyModule(src)) continue;
 
-		const gateFile = nearestV2GateFile(file);
+		const gateFile = nearestHostedProductGateFile(file);
 		if (gateFile) {
 			gateFiles.add(relative(SRC_DIR, gateFile));
 		} else {
@@ -108,7 +111,7 @@ function discoverV2OnlyRouteFiles(): string[] {
 
 	if (ungatedRouteFiles.length > 0) {
 		throw new Error(
-			`V2-only route entrypoints must render inside <V2Gate> directly or through a parent layout:\n  ${ungatedRouteFiles.join("\n  ")}`,
+			`Hosted product route entrypoints must render inside <HostedProductGate> directly or through a parent layout:\n  ${ungatedRouteFiles.join("\n  ")}`,
 		);
 	}
 
@@ -198,9 +201,9 @@ describe("hosted/ directory invariants", () => {
 	});
 });
 
-describe("v2/ directory invariants", () => {
+describe("hosted/v2 directory invariants", () => {
 	test('every .tsx file sets data-v2="true" on its root', () => {
-		const files = listTsx(V2_DIR);
+		const files = listTsx(HOSTED_V2_DIR);
 		expect(files.length).toBeGreaterThan(0);
 
 		for (const file of files) {
@@ -213,34 +216,7 @@ describe("v2/ directory invariants", () => {
 			}
 		}
 	});
-
-	test("v2 product modules do not depend on hosted agent infrastructure", () => {
-		const offenders: string[] = [];
-		for (const file of [...listTsx(V2_DIR), ...listTs(V2_DIR)]) {
-			const src = readFileSync(file, "utf8");
-			if (/@\/hosted\//.test(src)) offenders.push(relative(SRC_DIR, file));
-		}
-		if (offenders.length > 0) {
-			throw new Error(
-				`v2 product modules must not import hosted agent infrastructure:\n  ${offenders.join("\n  ")}`,
-			);
-		}
-	});
 });
-
-function listTs(dir: string): string[] {
-	const out: string[] = [];
-	const walk = (current: string) => {
-		for (const entry of readdirSync(current)) {
-			const full = join(current, entry);
-			const st = statSync(full);
-			if (st.isDirectory()) walk(full);
-			else if (entry.endsWith(".ts")) out.push(full);
-		}
-	};
-	walk(dir);
-	return out;
-}
 
 describe("no static @/hosted/* imports outside hosted/", () => {
 	test("non-hosted files only reach hosted/ via dynamic imports", () => {
@@ -268,27 +244,27 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 	});
 });
 
-describe("no static @/v2/* imports outside v2/ or hosted/", () => {
-	test("OSS-reachable files only reach v2/ via dynamic imports", () => {
+describe("no static @/hosted/v2/* imports outside hosted/", () => {
+	test("OSS-reachable files only reach hosted/v2 via dynamic imports", () => {
 		const offenders: string[] = [];
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
-			if (/^\s*import\s+[^"']+from\s+["']@\/v2\//m.test(src)) {
+			if (/^\s*import\s+[^"']+from\s+["']@\/hosted\/v2\//m.test(src)) {
 				offenders.push(relative(SRC_DIR, file));
 			}
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Static @/v2/* imports leak the v2 chunk into OSS bundles:\n  ${offenders.join("\n  ")}\nUse dynamic imports gated on IS_HOSTED instead.`,
+				`Static @/hosted/v2/* imports leak hosted-only chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nUse dynamic imports gated on IS_HOSTED instead.`,
 			);
 		}
 	});
 });
 
 describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
-	test('every `lazy(import("@/hosted/…"))` or `lazy(import("@/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
+	test('every `lazy(import("@/hosted/…"))` or `lazy(import("@/hosted/v2/…"))` is constructed inside `IS_HOSTED_BUILD ? … : null`', () => {
 		// Why this matters: a bare `lazy(() => import("@/hosted/x"))`
-		// or `lazy(() => import("@/v2/x"))` at module top level would
+		// or `lazy(() => import("@/hosted/v2/x"))` at module top level would
 		// register the gated chunk in the OSS
 		// client build graph even though `IS_HOSTED_BUILD &&
 		// <Component />` keeps it from rendering. The runtime bundler
@@ -302,7 +278,7 @@ describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
 		// then walk backwards to the most recent `const ` keyword. The
 		// snippet between the two must contain `IS_HOSTED_BUILD ?` — that's
 		// the gate the bundler folds at build time.
-		const gatedLazy = /lazy\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/(?:hosted|v2)\/[^"']+["']/g;
+		const gatedLazy = /lazy\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*["']@\/hosted\/[^"']+["']/g;
 		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
 			const src = readFileSync(file, "utf8");
 			for (const match of src.matchAll(gatedLazy)) {
@@ -317,43 +293,46 @@ describe("lazy gated-module imports are gated by the Vite hosted flag", () => {
 		}
 		if (offenders.length > 0) {
 			throw new Error(
-				`Ungated lazy imports of @/hosted/* or @/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? lazy(…) : null\`.`,
+				`Ungated lazy imports of @/hosted/* or @/hosted/v2/* leak gated chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nWrap each in \`const X = IS_HOSTED_BUILD ? lazy(…) : null\`.`,
 			);
 		}
 	});
 });
 
-describe("v2 route exposure", () => {
-	test("v2-only routes are behind the per-user V2 gate, not only the build flag", () => {
-		const routeFiles = discoverV2OnlyRouteFiles();
+describe("hosted product route exposure", () => {
+	test("hosted product routes are behind the per-user access gate, not only the build flag", () => {
+		const routeFiles = discoverHostedProductOnlyRouteFiles();
 
 		const offenders: string[] = [];
 		for (const routeFile of routeFiles) {
 			const full = join(SRC_DIR, routeFile);
 			const src = readFileSync(full, "utf8");
-			if (!src.includes('from "@/components/v2-gate"') || !/<V2Gate(?:\s|>)/.test(src)) {
+			if (
+				!src.includes('from "@/components/hosted-product-gate"') ||
+				!/<HostedProductGate(?:\s|>)/.test(src)
+			) {
 				offenders.push(routeFile);
 			}
-			if (/return\s+[A-Z][A-Za-z0-9]*\s*\?\s*\(\s*<V2Gate/.test(src)) {
-				offenders.push(`${routeFile} (short-circuits before V2Gate)`);
+			if (/return\s+[A-Z][A-Za-z0-9]*\s*\?\s*\(\s*<HostedProductGate/.test(src)) {
+				offenders.push(`${routeFile} (short-circuits before HostedProductGate)`);
 			}
 		}
 
 		if (offenders.length > 0) {
 			throw new Error(
-				`V2-only routes must render through <V2Gate>, not just IS_HOSTED:\n  ${offenders.join("\n  ")}`,
+				`Hosted product routes must render through <HostedProductGate>, not just IS_HOSTED:\n  ${offenders.join("\n  ")}`,
 			);
 		}
 	});
 
-	test("the unified new-agent entrypoint opens the in-app v2 wizard", () => {
+	test("the unified new-agent entrypoint opens the in-app deploy wizard", () => {
 		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
 		expect(src).toContain('router.navigate({ href: "/deploy" })');
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
 	});
 
-	test("v2-off agent index copy stays neutral", () => {
+	test("Cloud-agents-off agent index copy stays neutral", () => {
 		const agentsIndex = readFileSync(join(SRC_DIR, "pages/dashboard/agents/page.tsx"), "utf8");
 		const agentsCard = readFileSync(join(SRC_DIR, "components/dashboard/agents-card.tsx"), "utf8");
 		expect(agentsIndex).not.toContain("hosted on your account");

@@ -32,8 +32,8 @@ import {
 	useUpsertProvider,
 	useUpsertProviderQuiet,
 	useValidateProvider,
-} from "@/v2/ai-providers/ai-providers-hooks";
-import { ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
+} from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 	CODEX_OAUTH_CHANNEL,
@@ -42,7 +42,7 @@ import {
 	codexProviderBody,
 	codexRedirectUri,
 	parseCodexCallback,
-} from "@/v2/ai-providers/codex-oauth";
+} from "@/hosted/v2/ai-providers/codex-oauth";
 import {
 	API_MODE_LABEL,
 	type ApiMode,
@@ -50,8 +50,8 @@ import {
 	type ProviderTypeId,
 	providerTypeMeta,
 	toProviderId,
-} from "@/v2/ai-providers/provider-types";
-import type { AiProvider, AiProviderAuth } from "@/v2/ai-providers/types";
+} from "@/hosted/v2/ai-providers/provider-types";
+import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 
 type AuthMethod = "api_key" | "vault" | "oauth" | "none";
 
@@ -486,7 +486,11 @@ export function AddProviderDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={requestClose}>
-			<DialogContent data-v2="true" className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
+			>
 				{oauth ? (
 					<>
 						<DialogHeader>

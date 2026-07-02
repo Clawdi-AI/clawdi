@@ -15,8 +15,8 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
-import { useV2Access } from "@/lib/v2-access";
 
 export function NewAgentButton({
 	compact = false,
@@ -30,15 +30,15 @@ export function NewAgentButton({
 	className?: string;
 } = {}) {
 	const router = useRouter();
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
 	const [chooserOpen, setChooserOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const canDeployManagedAgent = mounted && IS_HOSTED && v2Access.canUseV2;
-	const checkingDeployAccess = mounted && IS_HOSTED && v2Access.isLoading;
+	const canDeployManagedAgent = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
+	const checkingDeployAccess = mounted && IS_HOSTED && hostedAccess.isLoading;
 
 	function handleClick() {
 		if (checkingDeployAccess) return;

@@ -94,6 +94,22 @@ import {
 	runtimeIsConfigured,
 	runtimeIsEnabled,
 } from "@/hosted/runtimes";
+import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import {
+	aiProviderRuntimeId,
+	buildAiProviderBootstrap,
+} from "@/hosted/v2/ai-providers/runtime-bootstrap";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
+import { ChannelError, ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import {
+	useAgentChannelLinks,
+	useBotPool,
+	useChannels,
+	useCreatePairCode,
+	useUnlinkAgentChannel,
+} from "@/hosted/v2/channels/channels-hooks";
 import {
 	type AgentSectionId,
 	agentSectionHref,
@@ -105,19 +121,6 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
-import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
-import { aiProviderRuntimeId, buildAiProviderBootstrap } from "@/v2/ai-providers/runtime-bootstrap";
-import type { AgentChannelLink } from "@/v2/channels/channel-edit-client";
-import { providerMeta } from "@/v2/channels/channel-providers";
-import { ChannelError, ProviderChip, TokenReveal } from "@/v2/channels/channel-ui";
-import {
-	useAgentChannelLinks,
-	useBotPool,
-	useChannels,
-	useCreatePairCode,
-	useUnlinkAgentChannel,
-} from "@/v2/channels/channels-hooks";
 
 type Runtime = HostedRuntime;
 type HostedAgentTab =

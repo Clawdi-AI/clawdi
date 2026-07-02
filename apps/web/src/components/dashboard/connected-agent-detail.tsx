@@ -82,9 +82,11 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 export function ConnectedAgentDetail({
 	environmentId,
 	section = "overview",
+	showSourceBadge = true,
 }: {
 	environmentId: string;
 	section?: AgentSectionId;
+	showSourceBadge?: boolean;
 }) {
 	const id = environmentId;
 	const router = useRouter();
@@ -243,7 +245,7 @@ export function ConnectedAgentDetail({
 										<ActiveTabIcon className="size-4 text-muted-foreground" />
 									) : null}
 									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-									<AgentSourceBadgeForEnvironment env={agent} compact />
+									{showSourceBadge ? <AgentSourceBadgeForEnvironment env={agent} compact /> : null}
 								</div>
 								{activeTabMeta.description ? (
 									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>

@@ -2,8 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
-import type { AiProviderUpsert } from "@/v2/ai-providers/types";
 
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 

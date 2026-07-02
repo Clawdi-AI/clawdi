@@ -1,4 +1,4 @@
-import { Cloud, Laptop } from "lucide-react";
+import { Cloud, History, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
 import { cn } from "@/lib/utils";
@@ -152,6 +152,30 @@ export function AgentSourceBadge({
 		>
 			<Icon className={cn(iconOnly ? "size-2.5" : "size-3.5", iconClass)} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
+		</span>
+	);
+}
+
+export function LegacyAgentBadge({
+	compact = false,
+	className,
+}: {
+	compact?: boolean;
+	className?: string;
+}) {
+	return (
+		<span
+			title="Managed in the legacy hosted dashboard"
+			className={cn(
+				"inline-flex shrink-0 items-center whitespace-nowrap border border-amber-200 bg-background font-medium leading-none text-foreground shadow-sm dark:border-amber-500/35 dark:bg-background/80",
+				compact
+					? "h-5 gap-1 rounded-full px-1.5 text-[11px]"
+					: "h-5 gap-1.5 rounded-full px-2 text-[11px]",
+				className,
+			)}
+		>
+			<History className="size-3.5 text-amber-600 dark:text-amber-300" />
+			Legacy
 		</span>
 	);
 }
