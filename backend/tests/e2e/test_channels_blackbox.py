@@ -484,12 +484,12 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             legacy_tg = await client.get(f"/bot{telegram['agent_token']}/getMe")
             assert legacy_tg.status_code == 404
             legacy_discord = await client.get(
-                "/v1/v10/gateway/bot",
+                "/api/v10/gateway/bot",
                 headers={"Authorization": f"Bot {discord['agent_token']}"},
             )
             assert legacy_discord.status_code == 404
             legacy_bluebubbles = await client.get(
-                "/v1/v1/server/info",
+                "/api/v1/server/info",
                 headers={"X-API-Key": imessage["agent_token"]},
             )
             assert legacy_bluebubbles.status_code == 404

@@ -167,7 +167,7 @@ class Settings(BaseSettings):
     #   (ONNX, ~1GB download on first use, no API key needed). Default.
     # - "api":   call an OpenAI-compatible embeddings endpoint. Set
     #   memory_embedding_api_key, and optionally memory_embedding_base_url
-    #   (e.g. https://openrouter.ai/v1/v1) and memory_embedding_model.
+    #   (e.g. https://openrouter.ai/api/v1) and memory_embedding_model.
     memory_embedding_mode: str = "local"
     memory_embedding_api_key: str = ""
     memory_embedding_base_url: str = ""

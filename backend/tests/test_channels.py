@@ -5933,12 +5933,12 @@ async def test_create_discord_channel_returns_provider_webhook(client: httpx.Asy
 async def test_legacy_channel_router_root_routes_are_absent(client: httpx.AsyncClient):
     checks = [
         ("POST", "/bot123456:token/getMe"),
-        ("GET", "/v1/v10/gateway/bot"),
-        ("GET", "/v1/v1/server/info"),
+        ("GET", "/api/v10/gateway/bot"),
+        ("GET", "/api/v1/server/info"),
         ("GET", "/channels/telegram"),
         ("GET", "/socket.io/"),
         ("GET", "/media/file.jpg"),
-        ("POST", "/v1/channels/migrations/legacy-router/import-tenant"),
+        ("POST", "/api/channels/migrations/legacy-router/import-tenant"),
     ]
 
     for method, path in checks:
