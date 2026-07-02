@@ -13,7 +13,7 @@ from sqlalchemy import cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import String
 
-from app.core.auth import AuthContext, _is_env_bound_api_key, get_auth
+from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import like_needle
@@ -365,6 +365,12 @@ _connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
+    # Mirror `require_user_auth`, which guarded the old connector MCP
+    # config route: narrowly-scoped api keys are deliberate capability
+    # narrowing and get no connector surface. Don't list what the
+    # caller can't call.
+    if _is_scoped_api_key(auth):
+        return []
     now = time.monotonic()
     cached = _connector_tools_cache.get(auth.user.clerk_id)
     if cached and cached[0] > now:
@@ -551,7 +557,21 @@ async def _tool_session_read(
             "reference must be a session UUID or a Clawdi share URL",
         ) from None
     if match:
-        session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, auth)
+        if _is_env_bound_api_key(auth):
+            # No owner-bypass for env-bound agent keys: a share URL for a
+            # same-user session in another environment must not sidestep
+            # the bare-UUID env filter. Own-environment sessions resolve
+            # directly; everything else needs an active public link
+            # (anonymous share semantics).
+            row = (
+                await db.execute(_user_sessions_stmt(auth).where(Session.id == parsed_id))
+            ).first()
+            if row is not None:
+                session, agent_type = row
+            else:
+                session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, None)
+        else:
+            session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, auth)
     else:
         stmt = _user_sessions_stmt(auth).where(Session.id == parsed_id)
         row = (await db.execute(stmt)).first()
@@ -576,6 +596,11 @@ async def _tool_session_read(
 async def _tool_connector_call(
     name: str, arguments: dict[str, Any], *, auth: AuthContext
 ) -> dict[str, Any]:
+    if _is_scoped_api_key(auth):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Connector tools are not available to scoped api keys",
+        )
     session = await get_tool_router_mcp_session(auth.user.clerk_id)
     response = await _forward_composio_mcp_request(
         session,

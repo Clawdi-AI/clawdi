@@ -536,3 +536,183 @@ async def test_create_tool_router_mcp_session_uses_composio_v31_api(monkeypatch)
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
     assert session.headers == {"x-session": "trs_test"}
     assert session.expires_at == now + timedelta(minutes=30)
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    """Scoped api keys are deliberate capability narrowing; the old
+    connector config route rejected them via `require_user_auth`, and the
+    MCP entrypoint must not reopen that surface: connector tools are
+    neither listed nor callable."""
+    from datetime import timedelta
+
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, scopes=["sessions:read"]),
+        )
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_forward(session, payload):
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]
+            },
+        }
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    assert listed.status_code == 200, listed.text
+    tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
+    assert "COMPOSIO_DANGEROUS" not in tool_names
+    assert "memory_search" in tool_names
+
+    assert called.status_code == 200, called.text
+    result = called.json()["result"]
+    assert result["isError"] is True
+    assert "scoped api keys" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    """An env-bound agent key must not use a share URL to owner-bypass
+    into same-user sessions from other environments. Own-env sessions and
+    actively link-shared sessions stay readable."""
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.models.session import Session
+    from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
+    from app.routes import mcp_bridge
+    from tests.conftest import create_env_with_project
+
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-share-a",
+        machine_name="Share Env A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-share-b",
+        machine_name="Share Env B",
+        agent_type="hermes",
+    )
+    now = datetime.now(UTC)
+    session_a = Session(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        local_session_id="share-a",
+        started_at=now,
+        summary="Env A session",
+        file_key="sessions/share-a.json",
+    )
+    session_b = Session(
+        user_id=seed_user.id,
+        environment_id=env_b.id,
+        local_session_id="share-b",
+        started_at=now,
+        summary="Env B session",
+        file_key="sessions/share-b.json",
+    )
+    db_session.add_all([session_a, session_b])
+    await db_session.commit()
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
+        )
+
+    async def fake_messages(session, store):
+        return [{"role": "user", "content": "hello"}]
+
+    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+
+    async def read_share(ac, session_id):
+        response = await ac.post(
+            "/v1/mcp/clawdi",
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "session_read",
+                    "arguments": {"reference": f"https://cloud.clawdi.ai/s/{session_id}"},
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["result"]
+
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            own_env = await read_share(ac, session_a.id)
+            cross_env = await read_share(ac, session_b.id)
+
+            db_session.add(SessionPermission(session_id=session_b.id, kind=PERMISSION_KIND_LINK))
+            await db_session.commit()
+            linked = await read_share(ac, session_b.id)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    assert not own_env.get("isError"), own_env
+    assert cross_env["isError"] is True, cross_env
+    assert not linked.get("isError"), linked
