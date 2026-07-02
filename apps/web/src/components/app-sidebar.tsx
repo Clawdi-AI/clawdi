@@ -103,10 +103,6 @@ import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import {
-	isLegacyHostedDashboardConfigured,
-	legacyHostedDashboardUrl,
-} from "@/lib/legacy-hosted-dashboard";
-import {
 	PROJECT_RESOURCE_GROUPS,
 	projectResourceDefinitionsForGroup,
 	projectResourceScopeLabel,
@@ -380,12 +376,10 @@ function ConsolePrimarySection({
 function ConsoleResourcesSection({
 	pathname,
 	showCloudFeatures,
-	showLegacyHostedDashboard,
 	onNavigate,
 }: {
 	pathname: string;
 	showCloudFeatures: boolean;
-	showLegacyHostedDashboard: boolean;
 	onNavigate?: () => void;
 }) {
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
@@ -402,22 +396,6 @@ function ConsoleResourcesSection({
 			};
 		}),
 	);
-
-	if (showLegacyHostedDashboard) {
-		const url = legacyHostedDashboardUrl();
-		if (url) {
-			resourceItems.push({
-				id: "hosted-dashboard",
-				label: "Hosted Dashboard",
-				href: url,
-				icon: Cloud,
-				tint: "bg-identity-5-bg text-identity-5-fg",
-				tooltip: "Legacy hosted dashboard",
-				active: false,
-				external: true,
-			});
-		}
-	}
 
 	if (showCloudFeatures) {
 		resourceItems.push(
@@ -582,7 +560,6 @@ function AgentFocusLoadingSections({
 function SidebarMainNavigation({
 	pathname,
 	showCloudFeatures,
-	showLegacyHostedDashboard,
 	activeAgentId,
 	activeAgent,
 	agentsLoaded,
@@ -591,7 +568,6 @@ function SidebarMainNavigation({
 }: {
 	pathname: string;
 	showCloudFeatures: boolean;
-	showLegacyHostedDashboard: boolean;
 	activeAgentId: string | null;
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
@@ -633,7 +609,6 @@ function SidebarMainNavigation({
 			<ConsoleResourcesSection
 				pathname={pathname}
 				showCloudFeatures={showCloudFeatures}
-				showLegacyHostedDashboard={showLegacyHostedDashboard}
 				onNavigate={onNavigate}
 			/>
 		</>
@@ -644,7 +619,6 @@ type FocusNavigationPaneProps = {
 	className?: string;
 	pathname: string;
 	showCloudFeatures: boolean;
-	showLegacyHostedDashboard: boolean;
 	activeAgentId: string | null;
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
@@ -656,7 +630,6 @@ function FocusNavigationPane({
 	className,
 	pathname,
 	showCloudFeatures,
-	showLegacyHostedDashboard,
 	activeAgentId,
 	activeAgent,
 	agentsLoaded,
@@ -676,7 +649,6 @@ function FocusNavigationPane({
 				<SidebarMainNavigation
 					pathname={pathname}
 					showCloudFeatures={showCloudFeatures}
-					showLegacyHostedDashboard={showLegacyHostedDashboard}
 					activeAgentId={activeAgentId}
 					activeAgent={activeAgent}
 					agentsLoaded={agentsLoaded}
@@ -1211,18 +1183,12 @@ function FocusHeader({
 			) : null}
 			<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
 				{/* Legacy agents share the hosted copy variant (supervised
-				 * daemon, no CLI steps); their lifecycle lives in the legacy
-				 * dashboard, so remediation points there when configured. */}
+				 * daemon, no CLI steps), but the legacy management app is no
+				 * longer linked from this dashboard. */}
 				<DaemonStatusBadge
 					env={activeAgent}
 					source={kind !== "connected" ? "on-clawdi" : "self-managed"}
-					manageHref={
-						kind === "cloud"
-							? agentSectionHref(activeAgent.id, "settings")
-							: kind === "legacy"
-								? (legacyHostedDashboardUrl() ?? undefined)
-								: undefined
-					}
+					manageHref={kind === "cloud" ? agentSectionHref(activeAgent.id, "settings") : undefined}
 					compact
 					tooltipDetail={meta.detailLabel}
 				/>
@@ -1474,11 +1440,6 @@ export function AppSidebar({
 		setMounted(true);
 	}, []);
 	const showCloudFeatures = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
-	const showLegacyHostedDashboard =
-		mounted &&
-		IS_HOSTED &&
-		hostedAccess.canUseLegacyHostedDashboard &&
-		isLegacyHostedDashboardConfigured();
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
@@ -1548,7 +1509,6 @@ export function AppSidebar({
 					<FocusNavigationPane
 						pathname={pathname}
 						showCloudFeatures={showCloudFeatures}
-						showLegacyHostedDashboard={showLegacyHostedDashboard}
 						activeAgentId={activeAgentId}
 						activeAgent={activeAgent ?? null}
 						agentsLoaded={agentsLoaded}
@@ -1577,7 +1537,6 @@ export function AppSidebar({
 							className="min-w-0"
 							pathname={pathname}
 							showCloudFeatures={showCloudFeatures}
-							showLegacyHostedDashboard={showLegacyHostedDashboard}
 							activeAgentId={activeAgentId}
 							activeAgent={activeAgent ?? null}
 							agentsLoaded={agentsLoaded}

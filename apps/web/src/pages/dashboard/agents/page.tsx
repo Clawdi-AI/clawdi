@@ -6,7 +6,6 @@ import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents
 import { PageHeader } from "@/components/page-header";
 import { unwrap, useApi } from "@/lib/api";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { isLegacyHostedDashboardConfigured } from "@/lib/legacy-hosted-dashboard";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -45,9 +44,6 @@ export default function AgentsIndexPage() {
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsByCompute && hostedAccess.canUseLegacyHostedDashboard,
 	);
-	const legacyHostedDashboardEnabled = Boolean(
-		legacyHostedAgentsEnabled && isLegacyHostedDashboardConfigured(),
-	);
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
@@ -64,7 +60,6 @@ export default function AgentsIndexPage() {
 						cloudEnvs={environments ?? []}
 						showCloudDeployments={hostedAgentsEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
-						showLegacyDashboard={legacyHostedDashboardEnabled}
 					/>
 				</Suspense>
 			) : (

@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { AgentSourceBadge, LegacyAgentBadge } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
 	type AgentTile,
@@ -15,7 +15,6 @@ import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 
 type Env = components["schemas"]["EnvironmentResponse"];
-const LEGACY_HOSTED_COMPUTE_ID = "legacy-hosted-dashboard";
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
@@ -46,8 +45,7 @@ export function HostedAgentsSection({
 	selfManagedCount,
 	cloudEnvs,
 	showCloudDeployments = true,
-	showLegacyDashboard = false,
-	showLegacyAgents = showLegacyDashboard,
+	showLegacyAgents = false,
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
@@ -62,13 +60,11 @@ export function HostedAgentsSection({
 	 */
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
-	showLegacyDashboard?: boolean;
 	showLegacyAgents?: boolean;
 }) {
 	const hosted = useHostedAgentTiles({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
-		includeLegacyDashboard: showLegacyDashboard,
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
@@ -139,7 +135,6 @@ function legacyConnectedTilesForAccess({
 	// Visible taxonomy in hosted builds:
 	// - Cloud deploy API records render as Clawdi Cloud agent tiles.
 	// - v1 hosted environments render like connected agents in this dashboard.
-	// - the v1 management app is exposed as one separate Legacy dashboard entry.
 	//
 	// When Cloud deployments are enabled, wait for the deployment query before
 	// projecting legacy environments so a Cloud-claimed env is not briefly duplicated.
@@ -171,14 +166,12 @@ export function HostedSecondaryCTA({
 	envsLoading,
 	cloudEnvs,
 	showCloudDeployments = true,
-	showLegacyDashboard = false,
-	showLegacyAgents = showLegacyDashboard,
+	showLegacyAgents = false,
 }: {
 	selfManagedCount: number;
 	envsLoading: boolean;
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
-	showLegacyDashboard?: boolean;
 	showLegacyAgents?: boolean;
 }) {
 	// Reuses the same hosted deployments TanStack Query cache
@@ -187,7 +180,6 @@ export function HostedSecondaryCTA({
 	const hosted = useHostedAgentTiles({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
-		includeLegacyDashboard: showLegacyDashboard,
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
@@ -219,21 +211,18 @@ export function HostedAgentsByCompute({
 	selfManagedCount,
 	cloudEnvs,
 	showCloudDeployments = true,
-	showLegacyDashboard = false,
-	showLegacyAgents = showLegacyDashboard,
+	showLegacyAgents = false,
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
 	selfManagedCount: number;
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
-	showLegacyDashboard?: boolean;
 	showLegacyAgents?: boolean;
 }) {
 	const hosted = useHostedAgentTiles({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
-		includeLegacyDashboard: showLegacyDashboard,
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
@@ -295,15 +284,9 @@ export function HostedAgentsByCompute({
 				<section key={group.key} className="space-y-2">
 					<div className="flex items-center gap-2 px-0.5">
 						<span className="text-sm font-medium">{group.name}</span>
-						{group.key === LEGACY_HOSTED_COMPUTE_ID ? (
-							<LegacyAgentBadge compact />
-						) : (
-							<AgentSourceBadge source="hosted" compact />
-						)}
+						<AgentSourceBadge source="hosted" compact />
 						<span className="text-xs text-muted-foreground">
-							{group.key === LEGACY_HOSTED_COMPUTE_ID
-								? "Legacy app"
-								: `${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
+							{`${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
 						</span>
 					</div>
 					<AgentTileGrid tiles={group.tiles} />
