@@ -832,6 +832,7 @@ async def _hosted_deployment_id_for_machine(
         )
     ).scalar_one_or_none()
 
+
 def _runtime_observed_desired(
     state: HostedRuntimeState,
 ) -> RuntimeObservedDesiredResponse:
