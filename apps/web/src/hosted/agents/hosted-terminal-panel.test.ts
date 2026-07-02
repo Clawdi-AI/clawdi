@@ -5,40 +5,33 @@ import {
 } from "@/hosted/agents/hosted-terminal-panel";
 
 describe("terminalWebSocketTarget", () => {
-	test("moves a fragment token into a websocket subprotocol by default", () => {
+	test("moves a fragment token into a websocket subprotocol", () => {
 		const target = terminalWebSocketTarget(
 			"wss://api.example.test/v2/deployments/hdep_123/terminal/ws#token=header.payload.signature",
 		);
 
 		expect(target.url).toBe("wss://api.example.test/v2/deployments/hdep_123/terminal/ws");
 		expect(target.protocols).toEqual(["tty", "clawdi-terminal.header.payload.signature"]);
-		expect(target.authMode).toBe("subprotocol");
 		expect(target.token).toBe("header.payload.signature");
 	});
 
-	test("can fall back to query-token auth when subprotocol auth is not viable", () => {
+	test("removes a query token without treating it as terminal auth", () => {
 		const target = terminalWebSocketTarget(
-			"wss://api.example.test/v2/deployments/hdep_123/terminal/ws#token=header.payload.signature",
-			"query",
-		);
-
-		expect(target.url).toBe(
 			"wss://api.example.test/v2/deployments/hdep_123/terminal/ws?token=header.payload.signature",
 		);
+
+		expect(target.url).toBe("wss://api.example.test/v2/deployments/hdep_123/terminal/ws");
 		expect(target.protocols).toEqual(["tty"]);
-		expect(target.authMode).toBe("query");
+		expect(target.token).toBeNull();
 	});
 
-	test("preserves existing query params when adding the fallback token", () => {
+	test("preserves existing query params while stripping the token", () => {
 		const target = terminalWebSocketTarget(
 			"wss://api.example.test/v2/deployments/hdep_123/terminal/ws?trace=1#token=tok",
-			"query",
 		);
 
-		expect(target.url).toBe(
-			"wss://api.example.test/v2/deployments/hdep_123/terminal/ws?trace=1&token=tok",
-		);
-		expect(target.protocols).toEqual(["tty"]);
+		expect(target.url).toBe("wss://api.example.test/v2/deployments/hdep_123/terminal/ws?trace=1");
+		expect(target.protocols).toEqual(["tty", "clawdi-terminal.tok"]);
 	});
 });
 

@@ -48,10 +48,10 @@ export function HostedAgentsSection({
 	/**
 	 * Cloud-api environments the parent already fetched for the
 	 * self-managed grid. Passed through so hosted tiles can join
-	 * to their daemon-sync row (`config_info.clawdi_cloud_environments`
+	 * to their daemon-sync row (`runtime_targets[agent_id].environment_id`
 	 * → `EnvironmentResponse.id`) and render the same status badge
-	 * as self-managed tiles. Empty/missing envs is harmless — the
-	 * matched-env lookup falls back to null and the tile still renders.
+	 * as self-managed tiles. Empty/missing envs is harmless: the
+	 * tile still renders through its explicit deployment-target route id.
 	 */
 	cloudEnvs: Env[];
 }) {

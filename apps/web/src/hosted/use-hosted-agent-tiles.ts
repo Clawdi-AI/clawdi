@@ -4,12 +4,12 @@ import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { deploymentDisplayName, hostedRuntimeTargetRouteId } from "@/hosted/agent-identity";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
-import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { enabledDeploymentRuntimeTargets, runtimeTargetDisplayName } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["EnvironmentResponse"];
@@ -22,8 +22,8 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * `cloudEnvs` is the cloud-api environments list the parent already
  * fetches for the self-managed grid; passing it through lets each
  * hosted tile attach its matching `EnvironmentResponse` (joined via
- * `deployment.config_info.clawdi_cloud_environments[agent_type] ===
- * env.id`). With the join, the same `DaemonStatusBadge` that powers
+ * `deployment.config_info.runtime_targets[agent_id].environment_id === env.id`).
+ * With the join, the same `DaemonStatusBadge` that powers
  * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
  * — hosted runtimes register cloud-api envs with their own daemon, so
  * the data is the same shape; only the "Clawdi" pill distinguishes
@@ -84,8 +84,8 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const claimedEnvIds = useMemo(() => {
 		const s = new Set<string>();
 		for (const d of query.data ?? []) {
-			for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
-				if (envId) s.add(envId.toLowerCase());
+			for (const target of enabledDeploymentRuntimeTargets(d)) {
+				if (target.environmentId) s.add(target.environmentId.toLowerCase());
 			}
 		}
 		return s;
@@ -110,54 +110,44 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 }
 
 /**
- * One deployment fans out to one tile per hosted runtime. Codex is the default
- * always-on runtime; OpenClaw and Hermes are optional sibling runtimes.
- *
- * Runtime resolution priority (see `resolveRuntimes` below):
- *   1. `clawdi_cloud_environments` keys. Each key corresponds to a
- *      runtime with a live cloud-api env binding.
- *   2. `onboarded_agents`, when it names recognizable runtimes.
- *   3. Codex plus enabled legacy runtime flags for older payloads.
+ * One deployment fans out to one tile per enabled runtime target. Target ids are
+ * the stable identity; runtime types only drive icon and adapter metadata.
  */
 function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
-	const runtimes = deploymentRuntimes(d);
+	const targets = enabledDeploymentRuntimeTargets(d);
 	const slug = deploymentDisplayName(d.name);
 	const statusLabel = displayStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	const active = d.status === "running" || d.status === "ready";
-	return runtimes.map((runtime) => {
+	return targets.map((target) => {
 		// Hosted env join: each hosted runtime registers a cloud-api env
-		// via the admin endpoint. Match by agent_type → environment_id
+		// via the admin endpoint. Match by target environment_id
 		// so the tile picks up daemon sync state (last_sync_at, queue
 		// depth, status badge) from cloud-api, and the primary click
 		// target points at the in-app env detail page — same UX as a
 		// self-managed agent. Lifecycle ops (Restart/Stop/Delete) live
 		// in that detail page's Settings section.
 		//
-		// If there is no registered env yet, route by deployment id.
-		// `AgentHome` resolves deployment ids without pretending they are
-		// cloud-api environment ids, so the tile still has a useful
-		// in-app place to click. Lifecycle operations live in Settings.
-		const envId = runtimeEnvironmentId(d.config_info, runtime);
+		// If there is no registered env yet, route by explicit
+		// deployment-target id so the detail page never guesses a sibling
+		// runtime by type or list order.
+		const envId = target.environmentId;
 		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+		const routeId = matchedEnv?.id ?? hostedRuntimeTargetRouteId(d.id, target.id);
 		const detailHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
-			: agentSectionHref(d.id);
+			: agentSectionHref(routeId, "overview", "source=on-clawdi");
 		const settingsHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
-			: agentSectionHref(d.id, "settings");
+			: agentSectionHref(routeId, "settings", "source=on-clawdi");
 		return {
-			id: `${d.id}:${runtime}`,
+			id: `${d.id}:${target.id}`,
 			source: "on-clawdi" as const,
-			// Runtime is the primary identifier on hosted tiles since the
-			// AgentIcon already brands it and one deployment fans out to
-			// multiple tiles — using `d.name` here would print
-			// "openclaw-b5451f9c" on a Hermes tile.
-			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
+			name: matchedEnv?.display_name?.trim() || runtimeTargetDisplayName(target),
 			displayName: matchedEnv?.display_name ?? null,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
-			agentType: runtime,
+			agentType: target.type,
 			// Deployment slug as the secondary line lets users disambiguate
 			// when they have more than one hosted deployment. Mode info ("Daemon") is
 			// implied by the "Clawdi" badge — every hosted runtime is daemon.

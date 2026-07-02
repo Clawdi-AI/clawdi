@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { hostedRuntimeTargetRouteId } from "@/hosted/agent-identity";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { DeployRequest, Plan } from "@/hosted/billing/contracts";
@@ -36,6 +37,7 @@ import {
 } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { defaultDeploymentRuntimeTarget } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn } from "@/lib/utils";
 import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
@@ -318,8 +320,18 @@ export function DeployWizard() {
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
+			const target = defaultDeploymentRuntimeTarget(deployment);
+			const routeId = target
+				? (target.environmentId ?? hostedRuntimeTargetRouteId(deployment.id, target.id))
+				: null;
+			if (!routeId) {
+				toast.error("Deployment created without runtime targets", {
+					description: "Refresh Agents once provisioning publishes target ids.",
+				});
+				return;
+			}
 			void router.navigate({
-				href: agentSectionHref(deployment.id, "overview", "source=on-clawdi"),
+				href: agentSectionHref(routeId, "overview", "source=on-clawdi"),
 			});
 		} catch (e) {
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });

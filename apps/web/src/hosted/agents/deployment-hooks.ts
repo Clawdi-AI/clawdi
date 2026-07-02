@@ -3,28 +3,35 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { parseHostedRuntimeTargetRouteId } from "@/hosted/agent-identity";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type { RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
 import { toastBillingError } from "@/hosted/billing/errors";
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
+import { deploymentRuntimeTargets, type HostedRuntimeTarget } from "@/hosted/runtimes";
 
 /**
- * Resolve the hosted deployment that backs a cloud-api environment, joined via
- * `config_info.clawdi_cloud_environments[runtime] === environmentId` (same join
- * the agent tiles use). Returns null for self-managed (CLI) agents.
+ * Resolve the hosted deployment target that backs a cloud-api environment,
+ * joined via `config_info.runtime_targets[agent_id].environment_id ===
+ * environmentId`. Returns null for self-managed (CLI) agents.
  */
 export function useAgentDeployment(environmentId: string) {
 	const query = useHostedDeployments();
 	const match = useMemo(() => {
+		const explicitTarget = parseHostedRuntimeTargetRouteId(environmentId);
 		const target = environmentId.toLowerCase();
 		for (const d of query.data ?? []) {
-			// Direct deployment-id match: the post-deploy redirect lands on
-			// `/agents/<deployment.id>` because cloud-api env ids aren't minted
-			// until provisioning finishes — resolve by id, not just the env join.
-			if (d.id.toLowerCase() === target) return { deployment: d, runtime: null };
-			const envs = d.config_info?.clawdi_cloud_environments ?? {};
-			const runtime = Object.entries(envs).find(([, v]) => (v ?? "").toLowerCase() === target);
-			if (runtime) return { deployment: d, runtime: runtime[0] };
+			if (explicitTarget && d.id === explicitTarget.deploymentId) {
+				const runtimeTarget = deploymentRuntimeTargets(d).find(
+					(item) => item.id === explicitTarget.agentId,
+				);
+				if (runtimeTarget) return { deployment: d, target: runtimeTarget };
+				continue;
+			}
+			const runtimeTarget = deploymentRuntimeTargets(d).find(
+				(item) => (item.environmentId ?? "").toLowerCase() === target,
+			);
+			if (runtimeTarget) return { deployment: d, target: runtimeTarget };
 		}
 		return null;
 	}, [query.data, environmentId]);
@@ -35,14 +42,13 @@ export function useAgentDeployment(environmentId: string) {
 	// deployment, falling back to the route param while provisioning hasn't
 	// minted env ids yet.
 	const resolvedEnvId = useMemo(() => {
-		if (!match || match.runtime) return environmentId;
-		const envs = match.deployment.config_info?.clawdi_cloud_environments ?? {};
-		return envs.codex || environmentId;
+		if (!match || match.target?.environmentId) return match?.target?.environmentId ?? environmentId;
+		return environmentId;
 	}, [match, environmentId]);
 
 	return {
 		deployment: match?.deployment ?? null,
-		matchedRuntime: match?.runtime ?? null,
+		runtimeTarget: match?.target ?? null,
 		environmentId: resolvedEnvId,
 		isLoading: query.isLoading,
 		isFetching: query.isFetching,
@@ -54,8 +60,8 @@ export function useSetAgentEnabled() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (vars: { id: string; agentType: string; enabled: boolean }) =>
-			client.setAgentEnabled(vars.id, vars.agentType, vars.enabled),
+		mutationFn: (vars: { id: string; agentId: string; enabled: boolean }) =>
+			client.setAgentEnabled(vars.id, vars.agentId, vars.enabled),
 		onSuccess: (_d, vars) => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			toast.success(vars.enabled ? "Runtime enabled" : "Runtime disabled");
@@ -71,12 +77,12 @@ export function useSetAgentAiProvider() {
 	return useMutation({
 		mutationFn: async (vars: {
 			id: string;
-			agentTypes: string[];
+			agentIds: string[];
 			body: RebindAgentAiProviderRequest;
 		}) => {
 			let last: Awaited<ReturnType<typeof client.setAgentAiProvider>> | undefined;
-			for (const agentType of vars.agentTypes) {
-				last = await client.setAgentAiProvider(vars.id, agentType, vars.body);
+			for (const agentId of vars.agentIds) {
+				last = await client.setAgentAiProvider(vars.id, agentId, vars.body);
 			}
 			return last;
 		},
@@ -85,24 +91,11 @@ export function useSetAgentAiProvider() {
 	});
 }
 
-export function useOnboardAgent() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { id: string; agentType: string }) =>
-			client.onboardAgent(vars.id, vars.agentType),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			toast.success("Runtime added");
-		},
-		onError: toastBillingError("Couldn't add runtime"),
-	});
-}
-
 export function useCreateTerminalSession() {
 	const client = useBillingClient();
 	return useMutation({
-		mutationFn: (vars: { id: string }) => client.createTerminalSession(vars.id),
+		mutationFn: (vars: { id: string; target: HostedRuntimeTarget }) =>
+			client.createTerminalSession(vars.id, vars.target.id),
 		onError: toastBillingError("Couldn't open terminal"),
 	});
 }

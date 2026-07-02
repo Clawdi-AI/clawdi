@@ -14,14 +14,12 @@ const TERMINAL_RESET_STYLE = "\u001b[0m";
 const TERMINAL_CLOSE_REASON_MAX_LENGTH = 120;
 
 export type HostedTerminalStatus = "connecting" | "connected" | "disconnected";
-type TerminalAuthMode = "subprotocol" | "query";
 type TerminalThemeMode = "dark" | "light";
 
 type TerminalWebSocketTarget = {
 	url: string;
 	protocols: string[];
 	token: string | null;
-	authMode: TerminalAuthMode;
 };
 
 type HostedTerminalPanelProps = {
@@ -76,35 +74,21 @@ const TERMINAL_THEMES = {
 	},
 } as const;
 
-export function terminalWebSocketTarget(
-	websocketUrl: string,
-	authMode: TerminalAuthMode = "subprotocol",
-): TerminalWebSocketTarget {
+export function terminalWebSocketTarget(websocketUrl: string): TerminalWebSocketTarget {
 	const protocols = ["tty"];
 	try {
 		const parsed = new URL(websocketUrl);
-		const queryToken = parsed.searchParams.get("token");
-		const fragmentToken = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("token");
-		const token = queryToken || fragmentToken;
+		const token = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("token");
 		parsed.hash = "";
-		if (!token) return { url: parsed.toString(), protocols, token: null, authMode };
-		if (queryToken || authMode === "query") {
-			parsed.searchParams.set("token", token);
-			return {
-				url: parsed.toString(),
-				protocols,
-				token,
-				authMode: "query",
-			};
-		}
+		parsed.searchParams.delete("token");
+		if (!token) return { url: parsed.toString(), protocols, token: null };
 		return {
 			url: parsed.toString(),
 			protocols: [...protocols, `${TERMINAL_TOKEN_PROTOCOL_PREFIX}${token}`],
 			token,
-			authMode: "subprotocol",
 		};
 	} catch {
-		return { url: websocketUrl, protocols, token: null, authMode };
+		return { url: websocketUrl, protocols, token: null };
 	}
 }
 
@@ -201,14 +185,9 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 
 		const openWebSocket = (target: TerminalWebSocketTarget) => {
 			let ws: WebSocket;
-			let opened = false;
 			try {
 				ws = new WebSocket(target.url, target.protocols);
 			} catch {
-				if (target.authMode === "subprotocol" && target.token) {
-					openWebSocket(terminalWebSocketTarget(websocketUrl, "query"));
-					return;
-				}
 				setStatus("disconnected");
 				writeTerminalNotice(term, "terminal websocket could not be opened");
 				return;
@@ -218,7 +197,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 
 			ws.onopen = () => {
 				if (disposed) return;
-				opened = true;
 				setStatus("connected");
 				term.focus();
 				ws.send(JSON.stringify({ AuthToken: "", columns: term.cols, rows: term.rows }));
@@ -239,16 +217,10 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 				if (wsRef.current === ws) {
 					wsRef.current = null;
 				}
-				if (!opened && target.authMode === "subprotocol" && target.token) {
-					setStatus("connecting");
-					openWebSocket(terminalWebSocketTarget(websocketUrl, "query"));
-					return;
-				}
 				setStatus("disconnected");
 				writeTerminalNotice(term, terminalConnectionClosedMessage(event));
 			};
 			ws.onerror = () => {
-				if (!opened && target.authMode === "subprotocol" && target.token) return;
 				if (!disposed) setStatus("disconnected");
 			};
 		};

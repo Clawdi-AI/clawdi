@@ -1,10 +1,14 @@
+import { hostedRuntimeTargetRouteId } from "@/hosted/agent-identity";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { deploymentRuntimes, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { enabledDeploymentRuntimeTargets } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 export function hostedEnvironmentHref(deployment: HostedDeployment): string | null {
-	const envId = deploymentRuntimes(deployment)
-		.map((runtime) => runtimeEnvironmentId(deployment.config_info, runtime))
-		.find((value): value is string => Boolean(value));
-	return envId ? agentSectionHref(envId, "overview", "source=on-clawdi") : null;
+	const target = enabledDeploymentRuntimeTargets(deployment)[0];
+	if (!target) return null;
+	return agentSectionHref(
+		target.environmentId ?? hostedRuntimeTargetRouteId(deployment.id, target.id),
+		"overview",
+		"source=on-clawdi",
+	);
 }

@@ -128,6 +128,7 @@ export type PendingSkillUploadEcho = {
 
 interface EngineOpts {
 	environmentId: string;
+	agentId?: string;
 	adapter: AgentAdapter;
 	abort: AbortSignal;
 	/** Used by the SSE consumer to abort the whole engine on a 401
@@ -141,6 +142,7 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
+	const syncAgentId = opts.agentId?.trim() || opts.adapter.agentType;
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, skill download, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -166,7 +168,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// the dedup map keeps the dropped session out forever.
 	const inFlightSessionHash = new Map<string, string>();
 	const queue = new RetryQueue({
-		agentType: opts.adapter.agentType,
+		agentType: syncAgentId,
 		onEvict: (item) => {
 			if (item.kind === "session_push") {
 				const cur = inFlightSessionHash.get(item.local_session_id);
@@ -192,7 +194,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const lastPushedHash = new Map<string, string>();
 	{
 		const lock = readSkillsLock();
-		const prefix = `${opts.adapter.agentType}:`;
+		const prefix = `${syncAgentId}:`;
 		// Two passes so v2 partitioned entries always win over a
 		// v1 flat fallback. The v1 entry might belong to a
 		// different agent for multi-agent users (v1 didn't track
@@ -290,9 +292,10 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	{
 		const lock = readSessionsLock();
 		for (const [k, v] of Object.entries(lock.sessions)) {
-			// Lock keys are `<agent_type>:<local_session_id>`. We
-			// only care about entries for the agent we're serving.
-			const prefix = `${opts.adapter.agentType}:`;
+			// Lock keys are `<agent_id>:<local_session_id>`. On laptops
+			// `agent_id` is usually the adapter type; hosted runtimes use
+			// the unique runtime target id, e.g. `openclaw-a`.
+			const prefix = `${syncAgentId}:`;
 			if (k.startsWith(prefix) && v?.hash) {
 				lastPushedSessionHash.set(k.slice(prefix.length), v.hash);
 			}
@@ -304,11 +307,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 
 	const rootDir = opts.adapter.getSkillsRootDir();
 
-	const stateDir = getServeStateDir(opts.adapter.agentType);
+	const stateDir = getServeStateDir(syncAgentId);
 	await mkdir(stateDir, { recursive: true });
 
 	log.info("engine.start", {
 		environment_id: opts.environmentId,
+		agent_id: syncAgentId,
 		agent_type: opts.adapter.agentType,
 		root_dir: rootDir,
 		state_dir: stateDir,
@@ -513,6 +517,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	try {
 		await initialSync(
 			opts,
+			syncAgentId,
 			api,
 			queue,
 			lastPushedHash,
@@ -602,7 +607,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				// missing" and re-enter the boot remove-or-push
 				// branch on a key that's already been deleted.
 				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, event.skill_key)];
+				delete lock.skills[skillCacheKey(syncAgentId, event.skill_key)];
 				writeSkillsLock(lock);
 				log.info("engine.skill_deleted_local", { skill_key: event.skill_key });
 				applied = true;
@@ -644,7 +649,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		addInFlight(pullsInFlight, event.skill_key);
 		let pulled = false;
 		try {
-			await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultProjectId);
+			await pullSkill(opts, syncAgentId, api, event.skill_key, lastPushedHash, defaultProjectId);
 			// Track the SSE-pulled skill in cloudObservedKeys so the
 			// reconcile sweep can later remove it if its delete event
 			// is missed. Without this, an SSE-installed skill that
@@ -772,6 +777,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}),
 		drainQueueLoop(
 			opts,
+			syncAgentId,
 			api,
 			queue,
 			lastPushedHash,
@@ -786,6 +792,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		),
 		reconcileLoop(
 			opts,
+			syncAgentId,
 			api,
 			lastPushedHash,
 			cloudObservedKeys,
@@ -801,7 +808,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			},
 			triggerAuthFailureAbort,
 		),
-		heartbeatLoop(opts, api, queue, opts.abort, () => ({
+		heartbeatLoop(opts, syncAgentId, api, queue, opts.abort, () => ({
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
@@ -982,6 +989,7 @@ export function isOversizedUploadError(e: unknown): boolean {
 
 async function drainQueueLoop(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	queue: RetryQueue,
 	lastPushedHash: Map<string, string>,
@@ -1028,6 +1036,7 @@ async function drainQueueLoop(
 		try {
 			await processQueueItem(
 				opts,
+				syncAgentId,
 				api,
 				queue,
 				item,
@@ -1170,6 +1179,7 @@ async function drainQueueLoop(
 
 async function processQueueItem(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	queue: RetryQueue,
 	item: QueueItem,
@@ -1202,6 +1212,7 @@ async function processQueueItem(
 		}
 		await uploadSkillFromQueue(
 			opts,
+			syncAgentId,
 			api,
 			item,
 			lastPushedHash,
@@ -1223,7 +1234,7 @@ async function processQueueItem(
 		return;
 	}
 	if (item.kind === "session_push") {
-		const result = await uploadSessionFromQueue(opts, api, item);
+		const result = await uploadSessionFromQueue(opts, syncAgentId, api, item);
 		// Move the hash from in-flight (touch-storm guard) to
 		// confirmed-pushed (source of truth for re-enqueue dedup).
 		// Doing this AFTER the upload returns means a queue evict /
@@ -1273,6 +1284,7 @@ async function processQueueItem(
  * counterpart that this borrows from. */
 async function uploadSessionFromQueue(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "session_push" }>,
 ): Promise<{ actualHash: string } | null> {
@@ -1370,7 +1382,7 @@ async function uploadSessionFromQueue(
 	// re-push on the wrong hash, leaving the cloud row out of sync
 	// with the local file.
 	const lock = readSessionsLock();
-	lock.sessions[cacheKey(opts.adapter.agentType, session.localSessionId)] = {
+	lock.sessions[cacheKey(syncAgentId, session.localSessionId)] = {
 		hash: actualHash,
 	};
 	writeSessionsLock(lock);
@@ -1385,6 +1397,7 @@ async function uploadSessionFromQueue(
 
 async function uploadSkillFromQueue(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
@@ -1458,7 +1471,7 @@ async function uploadSkillFromQueue(
 		// initialSync. Without this, divergence at boot defaulted
 		// to push and clobbered offline dashboard edits.
 		const lock = readSkillsLock();
-		lock.skills[skillCacheKey(opts.adapter.agentType, item.skill_key)] = {
+		lock.skills[skillCacheKey(syncAgentId, item.skill_key)] = {
 			hash: actualHash,
 		};
 		writeSkillsLock(lock);
@@ -1600,6 +1613,7 @@ async function listAllCloudSkills(
  */
 async function initialSync(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	queue: RetryQueue,
 	lastPushedHash: Map<string, string>,
@@ -1672,7 +1686,7 @@ async function initialSync(
 			// can't regress.
 			addInFlight(pullsInFlight, key);
 			try {
-				await pullSkill(opts, api, key, lastPushedHash, projectId);
+				await pullSkill(opts, syncAgentId, api, key, lastPushedHash, projectId);
 			} catch (e) {
 				allApplied = false;
 				log.warn("engine.boot_pull_failed", {
@@ -1730,7 +1744,7 @@ async function initialSync(
 				// intermediate empty state.
 				addInFlight(pullsInFlight, key);
 				try {
-					await pullSkill(opts, api, key, lastPushedHash, projectId);
+					await pullSkill(opts, syncAgentId, api, key, lastPushedHash, projectId);
 					log.info("engine.boot_pull_diverged", {
 						skill_key: key,
 						local: localHash,
@@ -1760,7 +1774,7 @@ async function initialSync(
 			// daemon was offline).
 			lastPushedHash.set(key, cloud.content_hash);
 			const lock = readSkillsLock();
-			lock.skills[skillCacheKey(opts.adapter.agentType, key)] = {
+			lock.skills[skillCacheKey(syncAgentId, key)] = {
 				hash: cloud.content_hash,
 			};
 			writeSkillsLock(lock);
@@ -1811,7 +1825,7 @@ async function initialSync(
 				// doesn't re-trigger this branch on a key that's
 				// already gone.
 				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, key)];
+				delete lock.skills[skillCacheKey(syncAgentId, key)];
 				writeSkillsLock(lock);
 				log.info("engine.boot_remove_cloud_deleted", { skill_key: key });
 			} catch (e) {
@@ -1873,6 +1887,7 @@ export function filterValidSkillKeysForSync(
  * wipe out skills the daemon hasn't visited yet. */
 async function reconcileLoop(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	lastPushedHash: Map<string, string>,
 	cloudObservedKeys: Set<string>,
@@ -1890,6 +1905,7 @@ async function reconcileLoop(
 		try {
 			await reconcileFromCloud(
 				opts,
+				syncAgentId,
 				api,
 				lastPushedHash,
 				cloudObservedKeys,
@@ -1926,6 +1942,7 @@ export function projectRefreshDelayMs(random: () => number = Math.random): numbe
 
 async function reconcileFromCloud(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	lastPushedHash: Map<string, string>,
 	cloudObservedKeys: Set<string>,
@@ -1994,7 +2011,7 @@ async function reconcileFromCloud(
 			// window would surface at boot as "local-only, no record"
 			// → PUSH back, undoing the deletion.
 			const lock = readSkillsLock();
-			lock.skills[skillCacheKey(opts.adapter.agentType, skill.skill_key)] = {
+			lock.skills[skillCacheKey(syncAgentId, skill.skill_key)] = {
 				hash: skill.content_hash,
 			};
 			writeSkillsLock(lock);
@@ -2046,7 +2063,7 @@ async function reconcileFromCloud(
 				// daemon restart would see the stale entry and
 				// hit the boot "remove or push" branch again.
 				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, knownKey)];
+				delete lock.skills[skillCacheKey(syncAgentId, knownKey)];
 				writeSkillsLock(lock);
 				log.info("engine.skill_swept", { skill_key: knownKey });
 			} catch (e) {
@@ -2177,6 +2194,7 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
  * env's resolved `projectId`. */
 async function pullSkill(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	skillKey: string,
 	lastPushedHash: Map<string, string>,
@@ -2198,7 +2216,7 @@ async function pullSkill(
 		// surface at boot as "local-only, no record" → PUSH back,
 		// resurrecting the deletion. Mirrors the push-success path.
 		const lock = readSkillsLock();
-		lock.skills[skillCacheKey(opts.adapter.agentType, skillKey)] = { hash };
+		lock.skills[skillCacheKey(syncAgentId, skillKey)] = { hash };
 		writeSkillsLock(lock);
 	} catch {
 		// Directory state weird (extraction half-done?); next
@@ -2214,6 +2232,7 @@ async function pullSkill(
  * after the first 30s sleep elapses. */
 async function heartbeatLoop(
 	opts: EngineOpts,
+	syncAgentId: string,
 	api: ApiClient,
 	queue: RetryQueue,
 	abort: AbortSignal,
@@ -2243,7 +2262,7 @@ async function heartbeatLoop(
 				},
 			});
 			heartbeatFailureStreak = 0;
-			await touchHealthFile(opts.adapter.agentType);
+			await touchHealthFile(syncAgentId);
 		} catch (e) {
 			// POST failed — restore the unsent dropped delta so the
 			// next successful heartbeat carries it. Without this the

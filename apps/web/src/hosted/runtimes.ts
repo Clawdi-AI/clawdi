@@ -9,6 +9,19 @@ export const OPTIONAL_HOSTED_RUNTIMES = [
 ] as const satisfies readonly HostedRuntime[];
 export const ALWAYS_ON_HOSTED_RUNTIME = "codex" as const satisfies HostedRuntime;
 
+type RawRuntimeTarget = NonNullable<DeploymentDetailsInfo["runtime_targets"]>[string];
+
+export interface HostedRuntimeTarget {
+	id: string;
+	type: HostedRuntime;
+	displayName: string;
+	enabled: boolean;
+	environmentId: string | null;
+	controlUiUrl: string | null;
+	image: RawRuntimeTarget["image"];
+	version: RawRuntimeTarget["version"];
+}
+
 const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
 );
@@ -39,6 +52,10 @@ export function runtimeDisplayName(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].label;
 }
 
+export function runtimeTargetDisplayName(target: HostedRuntimeTarget): string {
+	return target.displayName || runtimeDisplayName(target.type);
+}
+
 export function runtimeBlurb(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].blurb;
 }
@@ -47,70 +64,44 @@ export function runtimeCanDisable(runtime: HostedRuntime): boolean {
 	return RUNTIME_META[runtime].canDisable;
 }
 
-export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
-	const runtimes = new Set<HostedRuntime>();
-	for (const value of values) {
-		if (isHostedRuntime(value)) runtimes.add(value);
-	}
-	return [...runtimes].sort(
-		(left, right) => (RUNTIME_ORDER.get(left) ?? 0) - (RUNTIME_ORDER.get(right) ?? 0),
-	);
+export function deploymentRuntimeTargets(deployment: HostedDeployment): HostedRuntimeTarget[] {
+	const targets = deployment.config_info?.runtime_targets ?? {};
+	return Object.entries(targets)
+		.map(([id, raw]) => normalizeRuntimeTarget(id, raw))
+		.filter((target): target is HostedRuntimeTarget => target !== null)
+		.sort(
+			(left, right) =>
+				(RUNTIME_ORDER.get(left.type) ?? 99) - (RUNTIME_ORDER.get(right.type) ?? 99) ||
+				left.id.localeCompare(right.id),
+		);
 }
 
-export function runtimeIsEnabled(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
-): boolean {
-	if (runtime === ALWAYS_ON_HOSTED_RUNTIME) return true;
-	if (runtime === "openclaw") return configInfo?.enable_openclaw !== false;
-	return configInfo?.enable_hermes === true;
-}
-
-export function runtimeIsConfigured(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
-): boolean {
-	if (runtime === ALWAYS_ON_HOSTED_RUNTIME) return true;
-	return new Set(configInfo?.configured_agents ?? []).has(runtime);
-}
-
-export function runtimeEnvironmentId(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
-): string | undefined {
-	return configInfo?.clawdi_cloud_environments?.[runtime];
-}
-
-export function runtimeConsoleUrl(
+export function enabledDeploymentRuntimeTargets(
 	deployment: HostedDeployment,
-	runtime: HostedRuntime,
-): string | null | undefined {
-	if (runtime === "codex") return null;
-	if (runtime === "openclaw") return deployment.openclaw_control_ui_url;
-	return deployment.hermes_control_ui_url;
+): HostedRuntimeTarget[] {
+	return deploymentRuntimeTargets(deployment).filter((target) => target.enabled);
 }
 
-export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[] {
-	const configInfo = deployment.config_info;
-	const explicit = sortHostedRuntimes([
-		...Object.keys(configInfo?.clawdi_cloud_environments ?? {}),
-		...(configInfo?.onboarded_agents ?? []),
-	]);
-	if (explicit.length > 0) {
-		return sortHostedRuntimes([ALWAYS_ON_HOSTED_RUNTIME, ...explicit]);
-	}
-
-	const fallback = new Set<HostedRuntime>([ALWAYS_ON_HOSTED_RUNTIME]);
-	for (const runtime of sortHostedRuntimes(
-		Object.keys(configInfo?.clawdi_cloud_environments ?? {}),
-	)) {
-		fallback.add(runtime);
-	}
-	if (runtimeIsEnabled(configInfo, "openclaw")) fallback.add("openclaw");
-	if (runtimeIsEnabled(configInfo, "hermes")) fallback.add("hermes");
-	return sortHostedRuntimes(fallback);
+export function defaultDeploymentRuntimeTarget(
+	deployment: HostedDeployment,
+): HostedRuntimeTarget | null {
+	return enabledDeploymentRuntimeTargets(deployment)[0] ?? null;
 }
 
-export function defaultDeploymentRuntime(deployment: HostedDeployment): HostedRuntime {
-	return deploymentRuntimes(deployment)[0] ?? ALWAYS_ON_HOSTED_RUNTIME;
+export function runtimeConsoleUrl(target: HostedRuntimeTarget): string | null {
+	return target.type === "codex" ? null : target.controlUiUrl;
+}
+
+function normalizeRuntimeTarget(id: string, raw: RawRuntimeTarget): HostedRuntimeTarget | null {
+	if (!id || raw.id !== id || !isHostedRuntime(raw.type)) return null;
+	return {
+		id,
+		type: raw.type,
+		displayName: raw.display_name?.trim() || runtimeDisplayName(raw.type),
+		enabled: raw.enabled === true,
+		environmentId: raw.environment_id ?? null,
+		controlUiUrl: raw.control_ui_url ?? null,
+		image: raw.image ?? null,
+		version: raw.version ?? null,
+	};
 }

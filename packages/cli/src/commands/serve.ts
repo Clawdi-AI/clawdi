@@ -100,6 +100,7 @@ let activeControlRpcHttp: { host: string; port: number; allow_remote: boolean } 
 const CONTROL_ACTION_DELAY_MS = 100;
 
 interface DaemonRunTarget {
+	agentId: string;
 	agentType: AgentType;
 	adapter: NonNullable<ReturnType<typeof adapterForType>>;
 	environmentId: string;
@@ -207,9 +208,10 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 
 	log.info("serve.boot", {
 		mode,
-		agents: targets.map((target) => target.agentType),
+		agents: targets.map((target) => target.agentId),
+		agent_types: Object.fromEntries(targets.map((target) => [target.agentId, target.agentType])),
 		state_dirs: Object.fromEntries(
-			targets.map((target) => [target.agentType, getServeStateDir(target.agentType)]),
+			targets.map((target) => [target.agentId, getServeStateDir(target.agentId)]),
 		),
 		pid: process.pid,
 	});
@@ -248,22 +250,28 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		}
 	}
 
-	const rpc = await startControlRpcServer(
-		createControlRpcHandlers({ abortController: abort }),
-		abort.signal,
-		rpcListen,
-	);
-	activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
-	log.info("serve.rpc_listening", {
-		token_path: rpc.tokenPath,
-		http: rpc.http,
-	});
+	if (process.env.CLAWDI_DAEMON_RPC_DISABLED === "1") {
+		activeControlRpcHttp = null;
+		log.info("serve.rpc_disabled", {});
+	} else {
+		const rpc = await startControlRpcServer(
+			createControlRpcHandlers({ abortController: abort }),
+			abort.signal,
+			rpcListen,
+		);
+		activeControlRpcHttp = { ...rpc.http, allow_remote: rpcListen.allowRemote === true };
+		log.info("serve.rpc_listening", {
+			token_path: rpc.tokenPath,
+			http: rpc.http,
+		});
+	}
 
 	try {
 		await Promise.all(
 			targets.map((target) =>
 				runSyncEngine({
 					environmentId: target.environmentId,
+					agentId: target.agentId,
 					adapter: target.adapter,
 					abort: abort.signal,
 					abortController: abort,
@@ -1721,7 +1729,8 @@ function pickLegacyDaemonRunTarget(legacy: LegacyDaemonRun): DaemonRunTarget {
 		console.error(`No adapter available for ${legacy.agentType}.`);
 		process.exit(1);
 	}
-	const environmentId = legacy.environmentId ?? resolveEnvironmentId(legacy.agentType, 1);
+	const environmentId =
+		legacy.environmentId ?? resolveEnvironmentId(legacy.agentType, legacy.agentType, 1);
 	if (!environmentId) {
 		log.error("serve.no_environment", {
 			agent: legacy.agentType,
@@ -1730,6 +1739,7 @@ function pickLegacyDaemonRunTarget(legacy: LegacyDaemonRun): DaemonRunTarget {
 		process.exit(1);
 	}
 	return {
+		agentId: legacy.agentType,
 		agentType: legacy.agentType,
 		adapter,
 		environmentId,
@@ -1741,9 +1751,35 @@ function isAgentType(s: string): s is AgentType {
 }
 
 function pickDaemonRunTargets(): DaemonRunTarget[] {
+	const explicitAgentType = process.env.CLAWDI_AGENT_TYPE?.trim();
+	if (explicitAgentType) {
+		if (!isAgentType(explicitAgentType)) {
+			log.error("serve.unknown_agent", { agent: explicitAgentType, known: AGENT_TYPES });
+			console.error(
+				`Unknown agent: ${explicitAgentType}. Expected one of: ${AGENT_TYPES.join(", ")}`,
+			);
+			process.exit(1);
+		}
+		const agentId = process.env.CLAWDI_AGENT_ID?.trim() || explicitAgentType;
+		const adapter = adapterForType(explicitAgentType);
+		if (!adapter) {
+			log.error("serve.no_agent_adapter", { agent: explicitAgentType });
+			console.error(`No adapter available for ${explicitAgentType}.`);
+			process.exit(1);
+		}
+		const environmentId = resolveEnvironmentId(explicitAgentType, agentId, 1);
+		if (!environmentId) {
+			log.error("serve.no_environment", {
+				agent: agentId,
+				agent_type: explicitAgentType,
+				hint: "Set CLAWDI_ENVIRONMENT_ID or write ~/.clawdi/environments/<agent_id>.json.",
+			});
+			process.exit(1);
+		}
+		return [{ agentId, agentType: explicitAgentType, adapter, environmentId }];
+	}
 	const registered = listRegisteredAgentTypes();
-	const envAgent = process.env.CLAWDI_AGENT_TYPE;
-	const targets = registered.length > 0 ? registered : envAgent ? [envAgent] : [];
+	const targets = registered;
 	for (const target of targets) {
 		if (!isAgentType(target)) {
 			log.error("serve.unknown_agent", { agent: target, known: AGENT_TYPES });
@@ -1752,12 +1788,10 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 		}
 	}
 	if (registered.length === 0) {
-		if (!envAgent) {
-			log.error("serve.no_agent", {
-				hint: "Run `clawdi setup` to register an agent on this machine, or set CLAWDI_AGENT_TYPE in a container.",
-			});
-			process.exit(1);
-		}
+		log.error("serve.no_agent", {
+			hint: "Run `clawdi setup` to register an agent on this machine, or set CLAWDI_AGENT_TYPE in a container.",
+		});
+		process.exit(1);
 	}
 	const agentTypes = targets as AgentType[];
 	return agentTypes.map((agentType) => {
@@ -1767,7 +1801,7 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 			console.error(`No adapter available for ${agentType}.`);
 			process.exit(1);
 		}
-		const environmentId = resolveEnvironmentId(agentType, agentTypes.length);
+		const environmentId = resolveEnvironmentId(agentType, agentType, agentTypes.length);
 		if (!environmentId) {
 			log.error("serve.no_environment", {
 				agent: agentType,
@@ -1775,7 +1809,7 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 			});
 			process.exit(1);
 		}
-		return { agentType, adapter, environmentId };
+		return { agentId: agentType, agentType, adapter, environmentId };
 	});
 }
 
@@ -1821,10 +1855,16 @@ function pickAgent(explicit: string | undefined): {
 	return { agentType: picked, adapter: adapterForType(picked) };
 }
 
-function resolveEnvironmentId(agentType: AgentType, registeredCount: number): string | null {
+function resolveEnvironmentId(
+	agentType: AgentType,
+	agentId: string,
+	registeredCount: number,
+): string | null {
 	// Fallback: read the per-agent env file written by `clawdi
 	// setup`. Hosted pods bypass this (provision flow injects
 	// CLAWDI_ENVIRONMENT_ID directly); laptops use it.
+	const fromTargetFile = getEnvIdByAgent(agentId);
+	if (fromTargetFile) return fromTargetFile;
 	const fromFile = getEnvIdByAgent(agentType);
 	if (fromFile) return fromFile;
 	// Hosted/single-agent containers can still pass one env id via

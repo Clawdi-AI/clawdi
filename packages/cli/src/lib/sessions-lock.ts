@@ -1,7 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import type { AgentType } from "../adapters/registry";
 import { getClawdiDir } from "./config";
 
 /**
@@ -17,7 +16,7 @@ import { getClawdiDir } from "./config";
  */
 export interface SessionsLock {
 	version: 1;
-	// Key is `cacheKey(agentType, localSessionId)`. Flat namespace so a
+	// Key is `cacheKey(agentId, localSessionId)`. Flat namespace so a
 	// single-session change yields a one-line JSON diff. Value is the
 	// content hash that was last successfully synced with the server.
 	sessions: Record<string, { hash: string }>;
@@ -27,12 +26,13 @@ const LOCK_FILE = "sessions-lock.json";
 const CURRENT_VERSION = 1;
 
 /**
- * Composite key combining agent type and local session id. Local session
- * ids alone are NOT globally unique across agents (Claude Code's UUID
- * scheme can collide with Codex's), so we namespace by agent type.
+ * Composite key combining runtime target id and local session id. Local
+ * session ids alone are NOT globally unique across agents (Claude Code's
+ * UUID scheme can collide with Codex's), so we namespace by the runtime
+ * target id. For non-hosted local installs this remains the agent type.
  */
-export function cacheKey(agentType: AgentType, localSessionId: string): string {
-	return `${agentType}:${localSessionId}`;
+export function cacheKey(agentId: string, localSessionId: string): string {
+	return `${agentId}:${localSessionId}`;
 }
 
 /**

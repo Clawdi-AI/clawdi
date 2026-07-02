@@ -7,7 +7,6 @@ import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
-import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import type { AgentSectionId } from "@/lib/agent-routes";
 
 /**
@@ -29,7 +28,7 @@ export function AgentHome({
 	const {
 		deployment,
 		environmentId: resolvedEnvId,
-		matchedRuntime,
+		runtimeTarget,
 		isLoading,
 		isFetching,
 		error,
@@ -58,17 +57,21 @@ export function AgentHome({
 	}
 
 	if (deployment) {
-		// Scope the detail to a single runtime. Prefer the env's matched runtime;
-		// fall back to the deployment default when the route used a deployment id.
-		const runtime =
-			matchedRuntime && isHostedRuntime(matchedRuntime)
-				? matchedRuntime
-				: defaultDeploymentRuntime(deployment);
+		if (!runtimeTarget) {
+			return (
+				<div data-hosted="true" className="space-y-4 px-4 py-2 lg:px-6">
+					<BillingEmpty
+						title="Clawdi Cloud agent target not found"
+						description="This deployment has not exposed a runtime target for this route."
+					/>
+				</div>
+			);
+		}
 		return (
 			<HostedAgentDetail
 				environmentId={resolvedEnvId}
 				deployment={deployment}
-				runtime={runtime}
+				runtimeTarget={runtimeTarget}
 				section={section}
 			/>
 		);

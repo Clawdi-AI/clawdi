@@ -53,7 +53,6 @@ import {
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
-	useOnboardAgent,
 	useSetAgentAiProvider,
 	useSetAgentEnabled,
 } from "@/hosted/agents/deployment-hooks";
@@ -84,15 +83,12 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
-	HOSTED_RUNTIMES,
-	type HostedRuntime,
-	OPTIONAL_HOSTED_RUNTIMES,
+	deploymentRuntimeTargets,
+	type HostedRuntimeTarget,
 	runtimeBlurb,
 	runtimeCanDisable,
 	runtimeConsoleUrl,
-	runtimeDisplayName,
-	runtimeIsConfigured,
-	runtimeIsEnabled,
+	runtimeTargetDisplayName,
 } from "@/hosted/runtimes";
 import {
 	type AgentSectionId,
@@ -119,7 +115,6 @@ import {
 	useUnlinkAgentChannel,
 } from "@/v2/channels/channels-hooks";
 
-type Runtime = HostedRuntime;
 type HostedAgentTab =
 	| "overview"
 	| "console"
@@ -128,11 +123,6 @@ type HostedAgentTab =
 	| "ai"
 	| "channels"
 	| "settings";
-const RUNTIMES = HOSTED_RUNTIMES.map((id) => ({
-	id,
-	label: runtimeDisplayName(id),
-	blurb: runtimeBlurb(id),
-})) satisfies { id: Runtime; label: string; blurb: string }[];
 const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"overview",
 	"console",
@@ -233,18 +223,18 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 /**
  * PER-RUNTIME agent detail. A compute (deployment) hosts the always-on Codex
  * runtime plus optional sibling runtimes; each runtime has its own env id, AI
- * provider binding, channel links, sessions, and control UI. Terminal and compute
- * controls are deployment-wide because they attach to the shared hosted compute.
+ * provider binding, channel links, sessions, control UI, and terminal target.
+ * Compute lifecycle controls remain deployment-wide.
  */
 export function HostedAgentDetail({
 	environmentId,
 	deployment,
-	runtime,
+	runtimeTarget,
 	section = "overview",
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	runtime: Runtime;
+	runtimeTarget: HostedRuntimeTarget;
 	section?: AgentSectionId;
 }) {
 	const api = useApi();
@@ -261,7 +251,7 @@ export function HostedAgentDetail({
 		enabled: isCloudEnvId(environmentId),
 	});
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
-	const runtimeLabel = runtimeDisplayName(runtime);
+	const runtimeLabel = runtimeTargetDisplayName(runtimeTarget);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
 	useSetAgentBreadcrumbTitle({
@@ -271,7 +261,7 @@ export function HostedAgentDetail({
 	});
 
 	const isPerformance = ci?.compute_plan_slug === "compute_performance";
-	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
+	const consoleUrl = runtimeConsoleUrl(runtimeTarget);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
@@ -328,7 +318,7 @@ export function HostedAgentDetail({
 						{consoleUrl ? (
 							<Button asChild variant="outline" size="sm">
 								<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-									Open {runtimeBrowserUiLabel(runtime)}
+									Open {runtimeBrowserUiLabel(runtimeTarget)}
 									<ExternalLink className="size-3.5" />
 								</a>
 							</Button>
@@ -338,7 +328,7 @@ export function HostedAgentDetail({
 				{activeTab === "overview" ? (
 					<OverviewTab
 						deployment={deployment}
-						runtime={runtime}
+						runtimeTarget={runtimeTarget}
 						isPerformance={isPerformance}
 						sessions={sessions.data?.items ?? []}
 						sessionsLoading={sessions.isLoading}
@@ -347,8 +337,12 @@ export function HostedAgentDetail({
 						sessionLink={(session) => scopedSessionLink(session.id)}
 					/>
 				) : null}
-				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
-				{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
+				{activeTab === "console" ? (
+					<ConsoleTab deployment={deployment} runtimeTarget={runtimeTarget} />
+				) : null}
+				{activeTab === "terminal" ? (
+					<TerminalTab deployment={deployment} runtimeTarget={runtimeTarget} />
+				) : null}
 				{activeTab === "sessions" ? (
 					sessions.error ? (
 						<ChannelError
@@ -366,14 +360,16 @@ export function HostedAgentDetail({
 						/>
 					)
 				) : null}
-				{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
+				{activeTab === "ai" ? (
+					<AiProviderTab deployment={deployment} runtimeTarget={runtimeTarget} />
+				) : null}
 				{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
 				{activeTab === "settings" ? (
 					<HostedAgentSettingsTab
 						environmentId={environmentId}
 						deployment={deployment}
 						isPerformance={isPerformance}
-						runtime={runtime}
+						runtimeTarget={runtimeTarget}
 					/>
 				) : null}
 			</section>
@@ -394,7 +390,7 @@ function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
 
 function OverviewTab({
 	deployment,
-	runtime,
+	runtimeTarget,
 	isPerformance,
 	sessions,
 	sessionsLoading,
@@ -403,7 +399,7 @@ function OverviewTab({
 	sessionLink,
 }: {
 	deployment: HostedDeployment;
-	runtime: Runtime;
+	runtimeTarget: HostedRuntimeTarget;
 	isPerformance: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
@@ -415,7 +411,7 @@ function OverviewTab({
 	};
 }) {
 	const ci = deployment.config_info;
-	const binding = ci?.ai_provider_bindings?.[runtime];
+	const binding = ci?.ai_provider_bindings?.[runtimeTarget.id];
 	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
 	return (
 		<div className="flex flex-col gap-5">
@@ -453,18 +449,24 @@ function OverviewTab({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 /**
- * Live agent browser UI embedded inline. The deployment's per-runtime UI URLs
- * point at owner-only runtime bridge URLs. When the runtime
- * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
- * the full-screen link is the alternate path.
+ * Live agent browser UI embedded inline. The deployment's per-runtime UI URL
+ * may point at a direct authenticated runtime route or an explicitly declared
+ * bridge compatibility surface. If the runtime allows dashboard framing, it
+ * works in-frame; otherwise the full-screen link is the alternate path.
  */
-function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
+function ConsoleTab({
+	deployment,
+	runtimeTarget,
+}: {
+	deployment: HostedDeployment;
+	runtimeTarget: HostedRuntimeTarget;
+}) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
-	const label = runtimeDisplayName(runtime);
-	const browserUiLabel = runtimeBrowserUiLabel(runtime);
-	const url = runtimeConsoleUrl(deployment, runtime);
+	const label = runtimeTargetDisplayName(runtimeTarget);
+	const browserUiLabel = runtimeBrowserUiLabel(runtimeTarget);
+	const url = runtimeConsoleUrl(runtimeTarget);
 
-	// Not running yet — the runtime UI and bridge only exist once the agent boots.
+	// Not running yet — the runtime UI endpoint only exists once the agent boots.
 	if (!isRunning) {
 		return (
 			<EmptyState
@@ -515,7 +517,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
 			    full-screen link instead. */}
 			<iframe
-				key={`${runtime}:${url}`}
+				key={`${runtimeTarget.id}:${url}`}
 				src={url}
 				title={browserUiLabel}
 				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
@@ -536,10 +538,11 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	);
 }
 
-function runtimeBrowserUiLabel(runtime: Runtime): string {
-	if (runtime === "openclaw") return "OpenClaw Control UI";
-	if (runtime === "hermes") return "Hermes Dashboard";
-	return `${runtimeDisplayName(runtime)} UI`;
+function runtimeBrowserUiLabel(target: HostedRuntimeTarget): string {
+	const label = runtimeTargetDisplayName(target);
+	if (target.type === "openclaw") return `${label} Control UI`;
+	if (target.type === "hermes") return `${label} Dashboard`;
+	return `${label} UI`;
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────
@@ -600,16 +603,24 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	);
 }
 
-function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
+function TerminalTab({
+	deployment,
+	runtimeTarget,
+}: {
+	deployment: HostedDeployment;
+	runtimeTarget: HostedRuntimeTarget;
+}) {
 	const isRunning = deployment.status === "running" || deployment.status === "ready";
-	const label = deploymentDisplayName(deployment.name);
+	const label = `${deploymentDisplayName(deployment.name)} · ${runtimeTargetDisplayName(runtimeTarget)}`;
 	const terminal = useCreateTerminalSession();
 	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
 	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
-	const autoStartedDeploymentRef = useRef<string | null>(null);
+	const terminalTarget = `${deployment.id}:${runtimeTarget.id}`;
+	const autoStartedTerminalRef = useRef<string | null>(null);
 	const currentDeploymentIdRef = useRef(deployment.id);
+	const currentRuntimeTargetRef = useRef(runtimeTarget.id);
 	const terminalRequestRef = useRef(0);
 
 	const startTerminal = useCallback(async () => {
@@ -619,7 +630,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		setTerminalFailure(null);
 		setTerminalStatus("connecting");
 		try {
-			const session = await createTerminalSession({ id: deployment.id });
+			const session = await createTerminalSession({ id: deployment.id, target: runtimeTarget });
 			if (terminalRequestRef.current !== requestId) return;
 			if (!session.websocket_url) {
 				setTerminalStatus("disconnected");
@@ -635,20 +646,26 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 			setTerminalStatus("disconnected");
 			setTerminalFailure("Couldn't open terminal. Try again.");
 		}
-	}, [createTerminalSession, deployment.id, isOpeningTerminal, isRunning]);
+	}, [createTerminalSession, deployment.id, isOpeningTerminal, isRunning, runtimeTarget]);
 
 	useEffect(() => {
-		if (currentDeploymentIdRef.current === deployment.id) return;
+		if (
+			currentDeploymentIdRef.current === deployment.id &&
+			currentRuntimeTargetRef.current === runtimeTarget.id
+		) {
+			return;
+		}
 		currentDeploymentIdRef.current = deployment.id;
-		autoStartedDeploymentRef.current = null;
+		currentRuntimeTargetRef.current = runtimeTarget.id;
+		autoStartedTerminalRef.current = null;
 		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("disconnected");
-	}, [deployment.id]);
+	}, [deployment.id, runtimeTarget.id]);
 
 	useEffect(() => {
 		if (isRunning) return;
-		autoStartedDeploymentRef.current = null;
+		autoStartedTerminalRef.current = null;
 		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("disconnected");
@@ -656,10 +673,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 
 	useEffect(() => {
 		if (!isRunning || websocketUrl || isOpeningTerminal || terminalFailure) return;
-		if (autoStartedDeploymentRef.current === deployment.id) return;
-		autoStartedDeploymentRef.current = deployment.id;
+		if (autoStartedTerminalRef.current === terminalTarget) return;
+		autoStartedTerminalRef.current = terminalTarget;
 		void startTerminal();
-	}, [deployment.id, isOpeningTerminal, isRunning, startTerminal, terminalFailure, websocketUrl]);
+	}, [isOpeningTerminal, isRunning, startTerminal, terminalFailure, terminalTarget, websocketUrl]);
 
 	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
 		setTerminalStatus(status);
@@ -671,7 +688,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 				bordered
 				icon={TerminalSquare}
 				title="Terminal available once running"
-				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${statusLabel(
+				description={`A ${runtimeTargetDisplayName(runtimeTarget)} shell can be opened when the hosted compute is running. Current status: ${statusLabel(
 					deployment.status,
 				).toLowerCase()}.`}
 			/>
@@ -714,11 +731,13 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 						</div>
 						<div>
 							<h2 className="text-base font-semibold">
-								{terminalFailure ? "Terminal unavailable" : "Opening deployment terminal"}
+								{terminalFailure
+									? "Terminal unavailable"
+									: `Opening ${runtimeTargetDisplayName(runtimeTarget)} terminal`}
 							</h2>
 							<p className="mt-1 text-sm text-muted-foreground">
 								{terminalFailure ??
-									"Starting a real shell in the hosted deployment as the default runtime user."}
+									`Starting a real shell in the ${runtimeTargetDisplayName(runtimeTarget)} runtime.`}
 							</p>
 						</div>
 						{terminalFailure ? (
@@ -760,18 +779,17 @@ function selectableCard(active: boolean): string {
 
 function AiProviderTab({
 	deployment,
-	runtime,
+	runtimeTarget,
 }: {
 	deployment: HostedDeployment;
-	runtime: Runtime;
+	runtimeTarget: HostedRuntimeTarget;
 }) {
 	const providers = useAiProviders();
 	const setProvider = useSetAgentAiProvider();
 	const ci = deployment.config_info;
 	const list = providers.data?.providers ?? [];
-	// PER-RUNTIME binding (not the deployment-level field): each runtime binds
-	// its own provider in ai_provider_bindings[runtime].
-	const binding = ci?.ai_provider_bindings?.[runtime];
+	const runtime = runtimeTarget.type;
+	const binding = ci?.ai_provider_bindings?.[runtimeTarget.id];
 	const boundRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
 	const currentManaged =
 		!boundRef ||
@@ -851,7 +869,7 @@ function AiProviderTab({
 		}
 		// Scope the edit to THIS runtime only — not every enabled runtime.
 		setProvider.mutate(
-			{ id: deployment.id, agentTypes: [runtime], body },
+			{ id: deployment.id, agentIds: [runtimeTarget.id], body },
 			{
 				onSuccess: () =>
 					toast.success("Provider updated", { description: "Updating the runtime…" }),
@@ -1210,12 +1228,12 @@ function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
 	isPerformance,
-	runtime,
+	runtimeTarget,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	isPerformance: boolean;
-	runtime: Runtime;
+	runtimeTarget: HostedRuntimeTarget;
 }) {
 	return (
 		<div className="flex flex-col gap-10">
@@ -1223,7 +1241,7 @@ function HostedAgentSettingsTab({
 			<ComputeSettingsSections
 				deployment={deployment}
 				isPerformance={isPerformance}
-				runtime={runtime}
+				runtimeTarget={runtimeTarget}
 			/>
 		</div>
 	);
@@ -1232,24 +1250,23 @@ function HostedAgentSettingsTab({
 function ComputeSettingsSections({
 	deployment,
 	isPerformance,
-	runtime,
+	runtimeTarget,
 }: {
 	deployment: HostedDeployment;
 	isPerformance: boolean;
-	runtime: Runtime;
+	runtimeTarget: HostedRuntimeTarget;
 }) {
 	const router = useRouter();
 	const lifecycle = useDeploymentLifecycle();
 	const del = useDeleteDeployment();
 	const setEnabled = useSetAgentEnabled();
-	const onboard = useOnboardAgent();
 	const plans = usePlans();
 	const checkout = useCheckout();
 	const portal = usePortal();
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
-	const ci = deployment.config_info;
+	const runtimeTargets = deploymentRuntimeTargets(deployment);
 	const canStop = STOPPABLE_STATUSES.has(deployment.status);
 	const canStart = STARTABLE_STATUSES.has(deployment.status);
 	const canRestart = RESTARTABLE_STATUSES.has(deployment.status);
@@ -1258,11 +1275,10 @@ function ComputeSettingsSections({
 	const currentSubscription = deployment.compute_subscription;
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
-	const envs = ci?.clawdi_cloud_environments ?? {};
-	const optionalEnabledCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
-		runtimeIsEnabled(ci, runtimeId),
+	const optionalEnabledCount = runtimeTargets.filter(
+		(target) => runtimeCanDisable(target.type) && target.enabled,
 	).length;
-	const runtimePending = setEnabled.isPending || onboard.isPending;
+	const runtimePending = setEnabled.isPending;
 	const perfPlan = useMemo(() => performancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
 	const perfOffer = useMemo(
@@ -1382,29 +1398,31 @@ function ComputeSettingsSections({
 			>
 				<div className="flex flex-col gap-4">
 					<LiveNote>
-						Codex stays on by default. Optional runtime changes apply live, no restart.
+						Runtime target changes apply live. Each target keeps its own container, state, and
+						terminal identity.
 					</LiveNote>
 					<div className="flex flex-col">
-						{RUNTIMES.map((r, index) => {
-							const enabled = runtimeIsEnabled(ci, r.id);
-							const isConfigured = runtimeIsConfigured(ci, r.id);
-							const isCurrent = r.id === runtime;
-							const siblingEnv = envs[r.id];
-							const canDisable = runtimeCanDisable(r.id);
+						{runtimeTargets.map((target, index) => {
+							const enabled = target.enabled;
+							const isCurrent = target.id === runtimeTarget.id;
+							const siblingEnv = target.environmentId;
+							const canDisable = runtimeCanDisable(target.type);
 							const blockedByPlan =
 								canDisable && !isPerformance && !enabled && optionalEnabledCount >= 1;
 							return (
-								<Fragment key={r.id}>
+								<Fragment key={target.id}>
 									{index > 0 ? <Separator /> : null}
 									<div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
-										<AgentIcon agent={r.id} size="md" />
+										<AgentIcon agent={target.type} size="md" />
 										<div className="min-w-0 flex-1">
 											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-												{r.label}
+												{runtimeTargetDisplayName(target)}
 												{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
 												{canDisable ? null : <Badge variant="outline">Always on</Badge>}
 											</div>
-											<div className="text-xs text-muted-foreground">{r.blurb}</div>
+											<div className="text-xs text-muted-foreground">
+												{runtimeBlurb(target.type)}
+											</div>
 										</div>
 										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
 											{!isCurrent && enabled && siblingEnv ? (
@@ -1419,34 +1437,19 @@ function ComputeSettingsSections({
 													</Link>
 												</Button>
 											) : null}
-											{!canDisable ? null : isConfigured ? (
+											{!canDisable ? null : (
 												<Switch
 													checked={enabled}
 													disabled={runtimePending || blockedByPlan}
 													onCheckedChange={(next) =>
-														setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
+														setEnabled.mutate({
+															id: deployment.id,
+															agentId: target.id,
+															enabled: next,
+														})
 													}
-													aria-label={`Toggle ${r.label}`}
+													aria-label={`Toggle ${runtimeTargetDisplayName(target)}`}
 												/>
-											) : (
-												<Button
-													size="sm"
-													variant="outline"
-													disabled={runtimePending || blockedByPlan}
-													title={
-														blockedByPlan
-															? "Performance compute is required to run both runtimes"
-															: undefined
-													}
-													onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
-												>
-													{onboard.isPending && onboard.variables?.agentType === r.id ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Plus className="size-3.5" />
-													)}
-													Add
-												</Button>
 											)}
 										</div>
 									</div>

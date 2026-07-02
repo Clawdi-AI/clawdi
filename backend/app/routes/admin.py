@@ -29,6 +29,7 @@ can land in this file under the same auth dep.
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -671,7 +672,8 @@ async def admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
-    changed_fields = _runtime_state_changed_fields(existing_state, body)
+    runtime_targets = _runtime_targets_for_storage(body)
+    changed_fields = _runtime_state_changed_fields(existing_state, body, runtime_targets)
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
@@ -684,7 +686,7 @@ async def admin_upsert_runtime_state(
     state.system = body.system
     state.control_plane = body.control_plane
     state.clawdi_cli = body.clawdi_cli
-    state.runtimes = body.runtimes
+    state.runtimes = runtime_targets
     state.bridge = body.bridge
     state.live_sync = body.live_sync
     state.recovery = body.recovery
@@ -710,7 +712,7 @@ async def admin_upsert_runtime_state(
             "generation": body.generation,
             "previous_generation": previous_generation,
             "provider_id": body.provider_id,
-            "enabled_runtimes": _enabled_runtime_names(body.runtimes),
+            "enabled_runtimes": _enabled_runtime_names(runtime_targets),
             "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
@@ -834,9 +836,14 @@ def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
     )
 
 
+def _runtime_targets_for_storage(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
+    return {**body.runtimes, **body.runtime_targets}
+
+
 def _runtime_state_changed_fields(
     state: HostedRuntimeState | None,
     body: AdminRuntimeStateUpsert,
+    runtime_targets: dict[str, Any],
 ) -> list[str]:
     fields = [
         "deployment_id",
@@ -860,7 +867,7 @@ def _runtime_state_changed_fields(
     changed: list[str] = []
     preserve_when_omitted = {"mitm_profiles", "mcp", "tools"}
     for field in fields:
-        body_value = getattr(body, field)
+        body_value = runtime_targets if field == "runtimes" else getattr(body, field)
         if field in preserve_when_omitted and body_value is None:
             continue
         if getattr(state, field) != body_value:

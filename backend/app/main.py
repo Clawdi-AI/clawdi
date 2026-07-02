@@ -34,6 +34,7 @@ from app.routes.channels import router as channels_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.mcp_bridge import canonical_router as mcp_canonical_router
 from app.routes.mcp_bridge import router as mcp_bridge_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
@@ -258,6 +259,7 @@ app.include_router(settings_router)
 app.include_router(capabilities_router)
 app.include_router(vault_router)
 app.include_router(connectors_router)
+app.include_router(mcp_canonical_router)
 app.include_router(mcp_bridge_router)
 app.include_router(search_router)
 app.include_router(share_redeem_router)

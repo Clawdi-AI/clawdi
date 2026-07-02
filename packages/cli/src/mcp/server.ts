@@ -1,10 +1,16 @@
+import { timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v3";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
+
+export const MCP_HTTP_AUTH_TOKEN_ENV = "CLAWDI_MCP_HTTP_TOKEN";
 
 // Minimal shape of a JSON Schema property we care about when mapping
 // Composio tool definitions to Zod. Unknown fields are ignored.
@@ -269,11 +275,24 @@ Does NOT qualify:
 - Anything readable from the current code state
 - Conversational noise or meta-commentary`;
 
-export async function startMcpServer() {
+function requireMcpLogin(): void {
 	if (!isLoggedIn()) {
-		process.stderr.write("Not logged in. Run `clawdi auth login` first.\n");
+		throw new Error("Not logged in. Run `clawdi auth login` first.");
+	}
+}
+
+function ensureMcpLogin(): void {
+	try {
+		requireMcpLogin();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`${message}\n`);
 		process.exit(1);
 	}
+}
+
+export async function createClawdiMcpServer(): Promise<McpServer> {
+	requireMcpLogin();
 
 	const api = new ApiClient();
 
@@ -663,6 +682,138 @@ export async function startMcpServer() {
 		}
 	}
 
+	return server;
+}
+
+export async function startMcpServer() {
+	const server = await createClawdiMcpServer();
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
+}
+
+export interface McpHttpServerOptions {
+	host?: string;
+	port?: number;
+	path?: string;
+	authToken?: string;
+	authTokenFile?: string;
+}
+
+export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Promise<void> {
+	ensureMcpLogin();
+	const host = options.host?.trim() || "127.0.0.1";
+	const port = options.port ?? 8788;
+	const path = normalizeMcpHttpPath(options.path ?? "/mcp");
+	const authToken = resolveMcpHttpAuthToken(options);
+	if (!authToken) {
+		throw new Error(`MCP HTTP server requires ${MCP_HTTP_AUTH_TOKEN_ENV} or --auth-token-file`);
+	}
+	const httpServer = createServer(async (req, res) => {
+		const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+		if (url.pathname !== path) {
+			res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("Not Found");
+			return;
+		}
+		if (!mcpHttpRequestAuthorized(req.headers.authorization, authToken)) {
+			res.writeHead(401, {
+				"Content-Type": "application/json; charset=utf-8",
+				"Cache-Control": "no-store",
+				"WWW-Authenticate": 'Bearer realm="clawdi-mcp"',
+			});
+			res.end(JSON.stringify({ error: "unauthorized" }));
+			return;
+		}
+		try {
+			const mcpServer = await createClawdiMcpServer();
+			const transport = new StreamableHTTPServerTransport({
+				sessionIdGenerator: undefined,
+			});
+			let closed = false;
+			const closeTransport = () => {
+				if (closed) return;
+				closed = true;
+				void transport.close().catch(() => undefined);
+			};
+			res.once("finish", closeTransport);
+			res.once("close", closeTransport);
+			await mcpServer.connect(transport);
+			await transport.handleRequest(req, res);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!res.headersSent) {
+				res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+			}
+			if (!res.writableEnded) {
+				res.end(JSON.stringify({ error: message }));
+			}
+		}
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		const onError = (error: Error) => {
+			httpServer.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			httpServer.off("error", onError);
+			resolve();
+		};
+		httpServer.once("error", onError);
+		httpServer.once("listening", onListening);
+		httpServer.listen(port, host);
+	});
+
+	const address = httpServer.address();
+	const listenPort = typeof address === "object" && address ? address.port : port;
+	process.stderr.write(`Clawdi MCP HTTP server listening on http://${host}:${listenPort}${path}\n`);
+
+	await new Promise<void>((resolve) => {
+		let stopping = false;
+		const stop = () => {
+			if (stopping) return;
+			stopping = true;
+			httpServer.close(() => resolve());
+		};
+		process.once("SIGINT", stop);
+		process.once("SIGTERM", stop);
+	});
+}
+
+export function mcpHttpRequestAuthorized(
+	authorizationHeader: string | string[] | undefined,
+	expectedToken: string,
+): boolean {
+	const value = Array.isArray(authorizationHeader) ? authorizationHeader[0] : authorizationHeader;
+	if (!value || !expectedToken) return false;
+	const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+	return constantTimeEquals(match?.[1], expectedToken);
+}
+
+function resolveMcpHttpAuthToken(options: McpHttpServerOptions): string {
+	const explicit = options.authToken?.trim();
+	if (explicit) return explicit;
+	const file = options.authTokenFile?.trim();
+	if (file) return readFileSync(file, "utf-8").trim();
+	return process.env[MCP_HTTP_AUTH_TOKEN_ENV]?.trim() ?? "";
+}
+
+function constantTimeEquals(input: string | null | undefined, expected: string): boolean {
+	if (!input || !expected) return false;
+	const inputBuffer = Buffer.from(input);
+	const expectedBuffer = Buffer.from(expected);
+	const length = Math.max(inputBuffer.length, expectedBuffer.length);
+	const paddedInput = Buffer.alloc(length);
+	const paddedExpected = Buffer.alloc(length);
+	inputBuffer.copy(paddedInput);
+	expectedBuffer.copy(paddedExpected);
+	return (
+		timingSafeEqual(paddedInput, paddedExpected) && inputBuffer.length === expectedBuffer.length
+	);
+}
+
+function normalizeMcpHttpPath(path: string): string {
+	const trimmed = path.trim();
+	if (!trimmed || trimmed === "/") return "/mcp";
+	return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }

@@ -58,7 +58,7 @@ export interface paths {
         patch: operations["update_v2_deployment_v2_deployments__deployment_id__patch"];
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/agents/{agent_type}": {
+    "/v2/deployments/{deployment_id}/agent-targets/{agent_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -71,11 +71,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Set V2 Agent Enabled */
-        patch: operations["set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch"];
+        /** Set V2 Agent Target Enabled */
+        patch: operations["set_v2_agent_target_enabled_v2_deployments__deployment_id__agent_targets__agent_id__patch"];
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {
+    "/v2/deployments/{deployment_id}/agent-targets/{agent_id}/ai-provider": {
         parameters: {
             query?: never;
             header?: never;
@@ -88,8 +88,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Rebind V2 Agent Ai Provider */
-        patch: operations["rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch"];
+        /** Rebind V2 Agent Target Ai Provider */
+        patch: operations["rebind_v2_agent_target_ai_provider_v2_deployments__deployment_id__agent_targets__agent_id__ai_provider_patch"];
         trace?: never;
     };
     "/v2/deployments/{deployment_id}/terminal": {
@@ -103,23 +103,6 @@ export interface paths {
         put?: never;
         /** Create V2 Deployment Terminal Session */
         post: operations["create_v2_deployment_terminal_session_v2_deployments__deployment_id__terminal_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/deployments/{deployment_id}/onboard-agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Onboard V2 Agent */
-        post: operations["onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -536,6 +519,13 @@ export interface components {
             /** Upgrade Status */
             upgrade_status?: string | null;
         };
+        /** V2DeploymentTerminalSessionRequest */
+        V2DeploymentTerminalSessionRequest: {
+            /**
+             * Agent Id
+             */
+            agent_id: string;
+        };
         /** V2DeploymentTerminalSessionResponse */
         V2DeploymentTerminalSessionResponse: {
             /**
@@ -753,6 +743,45 @@ export interface components {
             clawdi_cloud_environments?: {
                 [key: string]: string;
             };
+            /** Runtime Targets */
+            runtime_targets?: {
+                [key: string]: {
+                    /** Id */
+                    id: string;
+                    /**
+                     * Type
+                     * @enum {string}
+                     */
+                    type: "codex" | "openclaw" | "hermes";
+                    /** Display Name */
+                    display_name?: string | null;
+                    /**
+                     * Enabled
+                     * @default true
+                     */
+                    enabled: boolean;
+                    /** Environment Id */
+                    environment_id?: string | null;
+                    /** Control Ui Url */
+                    control_ui_url?: string | null;
+                    image?: {
+                        ref?: string | null;
+                        repository?: string | null;
+                        tag?: string | null;
+                        digest?: string | null;
+                        pull_policy?: "IfNotPresent" | "Always" | "Never" | null;
+                    } | null;
+                    version?: {
+                        desired?: string | null;
+                        observed?: string | null;
+                        observed_at?: string | null;
+                        upgrade_available?: boolean | null;
+                        upgrade_policy?: "pinned" | "track-channel" | "manual" | null;
+                    } | null;
+                };
+            };
+            /** Onboarded Agent Ids */
+            onboarded_agent_ids?: string[];
             /** Vcpu */
             vcpu?: number | null;
             /** Ram Gb */
@@ -842,32 +871,6 @@ export interface components {
             by_model: components["schemas"]["V2HostedUsageModelBreakdown"][];
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
-        };
-        /** V2OnboardAgentRequest */
-        V2OnboardAgentRequest: {
-            /**
-             * Agent Type
-             * @enum {string}
-             */
-            agent_type: "openclaw" | "hermes";
-            /** Primary Model */
-            primary_model?: string | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
-            /** Personality */
-            personality?: string | null;
-            /** Language */
-            language?: string | null;
-            /** Timezone */
-            timezone?: string | null;
-            /** Ai Provider Id */
-            ai_provider_id?: string | null;
-            /** Ai Provider Auth Kind */
-            ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
-            /** Ai Provider Bootstrap */
-            ai_provider_bootstrap?: {
-                [key: string]: unknown;
-            } | null;
         };
         /** V2PlanResponse */
         V2PlanResponse: {
@@ -1236,12 +1239,12 @@ export interface operations {
             };
         };
     };
-    set_v2_agent_enabled_v2_deployments__deployment_id__agents__agent_type__patch: {
+    set_v2_agent_target_enabled_v2_deployments__deployment_id__agent_targets__agent_id__patch: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                agent_type: "openclaw" | "hermes";
+                agent_id: string;
                 deployment_id: string;
             };
             cookie?: never;
@@ -1272,12 +1275,12 @@ export interface operations {
             };
         };
     };
-    rebind_v2_agent_ai_provider_v2_deployments__deployment_id__agents__agent_type__ai_provider_patch: {
+    rebind_v2_agent_target_ai_provider_v2_deployments__deployment_id__agent_targets__agent_id__ai_provider_patch: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                agent_type: "openclaw" | "hermes";
+                agent_id: string;
                 deployment_id: string;
             };
             cookie?: never;
@@ -1317,7 +1320,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["V2DeploymentTerminalSessionRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1326,41 +1333,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2DeploymentTerminalSessionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2OnboardAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */

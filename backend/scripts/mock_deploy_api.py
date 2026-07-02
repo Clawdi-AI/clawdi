@@ -67,19 +67,30 @@ def _ws_base_url(request: Request) -> str:
     return base_url
 
 
-def _runtime_env_id(agent_type: str) -> str:
-    if agent_type == "codex":
+def _runtime_env_id(runtime_type: str) -> str:
+    if runtime_type == "codex":
         return _codex_env_id()
-    if agent_type == "openclaw":
+    if runtime_type == "openclaw":
         return _openclaw_env_id()
-    if agent_type == "hermes":
+    if runtime_type == "hermes":
         return _hermes_env_id()
     raise HTTPException(status_code=400, detail="Unsupported runtime")
 
 
-def _ordered_agents(values: set[str]) -> list[str]:
-    order = {"codex": 0, "openclaw": 1, "hermes": 2}
-    return sorted(values, key=lambda value: order.get(value, 99))
+def _runtime_type_order(runtime_type: str) -> int:
+    return {"codex": 0, "openclaw": 1, "hermes": 2}.get(runtime_type, 99)
+
+
+def _ordered_runtime_types(values: set[str]) -> list[str]:
+    return sorted(values, key=lambda value: _runtime_type_order(value))
+
+
+def _ordered_agent_ids(config_info: dict[str, Any], values: set[str]) -> list[str]:
+    targets = _runtime_targets(config_info)
+    return sorted(
+        values,
+        key=lambda value: (_runtime_type_order(str(targets.get(value, {}).get("type"))), value),
+    )
 
 
 def _base_config() -> dict[str, Any]:
@@ -126,6 +137,67 @@ def _base_config() -> dict[str, Any]:
             "openclaw": _openclaw_env_id(),
             "hermes": _hermes_env_id(),
         },
+        "runtime_targets": {
+            "codex": {
+                "id": "codex",
+                "type": "codex",
+                "display_name": "Codex",
+                "enabled": True,
+                "environment_id": _codex_env_id(),
+                "image": {"ref": "clawdi/codex-runtime:dev", "tag": "dev"},
+                "version": {"desired": "dev", "observed": "dev", "upgrade_policy": "manual"},
+                "execution": {
+                    "terminal": {
+                        "container": "codex",
+                        "user": "clawdi",
+                        "cwd": "/home/clawdi/clawdi",
+                    }
+                },
+            },
+            "openclaw": {
+                "id": "openclaw",
+                "type": "openclaw",
+                "display_name": "OpenClaw",
+                "enabled": True,
+                "environment_id": _openclaw_env_id(),
+                "control_ui_url": "https://openclaw.dev-preview.local",
+                "image": {"ref": "ghcr.io/openclaw/openclaw:2026.6.11", "tag": "2026.6.11"},
+                "version": {
+                    "desired": "2026.6.11",
+                    "observed": "OpenClaw 2026.6.11",
+                    "upgrade_policy": "pinned",
+                },
+                "execution": {
+                    "terminal": {
+                        "container": "openclaw",
+                        "user": "node",
+                        "cwd": "/home/node/.openclaw/workspace",
+                    }
+                },
+            },
+            "hermes": {
+                "id": "hermes",
+                "type": "hermes",
+                "display_name": "Hermes",
+                "enabled": True,
+                "environment_id": _hermes_env_id(),
+                "control_ui_url": "https://hermes.dev-preview.local",
+                "image": {"ref": "ghcr.io/nousresearch/hermes-agent:0.17.0", "tag": "0.17.0"},
+                "version": {
+                    "desired": "0.17.0",
+                    "observed": "Hermes Agent v0.17.0",
+                    "upgrade_policy": "pinned",
+                },
+                "execution": {
+                    "terminal": {
+                        "container": "hermes",
+                        "user": "hermes",
+                        "cwd": "/opt/data/workspace",
+                    }
+                },
+            },
+        },
+        "onboarded_agent_ids": ["codex", "openclaw", "hermes"],
         "vcpu": 4,
         "ram_gb": 8,
         "disk_gb": 80,
@@ -208,24 +280,36 @@ async def create_deployment(request: Request) -> dict[str, Any]:
         enabled_optional.append("openclaw")
     if body.get("enable_hermes", False):
         enabled_optional.append("hermes")
-    agents = ["codex", *enabled_optional]
+    runtime_types = ["codex", *enabled_optional]
     config = _base_config()
     config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_free")
     config["enable_openclaw"] = "openclaw" in enabled_optional
     config["enable_hermes"] = "hermes" in enabled_optional
-    config["onboarded_agents"] = agents
-    config["configured_agents"] = agents
-    config["clawdi_cloud_environments"] = {runtime: _runtime_env_id(runtime) for runtime in agents}
+    config["onboarded_agents"] = runtime_types
+    config["configured_agents"] = runtime_types
+    config["clawdi_cloud_environments"] = {
+        runtime_type: _runtime_env_id(runtime_type) for runtime_type in runtime_types
+    }
+    targets = {
+        target_id: target
+        for target_id, target in _runtime_targets(config).items()
+        if target.get("type") in runtime_types
+    }
+    for target_id, target in targets.items():
+        target["enabled"] = True
+        target["environment_id"] = config["clawdi_cloud_environments"].get(target_id)
+    config["runtime_targets"] = targets
+    config["onboarded_agent_ids"] = list(targets)
     config["primary_model"] = body.get("primary_model") or "openai/gpt-4o-mini"
     config["ai_provider_id"] = body.get("ai_provider_id") or DEV_V2_PROVIDER_ID
     config["ai_provider_auth_kind"] = body.get("ai_provider_auth_kind") or "managed"
     config["ai_provider_bindings"] = {
-        runtime: {
+        runtime_type: {
             "provider_id": config["ai_provider_id"],
             "auth_kind": config["ai_provider_auth_kind"],
             "primary_model": config["primary_model"],
         }
-        for runtime in agents
+        for runtime_type in runtime_types
     }
     created = _deployment(
         deployment_id=deployment_id,
@@ -261,121 +345,59 @@ async def delete_deployment(deployment_id: str) -> dict[str, Any]:
     return {"status": "deleted" if existed else "missing", "cvm_deleted": existed}
 
 
-@app.patch("/v2/deployments/{deployment_id}/agents/{agent_type}")
-async def set_agent_enabled(
+@app.patch("/v2/deployments/{deployment_id}/agent-targets/{agent_id}")
+async def set_agent_target_enabled(
     deployment_id: str,
-    agent_type: str,
+    agent_id: str,
     request: Request,
 ) -> dict[str, Any]:
     deployment = await get_deployment(deployment_id)
     body = await request.json()
     enabled = bool(body.get("enabled"))
     config = deployment["config_info"]
-    if agent_type not in {"codex", "openclaw", "hermes"}:
-        raise HTTPException(status_code=400, detail="Unsupported runtime")
-    if agent_type == "codex":
-        if not enabled:
-            raise HTTPException(status_code=400, detail="Codex is always enabled")
-        onboarded = set(config.get("onboarded_agents") or [])
-        configured = set(config.get("configured_agents") or [])
-        onboarded.add("codex")
-        configured.add("codex")
-        config["onboarded_agents"] = _ordered_agents(onboarded)
-        config["configured_agents"] = _ordered_agents(configured)
-        envs = dict(config.get("clawdi_cloud_environments") or {})
-        envs["codex"] = _runtime_env_id("codex")
-        config["clawdi_cloud_environments"] = envs
-        return deployment
-    config[f"enable_{agent_type}"] = enabled
-    onboarded = set(config.get("onboarded_agents") or [])
-    if enabled:
-        onboarded.add(agent_type)
-    else:
-        onboarded.discard(agent_type)
-    config["onboarded_agents"] = _ordered_agents(onboarded)
+    targets = _runtime_targets(config)
+    target = targets.get(agent_id)
+    if not target:
+        raise HTTPException(status_code=400, detail="Unsupported runtime target")
+    if target.get("type") == "codex" and not enabled:
+        raise HTTPException(status_code=400, detail="Codex target is always enabled")
+    target["enabled"] = enabled
+    config["runtime_targets"] = targets
+    onboarded_ids = {
+        target_id for target_id, item in targets.items() if item.get("enabled") is True
+    }
+    config["onboarded_agent_ids"] = _ordered_agent_ids(config, onboarded_ids)
+    enabled_types = {
+        str(item.get("type")) for item in targets.values() if item.get("enabled") is True
+    }
+    config["onboarded_agents"] = _ordered_runtime_types(enabled_types)
+    config["enable_openclaw"] = "openclaw" in enabled_types
+    config["enable_hermes"] = "hermes" in enabled_types
     return deployment
 
 
-@app.patch("/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider")
-async def set_agent_ai_provider(
+@app.patch("/v2/deployments/{deployment_id}/agent-targets/{agent_id}/ai-provider")
+async def set_agent_target_ai_provider(
     deployment_id: str,
-    agent_type: str,
+    agent_id: str,
     request: Request,
 ) -> dict[str, Any]:
     deployment = await get_deployment(deployment_id)
     body = await request.json()
-    if agent_type not in {"codex", "openclaw", "hermes"}:
-        raise HTTPException(status_code=400, detail="Unsupported runtime")
     config = deployment["config_info"]
+    target = _runtime_targets(config).get(agent_id)
+    if not target:
+        raise HTTPException(status_code=400, detail="Unsupported runtime target")
     bindings = dict(config.get("ai_provider_bindings") or {})
-    bindings[agent_type] = {
+    bindings[agent_id] = {
         "provider_id": body.get("ai_provider_id") or "managed",
         "auth_kind": body.get("ai_provider_auth_kind") or "managed",
         "primary_model": body.get("primary_model") or "openai/gpt-4o-mini",
     }
     config["ai_provider_bindings"] = bindings
-    config["ai_provider_id"] = bindings[agent_type]["provider_id"]
-    config["ai_provider_auth_kind"] = bindings[agent_type]["auth_kind"]
-    config["primary_model"] = bindings[agent_type]["primary_model"]
-    return deployment
-
-
-@app.post("/v2/deployments/{deployment_id}/onboard-agent")
-async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
-    body = await request.json()
-    deployment = await get_deployment(deployment_id)
-    agent_type = body.get("agent_type", "openclaw")
-    if agent_type not in {"codex", "openclaw", "hermes"}:
-        raise HTTPException(status_code=400, detail="Unsupported runtime")
-    config = deployment["config_info"]
-    bindings = dict(config.get("ai_provider_bindings") or {})
-    explicit_provider = any(
-        body.get(key)
-        for key in ("ai_provider_auth_kind", "ai_provider_id", "ai_provider_bootstrap")
-    )
-    if agent_type not in bindings:
-        source = next(
-            (
-                bindings.get(runtime)
-                for runtime in ("codex", "openclaw", "hermes")
-                if runtime != agent_type and isinstance(bindings.get(runtime), dict)
-            ),
-            None,
-        )
-        if explicit_provider or source is None:
-            binding = {
-                "provider_id": body.get("ai_provider_id") or "managed",
-                "auth_kind": body.get("ai_provider_auth_kind") or "managed",
-                "primary_model": body.get("primary_model") or config.get("primary_model"),
-            }
-            bootstrap = body.get("ai_provider_bootstrap")
-        else:
-            binding = {
-                "provider_id": source.get("provider_id") or "managed",
-                "auth_kind": source.get("auth_kind") or "managed",
-                "primary_model": body.get("primary_model")
-                or source.get("primary_model")
-                or config.get("primary_model"),
-            }
-            bootstrap = source.get("bootstrap")
-        if isinstance(bootstrap, dict):
-            binding["bootstrap"] = bootstrap
-        bindings[agent_type] = binding
-        config["ai_provider_bindings"] = bindings
-        config["ai_provider_id"] = binding["provider_id"]
-        config["ai_provider_auth_kind"] = binding["auth_kind"]
-        config["primary_model"] = binding["primary_model"]
-    if agent_type != "codex":
-        config[f"enable_{agent_type}"] = True
-    onboarded = set(config.get("onboarded_agents") or [])
-    onboarded.add(agent_type)
-    config["onboarded_agents"] = _ordered_agents(onboarded)
-    configured = set(config.get("configured_agents") or [])
-    configured.add(agent_type)
-    config["configured_agents"] = _ordered_agents(configured)
-    envs = dict(config.get("clawdi_cloud_environments") or {})
-    envs[agent_type] = _runtime_env_id(agent_type)
-    config["clawdi_cloud_environments"] = envs
+    config["ai_provider_id"] = bindings[agent_id]["provider_id"]
+    config["ai_provider_auth_kind"] = bindings[agent_id]["auth_kind"]
+    config["primary_model"] = bindings[agent_id]["primary_model"]
     return deployment
 
 
@@ -385,14 +407,30 @@ async def create_terminal_session(
     request: Request,
 ) -> dict[str, Any]:
     deployment = await get_deployment(deployment_id)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    config_info = deployment.get("config_info", {})
+    agent_id, runtime_type = _resolve_terminal_target(config_info, body)
+    if not _is_target_enabled(config_info, agent_id, runtime_type):
+        raise HTTPException(status_code=409, detail=f"{agent_id} runtime is not enabled.")
+    if _terminal_target(config_info, agent_id) is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{agent_id} terminal target is not configured.",
+        )
     if deployment.get("status") not in {"running", "ready"}:
         raise HTTPException(
             status_code=409,
             detail="Terminal is available only while the deployment is running.",
         )
     session_id = f"term_{uuid.uuid4().hex[:10]}"
+    query = urlencode({"agent_id": agent_id})
     fragment = urlencode({"token": session_id})
-    websocket_url = f"{_ws_base_url(request)}/v2/deployments/{deployment_id}/terminal/ws#{fragment}"
+    websocket_url = (
+        f"{_ws_base_url(request)}/v2/deployments/{deployment_id}/terminal/ws?{query}#{fragment}"
+    )
     return {
         "deployment_id": deployment_id,
         "websocket_url": websocket_url,
@@ -406,15 +444,27 @@ async def mock_terminal_ws(websocket: WebSocket, deployment_id: str) -> None:
     if deployment is None or deployment.get("status") not in {"running", "ready"}:
         await websocket.close(code=1008)
         return
+    agent_id = websocket.query_params.get("agent_id")
+    config_info = deployment.get("config_info", {})
+    try:
+        agent_id, runtime_type = _resolve_terminal_target(config_info, {"agent_id": agent_id})
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    target = _terminal_target(config_info, agent_id)
+    if target is None:
+        await websocket.close(code=1008)
+        return
 
     protocols = websocket.headers.get("sec-websocket-protocol", "")
     subprotocol = "tty" if "tty" in {value.strip() for value in protocols.split(",")} else None
     await websocket.accept(subprotocol=subprotocol)
     await websocket.send_text(
         "0"
-        f"Clawdi mock terminal - {deployment_id}\r\n"
-        "whoami: clawdi\r\n"
-        "cwd: /home/clawdi/clawdi\r\n"
+        f"Clawdi mock terminal - {deployment_id} ({agent_id}, {runtime_type})\r\n"
+        f"container: {target['container']}\r\n"
+        f"whoami: {target['user']}\r\n"
+        f"cwd: {target['cwd']}\r\n"
         "$ "
     )
 
@@ -436,7 +486,7 @@ async def mock_terminal_ws(websocket: WebSocket, deployment_id: str) -> None:
                 if char in {"\r", "\n"}:
                     command = buffer.strip()
                     buffer = ""
-                    await websocket.send_text(f"0\r\n{_mock_terminal_command(command)}$ ")
+                    await websocket.send_text(f"0\r\n{_mock_terminal_command(command, target)}$ ")
                     continue
                 if char == "\x7f":
                     buffer = buffer[:-1]
@@ -448,13 +498,58 @@ async def mock_terminal_ws(websocket: WebSocket, deployment_id: str) -> None:
         return
 
 
-def _mock_terminal_command(command: str) -> str:
+def _runtime_targets(config_info: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = config_info.get("runtime_targets")
+    if isinstance(raw, dict):
+        return {
+            str(target_id): dict(target)
+            for target_id, target in raw.items()
+            if isinstance(target, dict) and isinstance(target.get("type"), str)
+        }
+    return {}
+
+
+def _resolve_terminal_target(config_info: dict[str, Any], body: dict[str, Any]) -> tuple[str, str]:
+    targets = _runtime_targets(config_info)
+    agent_id = body.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    target = targets.get(agent_id)
+    if not target:
+        raise HTTPException(status_code=400, detail="Unsupported runtime target")
+    runtime_type = target.get("type")
+    if runtime_type not in {"codex", "openclaw", "hermes"}:
+        raise HTTPException(status_code=400, detail="Unsupported runtime")
+    return agent_id, str(runtime_type)
+
+
+def _is_target_enabled(config_info: dict[str, Any], agent_id: str, runtime_type: str) -> bool:
+    targets = _runtime_targets(config_info)
+    target = targets.get(agent_id) or {}
+    return target.get("type") == runtime_type and target.get("enabled") is True
+
+
+def _terminal_target(config_info: dict[str, Any], agent_id: str) -> dict[str, str] | None:
+    target = _runtime_targets(config_info).get(agent_id)
+    execution = target.get("execution") if isinstance(target, dict) else None
+    terminal = execution.get("terminal") if isinstance(execution, dict) else None
+    if not isinstance(terminal, dict):
+        return None
+    container = terminal.get("container")
+    user = terminal.get("user")
+    cwd = terminal.get("cwd")
+    if not all(isinstance(value, str) and value for value in (container, user, cwd)):
+        return None
+    return {"container": container, "user": user, "cwd": cwd}
+
+
+def _mock_terminal_command(command: str, target: dict[str, str]) -> str:
     if not command:
         return ""
     if command == "pwd":
-        return "/home/clawdi/clawdi\r\n"
+        return f"{target['cwd']}\r\n"
     if command == "whoami":
-        return "clawdi\r\n"
+        return f"{target['user']}\r\n"
     if command == "clear":
         return "\x1b[2J\x1b[H"
     return f"mock: command received: {command}\r\n"

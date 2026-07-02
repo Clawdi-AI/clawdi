@@ -38,7 +38,9 @@ export function mergeHermesConfig(configPath: string, patchContent: string): voi
 export function mergeHermesMcpServer(
 	configPath: string,
 	name: string,
-	server: { command: string; args: string[] },
+	server:
+		| { command: string; args: string[] }
+		| { url: string; transport?: string; headers?: Record<string, string> },
 ): void {
 	const document = readHermesConfig(configPath);
 	const root = document.toJS();

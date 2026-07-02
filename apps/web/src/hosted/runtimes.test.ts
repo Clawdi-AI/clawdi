@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { deploymentRuntimes } from "@/hosted/runtimes";
+import {
+	defaultDeploymentRuntimeTarget,
+	deploymentRuntimeTargets,
+	enabledDeploymentRuntimeTargets,
+	runtimeConsoleUrl,
+} from "@/hosted/runtimes";
 
 function deployment(configInfo: HostedDeployment["config_info"]): HostedDeployment {
 	return {
@@ -35,11 +40,12 @@ function configInfo(
 		ai_provider_id: null,
 		ai_provider_auth_kind: "managed",
 		public_ports: [],
-		enable_openclaw: true,
+		enable_openclaw: false,
 		enable_hermes: false,
-		onboarded_agents: ["openclaw"],
-		configured_agents: ["openclaw"],
+		onboarded_agents: [],
+		configured_agents: [],
 		clawdi_cloud_environments: {},
+		runtime_targets: {},
 		vcpu: null,
 		ram_gb: null,
 		disk_gb: null,
@@ -47,53 +53,131 @@ function configInfo(
 	};
 }
 
-describe("deploymentRuntimes", () => {
-	test("always includes Codex before enabled runtime environments", () => {
-		expect(
-			deploymentRuntimes(
-				deployment(
-					configInfo({
-						clawdi_cloud_environments: {
-							hermes: "env-hermes",
-							openclaw: "env-openclaw",
-						},
-					}),
-				),
+function target(
+	id: string,
+	type: "codex" | "openclaw" | "hermes",
+	overrides: Partial<
+		NonNullable<NonNullable<HostedDeployment["config_info"]>["runtime_targets"]>[string]
+	> = {},
+): NonNullable<NonNullable<HostedDeployment["config_info"]>["runtime_targets"]>[string] {
+	return {
+		id,
+		type,
+		display_name: null,
+		enabled: true,
+		environment_id: `env-${id}`,
+		control_ui_url: type === "codex" ? null : `https://${id}.example.test`,
+		image: null,
+		version: null,
+		...overrides,
+	};
+}
+
+describe("deploymentRuntimeTargets", () => {
+	test("sorts explicit runtime targets by runtime type and target id", () => {
+		const targets = deploymentRuntimeTargets(
+			deployment(
+				configInfo({
+					runtime_targets: {
+						"openclaw-b": target("openclaw-b", "openclaw"),
+						hermes: target("hermes", "hermes"),
+						codex: target("codex", "codex"),
+						"openclaw-a": target("openclaw-a", "openclaw"),
+					},
+				}),
 			),
-		).toEqual(["codex", "openclaw", "hermes"]);
+		);
+
+		expect(targets.map((item) => item.id)).toEqual(["codex", "openclaw-a", "openclaw-b", "hermes"]);
+		expect(targets.map((item) => item.type)).toEqual(["codex", "openclaw", "openclaw", "hermes"]);
 	});
 
-	test("does not surface disabled runtimes just because they remain configured", () => {
+	test("does not infer targets from legacy enable flags or environment maps", () => {
 		expect(
-			deploymentRuntimes(
+			deploymentRuntimeTargets(
 				deployment(
 					configInfo({
 						enable_openclaw: true,
-						enable_hermes: false,
-						onboarded_agents: ["openclaw"],
+						enable_hermes: true,
+						onboarded_agents: ["openclaw", "hermes"],
 						configured_agents: ["openclaw", "hermes"],
 						clawdi_cloud_environments: {
 							openclaw: "env-openclaw",
+							hermes: "env-hermes",
 						},
+						runtime_targets: {},
 					}),
 				),
 			),
-		).toEqual(["codex", "openclaw"]);
+		).toEqual([]);
 	});
 
-	test("falls back to legacy enable flags when explicit runtime lists are absent", () => {
-		expect(
-			deploymentRuntimes(
-				deployment(
-					configInfo({
-						enable_openclaw: false,
-						enable_hermes: true,
-						onboarded_agents: [],
-						configured_agents: [],
-						clawdi_cloud_environments: {},
-					}),
-				),
+	test("filters enabled targets without falling back to same-type siblings", () => {
+		const enabled = enabledDeploymentRuntimeTargets(
+			deployment(
+				configInfo({
+					runtime_targets: {
+						codex: target("codex", "codex"),
+						"openclaw-a": target("openclaw-a", "openclaw", { enabled: false }),
+						"openclaw-b": target("openclaw-b", "openclaw"),
+					},
+				}),
 			),
-		).toEqual(["codex", "hermes"]);
+		);
+
+		expect(enabled.map((item) => item.id)).toEqual(["codex", "openclaw-b"]);
+	});
+
+	test("rejects malformed target records instead of repairing them", () => {
+		const malformed = target("wrong-id", "openclaw");
+		const targets = deploymentRuntimeTargets(
+			deployment(
+				configInfo({
+					runtime_targets: {
+						"openclaw-a": malformed,
+					},
+				}),
+			),
+		);
+
+		expect(targets).toEqual([]);
+	});
+
+	test("selects a default only from explicit enabled targets", () => {
+		const empty = defaultDeploymentRuntimeTarget(deployment(configInfo({ runtime_targets: {} })));
+		const selected = defaultDeploymentRuntimeTarget(
+			deployment(
+				configInfo({
+					runtime_targets: {
+						codex: target("codex", "codex", { enabled: false }),
+						hermes: target("hermes", "hermes"),
+					},
+				}),
+			),
+		);
+
+		expect(empty).toBeNull();
+		expect(selected?.id).toBe("hermes");
+	});
+
+	test("uses the target control UI URL and never deployment-level legacy URLs", () => {
+		const targets = deploymentRuntimeTargets(
+			deployment(
+				configInfo({
+					runtime_targets: {
+						codex: target("codex", "codex"),
+						"openclaw-a": target("openclaw-a", "openclaw", {
+							control_ui_url: "https://openclaw-a.example.test",
+						}),
+					},
+				}),
+			),
+		);
+		const codex = targets[0];
+		const openclaw = targets[1];
+		if (!codex || !openclaw) throw new Error("expected test runtime targets");
+
+		expect(runtimeConsoleUrl(codex)).toBeNull();
+		expect(runtimeConsoleUrl(openclaw)).toBe("https://openclaw-a.example.test");
 	});
 });

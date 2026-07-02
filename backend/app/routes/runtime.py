@@ -99,8 +99,9 @@ async def get_runtime_manifest(
         "controlPlane": _control_plane(state.control_plane),
         "clawdiCli": state.clawdi_cli or _default_clawdi_cli(),
         "runtimes": state.runtimes,
+        "runtimeTargets": state.runtimes,
         "providers": providers,
-        "liveSync": state.live_sync or _default_live_sync(env),
+        "liveSync": state.live_sync or _default_live_sync(state),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
     }
     if state.bridge:
@@ -182,15 +183,27 @@ def _default_clawdi_cli() -> dict[str, Any]:
     }
 
 
-def _default_live_sync(env: AgentEnvironment) -> dict[str, Any]:
+def _default_live_sync(state: HostedRuntimeState) -> dict[str, Any]:
+    agents: list[dict[str, str]] = []
+    for target_id, runtime in sorted((state.runtimes or {}).items()):
+        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
+            continue
+        runtime_type = runtime.get("type")
+        environment_id = runtime.get("environmentId")
+        if runtime_type not in _SUPPORTED_PROVIDER_RUNTIMES:
+            continue
+        if not isinstance(environment_id, str) or not environment_id.strip():
+            continue
+        agents.append(
+            {
+                "agentType": runtime_type,
+                "agentId": str(target_id),
+                "environmentId": environment_id.strip(),
+            }
+        )
     return {
         "enabled": True,
-        "agents": [
-            {
-                "agentType": env.agent_type,
-                "environmentId": str(env.id),
-            }
-        ],
+        "agents": agents,
     }
 
 
@@ -308,7 +321,8 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
         if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
             continue
         runtime_key = str(runtime_name)
-        if runtime_key not in _SUPPORTED_PROVIDER_RUNTIMES:
+        runtime_type = runtime.get("type")
+        if runtime_type not in _SUPPORTED_PROVIDER_RUNTIMES:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"unsupported enabled runtime: {runtime_key}",
@@ -339,11 +353,6 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
         bindings[runtime_key] = _RuntimeProviderBinding(
             provider_id=provider_id,
             model=model.strip() if isinstance(model, str) else None,
-        )
-    if not bindings and state.provider_id:
-        bindings["default"] = _RuntimeProviderBinding(
-            provider_id=state.provider_id,
-            model=None,
         )
     return bindings
 

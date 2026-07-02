@@ -91,7 +91,8 @@ cat >package.json <<'JSON'
     "packages/shared"
   ],
   "catalog": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "zod": "^4.4.3"
   },
   "packageManager": "bun@1.3.14"
 }

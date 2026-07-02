@@ -64,11 +64,13 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
         "provider_id": "clawdi-managed-v2",
         "runtimes": {
             "openclaw": {
+                "type": "openclaw",
                 "enabled": True,
+                "environmentId": environment_id,
                 "install": {"source": "official", "channel": "stable"},
                 "run": {"args": ["gateway", "run"]},
             },
-            "hermes": {"enabled": False},
+            "hermes": {"type": "hermes", "enabled": False},
         },
     }
     body.update(overrides)
@@ -113,7 +115,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert manifest["instanceId"] == expected["instance_id"]
     assert manifest["generation"] == expected["generation"]
     assert manifest["liveSync"]["agents"] == [
-        {"agentType": "openclaw", "environmentId": str(env.id)}
+        {"agentType": "openclaw", "agentId": "openclaw", "environmentId": str(env.id)}
     ]
     assert "apiUrl" not in manifest["controlPlane"]
     assert "channels" not in manifest
@@ -153,6 +155,8 @@ async def test_runtime_manifest_includes_declared_bridge_surfaces(
                 "listenPort": 28789,
                 "upstreamHost": "127.0.0.1",
                 "upstreamPort": 18789,
+                "upstreamHeaders": {"X-Controlled": "fixed"},
+                "upstreamHeaderEnv": {"Authorization": "OPENCLAW_CONTROL_TOKEN"},
             }
         ]
     }
@@ -166,6 +170,61 @@ async def test_runtime_manifest_includes_declared_bridge_surfaces(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["manifest"]["bridge"] == bridge
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_includes_external_runtime_execution(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-external-{uuid4().hex[:8]}",
+        machine_name="Runtime external",
+        agent_type="openclaw",
+    )
+    runtimes = {
+        "openclaw": {
+            "type": "openclaw",
+            "enabled": True,
+            "environmentId": str(env.id),
+            "execution": {
+                "mode": "external",
+                "home": "/home/node",
+                "stateDir": "/home/node/.openclaw",
+                "workspace": "/home/node/.openclaw/workspace",
+                "controlCommand": {
+                    "command": "/usr/local/bin/agent-control",
+                    "args": ["openclaw"],
+                    "env": {"OPENCLAW_STATE_DIR": "/home/node/.openclaw"},
+                    "cwd": "/home/node/.openclaw/workspace",
+                },
+                "mcp": {
+                    "source": "sidecar-local",
+                    "url": "http://clawdi-sidecar:8788/mcp",
+                    "transport": "streamable-http",
+                },
+                "terminal": {
+                    "container": "openclaw",
+                    "user": "node",
+                    "cwd": "/home/node/.openclaw/workspace",
+                },
+            },
+        },
+        "hermes": {"type": "hermes", "enabled": False},
+    }
+    await _write_runtime_state(admin_client, str(env.id), runtimes=runtimes)
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["manifest"]["runtimes"] == runtimes
 
 
 @pytest.mark.asyncio
@@ -588,11 +647,13 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
         str(env.id),
         runtimes={
             "openclaw": {
+                "type": "openclaw",
                 "enabled": True,
                 "provider_id": "openai-managed",
                 "model": "gpt-5.5",
             },
             "hermes": {
+                "type": "hermes",
                 "enabled": True,
                 "providerId": "anthropic-managed",
                 "model": "claude-opus-4-6",
@@ -651,7 +712,7 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
-        "runtimes": {"openclaw": {"enabled": True}},
+        "runtimes": {"openclaw": {"type": "openclaw", "enabled": True}},
         field: {},
     }
 
@@ -709,6 +770,51 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
                 }
             ]
         },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                    "upstreamHeaders": {"Bad Header": "fixed"},
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                    "upstreamHeaderEnv": {"Authorization": "not-valid-env-name"},
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                    "upstreamHeaders": {"Authorization": "Bearer plaintext"},
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    "name": "openclaw",
+                    "kind": "control-ui",
+                    "listenPort": 28789,
+                    "upstreamPort": 18789,
+                    "upstreamHeaders": {"X-Controlled": "fixed"},
+                    "upstreamHeaderEnv": {"x-controlled": "OPENCLAW_CONTROL_TOKEN"},
+                }
+            ]
+        },
     ],
 )
 async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
@@ -730,8 +836,114 @@ async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
-        "runtimes": {"openclaw": {"enabled": True}},
+        "runtimes": {"openclaw": {"type": "openclaw", "enabled": True}},
         "bridge": bridge,
+    }
+
+    response = await admin_client.put(
+        f"/api/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "runtimes",
+    [
+        {"openclaw": {"type": "openclaw", "enabled": True, "execution": {"mode": "sidecar"}}},
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {"mode": "external", "home": "relative"},
+            }
+        },
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {
+                    "mode": "external",
+                    "controlCommand": {
+                        "command": "/usr/local/bin/agent-control",
+                        "cwd": "relative",
+                    },
+                },
+            }
+        },
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {
+                    "mode": "external",
+                    "mcp": {"source": "backend-direct", "url": "ftp://clawdi-sidecar/mcp"},
+                },
+            }
+        },
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {
+                    "mode": "external",
+                    "mcp": {"source": "sidecar-local", "url": "https://clawdi-sidecar:8788/mcp"},
+                },
+            }
+        },
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {
+                    "mode": "external",
+                    "mcp": {
+                        "source": "sidecar-local",
+                        "url": "http://clawdi-sidecar:8788/mcp",
+                        "transport": "websocket",
+                    },
+                },
+            }
+        },
+        {
+            "openclaw": {
+                "type": "openclaw",
+                "enabled": True,
+                "execution": {
+                    "mode": "external",
+                    "mcp": {
+                        "source": "sidecar-local",
+                        "url": "http://clawdi-sidecar:8788/mcp",
+                        "transport": "sse",
+                    },
+                },
+            }
+        },
+    ],
+)
+async def test_admin_runtime_state_rejects_invalid_runtime_execution(
+    admin_client,
+    db_session,
+    seed_user,
+    runtimes,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-invalid-exec-{uuid4().hex[:8]}",
+        machine_name="Runtime invalid execution",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": f"dep_{uuid4().hex}",
+        "app_id": "app-test",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "provider_id": "clawdi-managed",
+        "runtimes": runtimes,
     }
 
     response = await admin_client.put(
@@ -771,7 +983,7 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
-        "runtimes": {"openclaw": {"enabled": True}},
+        "runtimes": {"openclaw": {"type": "openclaw", "enabled": True}},
         field: value,
     }
 
@@ -804,7 +1016,7 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
         "generation": 7,
         "provider_id": "clawdi-managed",
         "runtimes": {
-            "openclaw": {"enabled": True},
+            "openclaw": {"type": "openclaw", "enabled": True},
             "channels": {},
         },
     }
@@ -838,8 +1050,8 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
         "generation": 7,
         "provider_id": "clawdi-managed",
         "runtimes": {
-            "openclaw": {"enabled": True},
-            "claude_code": {"enabled": True},
+            "openclaw": {"type": "openclaw", "enabled": True},
+            "claude_code": {"type": "claude_code", "enabled": True},
         },
     }
 
@@ -850,7 +1062,7 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
     )
 
     assert response.status_code == 422, response.text
-    assert "unsupported runtime desired state" in response.text
+    assert "runtime claude_code.type is unsupported" in response.text
 
 
 @pytest.mark.asyncio
@@ -874,8 +1086,8 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
             generation=7,
             provider_id="clawdi-managed-v2",
             runtimes={
-                "claude_code": {"enabled": True},
-                "openclaw": {"enabled": False},
+                "claude_code": {"type": "claude_code", "enabled": True},
+                "openclaw": {"type": "openclaw", "enabled": False},
             },
             system=None,
             control_plane=None,
@@ -923,7 +1135,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
             "apiUrl": "https://api.clawdi.test",
             "cloudApiUrl": "https://cloud-api.test",
         },
-        "runtimes": {"openclaw": {"enabled": True}},
+        "runtimes": {"openclaw": {"type": "openclaw", "enabled": True}},
     }
 
     response = await admin_client.put(
@@ -1241,11 +1453,12 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
         provider_id="custom-openai",
         runtimes={
             "openclaw": {
+                "type": "openclaw",
                 "enabled": True,
                 "provider_id": "custom-openai",
                 "model": "gpt-5.5",
             },
-            "hermes": {"enabled": False},
+            "hermes": {"type": "hermes", "enabled": False},
         },
     )
 
@@ -1299,12 +1512,13 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
         provider_id="openai-codex",
         runtimes={
             "codex": {
+                "type": "codex",
                 "enabled": True,
                 "provider_id": "openai-codex",
                 "model": "gpt-5.5",
             },
-            "openclaw": {"enabled": False},
-            "hermes": {"enabled": False},
+            "openclaw": {"type": "openclaw", "enabled": False},
+            "hermes": {"type": "hermes", "enabled": False},
         },
     )
 

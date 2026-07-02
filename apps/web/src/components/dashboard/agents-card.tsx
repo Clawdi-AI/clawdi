@@ -113,9 +113,9 @@ export interface AgentTile {
 	active?: boolean;
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
-	 * cloud-api env via `clawdi_cloud_environments` and end up with
-	 * the same shape; hosted deployments without a registered env leave
-	 * this null. */
+	 * cloud-api env via `runtime_targets[agent_id].environment_id` and
+	 * end up with the same shape; hosted deployments without a registered
+	 * env leave this null. */
 	env?: Env | null;
 	/** Hosted only: the compute (deployment) this runtime-agent belongs to.
 	 * Lets the /agents index group sibling runtime-agents under their shared

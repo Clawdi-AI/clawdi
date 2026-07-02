@@ -10,7 +10,6 @@ import type {
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
 	PortalRequest,
-	RuntimeAgentType,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
@@ -28,7 +27,7 @@ export { isDeployApiConfigured };
 
 type DeployResult<T> = { data?: T; error?: unknown; response: Response };
 type RebindAgentAiProviderRequest =
-	DeployPaths["/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider"]["patch"]["requestBody"]["content"]["application/json"];
+	DeployPaths["/v2/deployments/{deployment_id}/agent-targets/{agent_id}/ai-provider"]["patch"]["requestBody"]["content"]["application/json"];
 
 function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Response> {
 	const caller = init?.signal ?? request.signal;
@@ -63,11 +62,6 @@ export function unwrapDeploy<T>(result: DeployResult<T>): T {
 		throw new BillingApiError(result.response.status, detail);
 	}
 	return result.data as T;
-}
-
-function runtimeAgentType(agentType: string): RuntimeAgentType {
-	if (agentType === "openclaw" || agentType === "hermes") return agentType;
-	throw new BillingApiError(400, `Unsupported runtime: ${agentType}`);
 }
 
 /**
@@ -122,41 +116,29 @@ export function useBillingClient() {
 			createDeployment: async (body: DeployRequest) =>
 				unwrapDeploy(await api.POST("/v2/deployments", { body })),
 
-			setAgentEnabled: async (id: string, agentType: string, enabled: boolean) =>
+			setAgentEnabled: async (id: string, agentId: string, enabled: boolean) =>
 				unwrapDeploy(
-					await api.PATCH("/v2/deployments/{deployment_id}/agents/{agent_type}", {
+					await api.PATCH("/v2/deployments/{deployment_id}/agent-targets/{agent_id}", {
 						params: {
-							path: { deployment_id: id, agent_type: runtimeAgentType(agentType) },
+							path: { deployment_id: id, agent_id: agentId },
 						},
 						body: { enabled },
 					}),
 				),
-			setAgentAiProvider: async (
-				id: string,
-				agentType: string,
-				body: RebindAgentAiProviderRequest,
-			) =>
+			setAgentAiProvider: async (id: string, agentId: string, body: RebindAgentAiProviderRequest) =>
 				unwrapDeploy(
-					await api.PATCH("/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider", {
+					await api.PATCH("/v2/deployments/{deployment_id}/agent-targets/{agent_id}/ai-provider", {
 						params: {
-							path: { deployment_id: id, agent_type: runtimeAgentType(agentType) },
+							path: { deployment_id: id, agent_id: agentId },
 						},
 						body,
 					}),
 				),
-			onboardAgent: async (id: string, agentType: string) => {
-				const runtime = runtimeAgentType(agentType);
-				return unwrapDeploy(
-					await api.POST("/v2/deployments/{deployment_id}/onboard-agent", {
-						params: { path: { deployment_id: id } },
-						body: { agent_type: runtime },
-					}),
-				);
-			},
-			createTerminalSession: async (id: string) =>
+			createTerminalSession: async (id: string, agentId: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments/{deployment_id}/terminal", {
 						params: { path: { deployment_id: id } },
+						body: { agent_id: agentId },
 					}),
 				),
 			restartDeployment: async (id: string) =>
