@@ -344,7 +344,7 @@ class SessionListItemResponse(BaseModel):
 
 
 class PublicSessionResponse(BaseModel):
-    """Public-safe session detail payload for `/api/public/sessions/{id}`."""
+    """Public-safe session detail payload for `/v1/public/sessions/{id}`."""
 
     id: str
     summary: str | None
@@ -374,8 +374,8 @@ class SessionDetailResponse(SessionListItemResponse):
 class SessionPermissionResponse(BaseModel):
     """One row from `session_permissions`.
 
-    Returned by `GET /api/sessions/{id}/permissions` and as the body of
-    `POST /api/sessions/{id}/permissions`. Identifier columns mirror
+    Returned by `GET /v1/sessions/{id}/permissions` and as the body of
+    `POST /v1/sessions/{id}/permissions`. Identifier columns mirror
     Google Drive's `permissions` resource: a `kind` discriminator plus
     explicit fields for whichever principal type is populated.
     """
@@ -393,7 +393,7 @@ class SessionPermissionResponse(BaseModel):
 
 
 class SessionPermissionsResponse(BaseModel):
-    """`GET /api/sessions/{id}/permissions` — active permissions for a
+    """`GET /v1/sessions/{id}/permissions` — active permissions for a
     session, newest-first. Drives the share popover state and (in the
     future) the "people with access" list.
     """
@@ -402,7 +402,7 @@ class SessionPermissionsResponse(BaseModel):
 
 
 class SessionPermissionCreate(BaseModel):
-    """`POST /api/sessions/{id}/permissions` body.
+    """`POST /v1/sessions/{id}/permissions` body.
 
     For today's "Public access" toggle the body is just
     `{"kind": "link"}`. Future invite-by-email sends `{"kind": "email",
@@ -427,7 +427,7 @@ class SessionUploadResponse(BaseModel):
 
 
 class SessionExtractResponse(BaseModel):
-    """Result of `POST /api/sessions/{local_session_id}/extract`."""
+    """Result of `POST /v1/sessions/{local_session_id}/extract`."""
 
     memories_created: int
 
@@ -457,7 +457,7 @@ class PublicSessionExportResponse(PublicSessionResponse):
 class SessionMessagesPage(BaseModel):
     """Paginated slice of a session's messages. Used by the dashboard's
     detail page; the full-content download endpoint
-    (`GET /api/sessions/{id}/content`) stays unchanged so the CLI's
+    (`GET /v1/sessions/{id}/content`) stays unchanged so the CLI's
     `clawdi pull` mirror still gets a single full JSON array.
 
     `total` is the count of messages in the underlying content file

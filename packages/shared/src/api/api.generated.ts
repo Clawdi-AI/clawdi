@@ -853,7 +853,7 @@ export interface paths {
          * Get Session Messages
          * @description Paginated read of a session's messages, for the dashboard.
          *     The CLI's `clawdi pull` mirror still uses
-         *     `GET /api/sessions/{id}/content` to grab the full JSON blob;
+         *     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
          *     this endpoint slices the same blob server-side so the
          *     dashboard doesn't ship 10+ MB of messages on a long session.
          *
@@ -862,7 +862,7 @@ export interface paths {
          *     the entire JSON array), so `array[offset:offset+limit]` is
          *     stable for a given `content_hash`. Clients pin to a snapshot
          *     by reading `content_hash` from the parent
-         *     `/api/sessions/{id}` response and refusing to mix pages
+         *     `/v1/sessions/{id}` response and refusing to mix pages
          *     from different hashes — a daemon append in between would
          *     show up as a hash change and trigger a refetch.
          */
@@ -1245,7 +1245,7 @@ export interface paths {
          *     most-recently-active Agent Project; zero Agents → Personal),
          *     then runs the same upload pipeline as the project-explicit
          *     route. New CLIs and the dashboard call
-         *     `POST /api/projects/{project_id}/skills/upload` directly.
+         *     `POST /v1/projects/{project_id}/skills/upload` directly.
          *
          *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
          *     a wrong-project upload creates a stray row visible in the
@@ -1270,7 +1270,7 @@ export interface paths {
          * Download Skill Legacy
          * @description Phase-1 compat download — multi-project disambiguation by
          *     most-recently-updated. Replaced by
-         *     `/api/projects/{project_id}/skills/{skill_key}/download`.
+         *     `/v1/projects/{project_id}/skills/{skill_key}/download`.
          */
         get: operations["download_skill_legacy_v1_skills__skill_key__download_get"];
         put?: never;
@@ -1292,7 +1292,7 @@ export interface paths {
          * Get Skill Legacy
          * @description Phase-1 compat detail — multi-project disambiguation by
          *     most-recently-updated. Replaced by
-         *     `/api/projects/{project_id}/skills/{skill_key}` in phase 2 for
+         *     `/v1/projects/{project_id}/skills/{skill_key}` in phase 2 for
          *     callers that know which project they want.
          */
         get: operations["get_skill_legacy_v1_skills__skill_key__get"];
@@ -1307,7 +1307,7 @@ export interface paths {
          *     listing now exposes), or 404 with no useful hint when
          *     their default project doesn't have that key. The CLI and
          *     dashboard both migrated to
-         *     `DELETE /api/projects/{project_id}/skills/{skill_key}` and
+         *     `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
          *     pass the row's own project_id; force any stale client onto
          *     that path with 410 instead of guessing.
          *
@@ -1724,7 +1724,7 @@ export interface paths {
          * @description Store an encrypted local CLI credential profile.
          *
          *     Credential profiles are deliberately separate from `vault_items`: they
-         *     should not be returned by `/api/vault/resolve` all-env injection. The CLI
+         *     should not be returned by `/v1/vault/resolve` all-env injection. The CLI
          *     materializes them back to tool-specific local files instead.
          */
         post: operations["upsert_credential_profile_v1_vault_credential_profiles_post"];
@@ -1747,7 +1747,7 @@ export interface paths {
          * Resolve Credential Profile
          * @description Resolve one local CLI credential profile for materialization.
          *
-         *     Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+         *     Plaintext is restricted to CLI auth, matching `/v1/vault/resolve`.
          */
         post: operations["resolve_credential_profile_v1_vault_credential_profiles_resolve_post"];
         delete?: never;
@@ -3790,7 +3790,7 @@ export interface components {
         };
         /**
          * InvitationCreate
-         * @description Body for POST /api/projects/{project_id}/invitations.
+         * @description Body for POST /v1/projects/{project_id}/invitations.
          */
         InvitationCreate: {
             /** Email */
@@ -3838,7 +3838,7 @@ export interface components {
         };
         /**
          * MemberResponse
-         * @description Returned by GET /api/projects/{project_id}/members.
+         * @description Returned by GET /v1/projects/{project_id}/members.
          */
         MemberResponse: {
             /** Id */
@@ -4086,7 +4086,7 @@ export interface components {
         };
         /**
          * PublicSessionResponse
-         * @description Public-safe session detail payload for `/api/public/sessions/{id}`.
+         * @description Public-safe session detail payload for `/v1/public/sessions/{id}`.
          */
         PublicSessionResponse: {
             /** Id */
@@ -4423,7 +4423,7 @@ export interface components {
         };
         /**
          * SessionExtractResponse
-         * @description Result of `POST /api/sessions/{local_session_id}/extract`.
+         * @description Result of `POST /v1/sessions/{local_session_id}/extract`.
          */
         SessionExtractResponse: {
             /** Memories Created */
@@ -4516,7 +4516,7 @@ export interface components {
          * SessionMessagesPage
          * @description Paginated slice of a session's messages. Used by the dashboard's
          *     detail page; the full-content download endpoint
-         *     (`GET /api/sessions/{id}/content`) stays unchanged so the CLI's
+         *     (`GET /v1/sessions/{id}/content`) stays unchanged so the CLI's
          *     `clawdi pull` mirror still gets a single full JSON array.
          *
          *     `total` is the count of messages in the underlying content file
@@ -4535,7 +4535,7 @@ export interface components {
         };
         /**
          * SessionPermissionCreate
-         * @description `POST /api/sessions/{id}/permissions` body.
+         * @description `POST /v1/sessions/{id}/permissions` body.
          *
          *     For today's "Public access" toggle the body is just
          *     `{"kind": "link"}`. Future invite-by-email sends `{"kind": "email",
@@ -4559,8 +4559,8 @@ export interface components {
          * SessionPermissionResponse
          * @description One row from `session_permissions`.
          *
-         *     Returned by `GET /api/sessions/{id}/permissions` and as the body of
-         *     `POST /api/sessions/{id}/permissions`. Identifier columns mirror
+         *     Returned by `GET /v1/sessions/{id}/permissions` and as the body of
+         *     `POST /v1/sessions/{id}/permissions`. Identifier columns mirror
          *     Google Drive's `permissions` resource: a `kind` discriminator plus
          *     explicit fields for whichever principal type is populated.
          */
@@ -4595,7 +4595,7 @@ export interface components {
         };
         /**
          * SessionPermissionsResponse
-         * @description `GET /api/sessions/{id}/permissions` — active permissions for a
+         * @description `GET /v1/sessions/{id}/permissions` — active permissions for a
          *     session, newest-first. Drives the share popover state and (in the
          *     future) the "people with access" list.
          */
@@ -4636,7 +4636,7 @@ export interface components {
         };
         /**
          * ShareLinkCreate
-         * @description Body for POST /api/projects/{project_id}/share-links.
+         * @description Body for POST /v1/projects/{project_id}/share-links.
          */
         ShareLinkCreate: {
             /** Label */
@@ -4671,7 +4671,7 @@ export interface components {
         };
         /**
          * ShareLinkResponse
-         * @description Returned by GET /api/projects/{project_id}/share-links.
+         * @description Returned by GET /v1/projects/{project_id}/share-links.
          */
         ShareLinkResponse: {
             /** Id */
@@ -4707,7 +4707,7 @@ export interface components {
         };
         /**
          * ShareRedeemResponse
-         * @description Returned by POST /api/share/{token}/redeem.
+         * @description Returned by POST /v1/share/{token}/redeem.
          */
         ShareRedeemResponse: {
             /** Project Id */
@@ -4914,7 +4914,7 @@ export interface components {
         };
         /**
          * UnshareResponse
-         * @description Returned by POST /api/projects/{project_id}/unshare.
+         * @description Returned by POST /v1/projects/{project_id}/unshare.
          */
         UnshareResponse: {
             /** Links Revoked */
@@ -4931,8 +4931,8 @@ export interface components {
         };
         /**
          * UpgradeBody
-         * @description Optional body for POST /api/share/{token}/upgrade and
-         *     POST /api/me/invitations/{id}/accept.
+         * @description Optional body for POST /v1/share/{token}/upgrade and
+         *     POST /v1/me/invitations/{id}/accept.
          *
          *     Accepting access does not auto-bind by default. Callers can pass
          *     explicit `agent_ids` to attach the accepted Project for reads.

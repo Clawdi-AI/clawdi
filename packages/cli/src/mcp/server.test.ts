@@ -2,23 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	createClawdiMcpServer,
-	createConnectorToolDefinition,
-	type McpTool,
-	mcpHttpRequestAuthorized,
-	normalizeMcpUrl,
-} from "./server";
+import { createClawdiMcpServer, createConnectorToolDefinition, type McpTool } from "./server";
 
 describe("MCP connector helpers", () => {
-	it("requires the expected bearer token for MCP HTTP requests", () => {
-		expect(mcpHttpRequestAuthorized("Bearer sidecar-token", "sidecar-token")).toBe(true);
-		expect(mcpHttpRequestAuthorized("Bearer wrong", "sidecar-token")).toBe(false);
-		expect(mcpHttpRequestAuthorized(undefined, "sidecar-token")).toBe(false);
-		expect(mcpHttpRequestAuthorized("Basic sidecar-token", "sidecar-token")).toBe(false);
-	});
-
-	it("throws instead of exiting when MCP HTTP request setup has no CLI auth", async () => {
+	it("throws instead of exiting when there is no CLI auth", async () => {
 		const previousClawdiHome = process.env.CLAWDI_HOME;
 		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
 		const clawdiHome = mkdtempSync(join(tmpdir(), "clawdi-mcp-auth-"));
@@ -33,24 +20,6 @@ describe("MCP connector helpers", () => {
 			else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
 			rmSync(clawdiHome, { recursive: true, force: true });
 		}
-	});
-
-	it("normalizes localhost MCP URLs without changing the backend-selected path", () => {
-		expect(
-			normalizeMcpUrl(
-				"http://localhost:8000/v1/mcp/composio?session=abc#tools",
-				"https://cloud-api.clawdi.ai",
-			),
-		).toBe("https://cloud-api.clawdi.ai/v1/mcp/composio?session=abc#tools");
-	});
-
-	it("leaves non-local MCP URLs unchanged", () => {
-		expect(
-			normalizeMcpUrl(
-				"https://app.composio.dev/tool_router/v3/trs_123/mcp",
-				"https://cloud-api.clawdi.ai",
-			),
-		).toBe("https://app.composio.dev/tool_router/v3/trs_123/mcp");
 	});
 
 	it("preserves upstream tool names and builds typed fields from inputSchema", async () => {

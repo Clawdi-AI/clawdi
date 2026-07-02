@@ -78,7 +78,7 @@ async def list_vaults(
     # Dropped the `Vault.user_id == auth.user_id` filter that was
     # here pre-sharing — it would have blocked viewer members from
     # seeing shared-project vault slugs (and the key names inside).
-    # Plaintext resolution (`/api/vault/resolve`) keeps the CLI/API-key
+    # Plaintext resolution (`/v1/vault/resolve`) keeps the CLI/API-key
     # gate so web/JWT and anonymous share-token flows never return secrets.
     selected_project_id = project_id
     visible_project_ids = (
@@ -399,7 +399,7 @@ async def upsert_credential_profile(
     """Store an encrypted local CLI credential profile.
 
     Credential profiles are deliberately separate from `vault_items`: they
-    should not be returned by `/api/vault/resolve` all-env injection. The CLI
+    should not be returned by `/v1/vault/resolve` all-env injection. The CLI
     materializes them back to tool-specific local files instead.
     """
     _require_user_level_credential_profile_auth(auth)
@@ -455,7 +455,7 @@ async def resolve_credential_profile(
 ) -> VaultCredentialProfileResolveResponse:
     """Resolve one local CLI credential profile for materialization.
 
-    Plaintext is restricted to CLI auth, matching `/api/vault/resolve`.
+    Plaintext is restricted to CLI auth, matching `/v1/vault/resolve`.
     """
     _require_user_level_credential_profile_auth(auth)
     if body.project_id is not None:

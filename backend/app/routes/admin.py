@@ -7,7 +7,7 @@ revocation). Disabled by default — `settings.admin_api_key` must be
 set to a strong secret to enable.
 
 **Trust model:** admin-minted keys carry the same authority as keys
-the user mints for themselves via `POST /api/auth/keys` — full
+the user mints for themselves via `POST /v1/auth/keys` — full
 account access by default. The X-Admin-Key is therefore a root
 credential: a leak grants an attacker the ability to mint full-power
 keys for any user. Protect it like a database password (rotate on
@@ -162,7 +162,7 @@ async def admin_mint_api_key(
             ) from e
 
     # `scopes=None` is full API permission access — same default as
-    # user-self-mint via `POST /api/auth/keys`. Callers may pass a
+    # user-self-mint via `POST /v1/auth/keys`. Callers may pass a
     # narrower permission list to lock the minted key down (e.g. ops
     # tooling that only needs to push sessions); the route doesn't
     # impose a ceiling.
@@ -532,7 +532,7 @@ async def admin_register_environment(
 
     Migration tooling needs to seed env_id for legacy deployments
     where no per-user Clerk JWT is in project. The user-facing
-    `POST /api/environments` requires a Clerk-authed or Agent environment
+    `POST /v1/environments` requires a Clerk-authed or Agent environment
     api_key request; this admin variant is gated by the shared
     `X-Admin-Key` header instead.
 

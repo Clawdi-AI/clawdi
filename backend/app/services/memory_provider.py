@@ -518,7 +518,7 @@ def mem0_available() -> bool:
     truthy even when the module's transitive dependencies fail
     to load (broken `[mem0]` install, partially-installed venv).
     A truthy `find_spec` followed by a failing real import would
-    let `/api/capabilities` advertise mem0, the settings page
+    let `/v1/capabilities` advertise mem0, the settings page
     accept the value, then `Mem0Provider.__init__` catch the
     ImportError and silently degrade to builtin — leaving the
     user with a UI saying "Currently using: mem0" and behavior

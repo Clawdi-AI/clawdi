@@ -86,7 +86,7 @@ async def update_settings(
     # Validate memory_provider — refuse `mem0` if the deployment
     # doesn't have the optional `[mem0]` extra installed. Pre-fix
     # the dashboard would happily save the value, then GET
-    # /api/memories would 500 with `ModuleNotFoundError: 'mem0'`
+    # /v1/memories would 500 with `ModuleNotFoundError: 'mem0'`
     # for that user every time. The factory has an ImportError
     # fallback as defense-in-depth, but failing closed at write
     # time gives the user an actionable error ("not available on

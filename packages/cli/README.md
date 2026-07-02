@@ -319,7 +319,6 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](https://gith
 | `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
 | `clawdi mcp` | Start the MCP stdio server used by agents |
-| `clawdi mcp http` | Start the MCP server over streamable HTTP (for runtimes without stdio access) |
 
 Auto-update is enabled by default for all newer releases, including majors. Human CLI invocations update the global CLI in the background; installed daemons check on their own cadence, install silently, then let launchd/systemd restart them onto the new code. Disable both with `CLAWDI_NO_AUTO_UPDATE=1` or `clawdi config set autoUpdate false`.
 
@@ -334,7 +333,6 @@ part of normal laptop onboarding.
 | --- | --- |
 | `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
 | `clawdi runtime init --non-interactive [--json]` | Run one managed runtime convergence pass |
-| `clawdi mcp http --host <host> --port <port> --path <path> --auth-token-file <file>` | Expose the MCP server over local HTTP for runtimes without stdio access |
 | `clawdi runtime status [--json]` | Read the last runtime boot result from service-state files |
 | `clawdi runtime doctor [--json]` | Diagnose runtime policy, service state, HOME, temporary runtime state, and last boot status |
 

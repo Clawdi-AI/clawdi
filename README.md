@@ -321,7 +321,6 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi doctor [ai-provider]` | Diagnose auth, agent paths, vault, MCP config, and AI Provider setup |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
 | `clawdi mcp` | Start the MCP stdio server used by agents |
-| `clawdi mcp http` | Start the MCP server over streamable HTTP (for runtimes without stdio access) |
 
 Auto-update is enabled by default for all newer releases, including majors. Human CLI invocations update the global CLI in the background; installed daemons check on their own cadence, install silently, then let launchd/systemd restart them onto the new code. Disable both with `CLAWDI_NO_AUTO_UPDATE=1` or `clawdi config set autoUpdate false`.
 
@@ -336,7 +335,6 @@ part of normal laptop onboarding.
 | --- | --- |
 | `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
 | `clawdi runtime init/watch/bridge/status/doctor` | Converge, watch, expose runtime bridge surfaces, inspect, and diagnose runtime state |
-| `clawdi mcp http --host <host> --port <port> --path <path> --auth-token-file <file>` | Expose the MCP server over local HTTP for runtimes without stdio access |
 | `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
 
 Runtime mode is detected from policy or runtime credentials. In managed mode,

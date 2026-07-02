@@ -1219,7 +1219,7 @@ program
 // ─────────────────────────────────────────────────────────────
 // mcp / run
 // ─────────────────────────────────────────────────────────────
-const mcpCmd = program
+program
 	.command("mcp")
 	.description("Start MCP server (stdio transport, used by agents)")
 	.option("--api-url <url>", "Override CLAWDI_API_URL for this MCP process")
@@ -1230,27 +1230,6 @@ const mcpCmd = program
 		loadAuthTokenFile(opts.authTokenFile);
 		const { startMcpServer } = await import("./mcp/server.js");
 		await startMcpServer();
-	});
-
-mcpCmd
-	.command("http")
-	.description("Start MCP server over streamable HTTP")
-	.option("--host <host>", "Listen host", "127.0.0.1")
-	.option("--port <port>", "Listen port", "8788")
-	.option("--path <path>", "HTTP endpoint path", "/mcp")
-	.option("--auth-token-file <file>", "File containing the required bearer token")
-	.action(async (opts: { host?: string; port?: string; path?: string; authTokenFile?: string }) => {
-		const { startMcpHttpServer } = await import("./mcp/server.js");
-		const port = Number.parseInt(opts.port ?? "8788", 10);
-		if (!Number.isInteger(port) || port < 1 || port > 65535) {
-			throw new Error(`invalid MCP HTTP port: ${opts.port}`);
-		}
-		await startMcpHttpServer({
-			host: opts.host,
-			port,
-			path: opts.path,
-			authTokenFile: opts.authTokenFile,
-		});
 	});
 
 program

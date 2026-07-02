@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from typing import Any
 from uuid import UUID
 
@@ -48,13 +49,42 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory_search",
         "description": (
-            "Search the user's durable Clawdi memories. Use when a request references "
-            "the user's own preferences, projects, past decisions, named entities, or work history."
+            "ALWAYS call this BEFORE answering any question that references the user's own "
+            "context — their preferences, projects, past decisions, named entities, or work "
+            "history. A missed hit costs the user's trust every subsequent turn; a call that "
+            "returns empty costs ~100ms. Bias toward calling. Works in any language — pass "
+            "the user's query through as-is.\n\n"
+            "MUST call when the user's message contains ANY of these signals (in English, "
+            "Chinese, or any other language):\n"
+            '- First-person self-reference in a question about themselves: possessives like "my", '
+            'verbs of habit like "I usually", "I prefer", "I always"\n'
+            '- Preference / habit questions, even phrased abstractly: "what do I usually use for '
+            'X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger '
+            "even when no specific entity is named\n"
+            '- Callbacks to past context: "like last time", "as I mentioned", "you know the one", '
+            '"we discussed before", "what was that X"\n'
+            "- Named entities specific to this user: their project / repo / service / team / tool "
+            "name, or a person by name\n"
+            "- Any reference to a past bug, decision, investigation, meeting, or design choice\n\n"
+            "Do NOT call for pure textbook / generic programming questions with zero "
+            'user-specific signal (e.g. "how does async/await work").\n\n'
+            "When in doubt, CALL IT. Zero results is cheap; a missed memory makes you look "
+            "amnesic."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Natural-language search query."},
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Natural-language query in any language — the search does semantic "
+                        "matching, no keyword optimization needed. Pass the user's own phrasing "
+                        "(translation not required) or a short rewrite that captures intent. "
+                        'Examples: "user\'s name", "coding style preference", "command-line '
+                        'tools the user prefers", "how we fixed the login bug", "Clerk auth '
+                        'reasoning", "project architecture".'
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
@@ -69,17 +99,50 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory_add",
         "description": (
-            "Store a durable memory for future Clawdi sessions. Do not store plaintext "
-            "tokens, API keys, bearer credentials, or private keys."
+            "Store a durable memory so future agent sessions (same agent, or a different one) "
+            "can retrieve this context. Call this when you learn something non-obvious about "
+            "the user or their project that a future session would benefit from knowing.\n\n"
+            "MUST call when:\n"
+            '- The user explicitly asks you to remember something ("remember this", "save '
+            'this", or equivalent in any language) — always honor the request\n'
+            '- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n'
+            "- You and the user made an architecture decision together — save the decision AND "
+            "the reasoning (why this option over alternatives)\n"
+            "- The user expressed a coding / workflow preference you had to ask about — save it "
+            'so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n'
+            "- The user shared personal info (their name, their project name, their team, who "
+            "they work with) that future context would need\n\n"
+            "Do NOT save:\n"
+            "- Trivia that any agent can discover by reading the current code\n"
+            "- Generic programming knowledge (how APIs work, language features)\n"
+            '- Ephemeral conversation details ("the user asked about X today")\n'
+            "- Plaintext tokens, API keys, bearer credentials, or private keys; use Vault and "
+            "save a clawdi:// reference instead\n\n"
+            "Write the content as a standalone sentence with full context — include proper "
+            "nouns, not pronouns. A future session will read it without today's conversation. "
+            "Content language should match the user's primary language for that context."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Standalone memory content."},
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "The memory content. Standalone sentence that makes sense in isolation. "
+                        'Examples: "The user prefers rg over grep and fd over find.", "We chose '
+                        'Clerk over Auth0 because the team already had a Clerk account."'
+                    ),
+                },
                 "category": {
                     "type": "string",
                     "enum": ["fact", "preference", "pattern", "decision", "context"],
-                    "description": "Memory category. Default fact.",
+                    "description": (
+                        "fact — technical facts, API details, config values. preference — user "
+                        "preferences, coding style, workflow choices. pattern — recurring "
+                        "patterns, pitfalls, team conventions. decision — architecture decisions "
+                        "and their reasoning. context — project context, deadlines, ongoing "
+                        "work. Default: fact."
+                    ),
                 },
             },
             "required": ["content"],
@@ -89,8 +152,14 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory_extract",
         "description": (
-            "Return instructions for proposing durable memories from the current conversation. "
-            "The agent must ask the user before saving candidates with memory_add."
+            "Propose durable long-term memories from the CURRENT conversation, list them to "
+            "the user, and save only what they approve. Call this when the user asks to "
+            "'extract memories', 'save what we discussed', 'remember this conversation', or "
+            "any equivalent phrasing (in any language). The tool returns instructions — follow "
+            "them exactly: list up to 5 candidates first, wait for the user's confirmation, "
+            "then call memory_add on the approved ones. Do not narrate your internal workflow. "
+            "This tool inspects your active conversation context — it does NOT read any "
+            "external file or database."
         ),
         "inputSchema": {
             "type": "object",
@@ -101,13 +170,19 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "session_search",
         "description": (
-            "Search the user's past Clawdi sessions by keyword. Returned session IDs can "
-            "be passed to session_read."
+            "Search the user's past Clawdi sessions by keyword. Use when the user asks about "
+            "prior work (e.g. 'find the auth migration session'). Returns up to N matching "
+            "sessions with summary, agent, model, project, date, and message count. The "
+            "session UUID in each result can be passed back to session_read to fetch the full "
+            "conversation."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Keyword query."},
+                "query": {
+                    "type": "string",
+                    "description": "Keyword query — matches session summary and metadata.",
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
@@ -122,14 +197,22 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "session_read",
         "description": (
-            "Read a Clawdi session as Markdown. Accepts a session UUID or a Clawdi share URL."
+            "Read a Clawdi session and return its content as Markdown so you can ingest the "
+            "conversation as context. Use this when the user references a Clawdi share URL "
+            "(https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles "
+            "owned + shared sessions uniformly — you don't need to know which one. Returns a "
+            "YAML front-matter block (source/agent/model/project/messages) followed by "
+            "`## User` / `## Assistant` turn headings."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "reference": {
                     "type": "string",
-                    "description": "A session UUID or a Clawdi share URL containing /s/{uuid}.",
+                    "description": (
+                        "Either a full Clawdi share URL (https://cloud.clawdi.ai/s/{uuid}) or a "
+                        "bare session UUID."
+                    ),
                 },
             },
             "required": ["reference"],
@@ -139,13 +222,29 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
 ]
 
 _MEMORY_EXTRACT_INSTRUCTIONS = (
-    "Review the CURRENT conversation silently and propose up to 5 durable\n"
-    "memories worth saving for future sessions. Pick the highest-signal. Fewer is better.\n\n"
-    "Dedup first: for each candidate, call memory_search on its key topic and drop any\n"
-    "that already have a clear match stored.\n\n"
-    'If nothing qualifies, reply "nothing worth extracting" and stop.\n\n'
-    "Otherwise, present the surviving candidates to the user as a numbered list. Wait for\n"
-    "the user's approval. Do not call memory_add until the user approves specific candidates."
+    "Review the CURRENT conversation silently and propose up to 5 durable memories worth "
+    "saving for future sessions. Pick the highest-signal. Fewer is better — a confident 1-2 "
+    "beats 5 mediocre. Do not fabricate candidates to fill the list.\n\n"
+    "Dedup first, silently: for each candidate, call memory_search on its key topic and drop "
+    "any that already have a clear match stored.\n\n"
+    "If nothing qualifies — either because no candidate was durable, or because every "
+    'candidate was already saved — reply "nothing worth extracting" (or "everything useful '
+    'is already saved") and stop.\n\n'
+    "Otherwise, present the surviving candidates to the user as a numbered list. For each: "
+    "[category] full-sentence content, using proper nouns, not pronouns.\n\n"
+    "Wait for the user's reply. Do NOT call memory_add yet.\n\n"
+    "On approval, call memory_add once per approved memory, using the category and content "
+    "from the candidate (with any edits the user asked for). Then print a bullet summary "
+    "with the stored IDs so the user can delete individual ones later.\n\n"
+    "Do NOT narrate your internal workflow to the user. The user should see only the "
+    "candidate list, their own reply, and the final save summary — nothing else.\n\n"
+    "What qualifies as durable: user preferences / habits (tools, style, workflow); "
+    "architecture / design decisions and their reasoning; recurring patterns, team "
+    "conventions, pitfalls worked through; named entities specific to the user; anything "
+    "the user explicitly asked you to remember.\n\n"
+    "Does NOT qualify: one-off debugging details with no broader lesson; code snippets "
+    "(unless they demonstrate a preferred pattern); anything readable from the current code "
+    "state; conversational noise."
 )
 
 
@@ -258,8 +357,19 @@ def _http_exception_message(exc: HTTPException) -> str:
     return "request failed"
 
 
-async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    tools = list(_NATIVE_TOOLS)
+# Connector tool definitions change only when the user connects/disconnects
+# an app; a short per-user cache keeps repeated tools/list calls (every MCP
+# client init) from paying a Composio round-trip each time.
+_CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
+_connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
+    now = time.monotonic()
+    cached = _connector_tools_cache.get(auth.user.clerk_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    tools: list[dict[str, Any]] = []
     try:
         session = await get_tool_router_mcp_session(auth.user.clerk_id)
         response = await _forward_composio_mcp_request(
@@ -269,10 +379,19 @@ async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
         if isinstance(response, dict):
             result = response.get("result")
             if isinstance(result, dict) and isinstance(result.get("tools"), list):
-                tools.extend(tool for tool in result["tools"] if isinstance(tool, dict))
+                tools = [tool for tool in result["tools"] if isinstance(tool, dict)]
+        _connector_tools_cache[auth.user.clerk_id] = (
+            now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
+            tools,
+        )
     except Exception:
+        # Failures are not cached — the next call retries immediately.
         logger.info("Connector MCP tools unavailable for user=%s", auth.user_id)
     return tools
+
+
+async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
+    return list(_NATIVE_TOOLS) + await _connector_mcp_tools(auth)
 
 
 async def _call_clawdi_mcp_tool(

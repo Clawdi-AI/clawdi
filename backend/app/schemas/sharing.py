@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ShareLinkCreate(BaseModel):
-    """Body for POST /api/projects/{project_id}/share-links."""
+    """Body for POST /v1/projects/{project_id}/share-links."""
 
     label: str | None = Field(default=None, max_length=200)
     expires_at: datetime | None = None
@@ -27,7 +27,7 @@ class ShareLinkCreated(BaseModel):
 
 
 class ShareLinkResponse(BaseModel):
-    """Returned by GET /api/projects/{project_id}/share-links."""
+    """Returned by GET /v1/projects/{project_id}/share-links."""
 
     id: str
     prefix: str
@@ -48,7 +48,7 @@ class ShareLinkRevokeResponse(BaseModel):
 
 
 class InvitationCreate(BaseModel):
-    """Body for POST /api/projects/{project_id}/invitations."""
+    """Body for POST /v1/projects/{project_id}/invitations."""
 
     email: str
 
@@ -94,7 +94,7 @@ class InvitationDeclineResponse(BaseModel):
 
 
 class MemberResponse(BaseModel):
-    """Returned by GET /api/projects/{project_id}/members."""
+    """Returned by GET /v1/projects/{project_id}/members."""
 
     id: str
     user_id: str
@@ -123,7 +123,7 @@ class ProjectLeaveResponse(BaseModel):
 
 
 class UnshareResponse(BaseModel):
-    """Returned by POST /api/projects/{project_id}/unshare."""
+    """Returned by POST /v1/projects/{project_id}/unshare."""
 
     links_revoked: int
     members_removed: int
@@ -132,7 +132,7 @@ class UnshareResponse(BaseModel):
 
 
 class ShareRedeemResponse(BaseModel):
-    """Returned by POST /api/share/{token}/redeem."""
+    """Returned by POST /v1/share/{token}/redeem."""
 
     project_id: str
     project_name: str
@@ -168,7 +168,7 @@ class InvitationAcceptResponse(BaseModel):
 
 
 class SharedProjectResponse(BaseModel):
-    """An entry in GET /api/me/projects when listing shared projects."""
+    """An entry in GET /v1/me/projects when listing shared projects."""
 
     id: str
     name: str
@@ -182,8 +182,8 @@ class SharedProjectResponse(BaseModel):
 
 
 class UpgradeBody(BaseModel):
-    """Optional body for POST /api/share/{token}/upgrade and
-    POST /api/me/invitations/{id}/accept.
+    """Optional body for POST /v1/share/{token}/upgrade and
+    POST /v1/me/invitations/{id}/accept.
 
     Accepting access does not auto-bind by default. Callers can pass
     explicit `agent_ids` to attach the accepted Project for reads.

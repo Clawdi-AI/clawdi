@@ -1,6 +1,6 @@
 """SSE event channel for `clawdi daemon` processes.
 
-Daemon opens a long-lived `GET /api/sync/events` connection authed
+Daemon opens a long-lived `GET /v1/sync/events` connection authed
 with the same Bearer token it uses for any other API call; server
 pushes
 `{"type":"skill_changed"|"skill_deleted","skill_key":"…","project_id":"…","skills_revision":N}`

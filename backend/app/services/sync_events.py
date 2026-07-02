@@ -3,7 +3,7 @@
 Single owner of two intertwined concerns:
 
 1. `users.skills_revision` is the collection-ETag counter for
-   `GET /api/skills`. Every change that affects what a daemon
+   `GET /v1/skills`. Every change that affects what a daemon
    would see — skill insert, content update, soft-delete — bumps
    it. We centralize the bump in one helper so adding new skill
    mutation paths can't accidentally skip the increment. The
@@ -12,7 +12,7 @@ Single owner of two intertwined concerns:
    SSE events are missed.
 
 2. Each running `clawdi daemon` process has an open SSE connection
-   to `GET /api/sync/events` and is parked in a per-user queue.
+   to `GET /v1/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
    `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
    skills_revision}` event to every connection of that user, and
@@ -336,7 +336,7 @@ def _on_session_rollback(sync_session) -> None:
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:
-    """Read current revision — used by `GET /api/skills` to fill the
+    """Read current revision — used by `GET /v1/skills` to fill the
     `ETag` response header and check `If-None-Match`."""
     result = (
         await db.execute(select(User.skills_revision).where(User.id == user_id))

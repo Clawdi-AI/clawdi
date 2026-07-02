@@ -1026,7 +1026,7 @@ async def delete_environment(
     # Dashboard-only: a leaked deploy-key would otherwise be able
     # to delete its own env (de-registering the machine on the
     # owner's dashboard) or sibling envs under the same user.
-    # Mirrors the lockdown applied to /api/auth/keys in round 6.
+    # Mirrors the lockdown applied to /v1/auth/keys in round 6.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
@@ -1350,7 +1350,7 @@ async def batch_create_sessions(
     # turns the conflict into a no-op (correctly), but the response
     # is still computed from the pre-upsert snapshot — the caller
     # gets `created`/`needs_content` and then POSTs upload content
-    # to `/api/sessions/{local_session_id}/upload`, which resolves
+    # to `/v1/sessions/{local_session_id}/upload`, which resolves
     # the row by `local_session_id` alone and stamps the new bytes
     # onto the OTHER env's row. Cross-env data corruption.
     incoming_env_by_id = {s.local_session_id: s.environment_id for s in body.sessions}
@@ -1492,7 +1492,7 @@ async def batch_create_sessions(
             Session.environment_id.is_not_distinct_from(insert_stmt.excluded.environment_id),
         ),
     )
-    # Concurrent `DELETE /api/environments/{id}` between the pre-flight
+    # Concurrent `DELETE /v1/environments/{id}` between the pre-flight
     # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
     # FK violation specifically; anything else (we no longer hit unique
     # collisions because of the upsert) bubbles as a plain 500.
@@ -1504,7 +1504,7 @@ async def batch_create_sessions(
     # response below. Without this, the loser of a two-bound-keys
     # race on a never-before-seen `local_session_id` gets told its
     # row was `created` and that it should upload content; the
-    # follow-up POST `/api/sessions/{local_session_id}/upload` then
+    # follow-up POST `/v1/sessions/{local_session_id}/upload` then
     # 404s because the row that DID land belongs to the winner's
     # env (not visible to the loser). Worse, an unbound caller in
     # the same race window would bypass the pre-check and stamp
@@ -2019,7 +2019,7 @@ async def get_session_messages(
 ) -> SessionMessagesPage:
     """Paginated read of a session's messages, for the dashboard.
     The CLI's `clawdi pull` mirror still uses
-    `GET /api/sessions/{id}/content` to grab the full JSON blob;
+    `GET /v1/sessions/{id}/content` to grab the full JSON blob;
     this endpoint slices the same blob server-side so the
     dashboard doesn't ship 10+ MB of messages on a long session.
 
@@ -2028,7 +2028,7 @@ async def get_session_messages(
     the entire JSON array), so `array[offset:offset+limit]` is
     stable for a given `content_hash`. Clients pin to a snapshot
     by reading `content_hash` from the parent
-    `/api/sessions/{id}` response and refusing to mix pages
+    `/v1/sessions/{id}` response and refusing to mix pages
     from different hashes — a daemon append in between would
     show up as a hash change and trigger a refetch.
     """

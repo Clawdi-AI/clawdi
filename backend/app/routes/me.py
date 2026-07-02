@@ -1,4 +1,4 @@
-"""Recipient-facing `/api/me/...` routes."""
+"""Recipient-facing `/v1/me/...` routes."""
 
 from __future__ import annotations
 

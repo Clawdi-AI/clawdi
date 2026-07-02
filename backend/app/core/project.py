@@ -4,7 +4,7 @@ Project-scoped writes need a concrete `project_id`: skills store it
 directly, while attachable resources such as vaults use it to create
 their Project attachment. Routes that need to resolve the project from
 the caller's auth context (rather than taking a
-`/api/projects/{project_id}/...` path parameter) use the helpers below:
+`/v1/projects/{project_id}/...` path parameter) use the helpers below:
 
   * api_key with environment_id → that Agent Project id. Always
     defined; no ambiguity.
@@ -147,7 +147,7 @@ async def validate_project_for_caller(
     """Validate that the caller may write to the given `project_id`.
 
     Used by the phase-2 explicit-project routes
-    (`/api/projects/{project_id}/skills/...`) where the project is part
+    (`/v1/projects/{project_id}/skills/...`) where the project is part
     of the URL rather than auto-resolved from the caller's auth.
 
     Rules:

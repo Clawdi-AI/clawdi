@@ -183,7 +183,7 @@ app.add_middleware(
         "X-Clawdi-Environment-Id",
         "X-Clawdi-Token",
         # `If-None-Match` carries the daemon's last seen
-        # `skills_revision` for the conditional GET /api/skills.
+        # `skills_revision` for the conditional GET /v1/skills.
         # The CLI daemon hits this without going through CORS, so
         # this is forward-compat for any browser-side caller.
         "If-None-Match",
@@ -191,7 +191,7 @@ app.add_middleware(
     expose_headers=[
         "X-Request-ID",
         # `ETag` carries the user's `skills_revision` counter on
-        # /api/skills responses. Without exposing it, browser JS
+        # /v1/skills responses. Without exposing it, browser JS
         # gets `null` from `response.headers.get("ETag")` and the
         # dashboard can't conditional-GET. CLI daemon is unaffected
         # but the dashboard relies on this once it stops fetching

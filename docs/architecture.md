@@ -395,12 +395,9 @@ Agent runtime resolution is separate from folder links. `clawdi vault resolve KE
 
 ## MCP server
 
-`clawdi mcp` runs a stdio MCP server. Registered by `clawdi setup` with each agent, so the agent spawns it on startup. Two native tools:
+The single source of truth for Clawdi's MCP tools is the backend endpoint `POST /v1/mcp/clawdi` — a stateless JSON-RPC surface authenticated with a Clawdi API key. It serves the native tools (`memory_search`, `memory_add`, `memory_extract`, `session_search`, `session_read`) plus the user's **dynamically-listed connector tools**, which it forwards to the Composio Tool Router bridge (`/v1/mcp/composio`, with `/api/mcp/composio` kept as a legacy alias). The bridge mediates auth so the connector's real OAuth token and the Composio project API key never leave the backend. Connector tool listings are cached per-user for 60 seconds.
 
-- `memory_search(query, limit?)` — proxies to `GET /v1/memories?q=...`
-- `memory_add(content, category?)` — proxies to `POST /v1/memories`
-
-Plus **dynamically-registered connector tools** — at MCP init, the server fetches `/v1/connectors/mcp-config` and `tools/list` from the user's Composio Tool Router bridge (`/v1/mcp/composio`, with `/api/mcp/composio` kept as a legacy alias), then registers each remote tool locally with a zod schema built from the MCP `inputSchema` or older `parameters` metadata. When the agent calls one, the local MCP server forwards the original upstream tool name and structured arguments through the backend bridge. The bridge mediates auth so the connector's real OAuth token and the Composio project API key never leave the backend.
+Agents that speak streamable HTTP connect to `/v1/mcp/clawdi` directly with a bearer API key. For agents that can only spawn local stdio MCP servers, `clawdi mcp` (registered by `clawdi setup`) runs a thin stdio adapter: at init it calls `tools/list` on the backend, registers each tool locally with a zod schema built from the MCP `inputSchema` (or older `parameters`) metadata, and forwards every `tools/call` back to the backend.
 
 Tool descriptions on `memory_search` / `memory_add` are intentionally verbose and list concrete trigger patterns — the failure mode for a new agent is "didn't call memory when it obviously should have", and short descriptions leave too much to the agent's judgment. The `clawdi` skill installed to `~/.claude/skills/clawdi/` (and the equivalent paths on other agents) reinforces the same triggers in long-form.
 

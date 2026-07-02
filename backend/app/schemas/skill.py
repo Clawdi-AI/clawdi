@@ -73,7 +73,7 @@ class SkillDetailResponse(BaseModel):
     content_hash: str = ""
     updated_at: datetime | None = None
     # Project + machine context for the detail page. Lets the editor
-    # build the `/api/projects/{project_id}/skills/upload` URL for save
+    # build the `/v1/projects/{project_id}/skills/upload` URL for save
     # without an extra round-trip, and lets the page caption say
     # "on my-mac" so multi-machine users can tell which copy
     # they're looking at.

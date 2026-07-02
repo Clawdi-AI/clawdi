@@ -1,6 +1,6 @@
 """Public routes for reading shared sessions.
 
-Canonical URL: `/api/public/sessions/{session_id}` (UUID-keyed). Same
+Canonical URL: `/v1/public/sessions/{session_id}` (UUID-keyed). Same
 model as Google Drive's `drive.google.com/file/d/{file_id}/view` and
 Notion's `notion.so/{page_id}` — the resource ID *is* the URL. Always
 exists once the session exists; access is checked at request time

@@ -10,7 +10,7 @@ choice — they just get working semantic search.
   needed; CPU-only inference via onnxruntime.
 
 - "api" — OpenAI-compatible embeddings. Set MEMORY_EMBEDDING_API_KEY,
-  optionally MEMORY_EMBEDDING_BASE_URL (e.g. https://openrouter.ai/api/v1)
+  optionally MEMORY_EMBEDDING_BASE_URL (e.g. https://openrouter.ai/v1/v1)
   and MEMORY_EMBEDDING_MODEL. `dimensions=768` is passed to the API so
   the on-disk vector column stays dimension-compatible with local mode.
 
