@@ -55,9 +55,9 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
  * Reports cloud-api environment ids managed by hosted-only control planes.
  *
  * The OSS dashboard receives only this neutral ownership context. Deploy API
- * reads stay quarantined in `apps/web/src/hosted/`. Only definitive answers
- * resolve a set (success, or 404 = no v1 surface); transport/server errors
- * leave ownership `null` so destructive actions fail closed while cosmetic
+ * reads stay quarantined in `apps/web/src/hosted/`. Only successful data
+ * resolves a set; every error — 404 (route not deployed yet) included —
+ * leaves ownership `null` so destructive actions fail closed while cosmetic
  * consumers fall back to connected.
  */
 export function HostedAgentOwnershipSensor({
