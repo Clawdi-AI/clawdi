@@ -322,6 +322,15 @@ gateway service and does not synthesize `hermes-dashboard.service`. The sidecar
 bridge module is optional and exists only when Clawdi must own browser-facing
 auth, cookie, header, WebSocket, or path policy.
 
+Official gateway units follow a two-owner contract: the runtime's official
+installer owns the base unit file (`openclaw-gateway.service`,
+`hermes-gateway.service`), and Clawdi owns only its transparent drop-in
+(`<unit>.service.d/10-clawdi-hosted.conf`) and env file
+(`$CLAWDI_RUN_DIR/systemd/env/<unit>.service.env`). Clawdi installs and removes
+official units exclusively through the official install/uninstall commands and
+never edits a base unit it did not generate; failure semantics for that
+convergence live in `docs/managed-runtime.md`.
+
 ### Runtime UI And Terminal
 
 Runtime UI and Terminal are separate hosted deployment surfaces:

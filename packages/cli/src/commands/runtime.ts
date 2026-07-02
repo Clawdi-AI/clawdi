@@ -1696,14 +1696,15 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		}
 		const { convergence } = applyResult;
 		let systemdApplyError: string | null = null;
-		if (convergence.installErrors.length === 0) {
-			try {
-				applySystemdRuntimeUpdate(paths, previousSystemdUnits, readSystemdUnitSnapshot(paths));
-			} catch (error) {
-				systemdApplyError = `systemd apply failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`;
-			}
+		// Convergence errors must not block systemd apply: unit files already
+		// changed on disk, and stops/disables for removed units have to land
+		// even when an unrelated runtime install or projection failed.
+		try {
+			applySystemdRuntimeUpdate(paths, previousSystemdUnits, readSystemdUnitSnapshot(paths));
+		} catch (error) {
+			systemdApplyError = `systemd apply failed: ${
+				error instanceof Error ? error.message : String(error)
+			}`;
 		}
 		const runtimeErrors = [
 			...convergence.installErrors,
@@ -1844,18 +1845,19 @@ async function runtimeWatchTick(
 			userUnitsChanged: [] as string[],
 		};
 		let systemdApplyError: string | null = null;
-		if (convergence.installErrors.length === 0) {
-			try {
-				systemdApplyResult = applySystemdRuntimeUpdate(
-					paths,
-					previousSystemdUnits,
-					readSystemdUnitSnapshot(paths),
-				);
-			} catch (error) {
-				systemdApplyError = `systemd apply failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`;
-			}
+		// Convergence errors must not block systemd apply: unit files already
+		// changed on disk, and stops/disables for removed units have to land
+		// even when an unrelated runtime install or projection failed.
+		try {
+			systemdApplyResult = applySystemdRuntimeUpdate(
+				paths,
+				previousSystemdUnits,
+				readSystemdUnitSnapshot(paths),
+			);
+		} catch (error) {
+			systemdApplyError = `systemd apply failed: ${
+				error instanceof Error ? error.message : String(error)
+			}`;
 		}
 		const errors = [
 			...(cliUpdateError ? [cliUpdateError] : []),

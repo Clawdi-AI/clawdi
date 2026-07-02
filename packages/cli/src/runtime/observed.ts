@@ -319,7 +319,17 @@ function runRuntimeUserSystemctl(
 ): { exitCode: number | null; output: string } {
 	const runtimeUser = runtimeUserName();
 	if (process.getuid?.() === 0 && runtimeUser !== "root") {
-		const uid = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" }).stdout.trim();
+		const uidResult = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
+		const uid = uidResult.status === 0 ? (uidResult.stdout ?? "").trim() : "";
+		if (!uid) {
+			return {
+				exitCode: uidResult.status ?? 1,
+				output: `runtime user ${runtimeUser} uid lookup failed: ${
+					[uidResult.stderr, uidResult.error?.message].filter(Boolean).join("\n").trim() ||
+					"empty id output"
+				}`,
+			};
+		}
 		const result = spawnSync(
 			"gosu",
 			[

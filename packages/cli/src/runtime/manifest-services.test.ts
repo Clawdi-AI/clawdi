@@ -48,6 +48,7 @@ function writeFakeGatewayCli(input: {
 	logPath: string;
 	runtime: "openclaw" | "hermes";
 	unitPath: string;
+	failInstall?: boolean;
 	failUninstall?: boolean;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
@@ -58,14 +59,18 @@ set -euo pipefail
 printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 case "$*" in
   "gateway install --force --json"|"gateway install")
-    mkdir -p '${dirname(input.unitPath)}'
+    ${
+			input.failInstall
+				? "exit 41"
+				: `mkdir -p '${dirname(input.unitPath)}'
     cat > '${input.unitPath}' <<'EOF'
 [Unit]
 Description=Official gateway
 
 [Service]
 ExecStart=official gateway run
-EOF
+EOF`
+		}
     ;;
   "gateway uninstall")
     ${input.failUninstall ? "exit 42" : `rm -f '${input.unitPath}'`}
@@ -284,6 +289,87 @@ describe("runtime manifest services", () => {
 			expect(existsSync(join(paths.systemdEnvRoot, `${unit}.service.env`))).toBe(false);
 		}
 		expect(disabled.outputs.systemdUserUnits).toEqual([]);
+	});
+
+	test("skips hosted drop-ins when official install fails without a base unit", () => {
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "official-service-commands.log");
+		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const dropInPath = join(
+			paths.systemdUserRoot,
+			"openclaw-gateway.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_install_failure",
+			environmentId: "env_install_failure",
+			instanceId: "hri_install_failure",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			workspaceRoot: join(paths.userHome, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: runSettings(openclawCommand, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			recovery: {},
+		};
+		const load = (sourcePath: string, generation: number): RuntimeManifestLoad => ({
+			manifest: { ...manifest, generation },
+			source: "fixture-file",
+			sourcePath,
+			offline: false,
+		});
+
+		writeFakeGatewayCli({
+			path: openclawCommand,
+			logPath,
+			runtime: "openclaw",
+			unitPath,
+			failInstall: true,
+		});
+		const failedFirstInstall = convergeRuntimeManifest(load("inline-install-failure", 1), paths);
+		expect(failedFirstInstall.installErrors.join("\n")).toContain(
+			"official openclaw-gateway service install failed",
+		);
+		expect(existsSync(dropInPath)).toBe(false);
+		expect(
+			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
+		).not.toContain("openclaw-gateway.service");
+
+		writeFakeGatewayCli({
+			path: openclawCommand,
+			logPath,
+			runtime: "openclaw",
+			unitPath,
+		});
+		const installed = convergeRuntimeManifest(load("inline-install-recovered", 2), paths);
+		expect(installed.installErrors).toEqual([]);
+		expect(existsSync(unitPath)).toBe(true);
+		expect(existsSync(dropInPath)).toBe(true);
+
+		writeFakeGatewayCli({
+			path: openclawCommand,
+			logPath,
+			runtime: "openclaw",
+			unitPath,
+			failInstall: true,
+		});
+		const failedReinstall = convergeRuntimeManifest(load("inline-reinstall-failure", 3), paths);
+		expect(failedReinstall.installErrors.join("\n")).toContain(
+			"official openclaw-gateway service install failed",
+		);
+		expect(existsSync(unitPath)).toBe(true);
+		expect(existsSync(dropInPath)).toBe(true);
+		expect(
+			failedReinstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
+		).toContain("openclaw-gateway.service");
 	});
 
 	test("keeps stale official gateway drop-ins when official uninstall fails", () => {

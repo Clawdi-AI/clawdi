@@ -141,6 +141,32 @@ official units. When a later manifest removes an official gateway service,
 removes the hosted drop-in/env files. Clawdi-owned support units keep
 `clawdi-*` names.
 
+Official unit ownership follows a strict contract. The official installer owns
+the base unit file; Clawdi never edits or removes a base unit it did not
+generate. Clawdi owns exactly two artifacts per official unit: the drop-in
+`$HOME/.config/systemd/user/<unit>.service.d/10-clawdi-hosted.conf` and the env
+file `$CLAWDI_RUN_DIR/systemd/env/<unit>.service.env`, both marked with the
+generated-file header so convergence can identify them. Failure handling keeps
+that boundary convergent in both directions:
+
+- If an official service install fails and no base unit exists yet, the drop-in
+  is not written; convergence reports the install error and the next cycle
+  retries the official installer. If a base unit already exists from an earlier
+  successful install, the drop-in/env are still refreshed so the running
+  service keeps its current configuration.
+- If an official service uninstall fails, the drop-in/env files are kept as
+  retry evidence, convergence reports the error, and the next cycle retries the
+  official uninstaller before removing them.
+- Systemd apply (daemon-reload, enable/start, restart, stop/disable) always
+  runs after convergence, even when convergence reported errors: unit files on
+  disk already changed, and stops/disables for removed units must land even
+  when an unrelated runtime install or projection failed.
+
+Official service installers/uninstallers run only when the CLI runs as root
+(the hosted PID 1 path). `CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES=1|0`
+overrides that default for development and tests; when installers are skipped,
+convergence still writes the hosted drop-in/env files.
+
 Hermes gateway and dashboard are separate official commands in this model. A
 deployment that needs both must use an official service installer for each
 runtime-owned unit. Until Hermes exposes an official dashboard service

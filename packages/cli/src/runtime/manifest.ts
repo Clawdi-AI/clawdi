@@ -71,7 +71,10 @@ import {
 	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
+import {
+	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
+	isGeneratedRuntimeSystemdFile,
+} from "./systemd-user";
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -1508,11 +1511,7 @@ function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
 }
 
 function officialRuntimeSystemdProgramName(program: RuntimeSystemdUserProgram): string | null {
-	if (program.runtime === "openclaw" && !program.service) return "openclaw-gateway";
-	if (program.runtime !== "hermes") return null;
-	const commandKind = program.service ?? program.args[0] ?? "";
-	if (commandKind === "gateway") return "hermes-gateway";
-	return null;
+	return officialRuntimeServiceDescriptorForProgram(program)?.programName ?? null;
 }
 
 function runtimeSystemdProgramRevision(
@@ -1629,38 +1628,54 @@ function systemdEnvironmentFileQuote(value: string): string {
 
 type OfficialRuntimeServiceDescriptor = {
 	runtime: RuntimeName;
+	programName: string;
 	command: string;
 	installArgs: string[];
 	uninstallArgs: string[];
+	// Which desired programs the official unit covers. Deliberately
+	// asymmetric: openclaw's default program is its gateway, while hermes may
+	// express the gateway as the default program or an explicit
+	// `services.gateway` entry.
+	matchesProgram: (program: RuntimeSystemdUserProgram) => boolean;
 };
 
-const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: Record<string, OfficialRuntimeServiceDescriptor> = {
-	"openclaw-gateway.service": {
+const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] = [
+	{
 		runtime: "openclaw",
+		programName: "openclaw-gateway",
 		command: "openclaw",
 		installArgs: ["gateway", "install", "--force", "--json"],
 		uninstallArgs: ["gateway", "uninstall"],
+		matchesProgram: (program) => !program.service,
 	},
-	"hermes-gateway.service": {
+	{
 		runtime: "hermes",
+		programName: "hermes-gateway",
 		command: "hermes",
 		installArgs: ["gateway", "install"],
 		uninstallArgs: ["gateway", "uninstall"],
+		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
 	},
-};
+];
 
 function officialRuntimeServiceDescriptorForProgram(
 	program: RuntimeSystemdUserProgram,
 ): OfficialRuntimeServiceDescriptor | null {
-	const officialName = officialRuntimeSystemdProgramName(program);
-	if (!officialName) return null;
-	return OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS[systemdUnitFileName(officialName)] ?? null;
+	return (
+		OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+			(descriptor) => descriptor.runtime === program.runtime && descriptor.matchesProgram(program),
+		) ?? null
+	);
 }
 
 function officialRuntimeServiceDescriptorForUnit(
 	unitName: string,
 ): OfficialRuntimeServiceDescriptor | null {
-	return OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS[unitName] ?? null;
+	return (
+		OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+			(descriptor) => systemdUnitFileName(descriptor.programName) === unitName,
+		) ?? null
+	);
 }
 
 function officialRuntimeServiceCommand(
@@ -1697,6 +1712,21 @@ function writeSystemdEnvironmentFile(input: {
 	return path;
 }
 
+function writeSystemdProgramEnvironment(input: {
+	paths: RuntimePaths;
+	name: string;
+	owner: "root" | "runtime-user";
+	env: Record<string, string>;
+}): { envFile: string; envRevision: string } {
+	return {
+		envFile: writeSystemdEnvironmentFile(input),
+		envRevision: revisionHash({
+			systemdEnvironmentFile: "v1",
+			env: input.env,
+		}),
+	};
+}
+
 function writeSystemdUnit(input: {
 	root: string;
 	owner: "root" | "runtime-user";
@@ -1714,14 +1744,10 @@ function writeSystemdUnit(input: {
 	mkdirSync(input.root, { recursive: true });
 	if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
 	const path = join(input.root, systemdUnitFileName(input.name));
-	const envFile = writeSystemdEnvironmentFile({
+	const { envFile, envRevision } = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: input.owner,
-		env: input.env,
-	});
-	const envRevision = revisionHash({
-		systemdEnvironmentFile: "v1",
 		env: input.env,
 	});
 	const lines = [
@@ -1789,14 +1815,10 @@ function writeSystemdUserDropIn(input: {
 }): string {
 	const unitName = systemdUnitFileName(input.name);
 	removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-	const envFile = writeSystemdEnvironmentFile({
+	const { envFile, envRevision } = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: "runtime-user",
-		env: input.env,
-	});
-	const envRevision = revisionHash({
-		systemdEnvironmentFile: "v1",
 		env: input.env,
 	});
 	const path = systemdDropInFilePath(input.paths, input.name);
@@ -1945,7 +1967,7 @@ function removeStaleSystemdUserUnits(paths: RuntimePaths, writtenUnits: string[]
 
 function isGeneratedSystemdFile(path: string): boolean {
 	try {
-		return readFileSync(path, "utf-8").startsWith(GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
+		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
 	} catch {
 		return false;
 	}
@@ -2084,6 +2106,12 @@ function writeSystemdUnits(
 				: {}),
 		};
 		if (officialRuntimeServiceInstallArgs(program)) {
+			// Without a base unit the drop-in cannot converge to a startable
+			// service; skip it so systemd apply does not enable a broken unit.
+			// The next convergence retries the official install.
+			if (officialServiceInstallError && !existsSync(join(paths.systemdUserRoot, unitName))) {
+				continue;
+			}
 			userUnits.push(
 				writeSystemdUserDropIn({
 					paths,
