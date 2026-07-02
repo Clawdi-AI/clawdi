@@ -24,6 +24,7 @@ export const billingKeys = {
 	ledger: (limit: number) => ["billing", "ledger", limit] as const,
 	plans: ["billing", "plans"] as const,
 	deployments: ["billing", "deployments"] as const,
+	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,
 	usage: ["billing", "usage"] as const,
 };
@@ -170,10 +171,11 @@ function hasTransientDeployment(items: { status: string }[] | undefined): boolea
 	);
 }
 
-export function useHostedDeployments() {
+export function useHostedDeployments({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.deployments,
+		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
 		refetchInterval: (q) => (hasTransientDeployment(q.state.data) ? 10_000 : false),
 	});

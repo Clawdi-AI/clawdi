@@ -19,7 +19,7 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * Env ids claimed by Cloud deploy-API deployments (lower-cased —
  * see the case note on `envById`). Shared by the tile dedup here and
  * the sidebar's cloud-vs-legacy chrome classification so the two can
- * never disagree about which hosted_managed env is a Cloud agent.
+ * never disagree about which externally managed env is a Cloud agent.
  */
 export function claimedEnvIdsFromDeployments(
 	deployments: readonly HostedDeployment[],
