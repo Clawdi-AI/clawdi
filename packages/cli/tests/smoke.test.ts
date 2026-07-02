@@ -386,6 +386,8 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(parsed.convergence.mitmProfileBundle).toBe(
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
+			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
+			expect(parsed.convergence.systemdSystemUnits).toEqual([]);
 
 			for (const outputPath of [
 				join(serviceStateRoot, "config", "clawdi.json"),
@@ -399,14 +401,35 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "config", "projections", "hermes.json"),
 				join(serviceStateRoot, "config", "run", "openclaw.json"),
 				join(serviceStateRoot, "config", "run", "hermes.json"),
-				join(runRoot, "supervisor", "supervisord.conf"),
+				join(
+					home,
+					".config",
+					"systemd",
+					"user",
+					"openclaw-gateway.service.d",
+					"10-clawdi-hosted.conf",
+				),
+				join(
+					home,
+					".config",
+					"systemd",
+					"user",
+					"hermes-gateway.service.d",
+					"10-clawdi-hosted.conf",
+				),
+				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
+				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
+				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
 				join(home, "clawdi"),
 				join(home, ".openclaw", "bin", "openclaw"),
 				join(home, ".local", "bin", "hermes"),
 			]) {
-				expect(existsSync(outputPath)).toBe(true);
+				if (!existsSync(outputPath)) {
+					throw new Error(`expected runtime init output to exist: ${outputPath}`);
+				}
 			}
 			for (const staleShimPath of [
 				join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"),
@@ -415,6 +438,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "bin", "codex"),
 				join(serviceStateRoot, "config", "runtime-command-shims.json"),
 				join(serviceStateRoot, "supervisor", "supervisord.conf"),
+				join(runRoot, "supervisor", "supervisord.conf"),
 				join(runRoot, "launch", "openclaw.sh"),
 				join(runRoot, "launch", "openclaw.env"),
 				join(runRoot, "launch", "hermes.sh"),
@@ -450,33 +474,49 @@ chmod +x "$HOME/.local/bin/hermes"
 			);
 			expect(managed.generation).toBe(7);
 			expect(JSON.stringify(managed)).not.toContain("auth-test-token");
-			const supervisorConfig = readFileSync(
-				join(runRoot, "supervisor", "supervisord.conf"),
+			const hermesUnit = readFileSync(
+				join(
+					home,
+					".config",
+					"systemd",
+					"user",
+					"hermes-gateway.service.d",
+					"10-clawdi-hosted.conf",
+				),
 				"utf-8",
 			);
-			expect(supervisorConfig).toContain("[program:clawdi-hermes]");
-			expect(supervisorConfig).toContain("[program:clawdi-openclaw]");
-			expect(supervisorConfig).toContain("[program:clawdi-runtime-sidecar]");
-			expect(supervisorConfig).toContain(
-				`command='${join(home, ".local", "bin", "hermes")}' 'gateway' 'run'`,
+			const openclawUnit = readFileSync(
+				join(
+					home,
+					".config",
+					"systemd",
+					"user",
+					"openclaw-gateway.service.d",
+					"10-clawdi-hosted.conf",
+				),
+				"utf-8",
 			);
-			expect(supervisorConfig).toContain(
-				`command='${join(home, ".openclaw", "bin", "openclaw")}' 'gateway' 'run'`,
+			const sidecarUnit = readFileSync(
+				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				"utf-8",
 			);
-			expect(supervisorConfig).not.toContain("clawdi run -- hermes");
-			expect(supervisorConfig).not.toContain("clawdi run -- openclaw");
-			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
-			const openclawStart = supervisorConfig.indexOf("[program:clawdi-openclaw]");
-			const openclawSection = supervisorConfig.slice(
-				openclawStart,
-				supervisorConfig.indexOf("\n\n", openclawStart),
+			const openclawEnv = readFileSync(
+				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
+				"utf-8",
 			);
-			if (typeof process.getuid === "function" && process.getuid() === 0) {
-				expect(openclawSection).toContain("user=clawdi");
-			} else {
-				expect(openclawSection).not.toContain("user=clawdi");
-			}
-			expect(supervisorConfig).not.toContain("auth-test-token");
+			expect(hermesUnit).toContain(
+				`ExecStart="${join(home, ".local", "bin", "hermes")}" "gateway" "run"`,
+			);
+			expect(openclawUnit).toContain(
+				`ExecStart="${join(home, ".openclaw", "bin", "openclaw")}" "gateway" "run"`,
+			);
+			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+			expect(hermesUnit).not.toContain("clawdi run -- hermes");
+			expect(openclawUnit).not.toContain("clawdi run -- openclaw");
+			expect(openclawEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(openclawEnv).toContain('OPENCLAW_SYSTEMD_UNIT="openclaw-gateway.service"');
+			expect(openclawUnit).not.toContain("auth-test-token");
+			expect(openclawEnv).not.toContain("auth-test-token");
 			const inventory = JSON.parse(
 				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
 			);

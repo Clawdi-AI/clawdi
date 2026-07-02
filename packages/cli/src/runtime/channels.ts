@@ -201,7 +201,9 @@ function buildManagedChannelMitmProfiles(
 				match: {
 					scheme: "https",
 					host: "discord.com",
-					pathPrefix: "/v1/",
+					// Discord's own REST prefix (discord.com/api/v10/...) — external
+					// URL shape, not a clawdi-cloud API path; keep it /api/.
+					pathPrefix: "/api/",
 					headers: {
 						authorization: {
 							type: "secretRefEquals",

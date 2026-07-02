@@ -432,7 +432,7 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
 
-	it("does not prepend supervisor default args to hosted runtime subcommands", async () => {
+	it("does not prepend managed runtime default args to hosted runtime subcommands", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
