@@ -79,7 +79,7 @@ describe("skillAdd", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/projects/${projectId}/skills/upload`,
+				path: `/v1/projects/${projectId}/skills/upload`,
 				response: (request) =>
 					jsonResponse({
 						skill_key: request.multipartFields?.skill_key,
@@ -94,7 +94,7 @@ describe("skillAdd", () => {
 			restore();
 		}
 
-		const upload = captured.find((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		const upload = captured.find((c) => c.path === `/v1/projects/${projectId}/skills/upload`);
 		expect(upload?.multipartFields?.skill_key).toHaveLength(200);
 		expect(upload?.multipartFields?.skill_key).toBe("a".repeat(200));
 	});

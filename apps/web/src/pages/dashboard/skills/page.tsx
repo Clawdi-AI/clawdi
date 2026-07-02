@@ -96,7 +96,7 @@ function SkillsPageInner() {
 
 	const { data: projects, error: projectsError } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 	});
 	const orderedProjects = useMemo(
 		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
@@ -114,7 +114,7 @@ function SkillsPageInner() {
 
 	const { data: envs } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 	});
 
 	// Resolution order:
@@ -162,7 +162,7 @@ function SkillsPageInner() {
 			fetchAllPages<SkillSummary>(
 				async (page, pageSize) =>
 					unwrap(
-						await api.GET("/api/skills", {
+						await api.GET("/v1/skills", {
 							params: { query: { page, page_size: pageSize } },
 						}),
 					),
@@ -321,7 +321,7 @@ function SkillsPageInner() {
 	const uninstallSkill = useMutation({
 		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
 			unwrap(
-				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: projectId, skill_key: skillKey } },
 				}),
 			),
@@ -349,7 +349,7 @@ function SkillsPageInner() {
 			}
 			const blob = ensureBlob(
 				unwrap(
-					await api.GET("/api/projects/{project_id}/skills/{skill_key}/download", {
+					await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
 						params: {
 							path: { project_id: newest.project_id, skill_key: newest.skill_key },
 						},
@@ -400,7 +400,7 @@ function SkillsPageInner() {
 			for (const s of skills) {
 				if (!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)) continue;
 				unwrap(
-					await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 						params: { path: { project_id: s.project_id, skill_key: s.skill_key } },
 					}),
 				);
@@ -424,7 +424,7 @@ function SkillsPageInner() {
 			if (!targetProjectId || !targetProject) throw new Error("Choose a Project first");
 			if (!canWriteTargetProject) throw new Error("This Project is read-only");
 			unwrap(
-				await api.POST("/api/projects/{project_id}/skills/install", {
+				await api.POST("/v1/projects/{project_id}/skills/install", {
 					params: { path: { project_id: targetProjectId } },
 					body: { repo, path },
 				}),

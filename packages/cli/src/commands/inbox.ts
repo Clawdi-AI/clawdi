@@ -205,13 +205,13 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		return;
 	}
 
-	const r = await fetch(`${apiUrl}/api/me/invitations`, {
+	const r = await fetch(`${apiUrl}/v1/me/invitations`, {
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
-	const items = await readJson<InvitationItem[]>(r, "/api/me/invitations");
+	const items = await readJson<InvitationItem[]>(r, "/v1/me/invitations");
 
 	if (opts.json) {
 		console.log(JSON.stringify({ invitations: items }, null, 2));
@@ -338,7 +338,7 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		process.exitCode = 1;
 		return;
 	}
-	const r = await fetch(`${apiUrl}/api/me/invitations/${invitationId}/decline`, {
+	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/decline`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
@@ -424,7 +424,7 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await fetch(`${apiUrl}/api/share/${token}/redeem`, {
+	const r = await fetch(`${apiUrl}/v1/share/${token}/redeem`, {
 		method: "POST",
 		headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
 	});
@@ -536,7 +536,7 @@ async function acceptUrl(
 	const token = extractTokenFromUrl(urlOrToken);
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiUrl}/api/share/${token}/upgrade`, {
+	const r = await fetch(`${apiUrl}/v1/share/${token}/upgrade`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${bearer}`,
@@ -587,7 +587,7 @@ async function acceptInvitation(
 ): Promise<void> {
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiUrl}/api/me/invitations/${invitationId}/accept`, {
+	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/accept`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
 		body: JSON.stringify(reqBody),

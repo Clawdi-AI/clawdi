@@ -129,7 +129,7 @@ async def test_register_environment_heals_missing_project(
     client = await _client_for(db_session, seed_user, None)
     try:
         resp = await client.post(
-            "/api/environments",
+            "/v1/environments",
             json={
                 "machine_id": env_without_project.machine_id,
                 "machine_name": env_without_project.machine_name,
@@ -212,7 +212,7 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        resp = await client.get("/api/memories")
+        resp = await client.get("/v1/memories")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         contents = {m["content"] for m in body["items"]}
@@ -319,7 +319,7 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
         # page 1: 2 of the 5 env-A memories.
-        page1 = await client.get("/api/memories", params={"page": 1, "page_size": 2})
+        page1 = await client.get("/v1/memories", params={"page": 1, "page_size": 2})
         body1 = page1.json()
         assert body1["total"] == 5, f"total must reflect env-A's memory count, got {body1['total']}"
         page1_contents = {m["content"] for m in body1["items"]}
@@ -328,7 +328,7 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
         assert len(page1_contents) == 2
 
         # page 3: tail of the env-A set.
-        page3 = await client.get("/api/memories", params={"page": 3, "page_size": 2})
+        page3 = await client.get("/v1/memories", params={"page": 3, "page_size": 2})
         body3 = page3.json()
         page3_contents = {m["content"] for m in body3["items"]}
         for c in page3_contents:
@@ -429,7 +429,7 @@ async def test_unbound_cli_key_can_pin_any_project(
         # Pin env-A's project explicitly — must return env-A's
         # skill, NOT empty (the pre-fix bug).
         resp_a = await client.get(
-            "/api/skills",
+            "/v1/skills",
             params={"project_id": str(env_a.default_project_id)},
         )
         assert resp_a.status_code == 200, resp_a.text
@@ -438,7 +438,7 @@ async def test_unbound_cli_key_can_pin_any_project(
 
         # Pin env-B's project — must return env-B's skill.
         resp_b = await client.get(
-            "/api/skills",
+            "/v1/skills",
             params={"project_id": str(env_b.default_project_id)},
         )
         keys_b = {s["skill_key"] for s in resp_b.json()["items"]}
@@ -446,7 +446,7 @@ async def test_unbound_cli_key_can_pin_any_project(
 
         # No pin → both visible (unbound key sees the user's full
         # inventory, same as the dashboard JWT).
-        resp_all = await client.get("/api/skills")
+        resp_all = await client.get("/v1/skills")
         keys_all = {s["skill_key"] for s in resp_all.json()["items"]}
         assert keys_all == {"alpha-skill", "beta-skill"}, keys_all
     finally:
@@ -511,7 +511,7 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
     try:
         # Even when explicitly pinning env-B's project, the deploy
         # key must see nothing (env binding wins).
-        resp = await client.get("/api/skills", params={"project_id": str(env_b.default_project_id)})
+        resp = await client.get("/v1/skills", params={"project_id": str(env_b.default_project_id)})
         assert resp.status_code == 200
         assert resp.json()["items"] == [], resp.json()
     finally:
@@ -598,7 +598,7 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        resp = await client.get("/api/search", params={"q": needle})
+        resp = await client.get("/v1/search", params={"q": needle})
         assert resp.status_code == 200, resp.text
         memory_titles = {
             hit["title"] for hit in resp.json().get("hits", []) if hit.get("type") == "memory"
@@ -661,7 +661,7 @@ async def test_search_excludes_vault_for_scoped_keys(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        resp = await client.get("/api/search", params={"q": "OPENAI"})
+        resp = await client.get("/v1/search", params={"q": "OPENAI"})
         assert resp.status_code == 200, resp.text
         sources = {hit["source"] for hit in resp.json().get("hits", [])}
         assert "vaults" not in sources
@@ -708,7 +708,7 @@ async def test_dashboard_endpoints_reject_env_bound_deploy_keys(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        for path in ("/api/dashboard/stats", "/api/dashboard/contribution"):
+        for path in ("/v1/dashboard/stats", "/v1/dashboard/contribution"):
             resp = await client.get(path)
             assert resp.status_code == 403, (path, resp.status_code, resp.text)
     finally:
@@ -776,7 +776,7 @@ async def test_project_explicit_upload_403s_bound_key_targeting_other_project(
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
         resp = await client.post(
-            f"/api/projects/{env_b.default_project_id}/skills/upload",
+            f"/v1/projects/{env_b.default_project_id}/skills/upload",
             data={"skill_key": "evil"},
             files={"file": ("evil.tgz", archive, "application/gzip")},
         )

@@ -9,7 +9,7 @@ import type { ChannelCreate } from "@/v2/channels/channel-types";
 /**
  * Typed data hooks for the native channels surface. All reads/writes go
  * through the generated cloud-api client (`useApi`) against
- * `/api/channels/*`; mutations invalidate the affected queries and surface
+ * `/v1/channels/*`; mutations invalidate the affected queries and surface
  * recoverable errors as toasts.
  */
 
@@ -28,7 +28,7 @@ export function useChannels() {
 	const api = useApi();
 	return useQuery({
 		queryKey: keys.list,
-		queryFn: async () => unwrap(await api.GET("/api/channels")),
+		queryFn: async () => unwrap(await api.GET("/v1/channels")),
 	});
 }
 
@@ -36,7 +36,7 @@ export function useBotPool() {
 	const api = useApi();
 	return useQuery({
 		queryKey: keys.pool,
-		queryFn: async () => unwrap(await api.GET("/api/channels/bot-pool")),
+		queryFn: async () => unwrap(await api.GET("/v1/channels/bot-pool")),
 	});
 }
 
@@ -44,7 +44,7 @@ export function useChannelHealth() {
 	const api = useApi();
 	return useQuery({
 		queryKey: keys.health,
-		queryFn: async () => unwrap(await api.GET("/api/channels/health")),
+		queryFn: async () => unwrap(await api.GET("/v1/channels/health")),
 	});
 }
 
@@ -54,7 +54,7 @@ export function useChannel(id: string) {
 		queryKey: keys.channel(id),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/channels/{account_id}", {
+				await api.GET("/v1/channels/{account_id}", {
 					params: { path: { account_id: id } },
 				}),
 			),
@@ -68,7 +68,7 @@ export function useChannelAgentLinks(id: string) {
 		queryKey: keys.agentLinks(id),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/channels/{account_id}/agent-links", {
+				await api.GET("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: id } },
 				}),
 			),
@@ -82,7 +82,7 @@ export function useChannelBindings(id: string) {
 		queryKey: keys.bindings(id),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/channels/{account_id}/bindings", {
+				await api.GET("/v1/channels/{account_id}/bindings", {
 					params: { path: { account_id: id } },
 				}),
 			),
@@ -96,7 +96,7 @@ export function useChannelActivity(id: string) {
 		queryKey: keys.activity(id),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/channels/{account_id}/activity", {
+				await api.GET("/v1/channels/{account_id}/activity", {
 					params: { path: { account_id: id }, query: { limit: 50 } },
 				}),
 			),
@@ -109,7 +109,7 @@ export function useEnvironments() {
 	const api = useApi();
 	return useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 	});
 }
 
@@ -117,7 +117,7 @@ export function useCreateChannel() {
 	const api = useApi();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: async (body: ChannelCreate) => unwrap(await api.POST("/api/channels", { body })),
+		mutationFn: async (body: ChannelCreate) => unwrap(await api.POST("/v1/channels", { body })),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: keys.list });
 			qc.invalidateQueries({ queryKey: keys.pool });
@@ -133,7 +133,7 @@ export function useDeleteChannel() {
 	return useMutation({
 		mutationFn: async (id: string) =>
 			unwrap(
-				await api.DELETE("/api/channels/{account_id}", {
+				await api.DELETE("/v1/channels/{account_id}", {
 					params: { path: { account_id: id } },
 				}),
 			),
@@ -153,7 +153,7 @@ export function useLinkAgent(accountId: string) {
 	return useMutation({
 		mutationFn: async (agentId: string) =>
 			unwrap(
-				await api.POST("/api/channels/{account_id}/agent-links", {
+				await api.POST("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: accountId } },
 					body: { agent_id: agentId },
 				}),
@@ -173,7 +173,7 @@ export function useRotateAgentToken(accountId: string) {
 	return useMutation({
 		mutationFn: async (linkId: string) =>
 			unwrap(
-				await api.POST("/api/channels/{account_id}/agent-links/{link_id}/token", {
+				await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
 					params: { path: { account_id: accountId, link_id: linkId } },
 				}),
 			),
@@ -197,7 +197,7 @@ export function useCreatePairCode(accountId: string) {
 	return useMutation({
 		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string; ttl_seconds?: number }) =>
 			unwrap(
-				await api.POST("/api/channels/{account_id}/pair-codes", {
+				await api.POST("/v1/channels/{account_id}/pair-codes", {
 					params: { path: { account_id: accountId } },
 					body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
 				}),
@@ -255,7 +255,7 @@ export function useSyncCommands(accountId: string) {
 	return useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/api/channels/{account_id}/commands/sync", {
+				await api.POST("/v1/channels/{account_id}/commands/sync", {
 					params: { path: { account_id: accountId } },
 					body: {},
 				}),
@@ -275,7 +275,7 @@ export function useWhatsappTenantCreds(accountId: string, enabled = true) {
 		queryKey: keys.whatsappCreds(accountId),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/channels/whatsapp/{account_id}/tenant-creds", {
+				await api.GET("/v1/channels/whatsapp/{account_id}/tenant-creds", {
 					params: { path: { account_id: accountId } },
 				}),
 			),
@@ -289,7 +289,7 @@ export function useCreateWhatsappTenantCred(accountId: string) {
 	return useMutation({
 		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string }) =>
 			unwrap(
-				await api.POST("/api/channels/whatsapp/{account_id}/tenant-creds", {
+				await api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
 					params: { path: { account_id: accountId } },
 					// `device` defaults to 1 server-side but the generated client types
 					// it required — send the primary device.
@@ -312,7 +312,7 @@ export function useRevokeWhatsappTenantCred(accountId: string) {
 	return useMutation({
 		mutationFn: async (credentialId: string) =>
 			unwrap(
-				await api.DELETE("/api/channels/whatsapp/{account_id}/tenant-creds/{credential_id}", {
+				await api.DELETE("/v1/channels/whatsapp/{account_id}/tenant-creds/{credential_id}", {
 					params: { path: { account_id: accountId, credential_id: credentialId } },
 				}),
 			),

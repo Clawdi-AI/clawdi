@@ -50,7 +50,7 @@ def test_discord_route_key_strips_api_prefixes():
     assert limiter.route_key("POST", "/channels/111111111111111111/messages") == (
         limiter.route_key(
             "POST",
-            "/api/channels/discord/v10/channels/111111111111111111/messages",
+            "/v1/channels/discord/v10/channels/111111111111111111/messages",
         )
     )
 

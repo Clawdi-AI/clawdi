@@ -2,7 +2,7 @@
  * Ergonomic re-exports of the auto-generated OpenAPI types.
  *
  * The raw generated file (`api.generated.ts`) models every endpoint as
- * `paths["/api/..."]["get"]["responses"]["200"]["content"]["application/json"]`
+ * `paths["/v1/..."]["get"]["responses"]["200"]["content"]["application/json"]`
  * which is unreadable at call sites. This module hoists the common response
  * and request shapes to top-level aliases that pages actually want.
  *

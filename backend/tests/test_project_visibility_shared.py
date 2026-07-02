@@ -128,20 +128,20 @@ async def test_recipient_can_read_shared_project_skill_detail_and_search(
     await db_session.commit()
 
     try:
-        project_detail = await client.get(f"/api/projects/{shared.id}/skills/{skill_key}")
+        project_detail = await client.get(f"/v1/projects/{shared.id}/skills/{skill_key}")
         assert project_detail.status_code == 200, project_detail.text
         assert project_detail.json()["project_id"] == str(shared.id)
 
-        legacy_detail = await client.get(f"/api/skills/{skill_key}")
+        legacy_detail = await client.get(f"/v1/skills/{skill_key}")
         assert legacy_detail.status_code == 200, legacy_detail.text
         assert legacy_detail.json()["project_id"] == str(shared.id)
 
-        skill_search = await client.get("/api/search", params={"q": skill_key})
+        skill_search = await client.get("/v1/search", params={"q": skill_key})
         assert skill_search.status_code == 200, skill_search.text
         skill_hits = [h for h in skill_search.json()["results"] if h["type"] == "skill"]
         assert any(h["id"] for h in skill_hits), skill_search.json()
 
-        vault_search = await client.get("/api/search", params={"q": f"shared-vault-{nonce}"})
+        vault_search = await client.get("/v1/search", params={"q": f"shared-vault-{nonce}"})
         assert vault_search.status_code == 200, vault_search.text
         vault_hits = [h for h in vault_search.json()["results"] if h["type"] == "vault"]
         assert any(h["title"] == f"Shared Vault {nonce}" for h in vault_hits), vault_search.json()
@@ -219,34 +219,34 @@ async def test_recipient_viewer_cannot_write_shared_project_resources(
             "---\nname: denied\n---\n# Denied\n",
         )
         upload = await client.post(
-            f"/api/projects/{shared.id}/skills/upload",
+            f"/v1/projects/{shared.id}/skills/upload",
             data={"skill_key": f"recipient-skill-{nonce}"},
             files={"file": ("denied.tar.gz", tar_bytes, "application/gzip")},
         )
         assert upload.status_code == 404, upload.text
 
         edit = await client.put(
-            f"/api/projects/{shared.id}/skills/owner-skill-{nonce}/content",
+            f"/v1/projects/{shared.id}/skills/owner-skill-{nonce}/content",
             json={"content": "---\nname: denied\n---\n# Denied\n"},
         )
         assert edit.status_code == 404, edit.text
 
-        delete_skill = await client.delete(f"/api/projects/{shared.id}/skills/owner-skill-{nonce}")
+        delete_skill = await client.delete(f"/v1/projects/{shared.id}/skills/owner-skill-{nonce}")
         assert delete_skill.status_code == 404, delete_skill.text
 
         create_vault = await client.post(
-            f"/api/vault?project_id={shared.id}",
+            f"/v1/vault?project_id={shared.id}",
             json={"slug": f"recipient-vault-{nonce}", "name": "Denied"},
         )
         assert create_vault.status_code == 404, create_vault.text
 
         upsert_vault = await client.put(
-            f"/api/vault/owner-vault-{nonce}/items?project_id={shared.id}",
+            f"/v1/vault/owner-vault-{nonce}/items?project_id={shared.id}",
             json={"section": "", "fields": {"TOKEN": "denied"}},
         )
         assert upsert_vault.status_code == 404, upsert_vault.text
 
-        delete_vault = await client.delete(f"/api/vault/owner-vault-{nonce}?project_id={shared.id}")
+        delete_vault = await client.delete(f"/v1/vault/owner-vault-{nonce}?project_id={shared.id}")
         assert delete_vault.status_code == 404, delete_vault.text
 
         leaked_skill = (
@@ -351,18 +351,18 @@ async def test_recipient_cli_can_resolve_shared_project_vault_plaintext(
 
     try:
         explicit = await cli_client.post(
-            f"/api/vault/resolve?key=TOKEN&project_id={shared.id}&debug=true"
+            f"/v1/vault/resolve?key=TOKEN&project_id={shared.id}&debug=true"
         )
         assert explicit.status_code == 200, explicit.text
         assert explicit.json()["value"] == "owner-secret-value"
         assert explicit.json()["source_project_id"] == str(shared.id)
 
-        project_env = await cli_client.post(f"/api/vault/resolve?project_id={shared.id}")
+        project_env = await cli_client.post(f"/v1/vault/resolve?project_id={shared.id}")
         assert project_env.status_code == 200, project_env.text
         assert project_env.json()["TOKEN"] == "owner-secret-value"
 
         exact = await cli_client.post(
-            "/api/vault/resolve"
+            "/v1/vault/resolve"
             f"?vault_slug={vault.slug}&field=TOKEN&project_id={shared.id}&debug=true"
         )
         assert exact.status_code == 200, exact.text
@@ -370,7 +370,7 @@ async def test_recipient_cli_can_resolve_shared_project_vault_plaintext(
         assert exact.json()["source_project_id"] == str(shared.id)
 
         bulk = await cli_client.post(
-            "/api/vault/resolve/bulk",
+            "/v1/vault/resolve/bulk",
             json={
                 "references": [
                     {
@@ -394,7 +394,7 @@ async def test_recipient_cli_can_resolve_shared_project_vault_plaintext(
         assert bulk_result["source_project_id"] == str(shared.id)
 
         attached_key = await cli_client.post(
-            f"/api/vault/resolve?key=TOKEN&agent_id={env.id}&debug=true"
+            f"/v1/vault/resolve?key=TOKEN&agent_id={env.id}&debug=true"
         )
         assert attached_key.status_code == 200, attached_key.text
         assert attached_key.json()["value"] == "owner-secret-value"
@@ -403,7 +403,7 @@ async def test_recipient_cli_can_resolve_shared_project_vault_plaintext(
             for row in attached_key.json()["precedence"]
         )
 
-        attached_env = await cli_client.post(f"/api/vault/resolve?agent_id={env.id}")
+        attached_env = await cli_client.post(f"/v1/vault/resolve?agent_id={env.id}")
         assert attached_env.status_code == 200, attached_env.text
         assert attached_env.json()["TOKEN"] == "owner-secret-value"
     finally:
@@ -521,22 +521,22 @@ async def test_env_bound_agent_key_resolves_attached_shared_project_vault_plaint
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as ac:
-            explicit = await ac.post(f"/api/vault/resolve?key=TOKEN&project_id={shared.id}")
+            explicit = await ac.post(f"/v1/vault/resolve?key=TOKEN&project_id={shared.id}")
             assert explicit.status_code == 404, explicit.text
 
-            attached_key = await ac.post(f"/api/vault/resolve?key=TOKEN&agent_id={env.id}")
+            attached_key = await ac.post(f"/v1/vault/resolve?key=TOKEN&agent_id={env.id}")
             assert attached_key.status_code == 200, attached_key.text
             assert attached_key.json()["value"] == "attached-secret-value"
 
             attached_exact = await ac.post(
-                "/api/vault/resolve"
+                "/v1/vault/resolve"
                 f"?vault_slug={vault.slug}&field=TOKEN&project_id={shared.id}&agent_id={env.id}"
             )
             assert attached_exact.status_code == 200, attached_exact.text
             assert attached_exact.json()["value"] == "attached-secret-value"
             assert attached_exact.json()["source_project_id"] == str(shared.id)
 
-            attached_env = await ac.post(f"/api/vault/resolve?agent_id={env.id}")
+            attached_env = await ac.post(f"/v1/vault/resolve?agent_id={env.id}")
             assert attached_env.status_code == 200, attached_env.text
             assert attached_env.json()["TOKEN"] == "attached-secret-value"
     finally:
@@ -601,13 +601,13 @@ async def test_recipient_skill_list_etag_changes_when_owner_updates_shared_proje
     await db_session.commit()
 
     try:
-        first = await client.get(f"/api/skills?project_id={shared.id}")
+        first = await client.get(f"/v1/skills?project_id={shared.id}")
         assert first.status_code == 200, first.text
         etag = first.headers.get("ETag")
         assert etag
 
         cached = await client.get(
-            f"/api/skills?project_id={shared.id}",
+            f"/v1/skills?project_id={shared.id}",
             headers={"If-None-Match": etag},
         )
         assert cached.status_code == 304, cached.text
@@ -617,7 +617,7 @@ async def test_recipient_skill_list_etag_changes_when_owner_updates_shared_proje
         await db_session.commit()
 
         refreshed = await client.get(
-            f"/api/skills?project_id={shared.id}",
+            f"/v1/skills?project_id={shared.id}",
             headers={"If-None-Match": etag},
         )
         assert refreshed.status_code == 200, refreshed.text

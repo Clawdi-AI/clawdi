@@ -141,19 +141,19 @@ async def test_telegram_webhook_increments_inbound_metric(
     before = _metric_value("msg_router_inbound_total", {"channel": "telegram"})
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"metrics-{uuid.uuid4().hex}"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     response = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": int(uuid.uuid4().int % 1_000_000_000),

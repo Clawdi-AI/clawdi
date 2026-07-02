@@ -314,7 +314,7 @@ async function scanOneAgent(
 	if (!opts.dryRun && envId) {
 		const probe = new ApiClient();
 		try {
-			const res = await probe.GET("/api/environments/{environment_id}", {
+			const res = await probe.GET("/v1/environments/{environment_id}", {
 				params: { path: { environment_id: envId } },
 			});
 			if (res.error || !res.data) {
@@ -496,7 +496,7 @@ async function uploadOneAgent(
 			for (let offset = 0; offset < sessions.length; offset += SESSION_BATCH_CHUNK) {
 				const chunk = sessions.slice(offset, offset + SESSION_BATCH_CHUNK);
 				const result = unwrap(
-					await api.POST("/api/sessions/batch", {
+					await api.POST("/v1/sessions/batch", {
 						body: {
 							sessions: chunk.map((s) => ({
 								environment_id: envId,

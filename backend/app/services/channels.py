@@ -227,7 +227,7 @@ def decrypt_agent_link_token(link: ChannelBotAgentLink) -> str | None:
 
 
 def channel_webhook_url(account_id: UUID, provider: str) -> str:
-    return f"{settings.public_api_url.rstrip('/')}/api/channels/{provider}/{account_id}/webhook"
+    return f"{settings.public_api_url.rstrip('/')}/v1/channels/{provider}/{account_id}/webhook"
 
 
 async def store_channel_secrets(

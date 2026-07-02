@@ -61,7 +61,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 		queryKey: ["session-permissions", sessionId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/sessions/{session_id}/permissions", {
+				await api.GET("/v1/sessions/{session_id}/permissions", {
 					params: { path: { session_id: sessionId } },
 				}),
 			),
@@ -95,7 +95,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 	const enableMutation = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/api/sessions/{session_id}/permissions", {
+				await api.POST("/v1/sessions/{session_id}/permissions", {
 					params: { path: { session_id: sessionId } },
 					body: { kind: "link" },
 				}),
@@ -116,7 +116,7 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 
 	const disableMutation = useMutation({
 		mutationFn: async () => {
-			const res = await api.DELETE("/api/sessions/{session_id}/permissions", {
+			const res = await api.DELETE("/v1/sessions/{session_id}/permissions", {
 				params: { path: { session_id: sessionId }, query: { kind: "link" } },
 			});
 			if (res.error !== undefined) {

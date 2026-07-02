@@ -116,7 +116,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "whatsapp", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/api/channels/whatsapp/${link.account.id}/baileys`,
+				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
 				token: link.agentToken,
 			};
 			continue;
@@ -124,7 +124,7 @@ function buildOpenClawChannelsProjection(
 		if (provider === "imessage") {
 			channels.bluebubbles = {
 				enabled: true,
-				serverUrl: `${stripTrailingSlash(cloudApiUrl)}/api/channels/imessage/bluebubbles`,
+				serverUrl: `${stripTrailingSlash(cloudApiUrl)}/v1/channels/imessage/bluebubbles`,
 				password: link.agentToken,
 			};
 		}
@@ -184,7 +184,7 @@ function buildManagedChannelMitmProfiles(
 					query: {},
 				},
 				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/api/channels/telegram`,
+					upstreamBaseUrl: `${baseUrl}/v1/channels/telegram`,
 					preservePath: true,
 					setHeaders: {},
 				},
@@ -201,7 +201,7 @@ function buildManagedChannelMitmProfiles(
 				match: {
 					scheme: "https",
 					host: "discord.com",
-					pathPrefix: "/api/",
+					pathPrefix: "/v1/",
 					headers: {
 						authorization: {
 							type: "secretRefEquals",
@@ -212,7 +212,7 @@ function buildManagedChannelMitmProfiles(
 					query: {},
 				},
 				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/api/channels/discord`,
+					upstreamBaseUrl: `${baseUrl}/v1/channels/discord`,
 					preservePath: true,
 					setHeaders: {},
 				},
@@ -255,7 +255,7 @@ function buildManagedChannelMitmProfiles(
 					query: {},
 				},
 				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/api/channels/whatsapp/graph`,
+					upstreamBaseUrl: `${baseUrl}/v1/channels/whatsapp/graph`,
 					preservePath: true,
 					setHeaders: {},
 				},

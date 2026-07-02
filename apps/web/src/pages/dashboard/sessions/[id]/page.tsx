@@ -59,7 +59,7 @@ export function SessionDetailContent({
 		queryKey: ["session", sessionId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/sessions/{session_id}", {
+				await api.GET("/v1/sessions/{session_id}", {
 					params: { path: { session_id: sessionId } },
 				}),
 			),
@@ -147,7 +147,7 @@ export function SessionDetailContent({
 		queryFn: async ({ pageParam }) => {
 			const { offset, limit } = pageParam as PageParam;
 			return unwrap(
-				await api.GET("/api/sessions/{session_id}/messages", {
+				await api.GET("/v1/sessions/{session_id}/messages", {
 					params: {
 						path: { session_id: sessionId },
 						query: { offset, limit },

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
     r = await client.post(
-        "/api/environments",
+        "/v1/environments",
         json={
             "machine_id": machine_id,
             "machine_name": "Test Mac",
@@ -39,20 +39,20 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
 async def test_environments_support_conditional_get(client: httpx.AsyncClient):
     env_id = await _register_env(client, machine_id=f"etag-{uuid.uuid4().hex}")
 
-    first = await client.get("/api/environments")
+    first = await client.get("/v1/environments")
     assert first.status_code == 200, first.text
     etag = first.headers.get("ETag")
     assert etag
     assert first.headers.get("Cache-Control") == "private, no-cache"
 
-    not_modified = await client.get("/api/environments", headers={"If-None-Match": etag})
+    not_modified = await client.get("/v1/environments", headers={"If-None-Match": etag})
     assert not_modified.status_code == 304, not_modified.text
     assert not_modified.headers.get("ETag") == etag
 
-    heartbeat = await client.post(f"/api/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    heartbeat = await client.post(f"/v1/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
     assert heartbeat.status_code == 204, heartbeat.text
 
-    changed = await client.get("/api/environments", headers={"If-None-Match": etag})
+    changed = await client.get("/v1/environments", headers={"If-None-Match": etag})
     assert changed.status_code == 200, changed.text
     assert changed.headers.get("ETag") != etag
     updated = next(item for item in changed.json() if item["id"] == env_id)
@@ -63,23 +63,23 @@ async def test_environments_support_conditional_get(client: httpx.AsyncClient):
 async def test_environment_detail_supports_conditional_get(client: httpx.AsyncClient):
     env_id = await _register_env(client, machine_id=f"detail-etag-{uuid.uuid4().hex}")
 
-    first = await client.get(f"/api/environments/{env_id}")
+    first = await client.get(f"/v1/environments/{env_id}")
     assert first.status_code == 200, first.text
     etag = first.headers.get("ETag")
     assert etag
     assert first.headers.get("Cache-Control") == "private, no-cache"
 
     not_modified = await client.get(
-        f"/api/environments/{env_id}",
+        f"/v1/environments/{env_id}",
         headers={"If-None-Match": etag},
     )
     assert not_modified.status_code == 304, not_modified.text
     assert not_modified.headers.get("ETag") == etag
 
-    heartbeat = await client.post(f"/api/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    heartbeat = await client.post(f"/v1/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
     assert heartbeat.status_code == 204, heartbeat.text
 
-    changed = await client.get(f"/api/environments/{env_id}", headers={"If-None-Match": etag})
+    changed = await client.get(f"/v1/environments/{env_id}", headers={"If-None-Match": etag})
     assert changed.status_code == 200, changed.text
     assert changed.headers.get("ETag") != etag
     assert changed.json()["queue_depth_high_water"] == 1
@@ -125,7 +125,7 @@ async def test_environments_mark_hosted_runtime_siblings(
     )
     await db_session.commit()
 
-    r = await client.get("/api/environments")
+    r = await client.get("/v1/environments")
     assert r.status_code == 200, r.text
     by_id = {item["id"]: item for item in r.json()}
 
@@ -136,7 +136,7 @@ async def test_environments_mark_hosted_runtime_siblings(
     assert by_id[str(laptop.id)]["hosted_managed"] is False
     assert by_id[str(laptop.id)]["hosted_deployment_id"] is None
 
-    detail = await client.get(f"/api/environments/{codex.id}")
+    detail = await client.get(f"/v1/environments/{codex.id}")
     assert detail.status_code == 200, detail.text
     assert detail.json()["hosted_managed"] is True
     assert detail.json()["hosted_deployment_id"] == "hdep_test"
@@ -163,7 +163,7 @@ async def test_legacy_hosted_runtime_envs_are_marked_without_fake_deployment_id(
         agent_type="claude-code",
     )
 
-    r = await client.get("/api/environments")
+    r = await client.get("/v1/environments")
     assert r.status_code == 200, r.text
     by_id = {item["id"]: item for item in r.json()}
 
@@ -196,7 +196,7 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
             },
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
     # Both rows are brand new — no `file_key` yet, so both must be in
@@ -207,7 +207,7 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
     assert set(body["needs_content"]) == {"sess-abc", "sess-xyz"}
 
     # Listing the rows surfaces the metadata we just upserted.
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 2
     assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
 
@@ -224,7 +224,7 @@ async def test_session_batch_cleans_structured_and_long_model_values(client: htt
     long_model = "custom-" + ("x" * 160)
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -240,7 +240,7 @@ async def test_session_batch_cleans_structured_and_long_model_values(client: htt
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     session = next(
         item for item in listing["items"] if item["local_session_id"] == "sess-structured-model"
     )
@@ -262,7 +262,7 @@ async def test_session_batch_unchanged_when_hash_matches_and_content_uploaded(
 
     # 1. First push declares the hash; row is new, content needed.
     first = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -280,7 +280,7 @@ async def test_session_batch_unchanged_when_hash_matches_and_content_uploaded(
     # 2. Upload content. The endpoint hashes the bytes and stores it on
     # the row, so subsequent batches with the same hash will be unchanged.
     upload = await client.post(
-        "/api/sessions/sess-stable/upload",
+        "/v1/sessions/sess-stable/upload",
         files={"file": ("sess-stable.json", body_bytes, "application/json")},
     )
     assert upload.status_code == 200, upload.text
@@ -288,7 +288,7 @@ async def test_session_batch_unchanged_when_hash_matches_and_content_uploaded(
 
     # 3. Re-push with the same hash → unchanged, content not requested.
     second = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -325,7 +325,7 @@ async def test_unchanged_repush_does_not_bump_updated_at(client: httpx.AsyncClie
 
     # Initial push + content upload.
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -339,11 +339,11 @@ async def test_unchanged_repush_does_not_bump_updated_at(client: httpx.AsyncClie
         },
     )
     await client.post(
-        "/api/sessions/sess-quiet/upload",
+        "/v1/sessions/sess-quiet/upload",
         files={"file": ("sess-quiet.json", body_bytes, "application/json")},
     )
 
-    before = (await client.get("/api/sessions")).json()
+    before = (await client.get("/v1/sessions")).json()
     before_ts = next(
         s["updated_at"] for s in before["items"] if s["local_session_id"] == "sess-quiet"
     )
@@ -355,7 +355,7 @@ async def test_unchanged_repush_does_not_bump_updated_at(client: httpx.AsyncClie
     # Re-push with identical hash — server should treat as unchanged
     # and leave updated_at alone.
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -369,7 +369,7 @@ async def test_unchanged_repush_does_not_bump_updated_at(client: httpx.AsyncClie
         },
     )
 
-    after = (await client.get("/api/sessions")).json()
+    after = (await client.get("/v1/sessions")).json()
     after_ts = next(
         s["updated_at"] for s in after["items"] if s["local_session_id"] == "sess-quiet"
     )
@@ -385,7 +385,7 @@ async def test_session_batch_hash_change_triggers_needs_content(
 
     # Insert + upload some content.
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -399,13 +399,13 @@ async def test_session_batch_hash_change_triggers_needs_content(
         },
     )
     await client.post(
-        "/api/sessions/sess-mut/upload",
+        "/v1/sessions/sess-mut/upload",
         files={"file": ("sess-mut.json", b'[{"role":"user","content":"v1"}]', "application/json")},
     )
 
     # Re-push with a DIFFERENT hash — simulates the user appending a message.
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -425,7 +425,7 @@ async def test_session_batch_hash_change_triggers_needs_content(
     assert body["unchanged"] == 0
 
     # Metadata refreshed too (message_count went 1 → 2).
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     items = {s["local_session_id"]: s for s in listing["items"]}
     assert items["sess-mut"]["message_count"] == 2
     assert items["sess-mut"]["content_hash"] == "c" * 64
@@ -456,7 +456,7 @@ async def test_session_batch_clears_file_key_on_hash_change(
     started = datetime.now(UTC).isoformat()
 
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -470,7 +470,7 @@ async def test_session_batch_clears_file_key_on_hash_change(
         },
     )
     upload = await client.post(
-        "/api/sessions/sess-loss/upload",
+        "/v1/sessions/sess-loss/upload",
         files={"file": ("sess-loss.json", b'[{"role":"user","content":"v1"}]', "application/json")},
     )
     assert upload.status_code == 200, upload.text
@@ -501,7 +501,7 @@ async def test_session_batch_clears_file_key_on_hash_change(
     # Bump the hash WITHOUT a successful follow-up upload (simulating
     # network failure between push and upload).
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -531,10 +531,10 @@ async def test_session_batch_clears_file_key_on_hash_change(
     # before its first upload. Without this assertion a future
     # refactor could route through file_key-via-content-hash and
     # break the invariant from the read side.
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     items = {s["local_session_id"]: s for s in listing["items"]}
     session_uuid = items["sess-loss"]["id"]
-    stale_read = await client.get(f"/api/sessions/{session_uuid}/content")
+    stale_read = await client.get(f"/v1/sessions/{session_uuid}/content")
     assert stale_read.status_code == 404, (
         f"after hash bump with no follow-up upload, /content must return "
         f"404; got {stale_read.status_code} {stale_read.text}"
@@ -545,7 +545,7 @@ async def test_session_batch_clears_file_key_on_hash_change(
     # re-uploads. With the fix, prev.file_key is None puts it back in
     # needs_content.
     retry = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -576,7 +576,7 @@ async def test_session_upload_records_content_hash_and_uploaded_at(
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -592,7 +592,7 @@ async def test_session_upload_records_content_hash_and_uploaded_at(
 
     body_bytes = b'[{"role":"user","content":"x"}]'
     r = await client.post(
-        "/api/sessions/sess-up/upload",
+        "/v1/sessions/sess-up/upload",
         files={"file": ("sess-up.json", body_bytes, "application/json")},
     )
     assert r.status_code == 200, r.text
@@ -627,7 +627,7 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -647,17 +647,17 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     ]
     body_bytes = json.dumps(messages).encode("utf-8")
     r_upload = await client.post(
-        "/api/sessions/sess-long/upload",
+        "/v1/sessions/sess-long/upload",
         files={"file": ("sess-long.json", body_bytes, "application/json")},
     )
     assert r_upload.status_code == 200, r_upload.text
     # Look up the row's UUID via the listing — upload response
     # carries `file_key` but not `session_id` in its shape today.
-    listing = (await client.get("/api/sessions?q=sess-long")).json()
+    listing = (await client.get("/v1/sessions?q=sess-long")).json()
     session_id = next(s["id"] for s in listing["items"] if s["local_session_id"] == "sess-long")
 
     # Default page (offset=0, limit=100) returns first 100 messages.
-    r = await client.get(f"/api/sessions/{session_id}/messages")
+    r = await client.get(f"/v1/sessions/{session_id}/messages")
     assert r.status_code == 200, r.text
     page = r.json()
     assert page["total"] == 250
@@ -668,27 +668,27 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     assert page["items"][99]["content"] == "msg 99"
 
     # Second page picks up at offset=100.
-    r2 = await client.get(f"/api/sessions/{session_id}/messages?offset=100&limit=100")
+    r2 = await client.get(f"/v1/sessions/{session_id}/messages?offset=100&limit=100")
     page2 = r2.json()
     assert page2["offset"] == 100
     assert len(page2["items"]) == 100
     assert page2["items"][0]["content"] == "msg 100"
 
     # Third page is the tail (50 items, NOT 100 — total is 250).
-    r3 = await client.get(f"/api/sessions/{session_id}/messages?offset=200&limit=100")
+    r3 = await client.get(f"/v1/sessions/{session_id}/messages?offset=200&limit=100")
     page3 = r3.json()
     assert len(page3["items"]) == 50
     assert page3["items"][-1]["content"] == "msg 249"
 
     # Offset past the end → empty items, NOT 4xx (the blob may
     # have shrunk between paginated reads).
-    r4 = await client.get(f"/api/sessions/{session_id}/messages?offset=500&limit=100")
+    r4 = await client.get(f"/v1/sessions/{session_id}/messages?offset=500&limit=100")
     assert r4.status_code == 200, r4.text
     assert r4.json()["items"] == []
 
     # `limit` is capped server-side so a malicious / buggy client
     # can't request a 100k-item page.
-    r5 = await client.get(f"/api/sessions/{session_id}/messages?limit=99999")
+    r5 = await client.get(f"/v1/sessions/{session_id}/messages?limit=99999")
     assert r5.status_code == 422, r5.text
 
 
@@ -715,7 +715,7 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -731,10 +731,10 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     messages = [{"role": "user", "content": f"m{i}"} for i in range(50)]
     body_bytes = json.dumps(messages).encode("utf-8")
     await client.post(
-        "/api/sessions/sess-cache/upload",
+        "/v1/sessions/sess-cache/upload",
         files={"file": ("sess-cache.json", body_bytes, "application/json")},
     )
-    listing = (await client.get("/api/sessions?q=sess-cache")).json()
+    listing = (await client.get("/v1/sessions?q=sess-cache")).json()
     sid = next(s["id"] for s in listing["items"] if s["local_session_id"] == "sess-cache")
 
     # Reset the cache so other tests' entries don't satisfy us
@@ -755,7 +755,7 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     sessions_route.file_store.get = counting_get  # type: ignore[assignment]
     try:
         for offset in (0, 10, 20):
-            r = await client.get(f"/api/sessions/{sid}/messages?offset={offset}&limit=10")
+            r = await client.get(f"/v1/sessions/{sid}/messages?offset={offset}&limit=10")
             assert r.status_code == 200, r.text
     finally:
         sessions_route.file_store.get = orig_get  # type: ignore[assignment]
@@ -779,11 +779,11 @@ async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncC
         }
         for i in range(30)
     ]
-    await client.post("/api/sessions/batch", json={"sessions": sessions})
+    await client.post("/v1/sessions/batch", json={"sessions": sessions})
 
     # Default page size (25) caps the first response — paging state is surfaced
     # so the frontend can render a "Page 1 of N" indicator.
-    r = await client.get("/api/sessions")
+    r = await client.get("/v1/sessions")
     body = r.json()
     assert body["total"] == 30
     assert body["page"] == 1
@@ -791,22 +791,22 @@ async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncC
     assert len(body["items"]) == 25
 
     # Second page returns the tail.
-    r = await client.get("/api/sessions?page=2&page_size=25")
+    r = await client.get("/v1/sessions?page=2&page_size=25")
     assert len(r.json()["items"]) == 5
 
     # `q` filters against summary/project/local_session_id via ILIKE.
-    r = await client.get("/api/sessions?q=ship")
+    r = await client.get("/v1/sessions?q=ship")
     items = r.json()["items"]
     assert len(items) > 0
     assert all("Ship feature" in s["summary"] for s in items)
 
     # Invalid sort key should be rejected by the regex-constrained param.
-    r = await client.get("/api/sessions?sort=summary")
+    r = await client.get("/v1/sessions?sort=summary")
     assert r.status_code == 422
 
     # `tokens` is a synthetic sort — the backend resolves it to
     # `input_tokens + output_tokens` so the display column and sort agree.
-    r = await client.get("/api/sessions?sort=tokens&order=desc&page_size=5")
+    r = await client.get("/v1/sessions?sort=tokens&order=desc&page_size=5")
     assert r.status_code == 200
 
 
@@ -819,7 +819,7 @@ async def test_sessions_list_automated_filter(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -842,15 +842,15 @@ async def test_sessions_list_automated_filter(client: httpx.AsyncClient):
         },
     )
 
-    automated = (await client.get("/api/sessions?automated=true")).json()
+    automated = (await client.get("/v1/sessions?automated=true")).json()
     assert automated["total"] == 2
     assert all(s["summary"].startswith(("Cron:", "[")) for s in automated["items"])
 
-    manual = (await client.get("/api/sessions?automated=false")).json()
+    manual = (await client.get("/v1/sessions?automated=false")).json()
     assert manual["total"] == 2
     assert {s["local_session_id"] for s in manual["items"]} == {"sess-auto-2", "sess-auto-3"}
 
-    everything = (await client.get("/api/sessions")).json()
+    everything = (await client.get("/v1/sessions")).json()
     assert everything["total"] == 4
 
 
@@ -859,7 +859,7 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -873,9 +873,9 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
             ]
         },
     )
-    await client.post("/api/vault", json={"slug": "alpha-keys", "name": "alpha-keys"})
+    await client.post("/v1/vault", json={"slug": "alpha-keys", "name": "alpha-keys"})
 
-    r = await client.get("/api/search?q=alpha")
+    r = await client.get("/v1/search?q=alpha")
     assert r.status_code == 200
     body = r.json()
     types = {hit["type"] for hit in body["results"]}
@@ -915,7 +915,7 @@ async def test_global_search_encodes_nested_skill_keys_in_href(
     )
     await db_session.commit()
 
-    r = await client.get("/api/search?q=searchable-foo")
+    r = await client.get("/v1/search?q=searchable-foo")
     assert r.status_code == 200, r.text
     skill_hits = [h for h in r.json()["results"] if h["type"] == "skill"]
     assert skill_hits, r.json()
@@ -942,14 +942,14 @@ async def test_session_batch_rejects_unowned_environment_id(client: httpx.AsyncC
             }
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
     assert detail["code"] == "unknown_environment"
     assert "clawdi setup" in detail["message"]
     # Listing must show 0 sessions — the whole batch is rejected, not partially
     # accepted. Half-accept would silently drop the user's data.
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 0
 
 
@@ -957,7 +957,7 @@ async def _register_env_named(
     client: httpx.AsyncClient, machine_id: str, agent_type: str = "claude-code"
 ) -> str:
     r = await client.post(
-        "/api/environments",
+        "/v1/environments",
         json={
             "machine_id": machine_id,
             "machine_name": f"mac-{machine_id}",
@@ -987,7 +987,7 @@ async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.Asy
 
     # Land a session in env A first.
     r1 = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1007,7 +1007,7 @@ async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.Asy
     # different machine accidentally generated the same id, or if
     # a deploy-key dashboard write tried to retarget it.
     r2 = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1030,10 +1030,10 @@ async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.Asy
     # env=A — so this assertion is necessary to prove the new path
     # fails closed at request time, not just that the data didn't
     # corrupt by accident.
-    listing = (await client.get(f"/api/sessions?environment_id={env_a}")).json()
+    listing = (await client.get(f"/v1/sessions?environment_id={env_a}")).json()
     assert listing["total"] == 1
     assert listing["items"][0]["local_session_id"] == "shared-id"
-    listing_b = (await client.get(f"/api/sessions?environment_id={env_b}")).json()
+    listing_b = (await client.get(f"/v1/sessions?environment_id={env_b}")).json()
     assert listing_b["total"] == 0
 
 
@@ -1099,7 +1099,7 @@ async def test_session_batch_response_lists_rejected_session_ids(
             }
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     # Pre-fetch path catches it as 409 (the winner is visible).
     assert r.status_code == 409, r.text
     detail = r.json()["detail"]
@@ -1125,7 +1125,7 @@ async def test_session_batch_response_carries_rejected_field_shape(client: httpx
             }
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["rejected"] == []
@@ -1180,7 +1180,7 @@ async def test_session_batch_orphan_session_can_be_adopted_by_new_env(
             }
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
     # The orphan was adopted: row is now updated, env_id set, and
@@ -1222,7 +1222,7 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
             }
         ]
     }
-    r = await client.post("/api/sessions/batch", json=payload)
+    r = await client.post("/v1/sessions/batch", json=payload)
     assert r.status_code == 422
 
 
@@ -1245,7 +1245,7 @@ async def test_delete_environment_orphans_sessions_via_fk(
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1259,10 +1259,10 @@ async def test_delete_environment_orphans_sessions_via_fk(
         },
     )
 
-    r = await client.delete(f"/api/environments/{env_id}")
+    r = await client.delete(f"/v1/environments/{env_id}")
     assert r.status_code == 204, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
@@ -1290,7 +1290,7 @@ async def test_delete_environment_orphans_sessions_via_fk(
 
 @pytest.mark.asyncio
 async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
-    r = await client.delete(f"/api/environments/{uuid.uuid4()}")
+    r = await client.delete(f"/v1/environments/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
@@ -1307,7 +1307,7 @@ async def _seed_session_with_content(
     env_id = await _register_env(client)
     started = datetime.now(UTC).isoformat()
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1322,7 +1322,7 @@ async def _seed_session_with_content(
     )
     body = content or b'[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]'
     await client.post(
-        f"/api/sessions/{local_id}/upload",
+        f"/v1/sessions/{local_id}/upload",
         files={"file": (f"{local_id}.json", body, "application/json")},
     )
     return local_id
@@ -1358,7 +1358,7 @@ async def test_extract_creates_memories_linked_to_session(
     local_id = "sess-extract-1"
     await _seed_session_with_content(client, local_id)
 
-    r = await client.post(f"/api/sessions/{local_id}/extract")
+    r = await client.post(f"/v1/sessions/{local_id}/extract")
     assert r.status_code == 200, r.text
     assert r.json() == {"memories_created": 2}
 
@@ -1392,7 +1392,7 @@ async def test_extract_503_when_not_configured(
     local_id = "sess-extract-noconf"
     await _seed_session_with_content(client, local_id)
 
-    r = await client.post(f"/api/sessions/{local_id}/extract")
+    r = await client.post(f"/v1/sessions/{local_id}/extract")
     assert r.status_code == 503
     assert "not configured" in r.json()["detail"].lower()
 
@@ -1415,7 +1415,7 @@ async def test_last_activity_uses_client_supplied_when_sane(client: httpx.AsyncC
     last_msg = datetime.now(UTC) - timedelta(hours=2)  # last message 2h ago
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1432,7 +1432,7 @@ async def test_last_activity_uses_client_supplied_when_sane(client: httpx.AsyncC
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-active")
     assert datetime.fromisoformat(item["last_activity_at"]).replace(
         microsecond=0
@@ -1453,7 +1453,7 @@ async def test_last_activity_falls_back_to_ended_at_when_missing(
     ended = datetime.now(UTC) - timedelta(hours=1)
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1470,7 +1470,7 @@ async def test_last_activity_falls_back_to_ended_at_when_missing(
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-no-msgts")
     assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == ended.replace(
         microsecond=0
@@ -1491,7 +1491,7 @@ async def test_last_activity_clamps_future_clock_skew(client: httpx.AsyncClient)
     way_future = datetime.now(UTC) + timedelta(days=365)
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1507,7 +1507,7 @@ async def test_last_activity_clamps_future_clock_skew(client: httpx.AsyncClient)
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-skewed")
     persisted = datetime.fromisoformat(item["last_activity_at"])
     # Clamped to a value <= now; a year in the future should never land.
@@ -1526,7 +1526,7 @@ async def test_last_activity_clamps_when_started_at_also_future(client: httpx.As
     way_future = datetime.now(UTC) + timedelta(days=365 * 1000)
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1543,7 +1543,7 @@ async def test_last_activity_clamps_when_started_at_also_future(client: httpx.As
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-future-everything")
     persisted = datetime.fromisoformat(item["last_activity_at"])
     assert persisted < datetime.now(UTC) + timedelta(minutes=10), (
@@ -1565,7 +1565,7 @@ async def test_last_activity_clamps_to_started_at_lower_bound(
     bogus_earlier = started - timedelta(days=30)  # before the session existed
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1581,7 +1581,7 @@ async def test_last_activity_clamps_to_started_at_lower_bound(
     )
     assert r.status_code == 200, r.text
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-too-old")
     persisted = datetime.fromisoformat(item["last_activity_at"])
     assert persisted >= started.replace(microsecond=0) - timedelta(seconds=1)
@@ -1602,7 +1602,7 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
 
     # Push fresh first.
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1619,7 +1619,7 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
 
     # Then a stale push (e.g. another machine syncing an old snapshot).
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1634,7 +1634,7 @@ async def test_last_activity_is_monotonic_under_repush(client: httpx.AsyncClient
         },
     )
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     item = next(s for s in listing["items"] if s["local_session_id"] == "sess-mono")
     # Should still be the FRESHER value despite the stale repush.
     assert datetime.fromisoformat(item["last_activity_at"]).replace(microsecond=0) == fresh.replace(
@@ -1654,7 +1654,7 @@ async def test_sessions_since_until_filter_on_last_activity(client: httpx.AsyncC
     started_old = datetime.now(UTC) - timedelta(days=30)
 
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1680,7 +1680,7 @@ async def test_sessions_since_until_filter_on_last_activity(client: httpx.AsyncC
     )
 
     since = (datetime.now(UTC) - timedelta(days=2)).isoformat()
-    listing = (await client.get("/api/sessions", params={"since": since})).json()
+    listing = (await client.get("/v1/sessions", params={"since": since})).json()
     ids = {s["local_session_id"] for s in listing["items"]}
     assert "sess-old-but-active" in ids
     assert "sess-old-and-stale" not in ids
@@ -1701,7 +1701,7 @@ async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
     started = same_ts - timedelta(minutes=1)
 
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1720,8 +1720,8 @@ async def test_sessions_pagination_is_deterministic_under_tied_timestamps(
     # Two consecutive paginations must return non-overlapping,
     # union-of-set rows. Without a tiebreaker, offset 1 might
     # return a row already seen on offset 0.
-    p1 = (await client.get("/api/sessions?page=1&page_size=3")).json()
-    p2 = (await client.get("/api/sessions?page=2&page_size=3")).json()
+    p1 = (await client.get("/v1/sessions?page=1&page_size=3")).json()
+    p2 = (await client.get("/v1/sessions?page=2&page_size=3")).json()
     p1_ids = {s["local_session_id"] for s in p1["items"]}
     p2_ids = {s["local_session_id"] for s in p2["items"]}
     assert len(p1_ids & p2_ids) == 0, (
@@ -1744,7 +1744,7 @@ async def test_sessions_default_sort_uses_last_activity(client: httpx.AsyncClien
     # session A: last activity 1 hour ago
     # session B: last activity yesterday (older)
     await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -1767,7 +1767,7 @@ async def test_sessions_default_sort_uses_last_activity(client: httpx.AsyncClien
         },
     )
 
-    listing = (await client.get("/api/sessions")).json()
+    listing = (await client.get("/v1/sessions")).json()
     ids_in_order = [s["local_session_id"] for s in listing["items"]]
     a_idx = ids_in_order.index("sess-A-recent-activity")
     b_idx = ids_in_order.index("sess-B-stale-activity")

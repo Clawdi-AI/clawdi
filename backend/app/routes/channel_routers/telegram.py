@@ -78,7 +78,7 @@ from app.services.metrics import (
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
-router = APIRouter(prefix="/api/channels/telegram", tags=["channels"])
+router = APIRouter(prefix="/channels/telegram", tags=["channels"])
 
 
 @router.api_route(

@@ -83,10 +83,10 @@ function captureConsole(): {
 describe("owner project sharing commands", () => {
 	it("creates a read-only share link for the resolved project", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/projects/project-owned/share-links",
+				path: "/v1/projects/project-owned/share-links",
 				response: () =>
 					jsonResponse(
 						{
@@ -112,9 +112,9 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects",
-			"POST /api/projects/project-owned/share-links",
+			"GET /v1/projects",
+			"GET /v1/projects",
+			"POST /v1/projects/project-owned/share-links",
 		]);
 		expect(captured[2].body).toEqual({ label: "client review" });
 		const out = consoleCapture.lines.join("\n");
@@ -130,10 +130,10 @@ describe("owner project sharing commands", () => {
 
 	it("revokes a share link by unique prefix", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "GET",
-				path: "/api/projects/project-owned/share-links",
+				path: "/v1/projects/project-owned/share-links",
 				response: () =>
 					jsonResponse([
 						{
@@ -160,7 +160,7 @@ describe("owner project sharing commands", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/projects/project-owned/share-links/link-aaaaaaaa",
+				path: "/v1/projects/project-owned/share-links/link-aaaaaaaa",
 				response: () => jsonResponse({ status: "revoked" }),
 			},
 		]);
@@ -173,19 +173,19 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects/project-owned/share-links",
-			"DELETE /api/projects/project-owned/share-links/link-aaaaaaaa",
+			"GET /v1/projects",
+			"GET /v1/projects/project-owned/share-links",
+			"DELETE /v1/projects/project-owned/share-links/link-aaaaaaaa",
 		]);
 		expect(consoleCapture.lines.join("\n")).toContain("Share link revoked");
 	});
 
 	it("lists share links without exposing raw tokens", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "GET",
-				path: "/api/projects/project-owned/share-links",
+				path: "/v1/projects/project-owned/share-links",
 				response: () =>
 					jsonResponse([
 						{
@@ -220,8 +220,8 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects/project-owned/share-links",
+			"GET /v1/projects",
+			"GET /v1/projects/project-owned/share-links",
 		]);
 		const out = consoleCapture.lines.join("\n");
 		expect(out).toContain("Project share links (2)");
@@ -236,10 +236,10 @@ describe("owner project sharing commands", () => {
 
 	it("rejects an ambiguous share link prefix before deleting", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "GET",
-				path: "/api/projects/project-owned/share-links",
+				path: "/v1/projects/project-owned/share-links",
 				response: () =>
 					jsonResponse([
 						{
@@ -277,18 +277,18 @@ describe("owner project sharing commands", () => {
 		process.exitCode = 0;
 		expect(exitCode).toBe(1);
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects/project-owned/share-links",
+			"GET /v1/projects",
+			"GET /v1/projects/project-owned/share-links",
 		]);
 		expect(consoleCapture.errors.join("\n")).toContain("matches 2 links");
 	});
 
 	it("sends an invitation to an existing user", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/projects/project-owned/invitations",
+				path: "/v1/projects/project-owned/invitations",
 				response: () =>
 					jsonResponse(
 						{
@@ -312,8 +312,8 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"POST /api/projects/project-owned/invitations",
+			"GET /v1/projects",
+			"POST /v1/projects/project-owned/invitations",
 		]);
 		expect(captured[1].body).toEqual({ email: "bob@example.test" });
 		const out = consoleCapture.lines.join("\n");
@@ -324,10 +324,10 @@ describe("owner project sharing commands", () => {
 
 	it("suggests a share link when invite email has no account", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/projects/project-owned/invitations",
+				path: "/v1/projects/project-owned/invitations",
 				response: () =>
 					jsonResponse(
 						{
@@ -352,8 +352,8 @@ describe("owner project sharing commands", () => {
 		process.exitCode = 0;
 		expect(exitCode).toBe(1);
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"POST /api/projects/project-owned/invitations",
+			"GET /v1/projects",
+			"POST /v1/projects/project-owned/invitations",
 		]);
 		const err = consoleCapture.errors.join("\n");
 		expect(err).toContain("No clawdi account found");
@@ -362,10 +362,10 @@ describe("owner project sharing commands", () => {
 
 	it("lists pending invitations for an owned project", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "GET",
-				path: "/api/projects/project-owned/invitations",
+				path: "/v1/projects/project-owned/invitations",
 				response: () =>
 					jsonResponse([
 						{
@@ -392,8 +392,8 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects/project-owned/invitations",
+			"GET /v1/projects",
+			"GET /v1/projects/project-owned/invitations",
 		]);
 		const out = consoleCapture.lines.join("\n");
 		expect(out).toContain("Pending project invites (1)");
@@ -403,10 +403,10 @@ describe("owner project sharing commands", () => {
 
 	it("cancels a pending invitation", async () => {
 		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/api\/projects$/, response: () => jsonResponse(projects) },
+			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "DELETE",
-				path: "/api/projects/project-owned/invitations/invite-1",
+				path: "/v1/projects/project-owned/invitations/invite-1",
 				response: () => jsonResponse({ status: "cancelled" }),
 			},
 		]);
@@ -419,8 +419,8 @@ describe("owner project sharing commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"DELETE /api/projects/project-owned/invitations/invite-1",
+			"GET /v1/projects",
+			"DELETE /v1/projects/project-owned/invitations/invite-1",
 		]);
 		expect(consoleCapture.lines.join("\n")).toContain("Invitation cancelled");
 	});

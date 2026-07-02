@@ -49,7 +49,7 @@ interface VaultListPage {
  * existing slug, so this is safe before every item write.
  */
 async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?: string) {
-	const created = await api.POST("/api/vault", {
+	const created = await api.POST("/v1/vault", {
 		body: { slug, name },
 		params: projectId ? { query: { project_id: projectId } } : { query: {} },
 	});
@@ -68,7 +68,7 @@ async function fetchAllVaults(api: ApiClient, projectId?: string): Promise<Vault
 	let total = 0;
 	while (page <= 50) {
 		const result = unwrap(
-			await api.GET("/api/vault", {
+			await api.GET("/v1/vault", {
 				params: {
 					query: projectId
 						? {
@@ -119,7 +119,7 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 	await warnIfSharedVaultWrite(api, vaultSlug);
 
 	unwrap(
-		await api.PUT("/api/vault/{slug}/items", {
+		await api.PUT("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
 				query: { project_id: targetProject.projectId },
@@ -156,7 +156,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 
 	const fetchItems = (slug: string, attachedProjectId?: string) =>
 		api
-			.GET("/api/vault/{slug}/items", {
+			.GET("/v1/vault/{slug}/items", {
 				params: {
 					path: { slug },
 					query: attachedProjectId ? { project_id: attachedProjectId } : {},
@@ -312,7 +312,7 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	}
 
 	unwrap(
-		await api.DELETE("/api/vault/{slug}", {
+		await api.DELETE("/v1/vault/{slug}", {
 			params: { path: { slug: vaultSlug }, query: { project_id: targetProject.projectId } },
 		}),
 	);
@@ -418,7 +418,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	await warnIfSharedVaultWrite(api, vaultSlug);
 
 	unwrap(
-		await api.PUT("/api/vault/{slug}/items", {
+		await api.PUT("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
 				query: { project_id: targetProject.projectId },
@@ -479,7 +479,7 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 	}
 
 	unwrap(
-		await api.DELETE("/api/vault/{slug}/items", {
+		await api.DELETE("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
 				query: { project_id: targetProject.projectId, global_delete: Boolean(opts.global) },

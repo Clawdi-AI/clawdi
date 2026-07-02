@@ -53,7 +53,7 @@ export async function inspectAiProviderAuth(provider: AiProvider): Promise<AiPro
 			const resolved = await new ApiClient().postJsonBody<{
 				value?: string | null;
 				profile?: string | null;
-			}>(`/api/ai-providers/${encodeURIComponent(provider.id)}/auth/resolve`, {
+			}>(`/v1/ai-providers/${encodeURIComponent(provider.id)}/auth/resolve`, {
 				profile: "default",
 			});
 			if (resolved.value) {

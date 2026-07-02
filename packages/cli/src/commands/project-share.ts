@@ -52,7 +52,7 @@ export async function projectShareCommand(
 	// by the caller's network stack if they already hit /api/projects
 	// via resolveProjectId moments ago.
 	const projectSlug = (await listProjects(apiUrl, apiKey)).find((s) => s.id === projectId)?.slug;
-	const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links`, {
+	const r = await fetch(`${apiUrl}/v1/projects/${projectId}/share-links`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${apiKey}`,

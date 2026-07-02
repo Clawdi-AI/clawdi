@@ -116,7 +116,7 @@ async def _resolve_session_for_view(
     raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have access to this session")
 
 
-@router.get("/api/public/sessions/{session_id}", response_model=PublicSessionResponse)
+@router.get("/public/sessions/{session_id}", response_model=PublicSessionResponse)
 async def get_shared_session_detail(
     session_id: UUID = Path(...),
     db: AsyncSession = Depends(get_session),
@@ -136,7 +136,7 @@ async def get_shared_session_detail(
     )
 
 
-@router.get("/api/public/sessions/{session_id}/messages")
+@router.get("/public/sessions/{session_id}/messages")
 async def get_shared_session_messages(
     session_id: UUID = Path(...),
     offset: int = Query(default=0, ge=0),
@@ -173,7 +173,7 @@ async def get_shared_session_messages(
     )
 
 
-@router.get("/api/public/sessions/{session_id}/export.md")
+@router.get("/public/sessions/{session_id}/export.md")
 async def export_shared_session_markdown(
     session_id: UUID = Path(...),
     db: AsyncSession = Depends(get_session),
@@ -218,7 +218,7 @@ async def export_shared_session_markdown(
 
 
 @router.get(
-    "/api/public/sessions/{session_id}/export.json",
+    "/public/sessions/{session_id}/export.json",
     response_model=PublicSessionExportResponse,
     response_model_exclude_none=True,
 )

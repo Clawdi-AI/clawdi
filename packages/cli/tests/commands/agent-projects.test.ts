@@ -85,7 +85,7 @@ describe("agent project commands", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/agents/agent-1/project-bindings",
+				path: "/v1/agents/agent-1/project-bindings",
 				response: () =>
 					jsonResponse([
 						{
@@ -110,7 +110,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -161,7 +161,7 @@ describe("agent project commands", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/agents/agent-1/project-bindings",
+				path: "/v1/agents/agent-1/project-bindings",
 				response: () =>
 					jsonResponse([
 						{
@@ -177,7 +177,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -209,7 +209,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -223,7 +223,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/agent-1/project-bindings/context",
 				response: () =>
 					jsonResponse({
 						id: "attach-1",
@@ -255,7 +255,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -269,7 +269,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/agent-1/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
@@ -288,7 +288,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/api/agents/agent-1/project-bindings/context",
+					request.path === "/v1/agents/agent-1/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -298,7 +298,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -312,7 +312,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/agent-1/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
@@ -331,7 +331,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/api/agents/agent-1/project-bindings/context",
+					request.path === "/v1/agents/agent-1/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -341,7 +341,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -355,7 +355,7 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/agent-1/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
@@ -374,7 +374,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/api/agents/agent-1/project-bindings/context",
+					request.path === "/v1/agents/agent-1/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -384,7 +384,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/api/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/agent-1/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
@@ -408,7 +408,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/api/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/agent-1/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
@@ -426,7 +426,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/api/agents/agent-1/project-bindings/context/reorder",
+					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);
@@ -436,7 +436,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/api/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/agent-1/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
@@ -454,7 +454,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/api/agents/agent-1/project-bindings/context/reorder",
+					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);
@@ -464,7 +464,7 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/api/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/agent-1/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
@@ -482,7 +482,7 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/api/agents/agent-1/project-bindings/context/reorder",
+					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);

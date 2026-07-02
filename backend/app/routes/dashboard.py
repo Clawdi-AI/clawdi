@@ -12,7 +12,7 @@ from app.core.database import get_session
 from app.models.session import Session
 from app.schemas.dashboard import ContributionDayResponse, DashboardStatsResponse
 
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 log = logging.getLogger(__name__)
 
 _DASHBOARD_DAYS_MAX = 3660

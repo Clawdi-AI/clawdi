@@ -46,12 +46,12 @@ export default function VaultPage() {
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 	});
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 	});
 	const projectNameById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p.name])),
@@ -209,7 +209,7 @@ function VaultCard({
 		enabled: listCount === undefined,
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/vault/{slug}/items", {
+				await api.GET("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug: vault.slug },
 						query: { project_id: vault.project_ids?.[0] ?? undefined },
@@ -292,13 +292,13 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
 	const vaultsQuery = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 		enabled: open,
 	});
 	// A vault is created through a project the user can write to; the
@@ -329,7 +329,7 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 				throw new Error("A vault with that name already exists");
 			}
 			return unwrap(
-				await api.POST("/api/vault", {
+				await api.POST("/v1/vault", {
 					params: { query: { project_id: defaultProject.id, create_only: true } },
 					body: { slug, name: name.trim() },
 				}),

@@ -32,7 +32,7 @@ async function fetchLinks(
 	bearer: string,
 	projectId: string,
 ): Promise<ShareLinkRow[]> {
-	return authedJson<ShareLinkRow[]>(apiUrl, bearer, `/api/projects/${projectId}/share-links`);
+	return authedJson<ShareLinkRow[]>(apiUrl, bearer, `/v1/projects/${projectId}/share-links`);
 }
 
 function formatRow(link: ShareLinkRow): string {
@@ -81,7 +81,7 @@ export async function projectShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		const r = await fetch(`${apiUrl}/api/projects/${projectId}/share-links/${linkId}`, {
+		const r = await fetch(`${apiUrl}/v1/projects/${projectId}/share-links/${linkId}`, {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${apiKey}` },
 		});

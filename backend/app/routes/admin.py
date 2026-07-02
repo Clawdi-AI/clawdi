@@ -93,7 +93,7 @@ logger = logging.getLogger(__name__)
 # emitting bindings for them, so a leaked frontend bundle can't even
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
-router = APIRouter(prefix="/api/admin", tags=["admin"], include_in_schema=False)
+router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
 
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:

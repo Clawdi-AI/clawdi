@@ -35,8 +35,7 @@ from app.services.session_content import (
 from app.services.session_export import session_to_markdown
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/mcp", tags=["mcp"])
-v1_router = APIRouter(prefix="/v1/mcp", tags=["mcp"])
+router = APIRouter(prefix="/mcp", tags=["mcp"])
 file_store = get_file_store()
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -162,7 +161,6 @@ def _extract_user_id(request: Request) -> str:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
 
-@v1_router.post("/clawdi", include_in_schema=False)
 @router.post("/clawdi", include_in_schema=False)
 async def mcp_clawdi_post(
     request: Request,
@@ -478,7 +476,6 @@ async def _tool_connector_call(
     return _tool_text(text)
 
 
-@v1_router.post("/composio", include_in_schema=False)
 @router.post("/composio", include_in_schema=False)
 async def mcp_composio_bridge_post(request: Request):
     """Forward MCP JSON-RPC to Composio Tool Router for an authenticated user."""

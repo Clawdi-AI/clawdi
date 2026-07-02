@@ -49,7 +49,7 @@ describe("projectListCommand", () => {
 			},
 		];
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		const lines: string[] = [];
@@ -97,7 +97,7 @@ describe("projectListCommand", () => {
 			},
 		];
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		let out = "";
@@ -135,7 +135,7 @@ describe("projectListCommand", () => {
 			},
 		];
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		const lines: string[] = [];
@@ -173,7 +173,7 @@ describe("projectListCommand", () => {
 			},
 		];
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		let out = "";

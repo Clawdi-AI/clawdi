@@ -77,12 +77,12 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels$/,
+				path: /^\/v1\/channels$/,
 				response: () => jsonResponse([]),
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels$/,
+				path: /^\/v1\/channels$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -92,7 +92,7 @@ outputs:
 							status: "active",
 							visibility: "private",
 							has_provider_token: true,
-							webhook_url: "https://api.test/api/channels/telegram/channel-1/webhook",
+							webhook_url: "https://api.test/v1/channels/telegram/channel-1/webhook",
 							created_at: "2026-06-08T00:00:00Z",
 							webhook_secret: "shown-once",
 						},
@@ -101,12 +101,12 @@ outputs:
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-1\/agent-links$/,
+				path: /^\/v1\/channels\/channel-1\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-1\/agent-links$/,
+				path: /^\/v1\/channels\/channel-1\/agent-links$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -122,7 +122,7 @@ outputs:
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-1\/pair-codes$/,
+				path: /^\/v1\/channels\/channel-1\/pair-codes$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -137,7 +137,7 @@ outputs:
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-1\/commands\/sync$/,
+				path: /^\/v1\/channels\/channel-1\/commands\/sync$/,
 				response: () =>
 					jsonResponse({
 						provider: "telegram",
@@ -150,12 +150,12 @@ outputs:
 		restore();
 
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			"GET /api/channels",
-			"POST /api/channels",
-			"GET /api/channels/channel-1/agent-links",
-			"POST /api/channels/channel-1/agent-links",
-			"POST /api/channels/channel-1/pair-codes",
-			"POST /api/channels/channel-1/commands/sync",
+			"GET /v1/channels",
+			"POST /v1/channels",
+			"GET /v1/channels/channel-1/agent-links",
+			"POST /v1/channels/channel-1/agent-links",
+			"POST /v1/channels/channel-1/pair-codes",
+			"POST /v1/channels/channel-1/commands/sync",
 		]);
 		expect(captured[1]?.body).toMatchObject({
 			provider: "telegram",
@@ -170,7 +170,7 @@ outputs:
 		});
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("TELEGRAM_AGENT_TOKEN=agent-token");
-		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/api/channels/telegram");
+		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/v1/channels/telegram");
 		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/bot_pair PAIR123"');
 		expect(dotenv).toContain("# >>> clawdi channel runtime >>>");
 		expect(dotenv).toContain("# <<< clawdi channel runtime <<<");
@@ -199,7 +199,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -208,18 +208,18 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -238,10 +238,10 @@ outputs:
 		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
 		restore();
 
-		expect(captured.some((request) => request.path.startsWith("/api/admin/"))).toBe(false);
+		expect(captured.some((request) => request.path.startsWith("/v1/admin/"))).toBe(false);
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=discord-token");
-		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/api/channels/discord/gateway");
+		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/v1/channels/discord/gateway");
 	});
 
 	it("does not rotate an existing link token unless explicitly requested", async () => {
@@ -263,7 +263,7 @@ outputs:
 		const baseHandlers = [
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -272,13 +272,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -292,7 +292,7 @@ outputs:
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-public\/agent-links\/link-1\/token$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links\/link-1\/token$/,
 				response: () =>
 					jsonResponse({
 						id: "link-1",
@@ -352,7 +352,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -361,13 +361,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -390,7 +390,7 @@ outputs:
 		expect(JSON.parse(out).applied.warnings).toEqual([]);
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=existing-token");
-		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/api/channels/discord/gateway");
+		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/v1/channels/discord/gateway");
 	});
 
 	it("updates only the managed dotenv block and preserves user env lines", async () => {
@@ -413,7 +413,7 @@ outputs:
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -422,18 +422,18 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -477,7 +477,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels$/,
+				path: /^\/v1\/channels$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -487,14 +487,14 @@ outputs:
 							status: "active",
 							visibility: "private",
 							has_provider_token: true,
-							webhook_url: "https://api.test/api/channels/telegram/channel-1/webhook",
+							webhook_url: "https://api.test/v1/channels/telegram/channel-1/webhook",
 							created_at: "2026-06-08T00:00:00Z",
 						},
 					]),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-1\/agent-links$/,
+				path: /^\/v1\/channels\/channel-1\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 		]);
@@ -529,7 +529,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -538,13 +538,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 		]);
@@ -553,8 +553,8 @@ outputs:
 		restore();
 
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			"GET /api/channels/channel-public",
-			"GET /api/channels/channel-public/agent-links",
+			"GET /v1/channels/channel-public",
+			"GET /v1/channels/channel-public/agent-links",
 		]);
 		expect(JSON.parse(plan).plan.accounts[0].action).toBe("reuse_account");
 		expect(JSON.parse(plan).plan.warnings).toEqual([]);
@@ -579,7 +579,7 @@ outputs:
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-telegram$/,
+				path: /^\/v1\/channels\/channel-telegram$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-telegram",
@@ -588,7 +588,7 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/telegram/channel-telegram/webhook",
+						webhook_url: "https://api.test/v1/channels/telegram/channel-telegram/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
@@ -643,7 +643,7 @@ outputs:
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa$/,
+				path: /^\/v1\/channels\/channel-wa$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-wa",
@@ -652,13 +652,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/whatsapp/channel-wa/webhook",
+						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa\/agent-links$/,
+				path: /^\/v1\/channels\/channel-wa\/agent-links$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -673,7 +673,7 @@ outputs:
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/whatsapp\/channel-wa\/tenant-creds$/,
+				path: /^\/v1\/channels\/whatsapp\/channel-wa\/tenant-creds$/,
 				response: () =>
 					jsonResponse(
 						{
@@ -685,8 +685,8 @@ outputs:
 							identity_pub_key_hex: "abcd",
 							creds: { noiseKey: "n" },
 							auth_cert: { cert: "c" },
-							websocket_url: "wss://api.test/api/channels/whatsapp/channel-wa/baileys",
-							media_proxy_base_url: "https://api.test/api/channels/whatsapp/media",
+							websocket_url: "wss://api.test/v1/channels/whatsapp/channel-wa/baileys",
+							media_proxy_base_url: "https://api.test/v1/channels/whatsapp/media",
 						},
 						201,
 					),
@@ -856,7 +856,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa-a$/,
+				path: /^\/v1\/channels\/channel-wa-a$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-wa-a",
@@ -865,13 +865,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/whatsapp/channel-wa-a/webhook",
+						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-a/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa-a\/agent-links$/,
+				path: /^\/v1\/channels\/channel-wa-a\/agent-links$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -886,7 +886,7 @@ outputs:
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa-b$/,
+				path: /^\/v1\/channels\/channel-wa-b$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-wa-b",
@@ -895,13 +895,13 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/whatsapp/channel-wa-b/webhook",
+						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-b/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-wa-b\/agent-links$/,
+				path: /^\/v1\/channels\/channel-wa-b\/agent-links$/,
 				response: () =>
 					jsonResponse([
 						{
@@ -922,10 +922,10 @@ outputs:
 		expect(captured).toHaveLength(4);
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain(
-			"WA_A_WEBSOCKET_URL=wss://api.test/api/channels/whatsapp/channel-wa-a/baileys",
+			"WA_A_WEBSOCKET_URL=wss://api.test/v1/channels/whatsapp/channel-wa-a/baileys",
 		);
 		expect(dotenv).toContain(
-			"WA_B_WEBSOCKET_URL=wss://api.test/api/channels/whatsapp/channel-wa-b/baileys",
+			"WA_B_WEBSOCKET_URL=wss://api.test/v1/channels/whatsapp/channel-wa-b/baileys",
 		);
 	});
 
@@ -952,7 +952,7 @@ outputs:
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public$/,
+				path: /^\/v1\/channels\/channel-public$/,
 				response: () =>
 					jsonResponse({
 						id: "channel-public",
@@ -961,23 +961,23 @@ outputs:
 						status: "active",
 						visibility: "public",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/discord/channel-public/webhook",
+						webhook_url: "https://api.test/v1/channels/discord/channel-public/webhook",
 						created_at: "2026-06-08T00:00:00Z",
 					}),
 			},
 			{
 				method: "GET",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () => jsonResponse([]),
 			},
 			{
 				method: "POST",
-				path: /^\/api\/channels\/channel-public\/agent-links$/,
+				path: /^\/v1\/channels\/channel-public\/agent-links$/,
 				response: () => {
 					const count = captured.filter(
 						(request) =>
 							request.method === "POST" &&
-							request.path === "/api/channels/channel-public/agent-links",
+							request.path === "/v1/channels/channel-public/agent-links",
 					).length;
 					return jsonResponse(
 						{
@@ -1000,7 +1000,7 @@ outputs:
 		expect(
 			captured.filter(
 				(request) =>
-					request.method === "GET" && request.path === "/api/channels/channel-public/agent-links",
+					request.method === "GET" && request.path === "/v1/channels/channel-public/agent-links",
 			),
 		).toHaveLength(1);
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");

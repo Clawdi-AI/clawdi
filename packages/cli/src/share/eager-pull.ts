@@ -43,13 +43,13 @@ export async function pullSharedSkills(
 	const items: SkillSummary[] = [];
 	let page = 1;
 	while (true) {
-		const url = new URL(`${apiUrl}/api/skills`);
+		const url = new URL(`${apiUrl}/v1/skills`);
 		url.searchParams.set("project_id", projectId);
 		url.searchParams.set("page", String(page));
 		url.searchParams.set("page_size", String(PAGE_SIZE));
 		const r = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
 		if (!r.ok) throw new Error(`Skill listing failed: HTTP ${r.status}`);
-		const body = await readJson<{ items: SkillSummary[] }>(r, "/api/skills");
+		const body = await readJson<{ items: SkillSummary[] }>(r, "/v1/skills");
 		items.push(...body.items);
 		if (body.items.length < PAGE_SIZE) break;
 		page += 1;
@@ -63,7 +63,7 @@ export async function pullSharedSkills(
 	// concurrently; per-skill adapter writes also fan out per skill.
 	const dlResults = await Promise.all(
 		active.map(async (skill): Promise<string | null> => {
-			const dlUrl = `${apiUrl}/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
+			const dlUrl = `${apiUrl}/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`;
 			const dl = await fetch(dlUrl, { headers: { Authorization: `Bearer ${bearer}` } });
 			if (!dl.ok) return null;
 			const buf = Buffer.from(await dl.arrayBuffer());

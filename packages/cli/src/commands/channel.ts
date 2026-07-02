@@ -58,7 +58,7 @@ interface ChannelDeleteOptions extends JsonOption {
 
 export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
-	const channels = unwrap(await api.GET("/api/channels"));
+	const channels = unwrap(await api.GET("/v1/channels"));
 	if (opts.json) {
 		console.log(JSON.stringify({ channels }, null, 2));
 		return;
@@ -83,7 +83,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 
 export async function channelAvailableCommand(opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
-	const pool = unwrap(await api.GET("/api/channels/bot-pool"));
+	const pool = unwrap(await api.GET("/v1/channels/bot-pool"));
 	if (opts.json) {
 		console.log(JSON.stringify({ bot_pool: pool }, null, 2));
 		return;
@@ -94,7 +94,7 @@ export async function channelAvailableCommand(opts: JsonOption = {}): Promise<vo
 export async function channelGetCommand(accountId: string, opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
 	const channel = unwrap(
-		await api.GET("/api/channels/{account_id}", {
+		await api.GET("/v1/channels/{account_id}", {
 			params: { path: { account_id: accountId } },
 		}),
 	);
@@ -119,7 +119,7 @@ export async function channelCreateCommand(
 		config: opts.config ? parseObjectJson(opts.config, "--config") : null,
 		secrets: parseSecrets(opts.secret, opts.secretEnv),
 	};
-	const channel = unwrap(await api.POST("/api/channels", { body }));
+	const channel = unwrap(await api.POST("/v1/channels", { body }));
 	if (opts.json) {
 		console.log(JSON.stringify({ channel }, null, 2));
 		return;
@@ -130,7 +130,7 @@ export async function channelCreateCommand(
 export async function channelLinksCommand(accountId: string, opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
 	const links = unwrap(
-		await api.GET("/api/channels/{account_id}/agent-links", {
+		await api.GET("/v1/channels/{account_id}/agent-links", {
 			params: { path: { account_id: accountId } },
 		}),
 	);
@@ -155,7 +155,7 @@ export async function channelLinkCommand(
 ): Promise<void> {
 	const api = new ApiClient();
 	const link = unwrap(
-		await api.POST("/api/channels/{account_id}/agent-links", {
+		await api.POST("/v1/channels/{account_id}/agent-links", {
 			params: { path: { account_id: accountId } },
 			body: { agent_id: opts.agent },
 		}),
@@ -173,7 +173,7 @@ export async function channelRotateTokenCommand(
 ): Promise<void> {
 	const api = new ApiClient();
 	const link = unwrap(
-		await api.POST("/api/channels/{account_id}/agent-links/{link_id}/token", {
+		await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
 			params: { path: { account_id: accountId, link_id: opts.link } },
 		}),
 	);
@@ -196,7 +196,7 @@ export async function channelPairCodeCommand(
 	const ttlSeconds = parseTtl(opts.ttl);
 	const api = new ApiClient();
 	const pairCode = unwrap(
-		await api.POST("/api/channels/{account_id}/pair-codes", {
+		await api.POST("/v1/channels/{account_id}/pair-codes", {
 			params: { path: { account_id: accountId } },
 			body: {
 				agent_id: opts.agent ?? null,
@@ -228,7 +228,7 @@ export async function channelSendCommand(
 	}
 	const api = new ApiClient();
 	const message = unwrap(
-		await api.POST("/api/channels/{account_id}/messages", {
+		await api.POST("/v1/channels/{account_id}/messages", {
 			params: { path: { account_id: accountId } },
 			body: {
 				binding_id: opts.binding ?? null,
@@ -250,7 +250,7 @@ export async function channelBindingsCommand(
 ): Promise<void> {
 	const api = new ApiClient();
 	const bindings = unwrap(
-		await api.GET("/api/channels/{account_id}/bindings", {
+		await api.GET("/v1/channels/{account_id}/bindings", {
 			params: { path: { account_id: accountId } },
 		}),
 	);
@@ -280,7 +280,7 @@ export async function channelSyncCommandsCommand(
 ): Promise<void> {
 	const api = new ApiClient();
 	const synced = unwrap(
-		await api.POST("/api/channels/{account_id}/commands/sync", {
+		await api.POST("/v1/channels/{account_id}/commands/sync", {
 			params: { path: { account_id: accountId } },
 			body: {
 				commands: opts.commands ? parseCommandSpecs(opts.commands) : null,
@@ -313,7 +313,7 @@ export async function channelDeleteCommand(
 	}
 	const api = new ApiClient();
 	unwrap(
-		await api.DELETE("/api/channels/{account_id}", {
+		await api.DELETE("/v1/channels/{account_id}", {
 			params: { path: { account_id: accountId } },
 		}),
 	);

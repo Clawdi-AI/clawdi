@@ -58,12 +58,12 @@ export function AddKeysDialog({
 	const vaultsQuery = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 		enabled: open,
 	});
 	const projectsQuery = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
 
@@ -100,7 +100,7 @@ export function AddKeysDialog({
 		queryKey: ["vault-items", effectiveChoice, selectedVaultProjectId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/vault/{slug}/items", {
+				await api.GET("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug: effectiveChoice },
 						query: { project_id: selectedVaultProjectId },
@@ -148,7 +148,7 @@ export function AddKeysDialog({
 				if (!writableProject) throw new Error("No writable Project available yet");
 				projectId = writableProject.id;
 				await unwrap(
-					await api.POST("/api/vault", {
+					await api.POST("/v1/vault", {
 						params: { query: { project_id: projectId, create_only: true } },
 						body: { slug, name },
 					}),
@@ -161,7 +161,7 @@ export function AddKeysDialog({
 			if (entries.length === 0) throw new Error("No keys to save");
 			for (let i = 0; i < entries.length; i += 150) {
 				await unwrap(
-					await api.PUT("/api/vault/{slug}/items", {
+					await api.PUT("/v1/vault/{slug}/items", {
 						params: { path: { slug }, query: { project_id: projectId } },
 						body: { section: "", fields: Object.fromEntries(entries.slice(i, i + 150)) },
 					}),

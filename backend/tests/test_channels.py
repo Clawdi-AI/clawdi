@@ -219,7 +219,7 @@ async def _create_admin_channel(
         if config is not None:
             payload["config"] = config
         return await client.post(
-            "/api/admin/channels",
+            "/v1/admin/channels",
             headers={"X-Admin-Key": admin_key},
             json=payload,
         )
@@ -417,7 +417,7 @@ async def _create_paired_imessage_channel(
     sequenced_status_codes = list(_SequencedProviderClient.status_codes)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": name,
@@ -428,12 +428,12 @@ async def _create_paired_imessage_channel(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -444,7 +444,7 @@ async def _create_paired_imessage_channel(
         },
     )
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -478,7 +478,7 @@ async def _create_paired_telegram_channel(
         payload["config"] = config
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json=payload,
         )
     ).json()
@@ -496,12 +496,12 @@ async def _pair_telegram_chat(
 ) -> None:
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": update_id,
@@ -530,7 +530,7 @@ async def _create_paired_discord_channel(
 ) -> dict[str, Any]:
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": name,
@@ -541,12 +541,12 @@ async def _create_paired_discord_channel(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "type": 2,
@@ -576,7 +576,7 @@ async def _record_discord_interaction(
     guild_id: str = "discord-guild-1",
 ) -> None:
     await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "type": 2,
@@ -593,7 +593,7 @@ async def _record_discord_interaction(
 @pytest.mark.asyncio
 async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "telegram",
             "name": "ops-phone",
@@ -610,7 +610,7 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert created["webhook_secret"]
     assert "telegram-secret" not in response.text
 
-    listed = await client.get("/api/channels")
+    listed = await client.get("/v1/channels")
     assert listed.status_code == 200
     assert listed.json()[0]["has_provider_token"] is True
     assert "webhook_secret" not in listed.text
@@ -627,24 +627,24 @@ def test_generate_telegram_agent_token_matches_bot_api_contract():
 
 @pytest.mark.asyncio
 async def test_list_channels_supports_content_etag(client: httpx.AsyncClient):
-    first = await client.get("/api/channels")
+    first = await client.get("/v1/channels")
     assert first.status_code == 200
     etag = first.headers.get("etag")
     assert etag is not None
     assert first.headers["cache-control"] == "no-store"
 
-    not_modified = await client.get("/api/channels", headers={"If-None-Match": etag})
+    not_modified = await client.get("/v1/channels", headers={"If-None-Match": etag})
     assert not_modified.status_code == 304
     assert not_modified.headers["etag"] == etag
     assert not_modified.headers["cache-control"] == "no-store"
 
     created = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={"provider": "telegram", "name": f"etag-channel-{uuid4().hex}"},
     )
     assert created.status_code == 201
 
-    changed = await client.get("/api/channels", headers={"If-None-Match": etag})
+    changed = await client.get("/v1/channels", headers={"If-None-Match": etag})
     assert changed.status_code == 200
     assert changed.headers["etag"] != etag
     assert any(item["id"] == created.json()["id"] for item in changed.json())
@@ -657,7 +657,7 @@ async def test_rotate_channel_agent_link_token_replaces_one_time_token(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"rotate-token-{uuid4().hex}",
@@ -668,7 +668,7 @@ async def test_rotate_channel_agent_link_token_replaces_one_time_token(
     old_token = created["agent_token"]
 
     rotated = await client.post(
-        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
     )
 
     assert rotated.status_code == 200, rotated.text
@@ -697,7 +697,7 @@ async def test_channel_control_plane_actions_write_redacted_audit_events(
     provider_token = "123456:telegram-secret"
     extra_secret = "channel-extra-secret"
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "telegram",
             "name": f"audit-channel-{uuid4().hex}",
@@ -710,20 +710,20 @@ async def test_channel_control_plane_actions_write_redacted_audit_events(
     initial_agent_token = created["agent_token"]
 
     rotated_response = await client.post(
-        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
     )
     assert rotated_response.status_code == 200, rotated_response.text
     rotated_agent_token = rotated_response.json()["agent_token"]
 
     pair_response = await client.post(
-        f"/api/channels/{created['id']}/pair-codes",
+        f"/v1/channels/{created['id']}/pair-codes",
         json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
     )
     assert pair_response.status_code == 201, pair_response.text
     pair_code = pair_response.json()["code"]
 
     audit_response = await client.get(
-        "/api/audit/events",
+        "/v1/audit/events",
         params={"channel_account_id": created["id"], "limit": 20},
     )
     assert audit_response.status_code == 200, audit_response.text
@@ -757,7 +757,7 @@ async def test_channel_control_plane_actions_write_redacted_audit_events(
     )
     async with _client_for_user(db_session, other_user) as other_client:
         other_response = await other_client.get(
-            "/api/audit/events",
+            "/v1/audit/events",
             params={"channel_account_id": created["id"], "limit": 20},
         )
 
@@ -773,7 +773,7 @@ async def test_channel_activity_lists_messages_deliveries_and_debug_events_safel
 ):
     provider_token = "123456:activity-provider-token"
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "telegram",
             "name": f"activity-channel-{uuid4().hex}",
@@ -784,7 +784,7 @@ async def test_channel_activity_lists_messages_deliveries_and_debug_events_safel
     created = created_response.json()
 
     outbound_response = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "activity-chat", "text": "activity outbound"},
     )
     assert outbound_response.status_code == 201, outbound_response.text
@@ -828,7 +828,7 @@ async def test_channel_activity_lists_messages_deliveries_and_debug_events_safel
     await db_session.commit()
 
     response = await client.get(
-        f"/api/channels/{created['id']}/activity",
+        f"/v1/channels/{created['id']}/activity",
         params={"external_chat_id": "activity-chat", "limit": 20},
     )
 
@@ -863,7 +863,7 @@ async def test_public_channel_activity_is_scoped_to_event_owner(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"public-activity-{uuid4().hex}",
@@ -892,7 +892,7 @@ async def test_public_channel_activity_is_scoped_to_event_owner(
         label="activity-other",
     )
     async with _client_for_user(db_session, other_user) as other_client:
-        other_response = await other_client.get(f"/api/channels/{created['id']}/activity")
+        other_response = await other_client.get(f"/v1/channels/{created['id']}/activity")
 
     assert other_response.status_code == 200, other_response.text
     assert other_response.json()["items"] == []
@@ -905,7 +905,7 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     seed_user,
 ):
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={"provider": "telegram", "name": f"health-channel-{uuid4().hex}"},
     )
     assert created_response.status_code == 201, created_response.text
@@ -938,7 +938,7 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     await db_session.commit()
 
     failed_response = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "failed-chat", "text": "failed outbound"},
     )
     assert failed_response.status_code == 201, failed_response.text
@@ -952,7 +952,7 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     failed_delivery.last_error = "provider rejected request"
 
     pending_response = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "pending-chat", "text": "pending outbound"},
     )
     assert pending_response.status_code == 201, pending_response.text
@@ -969,7 +969,7 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     )
     await db_session.commit()
 
-    response = await client.get("/api/channels/health")
+    response = await client.get("/v1/channels/health")
 
     assert response.status_code == 200, response.text
     health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
@@ -996,7 +996,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"shared-health-{uuid4().hex}"},
         )
     ).json()
@@ -1056,7 +1056,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
     await db_session.commit()
 
     async with _client_for_user(db_session, other_user) as other_client:
-        response = await other_client.get("/api/channels/health")
+        response = await other_client.get("/v1/channels/health")
 
     assert response.status_code == 200, response.text
     health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
@@ -1075,7 +1075,7 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
     channel_agent,
 ):
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "telegram",
             "name": f"runtime-list-{uuid4().hex}",
@@ -1087,7 +1087,7 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        listed = await runtime_client.get("/api/channels")
+        listed = await runtime_client.get("/v1/channels")
 
     assert listed.status_code == 200, listed.text
     payload = listed.json()
@@ -1116,7 +1116,7 @@ async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
 ):
     duplicate_name = f"Runtime Duplicate {uuid4().hex}"
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "telegram",
             "name": duplicate_name,
@@ -1156,10 +1156,10 @@ async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        first = await runtime_client.get("/api/channels")
+        first = await runtime_client.get("/v1/channels")
         assert first.status_code == 200, first.text
         etag = first.headers["etag"]
-        second = await runtime_client.get("/api/channels", headers={"If-None-Match": etag})
+        second = await runtime_client.get("/v1/channels", headers={"If-None-Match": etag})
 
     assert second.status_code == 304, second.text
     listed_ids = [item["id"] for item in first.json()]
@@ -1175,7 +1175,7 @@ async def test_env_bound_channel_etag_changes_when_agent_token_rotates(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"runtime-etag-{uuid4().hex}",
@@ -1186,18 +1186,18 @@ async def test_env_bound_channel_etag_changes_when_agent_token_rotates(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        first = await runtime_client.get("/api/channels")
+        first = await runtime_client.get("/v1/channels")
     assert first.status_code == 200, first.text
     etag = first.headers["etag"]
 
     rotated = await client.post(
-        f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
     )
     assert rotated.status_code == 200, rotated.text
     rotated_token = rotated.json()["agent_token"]
 
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        changed = await runtime_client.get("/api/channels", headers={"If-None-Match": etag})
+        changed = await runtime_client.get("/v1/channels", headers={"If-None-Match": etag})
 
     assert changed.status_code == 200, changed.text
     assert changed.headers["etag"] != etag
@@ -1211,7 +1211,7 @@ async def test_user_created_channel_is_private_to_owner(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"private-{uuid4().hex}"},
         )
     ).json()
@@ -1222,17 +1222,17 @@ async def test_user_created_channel_is_private_to_owner(
         label="private-other",
     )
     async with _client_for_user(db_session, other_user) as other_client:
-        listed = await other_client.get("/api/channels")
+        listed = await other_client.get("/v1/channels")
         assert listed.status_code == 200
         assert all(item["id"] != created["id"] for item in listed.json())
 
-        fetched = await other_client.get(f"/api/channels/{created['id']}")
+        fetched = await other_client.get(f"/v1/channels/{created['id']}")
         linked = await other_client.post(
-            f"/api/channels/{created['id']}/agent-links",
+            f"/v1/channels/{created['id']}/agent-links",
             json={"agent_id": str(other_agent.id)},
         )
         paired = await other_client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"agent_id": str(other_agent.id), "ttl_seconds": 900},
         )
 
@@ -1249,7 +1249,7 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
 ):
     private = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"pool-private-{uuid4().hex}"},
         )
     ).json()
@@ -1263,7 +1263,7 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     public_body = public.json()
     disabled_private = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"pool-disabled-{uuid4().hex}"},
         )
     ).json()
@@ -1276,7 +1276,7 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     await db_session.flush()
     disabled_whatsapp = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": f"pool-disabled-wa-{uuid4().hex}"},
         )
     ).json()
@@ -1288,7 +1288,7 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     disabled_whatsapp_account.status = CHANNEL_STATUS_DISABLED
     await db_session.flush()
 
-    pool = await client.get("/api/channels/bot-pool")
+    pool = await client.get("/v1/channels/bot-pool")
     assert pool.status_code == 200
     telegram = pool.json()["providers"]["telegram"]
     pool_by_id = {item["id"]: item for item in telegram}
@@ -1321,7 +1321,7 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
         label="pool-other",
     )
     async with _client_for_user(db_session, other_user) as other_client:
-        other_pool = await other_client.get("/api/channels/bot-pool")
+        other_pool = await other_client.get("/v1/channels/bot-pool")
     assert other_pool.status_code == 200
     other_telegram = other_pool.json()["providers"]["telegram"]
     other_ids = {item["id"] for item in other_telegram}
@@ -1331,26 +1331,26 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     other_public = next(item for item in other_telegram if item["id"] == public_body["id"])
     assert other_public["access"] == "public"
 
-    disabled_detail = await client.get(f"/api/channels/{disabled_private['id']}")
-    disabled_links = await client.get(f"/api/channels/{disabled_private['id']}/agent-links")
+    disabled_detail = await client.get(f"/v1/channels/{disabled_private['id']}")
+    disabled_links = await client.get(f"/v1/channels/{disabled_private['id']}/agent-links")
     disabled_link_create = await client.post(
-        f"/api/channels/{disabled_private['id']}/agent-links",
+        f"/v1/channels/{disabled_private['id']}/agent-links",
         json={},
     )
     disabled_pair = await client.post(
-        f"/api/channels/{disabled_private['id']}/pair-codes",
+        f"/v1/channels/{disabled_private['id']}/pair-codes",
         json={"ttl_seconds": 900},
     )
     disabled_send = await client.post(
-        f"/api/channels/{disabled_private['id']}/messages",
+        f"/v1/channels/{disabled_private['id']}/messages",
         json={"external_chat_id": "12345", "text": "hello"},
     )
     disabled_whatsapp_credential = await client.post(
-        f"/api/channels/whatsapp/{disabled_whatsapp['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{disabled_whatsapp['id']}/tenant-creds",
         json={},
     )
     disabled_whatsapp_auth_cert = await client.get(
-        f"/api/channels/whatsapp/{disabled_whatsapp['id']}/auth-cert"
+        f"/v1/channels/whatsapp/{disabled_whatsapp['id']}/auth-cert"
     )
     assert disabled_detail.status_code == 200
     assert disabled_links.status_code == 200
@@ -1381,18 +1381,18 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
 
     async with _client_for_user(db_session, user_a) as client_a:
         first_link = await client_a.post(
-            f"/api/channels/{account_id}/agent-links",
+            f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_a.id)},
         )
-        pool_after_first = await client_a.get("/api/channels/bot-pool")
+        pool_after_first = await client_a.get("/v1/channels/bot-pool")
     async with _client_for_user(db_session, user_b) as client_b:
-        pool_for_second = await client_b.get("/api/channels/bot-pool")
+        pool_for_second = await client_b.get("/v1/channels/bot-pool")
         second_link = await client_b.post(
-            f"/api/channels/{account_id}/agent-links",
+            f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_b.id)},
         )
         second_pair = await client_b.post(
-            f"/api/channels/{account_id}/pair-codes",
+            f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
         )
 
@@ -1437,7 +1437,7 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
 
     async with _client_for_user(db_session, user_a) as client_a:
         first_link = await client_a.post(
-            f"/api/channels/{account_id}/agent-links",
+            f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_a.id)},
         )
         assert first_link.status_code == 201, first_link.text
@@ -1446,28 +1446,28 @@ async def test_delete_channel_agent_link_archives_link_and_releases_capacity(
         assert active_link is not None
         assert active_link.encrypted_agent_token is not None
         assert active_link.agent_token_nonce is not None
-        full_pool = await client_a.get("/api/channels/bot-pool")
+        full_pool = await client_a.get("/v1/channels/bot-pool")
         api_key = ApiKey(user_id=user_a.id, environment_id=agent_a.id, label="hosted")
         async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
-            desired_before = await runtime_client.get("/api/channels")
+            desired_before = await runtime_client.get("/v1/channels")
 
-        deleted = await client_a.delete(f"/api/channels/{account_id}/agent-links/{first_link_id}")
+        deleted = await client_a.delete(f"/v1/channels/{account_id}/agent-links/{first_link_id}")
         second_delete = await client_a.delete(
-            f"/api/channels/{account_id}/agent-links/{first_link_id}"
+            f"/v1/channels/{account_id}/agent-links/{first_link_id}"
         )
-        missing_delete = await client_a.delete(f"/api/channels/{account_id}/agent-links/{uuid4()}")
+        missing_delete = await client_a.delete(f"/v1/channels/{account_id}/agent-links/{uuid4()}")
 
-        links_after = await client_a.get(f"/api/channels/{account_id}/agent-links")
-        pool_after_delete = await client_a.get("/api/channels/bot-pool")
+        links_after = await client_a.get(f"/v1/channels/{account_id}/agent-links")
+        pool_after_delete = await client_a.get("/v1/channels/bot-pool")
         async with _client_for_api_key(db_session, user_a, api_key) as runtime_client:
-            desired_after = await runtime_client.get("/api/channels")
+            desired_after = await runtime_client.get("/v1/channels")
         audit_response = await client_a.get(
-            "/api/audit/events",
+            "/v1/audit/events",
             params={"channel_account_id": account_id, "limit": 20},
         )
     async with _client_for_user(db_session, user_b) as client_b:
         second_link = await client_b.post(
-            f"/api/channels/{account_id}/agent-links",
+            f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_b.id)},
         )
 
@@ -1527,7 +1527,7 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"agent-link-state-delete-{uuid4().hex}",
@@ -1538,7 +1538,7 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
     account_id = UUID(created["id"])
     target_link_id = UUID(created["agent_link_id"])
     sibling_link_response = await client.post(
-        f"/api/channels/{account_id}/agent-links",
+        f"/v1/channels/{account_id}/agent-links",
         json={"agent_id": str(second_channel_agent.id)},
     )
     assert sibling_link_response.status_code == 201, sibling_link_response.text
@@ -1649,7 +1649,7 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
     db_session.add_all([target_pending_delivery, target_in_progress_delivery, sibling_delivery])
     await db_session.commit()
 
-    deleted = await client.delete(f"/api/channels/{account_id}/agent-links/{target_link_id}")
+    deleted = await client.delete(f"/v1/channels/{account_id}/agent-links/{target_link_id}")
 
     assert deleted.status_code == 204, deleted.text
     for row in (
@@ -1687,7 +1687,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
 ):
     private = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"agent-links-private-{uuid4().hex}",
@@ -1697,7 +1697,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     ).json()
     other_private = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": f"agent-links-other-{uuid4().hex}",
@@ -1714,7 +1714,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert public.status_code == 201, public.text
     public_body = public.json()
     public_link = await client.post(
-        f"/api/channels/{public_body['id']}/agent-links",
+        f"/v1/channels/{public_body['id']}/agent-links",
         json={"agent_id": str(channel_agent.id)},
     )
     assert public_link.status_code == 201, public_link.text
@@ -1725,17 +1725,17 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     )
     async with _client_for_user(db_session, other_user) as other_client:
         other_user_link = await other_client.post(
-            f"/api/channels/{public_body['id']}/agent-links",
+            f"/v1/channels/{public_body['id']}/agent-links",
             json={"agent_id": str(other_agent.id)},
         )
         other_user_listing = await other_client.get(
-            "/api/channels/agent-links",
+            "/v1/channels/agent-links",
             params={"agent_id": str(channel_agent.id)},
         )
     assert other_user_link.status_code == 201, other_user_link.text
 
     listed = await client.get(
-        "/api/channels/agent-links",
+        "/v1/channels/agent-links",
         params={"agent_id": str(channel_agent.id)},
     )
 
@@ -1780,14 +1780,14 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     _FakeProviderClient.calls = []
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
 
-    sync = await client.post(f"/api/channels/{account_id}/commands/sync", json={})
-    delete = await client.delete(f"/api/channels/{account_id}")
+    sync = await client.post(f"/v1/channels/{account_id}/commands/sync", json={})
+    delete = await client.delete(f"/v1/channels/{account_id}")
     link = await client.post(
-        f"/api/channels/{account_id}/agent-links",
+        f"/v1/channels/{account_id}/agent-links",
         json={"agent_id": str(channel_agent.id)},
     )
     pair = await client.post(
-        f"/api/channels/{account_id}/pair-codes",
+        f"/v1/channels/{account_id}/pair-codes",
         json={"agent_id": str(channel_agent.id), "ttl_seconds": 900},
     )
 
@@ -1828,11 +1828,11 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     user_b, agent_b = await _create_user_with_channel_agent(db_session, label="public-b")
 
     async with _client_for_user(db_session, user_a) as client_a:
-        listed = await client_a.get("/api/channels")
+        listed = await client_a.get("/v1/channels")
         assert listed.status_code == 200
         assert all(item["id"] != str(account_id) for item in listed.json())
 
-        pool = await client_a.get("/api/channels/bot-pool")
+        pool = await client_a.get("/v1/channels/bot-pool")
         assert pool.status_code == 200
         public_item = next(
             item for item in pool.json()["providers"]["telegram"] if item["id"] == str(account_id)
@@ -1841,14 +1841,14 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
         assert public_item["access"] == "public"
 
         pair = await client_a.post(
-            f"/api/channels/{account_id}/pair-codes",
+            f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
         )
         assert pair.status_code == 201
         pair_body = pair.json()
 
     pair_webhook = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": public_secret},
         json={
             "update_id": 7001,
@@ -1860,7 +1860,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
         },
     )
     inbound = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": public_secret},
         json={
             "update_id": 7002,
@@ -1903,21 +1903,21 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     assert message.user_id == user_a.id
 
     async with _client_for_user(db_session, user_b) as client_b:
-        fetched = await client_b.get(f"/api/channels/{account_id}")
+        fetched = await client_b.get(f"/v1/channels/{account_id}")
         assert fetched.status_code == 200
         assert fetched.json()["visibility"] == "public"
 
-        links = await client_b.get(f"/api/channels/{account_id}/agent-links")
-        bindings = await client_b.get(f"/api/channels/{account_id}/bindings")
+        links = await client_b.get(f"/v1/channels/{account_id}/agent-links")
+        bindings = await client_b.get(f"/v1/channels/{account_id}/bindings")
         rotate = await client_b.post(
-            f"/api/channels/{account_id}/agent-links/{link.id}/token",
+            f"/v1/channels/{account_id}/agent-links/{link.id}/token",
         )
         send_unowned = await client_b.post(
-            f"/api/channels/{account_id}/messages",
+            f"/v1/channels/{account_id}/messages",
             json={"external_chat_id": "99001", "text": "wrong user"},
         )
         own_link = await client_b.post(
-            f"/api/channels/{account_id}/agent-links",
+            f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent_b.id)},
         )
 
@@ -1952,12 +1952,12 @@ async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
     user_b, _agent_b = await _create_user_with_channel_agent(db_session, label="public-wa-b")
 
     async with _client_for_user(db_session, user_a) as client_a:
-        auth_cert = await client_a.get(f"/api/channels/whatsapp/{account_id}/auth-cert")
+        auth_cert = await client_a.get(f"/v1/channels/whatsapp/{account_id}/auth-cert")
         credential = await client_a.post(
-            f"/api/channels/whatsapp/{account_id}/tenant-creds",
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
             json={"agent_id": str(agent_a.id), "phone_user": "15551234567"},
         )
-        listed_a = await client_a.get(f"/api/channels/whatsapp/{account_id}/tenant-creds")
+        listed_a = await client_a.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
 
     assert auth_cert.status_code == 200
     assert auth_cert.json()["ISSUER"] == "clawdi"
@@ -1967,8 +1967,8 @@ async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
     assert len(listed_a.json()) == 1
 
     async with _client_for_user(db_session, user_b) as client_b:
-        listed_b = await client_b.get(f"/api/channels/whatsapp/{account_id}/tenant-creds")
-        auth_cert_b = await client_b.get(f"/api/channels/whatsapp/{account_id}/auth-cert")
+        listed_b = await client_b.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
+        auth_cert_b = await client_b.get(f"/v1/channels/whatsapp/{account_id}/auth-cert")
 
     assert listed_b.status_code == 200
     assert listed_b.json() == []
@@ -2000,14 +2000,14 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
 
     async with _client_for_user(db_session, user_a) as client_a:
         pair_a = await client_a.post(
-            f"/api/channels/{account_id}/pair-codes",
+            f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
         )
     assert pair_a.status_code == 201
 
     async with _client_for_user(db_session, user_b) as client_b:
         pair_b = await client_b.post(
-            f"/api/channels/{account_id}/pair-codes",
+            f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_b.id), "ttl_seconds": 900},
         )
     assert pair_b.status_code == 201
@@ -2027,7 +2027,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
         }
 
     paired_a = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
         json=group_command(8101, f"/bot_pair {pair_a.json()['code']}", 1111),
     )
@@ -2047,7 +2047,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     assert binding.paired_external_user_id == "1111"
 
     bob_unpair = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
         json=group_command(8102, "/bot_unpair", 2222),
     )
@@ -2072,7 +2072,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     assert bob_unpair_reply.bot_agent_link_id is None
 
     bob_takeover = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
         json=group_command(8103, f"/bot_pair {pair_b.json()['code']}", 2222),
     )
@@ -2106,7 +2106,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     assert pair_code_b.claimed_external_user_id is None
 
     alice_unpair = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
         json=group_command(8104, "/bot_unpair", 1111),
     )
@@ -2116,7 +2116,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     assert binding.status == "archived"
 
     paired_b = await client.post(
-        f"/api/channels/telegram/{account_id}/webhook",
+        f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
         json=group_command(8105, f"/bot_pair {pair_b.json()['code']}", 2222),
     )
@@ -2147,19 +2147,19 @@ async def test_group_pairing_requires_external_actor(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-group-missing-actor"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     paired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 8201,
@@ -2173,7 +2173,7 @@ async def test_group_pairing_requires_external_actor(
     assert paired.status_code == 200
     assert paired.json()["paired"] is False
 
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json() == []
     pair_code = (
@@ -2194,13 +2194,13 @@ async def test_pair_code_binding_race_returns_controlled_failure(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": f"telegram-race-{uuid4().hex}"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
@@ -2211,7 +2211,7 @@ async def test_pair_code_binding_race_returns_controlled_failure(
     monkeypatch.setattr(channel_service, "get_or_create_binding", _raise_integrity_error)
 
     paired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -2225,7 +2225,7 @@ async def test_pair_code_binding_race_returns_controlled_failure(
     assert paired.status_code == 200
     assert paired.json()["paired"] is False
     assert paired.json()["binding_id"] is None
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json() == []
     pair_code = (
@@ -2241,18 +2241,18 @@ async def test_pair_code_binding_race_returns_controlled_failure(
 async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-agent"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -2264,7 +2264,7 @@ async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.Asy
         },
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -2277,7 +2277,7 @@ async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.Asy
     )
 
     updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         params={"offset": 2},
     )
 
@@ -2303,7 +2303,7 @@ async def test_telegram_bot_api_accepts_official_bot_path_shape(client: httpx.As
         chat_id="333",
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 3,
@@ -2316,11 +2316,11 @@ async def test_telegram_bot_api_accepts_official_bot_path_shape(client: httpx.As
     )
 
     updates = await client.get(
-        f"/api/channels/telegram/bot{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot{created['agent_token']}/getUpdates",
         params={"offset": 3},
     )
     delete_webhook = await client.post(
-        f"/api/channels/telegram/bot{created['agent_token']}/deleteWebhook",
+        f"/v1/channels/telegram/bot{created['agent_token']}/deleteWebhook",
     )
 
     assert updates.status_code == 200
@@ -2339,7 +2339,7 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-public-bot",
@@ -2349,13 +2349,13 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
     ).json()
     default_pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     workspace_pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"agent_id": str(second_channel_agent.id), "ttl_seconds": 900},
         )
     ).json()
@@ -2364,7 +2364,7 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
 
     async def post_update(update_id: int, text: str):
         return await client.post(
-            f"/api/channels/telegram/{created['id']}/webhook",
+            f"/v1/channels/telegram/{created['id']}/webhook",
             headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
             json={
                 "update_id": update_id,
@@ -2403,11 +2403,11 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
     assert str(messages[0].bot_agent_link_id) == workspace_pair["agent_link_id"]
 
     default_updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         params={"offset": 103},
     )
     workspace_updates = await client.get(
-        f"/api/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates",
         params={"offset": 103},
     )
     assert default_updates.status_code == 200
@@ -2432,7 +2432,7 @@ async def _paired_telegram_shared_chat(
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": f"telegram-shared-{uuid4().hex}",
@@ -2442,20 +2442,20 @@ async def _paired_telegram_shared_chat(
     ).json()
     default_pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     workspace_pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"agent_id": str(second_channel_agent.id), "ttl_seconds": 900},
         )
     ).json()
 
     async def post_update(update_id: int, text: str):
         return await client.post(
-            f"/api/channels/telegram/{created['id']}/webhook",
+            f"/v1/channels/telegram/{created['id']}/webhook",
             headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
             json={
                 "update_id": update_id,
@@ -2485,7 +2485,7 @@ async def test_telegram_unpair_archives_current_chat_route(
     )
 
     unpaired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 203,
@@ -2496,7 +2496,7 @@ async def test_telegram_unpair_archives_current_chat_route(
             },
         },
     )
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
 
     assert unpaired.status_code == 200
     assert unpaired.json()["unpaired"] is True
@@ -2514,14 +2514,14 @@ async def test_channel_send_uses_current_chat_route_after_repair(
         channel_agent,
         second_channel_agent,
     )
-    bindings = (await client.get(f"/api/channels/{created['id']}/bindings")).json()
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
 
     by_chat = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": chat_id, "text": "by-chat"},
     )
     explicit = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"binding_id": bindings[0]["id"], "text": "explicit"},
     )
 
@@ -2537,13 +2537,13 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
 ):
     first = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-bot-one"},
         )
     ).json()
     second = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-bot-two"},
         )
     ).json()
@@ -2554,12 +2554,12 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
     async def pair_and_post(account: dict[str, Any], update_id: int, text: str) -> None:
         pair = (
             await client.post(
-                f"/api/channels/{account['id']}/pair-codes",
+                f"/v1/channels/{account['id']}/pair-codes",
                 json={"ttl_seconds": 900},
             )
         ).json()
         paired = await client.post(
-            f"/api/channels/telegram/{account['id']}/webhook",
+            f"/v1/channels/telegram/{account['id']}/webhook",
             headers={"x-telegram-bot-api-secret-token": account["webhook_secret"]},
             json={
                 "update_id": update_id,
@@ -2571,7 +2571,7 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
             },
         )
         inbound = await client.post(
-            f"/api/channels/telegram/{account['id']}/webhook",
+            f"/v1/channels/telegram/{account['id']}/webhook",
             headers={"x-telegram-bot-api-secret-token": account["webhook_secret"]},
             json={
                 "update_id": update_id + 1,
@@ -2590,15 +2590,15 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
     await pair_and_post(second, 301, "second bot update")
 
     first_updates = await client.get(
-        f"/api/channels/telegram/bot/{first['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{first['agent_token']}/getUpdates",
         params={"offset": 202},
     )
     second_updates = await client.get(
-        f"/api/channels/telegram/bot/{second['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{second['agent_token']}/getUpdates",
         params={"offset": 302},
     )
     first_token_cannot_read_second_bot = await client.get(
-        f"/api/channels/telegram/bot/{first['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{first['agent_token']}/getUpdates",
         params={"offset": 302},
     )
     assert first_updates.status_code == 200
@@ -2620,7 +2620,7 @@ async def test_telegram_bot_api_get_updates_empty_allowed_updates_delivers_all(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -2633,7 +2633,7 @@ async def test_telegram_bot_api_get_updates_empty_allowed_updates_delivers_all(
     )
 
     updates = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         json={"offset": 2, "allowed_updates": []},
     )
 
@@ -2652,7 +2652,7 @@ async def test_telegram_webhook_synthesizes_bot_command_entities(
         provider_token=None,
     )
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 3,
@@ -2664,7 +2664,7 @@ async def test_telegram_webhook_synthesizes_bot_command_entities(
         },
     )
     updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         params={"offset": 3},
     )
 
@@ -2687,7 +2687,7 @@ async def test_telegram_bot_api_get_updates_allowed_updates_drains_filtered_rows
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -2699,7 +2699,7 @@ async def test_telegram_bot_api_get_updates_allowed_updates_drains_filtered_rows
         },
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 3,
@@ -2712,7 +2712,7 @@ async def test_telegram_bot_api_get_updates_allowed_updates_drains_filtered_rows
     )
 
     updates = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         json={"offset": 2, "allowed_updates": ["callback_query"]},
     )
     filtered_message = (
@@ -2825,7 +2825,7 @@ async def test_telegram_bot_api_get_updates_long_poll_times_out_empty(
     )
 
     updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
         params={"offset": 2, "timeout": 1},
     )
 
@@ -2839,17 +2839,17 @@ async def test_telegram_bot_api_set_webhook_conflicts_with_get_updates(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-webhook-agent"},
         )
     ).json()
 
     set_webhook = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/webhook", "secret_token": "agent-secret"},
     )
     get_updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates"
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
     )
 
     assert set_webhook.status_code == 200
@@ -2877,17 +2877,17 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
         second_channel_agent,
     )
     set_workspace_webhook = await client.post(
-        f"/api/channels/telegram/bot/{workspace_pair['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/setWebhook",
         json={"url": "https://agent.example/workspace-hook"},
     )
     default_get_updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates"
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
     )
     workspace_get_updates = await client.get(
-        f"/api/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates"
+        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates"
     )
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 204,
@@ -2899,7 +2899,7 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
         },
     )
     default_updates = await client.get(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates"
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
     )
 
     assert set_workspace_webhook.status_code == 200
@@ -2933,7 +2933,7 @@ async def test_telegram_get_me_proxies_provider_bot_identity(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-get-me",
@@ -2943,7 +2943,7 @@ async def test_telegram_get_me_proxies_provider_bot_identity(
     ).json()
 
     response = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMe",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
         json={},
     )
 
@@ -2956,17 +2956,17 @@ async def test_telegram_get_me_proxies_provider_bot_identity(
 async def test_telegram_set_webhook_rejects_private_targets(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-webhook-private"},
         )
     ).json()
 
     missing_url = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={},
     )
     private_url = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://127.0.0.1/hook"},
     )
 
@@ -2998,13 +2998,13 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-webhook-private-dns"},
         )
     ).json()
 
     response = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent-hook.example/hook"},
     )
 
@@ -3016,7 +3016,7 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
 @pytest.mark.asyncio
 async def test_user_channel_config_rejects_private_provider_urls(client: httpx.AsyncClient):
     response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-private-server-url",
@@ -3032,7 +3032,7 @@ async def test_user_channel_config_rejects_private_provider_urls(client: httpx.A
 @pytest.mark.asyncio
 async def test_user_channel_config_rejects_malformed_provider_urls(client: httpx.AsyncClient):
     response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-malformed-server-url",
@@ -3050,7 +3050,7 @@ async def test_user_channel_config_rejects_insecure_discord_gateway_url(
     client: httpx.AsyncClient,
 ):
     response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "discord",
             "name": "discord-insecure-gateway-url",
@@ -3117,27 +3117,27 @@ async def test_telegram_command_sync_rejects_private_provider_base_url(monkeypat
 async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
     account_a = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-profile-a"},
         )
     ).json()
     account_b = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-profile-b"},
         )
     ).json()
 
     set_name = await client.post(
-        f"/api/channels/telegram/bot/{account_a['agent_token']}/setMyName",
+        f"/v1/channels/telegram/bot/{account_a['agent_token']}/setMyName",
         json={"name": "Tenant A Bot"},
     )
     get_a = await client.post(
-        f"/api/channels/telegram/bot/{account_a['agent_token']}/getMyName",
+        f"/v1/channels/telegram/bot/{account_a['agent_token']}/getMyName",
         json={},
     )
     get_b = await client.post(
-        f"/api/channels/telegram/bot/{account_b['agent_token']}/getMyName",
+        f"/v1/channels/telegram/bot/{account_b['agent_token']}/getMyName",
         json={},
     )
 
@@ -3159,15 +3159,15 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     )
 
     set_commands = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
     get_commands = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={},
     )
     wrong_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={"scope": {"type": "chat", "chat_id": 99}},
     )
 
@@ -3192,41 +3192,41 @@ async def test_telegram_bot_commands_preserve_scope_language_and_delete(
     )
 
     default_en = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
     default_es = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={
             "language_code": "es",
             "commands": [{"command": "start", "description": "Inicio"}],
         },
     )
     chat_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={
             "scope": {"type": "chat", "chat_id": "42"},
             "commands": [{"command": "deploy", "description": "Deploy"}],
         },
     )
     get_default_en = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={},
     )
     get_default_es = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={"language_code": "es"},
     )
     get_chat_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={"scope": {"type": "chat", "chat_id": "42"}},
     )
     deleted_es = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/deleteMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteMyCommands",
         json={"language_code": "es"},
     )
     get_deleted_es = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
         json={"language_code": "es"},
     )
 
@@ -3276,7 +3276,7 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
     await _pair_telegram_chat(client, created=created, chat_id="99", update_id=4)
 
     response = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
 
@@ -3298,7 +3298,7 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     private_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={
             "commands": [{"command": "start", "description": "Start"}],
             "scope": {"type": "all_private_chats"},
@@ -3310,7 +3310,7 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     group_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={
             "commands": [{"command": "group", "description": "Group"}],
             "scope": {"type": "all_group_chats"},
@@ -3325,7 +3325,7 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     admin_scope = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={
             "commands": [{"command": "admin", "description": "Admin"}],
             "scope": {"type": "all_chat_administrators"},
@@ -3352,7 +3352,7 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-command-replay-on-pair",
@@ -3362,7 +3362,7 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
     ).json()
     commands = [{"command": "welcome", "description": "Say hi"}]
     stored = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
         json={"commands": commands},
     )
     assert stored.status_code == 200
@@ -3370,12 +3370,12 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
 
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     paired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 51,
@@ -3418,15 +3418,15 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
     await _pair_telegram_chat(client, created=created, chat_id="99", update_id=2)
 
     edit = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/editMessageText",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/editMessageText",
         json={"chat_id": 42, "message_id": 1, "text": "edited"},
     )
     copy = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/copyMessage",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/copyMessage",
         json={"chat_id": 42, "from_chat_id": 99, "message_id": 1},
     )
     blocked_reply = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/sendMessage",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
         json={
             "chat_id": 42,
             "text": "reply",
@@ -3434,7 +3434,7 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
         },
     )
     no_chat = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/answerInlineQuery",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/answerInlineQuery",
         json={"inline_query_id": "inline-1", "results": []},
     )
 
@@ -3464,7 +3464,7 @@ async def test_telegram_multipart_reply_parameters_are_scope_checked(
     )
 
     response = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/sendPhoto",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/sendPhoto",
         data={
             "chat_id": "42",
             "caption": "photo",
@@ -3494,7 +3494,7 @@ async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
     )
 
     response = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/sendPhoto",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/sendPhoto",
         data={"chat_id": "42", "photo": "attach://photo_file"},
         files={"photo_file": ("photo.png", b"PNGDATA", "image/png")},
     )
@@ -3525,13 +3525,13 @@ async def test_telegram_send_methods_are_rate_limited(
 
     for index in range(5):
         response = await client.post(
-            f"/api/channels/telegram/bot/{created['agent_token']}/sendMessage",
+            f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
             json={"chat_id": 42, "text": f"msg{index}"},
         )
         assert response.status_code == 200
 
     limited = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/sendMessage",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
         json={"chat_id": 42, "text": "overflow"},
     )
 
@@ -3549,7 +3549,7 @@ async def test_telegram_delete_webhook_drop_pending_updates(client: httpx.AsyncC
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -3561,15 +3561,15 @@ async def test_telegram_delete_webhook_drop_pending_updates(client: httpx.AsyncC
         },
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/webhook"},
     )
 
     deleted = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
         json={"drop_pending_updates": True},
     )
-    updates = await client.get(f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates")
+    updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
 
     assert deleted.status_code == 200
     assert updates.status_code == 200
@@ -3588,12 +3588,12 @@ async def test_channel_request_parsing_rejects_malformed_json_and_non_object_bod
     )
 
     malformed = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMe",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
         content=b"{",
         headers={"content-type": "application/json"},
     )
     non_object = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getMe",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
         json=[],
     )
 
@@ -3614,7 +3614,7 @@ async def test_channel_request_parsing_accepts_form_encoded_wire_values(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -3626,15 +3626,15 @@ async def test_channel_request_parsing_accepts_form_encoded_wire_values(
         },
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/webhook"},
     )
 
     deleted = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
         data={"drop_pending_updates": "true"},
     )
-    updates = await client.get(f"/api/channels/telegram/bot/{created['agent_token']}/getUpdates")
+    updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
 
     assert deleted.status_code == 200
     assert updates.json() == {"ok": True, "result": []}
@@ -3657,12 +3657,12 @@ async def test_telegram_agent_webhook_success_acks_inbox(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
 
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 901,
@@ -3705,12 +3705,12 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook"},
     )
 
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 907,
@@ -3760,7 +3760,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook"},
     )
     link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
@@ -3770,7 +3770,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
     await db_session.commit()
 
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 908,
@@ -3786,9 +3786,9 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
             select(ChannelMessage).where(ChannelMessage.provider_message_id == "908")
         )
     ).scalar_one()
-    health_response = await client.get("/api/channels/health")
+    health_response = await client.get("/v1/channels/health")
     activity_response = await client.get(
-        f"/api/channels/{created['id']}/activity",
+        f"/v1/channels/{created['id']}/activity",
         params={"external_chat_id": "4301", "limit": 20},
     )
 
@@ -3835,12 +3835,12 @@ async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
 
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 904,
@@ -3901,12 +3901,12 @@ async def test_telegram_agent_webhook_revalidates_dns_at_delivery(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent-hook.example/agent-hook"},
     )
 
     inbound = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 905,
@@ -3946,11 +3946,11 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 902,
@@ -4012,7 +4012,7 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
         chat_id="4202",
     )
     await client.post(
-        f"/api/channels/telegram/bot/{webhook_channel['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{webhook_channel['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook"},
     )
 
@@ -4040,7 +4040,7 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
     await db_session.flush()
 
     inbound = await client.post(
-        f"/api/channels/telegram/{webhook_channel['id']}/webhook",
+        f"/v1/channels/telegram/{webhook_channel['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_channel["webhook_secret"]},
         json={
             "update_id": 906,
@@ -4096,11 +4096,11 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
         provider_token=None,
     )
     await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/agent-hook"},
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 903,
@@ -4146,7 +4146,7 @@ async def test_telegram_callback_query_answer_requires_recorded_reference(
         chat_id="42",
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -4162,11 +4162,11 @@ async def test_telegram_callback_query_answer_requires_recorded_reference(
     )
 
     owned = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
         json={"callback_query_id": "cb-1", "text": "ok"},
     )
     unowned = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
         json={"callback_query_id": "cb-other", "text": "ok"},
     )
 
@@ -4192,7 +4192,7 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
         chat_id="42",
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -4205,11 +4205,11 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     )
 
     get_file = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getFile",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getFile",
         json={"file_id": "file_1"},
     )
     unowned_file = await client.post(
-        f"/api/channels/telegram/bot/{created['agent_token']}/getFile",
+        f"/v1/channels/telegram/bot/{created['agent_token']}/getFile",
         json={"file_id": "file_other"},
     )
     _reset_fake_provider_client(
@@ -4218,10 +4218,10 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
         headers={"content-type": "text/plain"},
     )
     download = await client.get(
-        f"/api/channels/telegram/file/bot/{created['agent_token']}/photos/file_1.jpg"
+        f"/v1/channels/telegram/file/bot/{created['agent_token']}/photos/file_1.jpg"
     )
     unowned_download = await client.get(
-        f"/api/channels/telegram/file/bot/{created['agent_token']}/photos/other.jpg"
+        f"/v1/channels/telegram/file/bot/{created['agent_token']}/photos/other.jpg"
     )
 
     assert get_file.status_code == 200
@@ -4241,7 +4241,7 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
 async def test_discord_rest_gateway_bot_uses_agent_token(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-agent",
@@ -4251,12 +4251,12 @@ async def test_discord_rest_gateway_bot_uses_agent_token(client: httpx.AsyncClie
     ).json()
 
     response = await client.get(
-        "/api/channels/discord/v10/gateway/bot",
+        "/v1/channels/discord/v10/gateway/bot",
         headers={"Authorization": f"Bot {created['agent_token']}"},
     )
 
     assert response.status_code == 200
-    assert response.json()["url"].endswith("/api/channels/discord/gateway")
+    assert response.json()["url"].endswith("/v1/channels/discord/gateway")
     assert response.json()["shards"] == 1
 
 
@@ -4264,7 +4264,7 @@ async def test_discord_rest_gateway_bot_uses_agent_token(client: httpx.AsyncClie
 async def test_discord_rest_accepts_preserve_path_mitm_alias(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-agent-preserve-path",
@@ -4274,12 +4274,12 @@ async def test_discord_rest_accepts_preserve_path_mitm_alias(client: httpx.Async
     ).json()
 
     response = await client.get(
-        "/api/channels/discord/api/v10/gateway/bot",
+        "/v1/channels/discord/api/v10/gateway/bot",
         headers={"Authorization": f"Bot {created['agent_token']}"},
     )
 
     assert response.status_code == 200
-    assert response.json()["url"].endswith("/api/channels/discord/gateway")
+    assert response.json()["url"].endswith("/v1/channels/discord/gateway")
 
 
 @pytest.mark.asyncio
@@ -4288,7 +4288,7 @@ async def test_discord_rest_application_commands_are_tenant_shadowed(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-shadow",
@@ -4299,15 +4299,15 @@ async def test_discord_rest_application_commands_are_tenant_shadowed(
     headers = {"Authorization": f"Bot {created['agent_token']}"}
 
     updated = await client.put(
-        "/api/channels/discord/v10/applications/app-shadow/commands",
+        "/v1/channels/discord/v10/applications/app-shadow/commands",
         headers=headers,
         json=[{"name": "deploy", "description": "Deploy a service"}],
     )
     listed = await client.get(
-        "/api/channels/discord/v10/applications/app-shadow/commands", headers=headers
+        "/v1/channels/discord/v10/applications/app-shadow/commands", headers=headers
     )
     reserved = await client.post(
-        "/api/channels/discord/v10/applications/app-shadow/commands",
+        "/v1/channels/discord/v10/applications/app-shadow/commands",
         headers=headers,
         json={"name": "bot_pair", "description": "bad"},
     )
@@ -4325,7 +4325,7 @@ async def test_discord_application_command_lifecycle_is_tenant_shadowed(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-lifecycle",
@@ -4336,26 +4336,26 @@ async def test_discord_application_command_lifecycle_is_tenant_shadowed(
     headers = {"Authorization": f"Bot {created['agent_token']}"}
 
     created_command = await client.post(
-        "/api/channels/discord/v10/applications/app-lifecycle/commands",
+        "/v1/channels/discord/v10/applications/app-lifecycle/commands",
         headers=headers,
         json={"name": "deploy", "description": "Deploy"},
     )
     command_id = created_command.json()["id"]
     edited = await client.patch(
-        f"/api/channels/discord/v10/applications/app-lifecycle/commands/{command_id}",
+        f"/v1/channels/discord/v10/applications/app-lifecycle/commands/{command_id}",
         headers=headers,
         json={"description": "Deploy service"},
     )
     listed = await client.get(
-        "/api/channels/discord/v10/applications/app-lifecycle/commands",
+        "/v1/channels/discord/v10/applications/app-lifecycle/commands",
         headers=headers,
     )
     deleted = await client.delete(
-        f"/api/channels/discord/v10/applications/app-lifecycle/commands/{command_id}",
+        f"/v1/channels/discord/v10/applications/app-lifecycle/commands/{command_id}",
         headers=headers,
     )
     missing = await client.patch(
-        "/api/channels/discord/v10/applications/app-lifecycle/commands/missing",
+        "/v1/channels/discord/v10/applications/app-lifecycle/commands/missing",
         headers=headers,
         json={"description": "missing"},
     )
@@ -4376,13 +4376,13 @@ async def test_discord_application_command_lifecycle_is_tenant_shadowed(
     )
     await db_session.commit()
     guild_created = await client.post(
-        "/api/channels/discord/v10/applications/app-lifecycle/guilds/guild-1/commands",
+        "/v1/channels/discord/v10/applications/app-lifecycle/guilds/guild-1/commands",
         headers=headers,
         json={"name": "guilddeploy", "description": "Guild deploy"},
     )
     guild_id = guild_created.json()["id"]
     guild_edited = await client.patch(
-        f"/api/channels/discord/v10/applications/app-lifecycle/guilds/guild-1/commands/{guild_id}",
+        f"/v1/channels/discord/v10/applications/app-lifecycle/guilds/guild-1/commands/{guild_id}",
         headers=headers,
         json={"description": "Guild deploy service"},
     )
@@ -4404,7 +4404,7 @@ async def test_discord_application_commands_validate_application_and_guild_scope
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-scope",
@@ -4415,22 +4415,22 @@ async def test_discord_application_commands_validate_application_and_guild_scope
     headers = {"Authorization": f"Bot {created['agent_token']}"}
 
     wrong_app = await client.put(
-        "/api/channels/discord/v10/applications/wrong-app/commands",
+        "/v1/channels/discord/v10/applications/wrong-app/commands",
         headers=headers,
         json=[{"name": "deploy", "description": "Deploy"}],
     )
     unbound_guild = await client.put(
-        "/api/channels/discord/v10/applications/app-scope/guilds/guild-404/commands",
+        "/v1/channels/discord/v10/applications/app-scope/guilds/guild-404/commands",
         headers=headers,
         json=[{"name": "deploy", "description": "Deploy"}],
     )
     dm_create = await client.post(
-        "/api/channels/discord/v10/users/@me/channels",
+        "/v1/channels/discord/v10/users/@me/channels",
         headers=headers,
         json={"recipient_id": "user-1"},
     )
     unknown = await client.post(
-        "/api/channels/discord/v10/unknown/path",
+        "/v1/channels/discord/v10/unknown/path",
         headers=headers,
         json={},
     )
@@ -4458,7 +4458,7 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-fanout",
@@ -4469,7 +4469,7 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
     ).json()
     other = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-contender",
@@ -4505,7 +4505,7 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
     await db_session.commit()
 
     response = await client.put(
-        "/api/channels/discord/v10/applications/app-fanout/commands",
+        "/v1/channels/discord/v10/applications/app-fanout/commands",
         headers={"Authorization": f"Bot {created['agent_token']}"},
         json=[{"name": "deploy", "description": "Deploy"}],
     )
@@ -4534,7 +4534,7 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-command-replay-on-pair",
@@ -4545,7 +4545,7 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
     ).json()
     commands = [{"name": "deploy", "description": "Deploy"}]
     stored = await client.put(
-        "/api/channels/discord/v10/applications/app-replay/commands",
+        "/v1/channels/discord/v10/applications/app-replay/commands",
         headers={"Authorization": f"Bot {created['agent_token']}"},
         json=commands,
     )
@@ -4554,12 +4554,12 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
 
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     paired = await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -4609,7 +4609,7 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
     )
     other = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-interaction-other",
@@ -4621,37 +4621,37 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
 
     headers = {"Authorization": f"Bot {created['agent_token']}"}
     callback = await client.post(
-        "/api/channels/discord/v10/interactions/interaction-1/interaction-token-1/callback",
+        "/v1/channels/discord/v10/interactions/interaction-1/interaction-token-1/callback",
         headers=headers,
         json={"type": 4, "data": {"content": "pong"}},
     )
     wrong_id = await client.post(
-        "/api/channels/discord/v10/interactions/wrong/interaction-token-1/callback",
+        "/v1/channels/discord/v10/interactions/wrong/interaction-token-1/callback",
         headers=headers,
         json={"type": 4, "data": {"content": "pong"}},
     )
     wrong_tenant = await client.post(
-        "/api/channels/discord/v10/interactions/interaction-1/interaction-token-1/callback",
+        "/v1/channels/discord/v10/interactions/interaction-1/interaction-token-1/callback",
         headers={"Authorization": f"Bot {other['agent_token']}"},
         json={"type": 4},
     )
     followup = await client.post(
-        "/api/channels/discord/v10/webhooks/discord-app-123/interaction-token-1",
+        "/v1/channels/discord/v10/webhooks/discord-app-123/interaction-token-1",
         headers=headers,
         json={"content": "followup"},
     )
     edit_original = await client.patch(
-        "/api/channels/discord/v10/webhooks/discord-app-123/interaction-token-1/messages/@original",
+        "/v1/channels/discord/v10/webhooks/discord-app-123/interaction-token-1/messages/@original",
         headers=headers,
         json={"content": "edited"},
     )
     wrong_app = await client.post(
-        "/api/channels/discord/v10/webhooks/wrong-app/interaction-token-1",
+        "/v1/channels/discord/v10/webhooks/wrong-app/interaction-token-1",
         headers=headers,
         json={"content": "nope"},
     )
     unknown_token = await client.post(
-        "/api/channels/discord/v10/webhooks/discord-app-123/unknown-token",
+        "/v1/channels/discord/v10/webhooks/discord-app-123/unknown-token",
         headers=headers,
         json={"content": "nope"},
     )
@@ -4682,7 +4682,7 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
 async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
     account_a = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-profile-a",
@@ -4692,7 +4692,7 @@ async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncC
     ).json()
     account_b = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-profile-b",
@@ -4703,22 +4703,22 @@ async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncC
     headers_a = {"Authorization": f"Bot {account_a['agent_token']}"}
     headers_b = {"Authorization": f"Bot {account_b['agent_token']}"}
 
-    default_a = await client.get("/api/channels/discord/v10/users/@me", headers=headers_a)
+    default_a = await client.get("/v1/channels/discord/v10/users/@me", headers=headers_a)
     patched_a = await client.patch(
-        "/api/channels/discord/v10/users/@me",
+        "/v1/channels/discord/v10/users/@me",
         headers=headers_a,
         json={"username": "Tenant A Bot", "avatar": "data:image/png;base64,abc"},
     )
-    get_a = await client.get("/api/channels/discord/v10/users/@me", headers=headers_a)
-    get_b = await client.get("/api/channels/discord/v10/users/@me", headers=headers_b)
-    app_a = await client.get("/api/channels/discord/v10/applications/@me", headers=headers_a)
+    get_a = await client.get("/v1/channels/discord/v10/users/@me", headers=headers_a)
+    get_b = await client.get("/v1/channels/discord/v10/users/@me", headers=headers_b)
+    app_a = await client.get("/v1/channels/discord/v10/applications/@me", headers=headers_a)
 
     await client.patch(
-        "/api/channels/discord/v10/users/@me",
+        "/v1/channels/discord/v10/users/@me",
         headers=headers_b,
         json={"username": "Tenant B Bot"},
     )
-    app_b = await client.get("/api/channels/discord/v10/oauth2/applications/@me", headers=headers_b)
+    app_b = await client.get("/v1/channels/discord/v10/oauth2/applications/@me", headers=headers_b)
 
     assert default_a.status_code == 200
     assert default_a.json()["username"] == "discord-profile-a"
@@ -4754,17 +4754,17 @@ async def test_discord_guild_rest_requires_bound_guild_scope(
     headers = {"Authorization": f"Bot {created['agent_token']}"}
 
     allowed = await client.post(
-        "/api/channels/discord/v10/guilds/discord-guild-1/channels",
+        "/v1/channels/discord/v10/guilds/discord-guild-1/channels",
         headers=headers,
         json={"name": "ops", "type": 0},
     )
     channel_send = await client.post(
-        "/api/channels/discord/v10/channels/discord-chan-1/messages",
+        "/v1/channels/discord/v10/channels/discord-chan-1/messages",
         headers=headers,
         json={"content": "hello guild channel"},
     )
     blocked = await client.post(
-        "/api/channels/discord/v10/guilds/discord-guild-2/channels",
+        "/v1/channels/discord/v10/guilds/discord-guild-2/channels",
         headers=headers,
         json={"name": "ops", "type": 0},
     )
@@ -4794,7 +4794,7 @@ async def test_discord_channel_rest_accepts_bound_channel_alias(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-channel-alias-rest",
@@ -4831,7 +4831,7 @@ async def test_discord_channel_rest_accepts_bound_channel_alias(
     await db_session.commit()
 
     response = await client.put(
-        "/api/channels/discord/v10/channels/chan-alias-rest/permissions/role-1",
+        "/v1/channels/discord/v10/channels/chan-alias-rest/permissions/role-1",
         headers={"Authorization": f"Bot {created['agent_token']}"},
         json={"allow": "1024", "deny": "0", "type": 0},
     )
@@ -4857,7 +4857,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-agent",
@@ -4868,12 +4868,12 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "entry": [
@@ -4898,7 +4898,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
     _reset_fake_provider_client({"messages": [{"id": "wamid.agent.sent"}]})
 
     sent = await client.post(
-        "/api/channels/whatsapp/graph/v20.0/phone-agent/messages",
+        "/v1/channels/whatsapp/graph/v20.0/phone-agent/messages",
         headers={"Authorization": f"Bearer {created['agent_token']}"},
         json={
             "messaging_product": "whatsapp",
@@ -4929,7 +4929,7 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-agent",
@@ -4940,12 +4940,12 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -4958,7 +4958,7 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
     _reset_fake_provider_client({"data": {"guid": "imsg-agent-sent"}})
 
     sent = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/text",
+        "/v1/channels/imessage/bluebubbles/v1/message/text",
         params={"password": created["agent_token"]},
         json={"chatGuid": "iMessage;-;+15550001111", "message": "hello imessage"},
     )
@@ -4985,7 +4985,7 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-any-service",
@@ -4996,12 +4996,12 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5014,7 +5014,7 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
     _reset_fake_provider_client({"data": {"guid": "imsg-any-service-sent"}})
 
     sent = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/text",
+        "/v1/channels/imessage/bluebubbles/v1/message/text",
         params={"password": created["agent_token"]},
         json={"chatGuid": "SMS;-;+15550001112", "message": "hello sms"},
     )
@@ -5037,7 +5037,7 @@ async def test_bluebubbles_auth_accepts_password_api_key_x_password_and_bearer(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-auth-shapes",
@@ -5048,21 +5048,21 @@ async def test_bluebubbles_auth_accepts_password_api_key_x_password_and_bearer(
     ).json()
     token = created["agent_token"]
 
-    missing = await client.get("/api/channels/imessage/bluebubbles/v1/ping")
+    missing = await client.get("/v1/channels/imessage/bluebubbles/v1/ping")
     password = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         params={"password": token},
     )
     x_api_key = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         headers={"X-API-Key": token},
     )
     x_password = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         headers={"X-Password": token},
     )
     bearer = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -5100,7 +5100,7 @@ async def test_bluebubbles_socketio_auth_packets_match_advanced_imessagekit(
         "app.routes.channel_routers.imessage_realtime.resolve_channel_agent_by_token",
         fake_resolve_agent,
     )
-    path = "/api/channels/imessage/bluebubbles/socket.io/?EIO=4&transport=websocket"
+    path = "/v1/channels/imessage/bluebubbles/socket.io/?EIO=4&transport=websocket"
 
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect(path) as websocket:
@@ -5158,7 +5158,7 @@ async def test_bluebubbles_socket_manager_emits_only_to_account():
 async def test_bluebubbles_webhook_self_registration_and_delete(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-webhook-agent",
@@ -5170,15 +5170,15 @@ async def test_bluebubbles_webhook_self_registration_and_delete(client: httpx.As
     params = {"password": created["agent_token"]}
 
     registered = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params=params,
         json={"url": "https://agent.example/bluebubbles", "events": ["new-message"]},
     )
-    listed = await client.get("/api/channels/imessage/bluebubbles/v1/webhook", params=params)
+    listed = await client.get("/v1/channels/imessage/bluebubbles/v1/webhook", params=params)
     deleted = await client.delete(
-        f"/api/channels/imessage/bluebubbles/v1/webhook/{created['id']}", params=params
+        f"/v1/channels/imessage/bluebubbles/v1/webhook/{created['id']}", params=params
     )
-    relisted = await client.get("/api/channels/imessage/bluebubbles/v1/webhook", params=params)
+    relisted = await client.get("/v1/channels/imessage/bluebubbles/v1/webhook", params=params)
 
     assert registered.status_code == 200
     assert registered.json()["data"]["url"] == "https://agent.example/bluebubbles"
@@ -5191,7 +5191,7 @@ async def test_bluebubbles_webhook_self_registration_and_delete(client: httpx.As
 async def test_bluebubbles_server_info_advertises_private_api(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-server-info",
@@ -5205,7 +5205,7 @@ async def test_bluebubbles_server_info_advertises_private_api(client: httpx.Asyn
     ).json()
 
     info = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/server/info",
+        "/v1/channels/imessage/bluebubbles/v1/server/info",
         params={"password": created["agent_token"]},
     )
 
@@ -5221,7 +5221,7 @@ async def test_bluebubbles_webhook_registration_rejects_unsafe_urls(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-webhook-ssrf",
@@ -5233,17 +5233,17 @@ async def test_bluebubbles_webhook_registration_rejects_unsafe_urls(
     params = {"password": created["agent_token"]}
 
     plain_http = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params=params,
         json={"url": "http://example.com/webhook"},
     )
     loopback = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params=params,
         json={"url": "https://127.0.0.1/webhook"},
     )
     safe = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params=params,
         json={"url": "https://example.com/webhook"},
     )
@@ -5294,7 +5294,7 @@ async def test_bluebubbles_webhook_registration_rejects_private_dns_targets(
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-webhook-private-dns",
@@ -5305,7 +5305,7 @@ async def test_bluebubbles_webhook_registration_rejects_private_dns_targets(
     ).json()
 
     response = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params={"password": created["agent_token"]},
         json={"url": "https://agent-hook.example/bluebubbles"},
     )
@@ -5336,7 +5336,7 @@ async def test_bluebubbles_webhook_delivery_no_config_does_not_call_agent(
     )
 
     inbound = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5368,13 +5368,13 @@ async def test_bluebubbles_webhook_delivery_retries_5xx(
         webhook_message_guid="imsg-retry-initial",
     )
     await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params={"password": created["agent_token"]},
         json={"url": "https://agent.example/bluebubbles", "events": ["new-message"]},
     )
 
     inbound = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5406,13 +5406,13 @@ async def test_bluebubbles_webhook_delivery_does_not_retry_4xx(
         webhook_message_guid="imsg-4xx-initial",
     )
     await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params={"password": created["agent_token"]},
         json={"url": "https://agent.example/bluebubbles", "events": ["new-message"]},
     )
 
     inbound = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5446,7 +5446,7 @@ async def test_bluebubbles_webhook_delivery_sends_password_query_and_header(
         webhook_message_guid="imsg-auth-delivery-initial",
     )
     await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params={"password": created["agent_token"]},
         json={
             "url": "https://agent.example/bluebubbles?existing=1&password=old",
@@ -5461,7 +5461,7 @@ async def test_bluebubbles_webhook_delivery_sends_password_query_and_header(
     webhook_config = account.config["bluebubbles_webhook"]
 
     inbound = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5502,13 +5502,13 @@ async def test_bluebubbles_client_payload_strips_photon_reply_pointers(
     )
     params = {"password": created["agent_token"]}
     await client.post(
-        "/api/channels/imessage/bluebubbles/v1/webhook",
+        "/v1/channels/imessage/bluebubbles/v1/webhook",
         params=params,
         json={"url": "https://agent.example/bluebubbles", "events": ["new-message"]},
     )
 
     inbound = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "type": "new-message",
@@ -5524,11 +5524,11 @@ async def test_bluebubbles_client_payload_strips_photon_reply_pointers(
         },
     )
     single = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/message/imsg-sanitize-message",
+        "/v1/channels/imessage/bluebubbles/v1/message/imsg-sanitize-message",
         params=params,
     )
     history = await client.get(
-        f"/api/channels/imessage/bluebubbles/v1/chat/{chat_guid}/messages",
+        f"/v1/channels/imessage/bluebubbles/v1/chat/{chat_guid}/messages",
         params=params,
     )
 
@@ -5550,7 +5550,7 @@ async def test_bluebubbles_client_payload_strips_photon_reply_pointers(
 async def test_bluebubbles_query_routes_are_binding_scoped(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-query-agent",
@@ -5561,12 +5561,12 @@ async def test_bluebubbles_query_routes_are_binding_scoped(client: httpx.AsyncCl
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5577,7 +5577,7 @@ async def test_bluebubbles_query_routes_are_binding_scoped(client: httpx.AsyncCl
         },
     )
     await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -5590,18 +5590,18 @@ async def test_bluebubbles_query_routes_are_binding_scoped(client: httpx.AsyncCl
 
     params = {"password": created["agent_token"]}
     chats = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/chat/query", params=params, json={}
+        "/v1/channels/imessage/bluebubbles/v1/chat/query", params=params, json={}
     )
     messages = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/query",
+        "/v1/channels/imessage/bluebubbles/v1/message/query",
         params=params,
         json={"chatGuid": "iMessage;-;+15550003333"},
     )
     single = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/message/imsg-query-message", params=params
+        "/v1/channels/imessage/bluebubbles/v1/message/imsg-query-message", params=params
     )
     blocked = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/chat/iMessage;-;+19999999999", params=params
+        "/v1/channels/imessage/bluebubbles/v1/chat/iMessage;-;+19999999999", params=params
     )
 
     assert chats.status_code == 200
@@ -5624,23 +5624,23 @@ async def test_bluebubbles_history_count_message_ops_and_schedule(client: httpx.
     params = {"password": created["agent_token"]}
 
     history_a = await client.get(
-        f"/api/channels/imessage/bluebubbles/v1/chat/{chat_guid}/messages", params=params
+        f"/v1/channels/imessage/bluebubbles/v1/chat/{chat_guid}/messages", params=params
     )
     history_b = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/messages",
+        "/v1/channels/imessage/bluebubbles/v1/messages",
         params={**params, "chatGuid": chat_guid},
     )
     count = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/message/count",
+        "/v1/channels/imessage/bluebubbles/v1/message/count",
         params={**params, "chatGuid": chat_guid},
     )
     edited = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/imsg-compat-message/edit",
+        "/v1/channels/imessage/bluebubbles/v1/message/imsg-compat-message/edit",
         params=params,
         json={"editedMessage": "edited"},
     )
     reacted = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/react",
+        "/v1/channels/imessage/bluebubbles/v1/message/react",
         params=params,
         json={
             "chatGuid": chat_guid,
@@ -5649,30 +5649,30 @@ async def test_bluebubbles_history_count_message_ops_and_schedule(client: httpx.
         },
     )
     updated_count = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/message/count/updated",
+        "/v1/channels/imessage/bluebubbles/v1/message/count/updated",
         params={**params, "chatGuid": chat_guid},
     )
     unsent = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/imsg-compat-message/unsend",
+        "/v1/channels/imessage/bluebubbles/v1/message/imsg-compat-message/unsend",
         params=params,
         json={},
     )
     scheduled = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/schedule",
+        "/v1/channels/imessage/bluebubbles/v1/message/schedule",
         params=params,
         json={"chatGuid": chat_guid, "message": "later", "scheduledFor": 1_900_000_000_000},
     )
     schedule_id = scheduled.json()["data"]["id"]
     listed = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/message/schedule", params=params
+        "/v1/channels/imessage/bluebubbles/v1/message/schedule", params=params
     )
     updated_schedule = await client.put(
-        f"/api/channels/imessage/bluebubbles/v1/message/schedule/{schedule_id}",
+        f"/v1/channels/imessage/bluebubbles/v1/message/schedule/{schedule_id}",
         params=params,
         json={"message": "later edited"},
     )
     deleted_schedule = await client.delete(
-        f"/api/channels/imessage/bluebubbles/v1/message/schedule/{schedule_id}", params=params
+        f"/v1/channels/imessage/bluebubbles/v1/message/schedule/{schedule_id}", params=params
     )
 
     assert history_a.status_code == 200
@@ -5712,13 +5712,13 @@ async def test_bluebubbles_attachment_upload_multipart_and_download(
     params = {"password": created["agent_token"]}
 
     uploaded = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/attachment/upload",
+        "/v1/channels/imessage/bluebubbles/v1/attachment/upload",
         params=params,
         files={"attachment": ("note.txt", b"hello attachment", "text/plain")},
     )
     upload_path = uploaded.json()["data"]["path"]
     multipart = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/multipart",
+        "/v1/channels/imessage/bluebubbles/v1/message/multipart",
         params=params,
         json={
             "chatGuid": chat_guid,
@@ -5727,11 +5727,11 @@ async def test_bluebubbles_attachment_upload_multipart_and_download(
     )
     attachment_guid = multipart.json()["data"]["attachments"][0]["guid"]
     downloaded = await client.get(
-        f"/api/channels/imessage/bluebubbles/v1/attachment/{attachment_guid}/download",
+        f"/v1/channels/imessage/bluebubbles/v1/attachment/{attachment_guid}/download",
         params=params,
     )
     direct = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/attachment",
+        "/v1/channels/imessage/bluebubbles/v1/message/attachment",
         params=params,
         data={"chatGuid": chat_guid, "name": "direct.txt", "message": "direct"},
         files={"attachment": ("direct.txt", b"direct bytes", "text/plain")},
@@ -5756,7 +5756,7 @@ async def test_bluebubbles_chat_new_accepts_addresses_and_initial_message(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-chat-new-addresses",
@@ -5768,12 +5768,12 @@ async def test_bluebubbles_chat_new_accepts_addresses_and_initial_message(
     params = {"password": created["agent_token"]}
 
     empty_address = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/chat/new",
+        "/v1/channels/imessage/bluebubbles/v1/chat/new",
         params=params,
         json={"addresses": [None], "message": "hi"},
     )
     no_message = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/chat/new",
+        "/v1/channels/imessage/bluebubbles/v1/chat/new",
         params=params,
         json={
             "addresses": ["+15550007777"],
@@ -5782,7 +5782,7 @@ async def test_bluebubbles_chat_new_accepts_addresses_and_initial_message(
         },
     )
     with_message = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/chat/new",
+        "/v1/channels/imessage/bluebubbles/v1/chat/new",
         params=params,
         json={
             "addresses": ["+15550008888"],
@@ -5823,7 +5823,7 @@ async def test_bluebubbles_chat_new_accepts_addresses_and_initial_message(
         )
     ).scalar_one()
     history = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/messages",
+        "/v1/channels/imessage/bluebubbles/v1/messages",
         params={**params, "chatGuid": "iMessage;-;+15550008888"},
     )
 
@@ -5845,36 +5845,36 @@ async def test_bluebubbles_extended_compat_routes_are_account_scoped(client: htt
     params = {"password": created["agent_token"]}
 
     chat_new = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/chat/new",
+        "/v1/channels/imessage/bluebubbles/v1/chat/new",
         params=params,
         json={"participants": ["+15550007777"], "displayName": "New chat"},
     )
     search = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/message/search",
+        "/v1/channels/imessage/bluebubbles/v1/message/search",
         params=params,
         json={"chatGuid": chat_guid, "query": "query"},
     )
     poll = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/poll/create",
+        "/v1/channels/imessage/bluebubbles/v1/poll/create",
         params=params,
         json={"chatGuid": chat_guid, "title": "Pick one", "options": ["A", "B"]},
     )
     facetime = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/facetime/session", params=params
+        "/v1/channels/imessage/bluebubbles/v1/facetime/session", params=params
     )
     handles = await client.post(
-        "/api/channels/imessage/bluebubbles/v1/handle/query", params=params, json={}
+        "/v1/channels/imessage/bluebubbles/v1/handle/query", params=params, json={}
     )
     stats = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/server/statistics/totals", params=params
+        "/v1/channels/imessage/bluebubbles/v1/server/statistics/totals", params=params
     )
-    contact = await client.get("/api/channels/imessage/bluebubbles/v1/contact", params=params)
+    contact = await client.get("/v1/channels/imessage/bluebubbles/v1/contact", params=params)
     share = await client.get(
-        f"/api/channels/imessage/bluebubbles/v1/chat/{chat_guid}/share/contact/status",
+        f"/v1/channels/imessage/bluebubbles/v1/chat/{chat_guid}/share/contact/status",
         params=params,
     )
     missing_share = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/chat/iMessage;-;+19999999999/share/contact/status",
+        "/v1/channels/imessage/bluebubbles/v1/chat/iMessage;-;+19999999999/share/contact/status",
         params=params,
     )
 
@@ -5915,7 +5915,7 @@ def test_discord_rate_limiter_blocks_exhausted_route_bucket():
 @pytest.mark.asyncio
 async def test_create_discord_channel_returns_provider_webhook(client: httpx.AsyncClient):
     response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "discord",
             "name": "discord-main",
@@ -5926,7 +5926,7 @@ async def test_create_discord_channel_returns_provider_webhook(client: httpx.Asy
     assert response.status_code == 201
     created = response.json()
     assert created["provider"] == "discord"
-    assert "/api/channels/discord/" in created["webhook_url"]
+    assert "/v1/channels/discord/" in created["webhook_url"]
     assert created["has_provider_token"] is True
     assert "discord-token" not in response.text
 
@@ -5935,12 +5935,12 @@ async def test_create_discord_channel_returns_provider_webhook(client: httpx.Asy
 async def test_legacy_channel_router_root_routes_are_absent(client: httpx.AsyncClient):
     checks = [
         ("POST", "/bot123456:token/getMe"),
-        ("GET", "/api/v10/gateway/bot"),
-        ("GET", "/api/v1/server/info"),
+        ("GET", "/v1/v10/gateway/bot"),
+        ("GET", "/v1/v1/server/info"),
         ("GET", "/channels/telegram"),
         ("GET", "/socket.io/"),
         ("GET", "/media/file.jpg"),
-        ("POST", "/api/channels/migrations/legacy-router/import-tenant"),
+        ("POST", "/v1/channels/migrations/legacy-router/import-tenant"),
     ]
 
     for method, path in checks:
@@ -5952,19 +5952,19 @@ async def test_legacy_channel_router_root_routes_are_absent(client: httpx.AsyncC
 async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-main"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -5984,7 +5984,7 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     assert webhook.json()["paired"] is True
     assert webhook.json()["binding_id"]
 
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654321"
     assert bindings.json()[0]["external_chat_type"] == "private"
@@ -6000,7 +6000,7 @@ async def test_telegram_webhook_pair_code_sends_user_reply(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-pair-reply",
@@ -6010,13 +6010,13 @@ async def test_telegram_webhook_pair_code_sends_user_reply(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -6047,7 +6047,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-pair-failure-replies",
@@ -6057,7 +6057,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
     ).json()
 
     missing = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -6070,7 +6070,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
         },
     )
     invalid = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -6100,7 +6100,7 @@ async def test_telegram_webhook_unpair_sends_user_reply(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-unpair-reply",
@@ -6110,13 +6110,13 @@ async def test_telegram_webhook_unpair_sends_user_reply(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -6129,7 +6129,7 @@ async def test_telegram_webhook_unpair_sends_user_reply(
         },
     )
     unpaired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -6159,7 +6159,7 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-pair-reply-fails",
@@ -6169,13 +6169,13 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -6190,7 +6190,7 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654324"
     assert len(_FailingProviderClient.calls) == 1
@@ -6202,19 +6202,19 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-start-pair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 1,
@@ -6226,7 +6226,7 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
         },
     )
     legacy_start = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "update_id": 2,
@@ -6242,7 +6242,7 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
     assert webhook.json()["paired"] is True
     assert legacy_start.status_code == 200
     assert legacy_start.json()["paired"] is False
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert [binding["external_chat_id"] for binding in bindings.json()] == ["987654322"]
 
 
@@ -6250,13 +6250,13 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-secret-check"},
         )
     ).json()
 
     response = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": "wrong"},
         json={
             "message": {
@@ -6337,7 +6337,7 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": f"discord-worker-resume-{uuid4().hex}",
@@ -6552,14 +6552,14 @@ def _install_discord_gateway_protocol_fakes(
 def test_discord_gateway_rejects_unsupported_encoding_and_compress():
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect(
-            "/api/channels/discord/gateway?encoding=etf"
+            "/v1/channels/discord/gateway?encoding=etf"
         ) as websocket:
             with pytest.raises(WebSocketDisconnect) as exc:
                 websocket.receive_json()
             assert exc.value.code == 4012
 
         with sync_client.websocket_connect(
-            "/api/channels/discord/gateway?encoding=json&compress=zstd-stream"
+            "/v1/channels/discord/gateway?encoding=json&compress=zstd-stream"
         ) as websocket:
             with pytest.raises(WebSocketDisconnect) as exc:
                 websocket.receive_json()
@@ -6572,7 +6572,7 @@ def test_discord_gateway_zlib_stream_compresses_outbound_frames(monkeypatch):
 
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect(
-            "/api/channels/discord/gateway?encoding=json&compress=zlib-stream"
+            "/v1/channels/discord/gateway?encoding=json&compress=zlib-stream"
         ) as websocket:
             hello = json.loads(inflater.decompress(websocket.receive_bytes()).decode("utf-8"))
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
@@ -6587,14 +6587,14 @@ def test_discord_gateway_resume_validates_session_id_and_token(monkeypatch):
     _install_discord_gateway_protocol_fakes(monkeypatch)
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
             ready = websocket.receive_json()
             session_id = ready["d"]["session_id"]
             assert websocket.receive_json()["t"] == "GUILD_CREATE"
 
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6608,7 +6608,7 @@ def test_discord_gateway_resume_validates_session_id_and_token(monkeypatch):
             )
             assert websocket.receive_json()["t"] == "RESUMED"
 
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6622,7 +6622,7 @@ def test_discord_gateway_resume_validates_session_id_and_token(monkeypatch):
             )
             assert websocket.receive_json() == {"op": 9, "d": False}
 
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6655,7 +6655,7 @@ def test_discord_gateway_resume_replays_buffered_dispatches(monkeypatch):
     )
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
             ready = websocket.receive_json()
@@ -6663,7 +6663,7 @@ def test_discord_gateway_resume_replays_buffered_dispatches(monkeypatch):
             assert websocket.receive_json()["t"] == "GUILD_CREATE"
             assert websocket.receive_json()["d"]["content"] == "missed dispatch"
 
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6733,7 +6733,7 @@ async def test_discord_gateway_stateless_resume_replays_unacked_db_events(
     await db_session.commit()
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6799,7 +6799,7 @@ async def test_discord_gateway_early_heartbeat_does_not_ack_undispatched_low_inb
     settings.discord_gateway_poll_interval_seconds = 1.0
     try:
         with TestClient(app) as sync_client:
-            with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+            with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
                 assert websocket.receive_json()["op"] == 10
                 websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
                 ready = websocket.receive_json()
@@ -6886,7 +6886,7 @@ def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
     )
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
             ready = websocket.receive_json()
@@ -6895,7 +6895,7 @@ def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
             assert websocket.receive_json()["d"]["content"] == "event one"
             assert websocket.receive_json()["d"]["content"] == "event two"
 
-        with sync_client.websocket_connect("/api/channels/discord/gateway") as websocket:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             assert websocket.receive_json()["op"] == 10
             websocket.send_json(
                 {
@@ -6914,19 +6914,19 @@ def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
 async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-unpair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     paired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -6940,7 +6940,7 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
     assert paired.json()["paired"] is True
 
     unpaired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -6953,18 +6953,18 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
     assert unpaired.status_code == 200
     assert unpaired.json()["unpaired"] is True
 
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json() == []
 
     pair_again = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     repaired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -6976,7 +6976,7 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
     )
     assert repaired.status_code == 200
     assert repaired.json()["paired"] is True
-    repaired_bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    repaired_bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert len(repaired_bindings.json()) == 1
 
 
@@ -6986,25 +6986,25 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "telegram-already-bound"},
         )
     ).json()
     first = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     second = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     paired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -7015,7 +7015,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         },
     )
     repaired_same_agent = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -7026,7 +7026,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         },
     )
     await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -7037,7 +7037,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         },
     )
     repaired = await client.post(
-        f"/api/channels/telegram/{created['id']}/webhook",
+        f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
         json={
             "message": {
@@ -7057,19 +7057,19 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
 async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "discord", "name": "discord-pair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -7086,7 +7086,7 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.json()[0]["external_chat_id"] == "guild-1"
     assert bindings.json()[0]["external_chat_type"] == "guild_text"
     assert bindings.json()[0]["external_chat_name"] == "guild-1"
@@ -7110,7 +7110,7 @@ async def test_discord_webhook_inactive_link_records_debug_health(
     await db_session.commit()
 
     inbound = await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -7130,9 +7130,9 @@ async def test_discord_webhook_inactive_link_records_debug_health(
             )
         )
     ).scalar_one()
-    health_response = await client.get("/api/channels/health")
+    health_response = await client.get("/v1/channels/health")
     activity_response = await client.get(
-        f"/api/channels/{created['id']}/activity",
+        f"/v1/channels/{created['id']}/activity",
         params={"external_chat_id": "discord-inactive-guild", "limit": 20},
     )
 
@@ -7169,7 +7169,7 @@ async def test_discord_message_pair_code_sends_user_reply(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-message-pair-reply",
@@ -7179,13 +7179,13 @@ async def test_discord_message_pair_code_sends_user_reply(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -7218,19 +7218,19 @@ async def test_discord_message_pair_code_sends_user_reply(
 async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "discord", "name": "discord-unpair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "type": 2,
@@ -7248,7 +7248,7 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
     )
 
     unpaired = await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "type": 2,
@@ -7267,7 +7267,7 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
         unpaired.json()["data"]["content"]
         == "Unpaired. This chat is no longer connected to an agent."
     )
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json() == []
 
@@ -7299,18 +7299,18 @@ async def test_discord_dispatch_records_bound_message(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "discord", "name": "discord-dispatch"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     await client.post(
-        f"/api/channels/discord/{created['id']}/webhook",
+        f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -7372,13 +7372,13 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "discord", "name": "discord-gateway-pair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
@@ -7433,7 +7433,7 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
 async def test_imessage_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-main",
@@ -7444,13 +7444,13 @@ async def test_imessage_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "type": "new-message",
@@ -7464,7 +7464,7 @@ async def test_imessage_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.json()[0]["external_chat_id"] == "iMessage;-;+15551234567"
     assert bindings.json()[0]["external_chat_type"] == "dm"
 
@@ -7478,7 +7478,7 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-pair-reply",
@@ -7489,13 +7489,13 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "type": "new-message",
@@ -7525,7 +7525,7 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
 async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-main",
@@ -7536,13 +7536,13 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     verify = await client.get(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         params={
             "hub.mode": "subscribe",
             "hub.verify_token": created["webhook_secret"],
@@ -7553,7 +7553,7 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     assert verify.text == "challenge-1"
 
     webhook = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "entry": [
@@ -7579,7 +7579,7 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.json()[0]["external_chat_id"] == "15551234567"
     assert bindings.json()[0]["external_chat_name"] == "Ops Phone"
 
@@ -7593,7 +7593,7 @@ async def test_whatsapp_webhook_pair_code_sends_user_reply(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-pair-reply",
@@ -7604,13 +7604,13 @@ async def test_whatsapp_webhook_pair_code_sends_user_reply(
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     webhook = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "entry": [
@@ -7687,13 +7687,13 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
         ),
     ]
     created_by_provider = {
-        provider: (await client.post("/api/channels", json=body)).json()
+        provider: (await client.post("/v1/channels", json=body)).json()
         for provider, body in channel_specs
     }
     pair_codes = {
         provider: (
             await client.post(
-                f"/api/channels/{created['id']}/pair-codes",
+                f"/v1/channels/{created['id']}/pair-codes",
                 json={"ttl_seconds": 900},
             )
         ).json()["code"]
@@ -7702,7 +7702,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
 
     telegram = created_by_provider["telegram"]
     await client.post(
-        f"/api/channels/telegram/{telegram['id']}/webhook",
+        f"/v1/channels/telegram/{telegram['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": telegram["webhook_secret"]},
         json={
             "update_id": 401,
@@ -7715,7 +7715,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
     )
     discord = created_by_provider["discord"]
     await client.post(
-        f"/api/channels/discord/{discord['id']}/webhook",
+        f"/v1/channels/discord/{discord['id']}/webhook",
         headers={"x-clawdi-channel-secret": discord["webhook_secret"]},
         json={
             "id": "discord-shared-msg",
@@ -7725,7 +7725,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
     )
     imessage = created_by_provider["imessage"]
     await client.post(
-        f"/api/channels/imessage/{imessage['id']}/webhook",
+        f"/v1/channels/imessage/{imessage['id']}/webhook",
         params={"secret": imessage["webhook_secret"]},
         json={
             "data": {
@@ -7738,7 +7738,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
     )
     whatsapp = created_by_provider["whatsapp"]
     await client.post(
-        f"/api/channels/whatsapp/{whatsapp['id']}/webhook",
+        f"/v1/channels/whatsapp/{whatsapp['id']}/webhook",
         headers={"x-clawdi-channel-secret": whatsapp["webhook_secret"]},
         json={
             "entry": [
@@ -7763,7 +7763,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
 
     bindings_by_provider = {}
     for provider, created in created_by_provider.items():
-        bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+        bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
         assert bindings.status_code == 200
         bindings_by_provider[provider] = bindings.json()
 
@@ -7781,7 +7781,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
     app_secret = "wa-app-secret"
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-hmac",
@@ -7791,7 +7791,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
@@ -7820,7 +7820,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
     signature = hmac.new(app_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
     webhook = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={
             "x-hub-signature-256": f"sha256={signature}",
             "content-type": "application/json",
@@ -7830,7 +7830,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
 
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.json()[0]["external_chat_id"] == "15551239999"
 
 
@@ -7838,7 +7838,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
 async def test_whatsapp_webhook_rejects_bad_meta_hmac_signature(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-hmac-bad",
@@ -7848,7 +7848,7 @@ async def test_whatsapp_webhook_rejects_bad_meta_hmac_signature(client: httpx.As
     ).json()
 
     response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={
             "x-hub-signature-256": "sha256=bad",
             "content-type": "application/json",
@@ -7866,19 +7866,19 @@ async def test_whatsapp_webhook_skips_from_me_messages(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-from-me"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
 
     response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -7894,7 +7894,7 @@ async def test_whatsapp_webhook_skips_from_me_messages(
 
     assert response.status_code == 200
     assert response.json()["paired"] is False
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.json() == []
     messages = (
         (
@@ -7912,7 +7912,7 @@ async def test_whatsapp_webhook_skips_from_me_messages(
 async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-wrapper-pair"},
         )
     ).json()
@@ -7946,13 +7946,13 @@ async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(client: httpx
     for label, wrapped_message in wrappers:
         pair = (
             await client.post(
-                f"/api/channels/{created['id']}/pair-codes",
+                f"/v1/channels/{created['id']}/pair-codes",
                 json={"ttl_seconds": 900},
             )
         ).json()
         jid = f"{label}@s.whatsapp.net"
         response = await client.post(
-            f"/api/channels/whatsapp/{created['id']}/webhook",
+            f"/v1/channels/whatsapp/{created['id']}/webhook",
             headers={"x-clawdi-channel-secret": created["webhook_secret"]},
             json={
                 "message": {
@@ -7964,7 +7964,7 @@ async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(client: httpx
         assert response.status_code == 200
         assert response.json()["paired"] is True
 
-    bindings = await client.get(f"/api/channels/{created['id']}/bindings")
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert {binding["external_chat_id"] for binding in bindings.json()} == {
         "ephemeral@s.whatsapp.net",
         "viewonce@s.whatsapp.net",
@@ -7977,7 +7977,7 @@ async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(client: httpx
 async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-send",
@@ -7987,13 +7987,13 @@ async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
     webhook = (
         await client.post(
-            f"/api/channels/telegram/{created['id']}/webhook",
+            f"/v1/channels/telegram/{created['id']}/webhook",
             headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
             json={
                 "message": {
@@ -8006,7 +8006,7 @@ async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
     ).json()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"binding_id": webhook["binding_id"], "text": "deploy done"},
     )
 
@@ -8025,7 +8025,7 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-delete-outbox",
@@ -8034,11 +8034,11 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
         )
     ).json()
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "111", "text": "delete before delivery"},
     )
 
-    deleted = await client.delete(f"/api/channels/{created['id']}")
+    deleted = await client.delete(f"/v1/channels/{created['id']}")
 
     assert deleted.status_code == 204
     delivery = (
@@ -8062,7 +8062,7 @@ async def test_channel_delivery_worker_retries_provider_failures(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-retry",
@@ -8071,7 +8071,7 @@ async def test_channel_delivery_worker_retries_provider_failures(
         )
     ).json()
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "111", "text": "retry me"},
     )
 
@@ -8100,7 +8100,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-claimed-link-archive",
@@ -8121,7 +8121,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     await db_session.commit()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"binding_id": str(binding.id), "text": "do not leak"},
     )
     assert sent.status_code == 201, sent.text
@@ -8142,7 +8142,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
         await worker_db.commit()
 
         deleted = await client.delete(
-            f"/api/channels/{created['id']}/agent-links/{created['agent_link_id']}"
+            f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}"
         )
         assert deleted.status_code == 204, deleted.text
 
@@ -8174,7 +8174,7 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-link-lock-contention",
@@ -8217,7 +8217,7 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
     await db_session.commit()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"binding_id": str(binding.id), "text": "send after contention"},
     )
     assert sent.status_code == 201, sent.text
@@ -8338,7 +8338,7 @@ async def test_telegram_command_sync_uses_set_my_commands(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "telegram",
                 "name": "telegram-commands",
@@ -8347,7 +8347,7 @@ async def test_telegram_command_sync_uses_set_my_commands(
         )
     ).json()
 
-    response = await client.post(f"/api/channels/{created['id']}/commands/sync", json={})
+    response = await client.post(f"/v1/channels/{created['id']}/commands/sync", json={})
 
     assert response.status_code == 200
     assert response.json()["provider"] == "telegram"
@@ -8368,7 +8368,7 @@ async def test_discord_command_sync_upserts_application_commands(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-commands",
@@ -8379,7 +8379,7 @@ async def test_discord_command_sync_upserts_application_commands(
     ).json()
 
     response = await client.post(
-        f"/api/channels/{created['id']}/commands/sync",
+        f"/v1/channels/{created['id']}/commands/sync",
         json={"guild_id": "guild-123"},
     )
 
@@ -8406,7 +8406,7 @@ async def test_discord_send_uses_provider_rest_api(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "discord",
                 "name": "discord-send",
@@ -8416,7 +8416,7 @@ async def test_discord_send_uses_provider_rest_api(
     ).json()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "chan-2", "text": "deploy done"},
     )
 
@@ -8450,7 +8450,7 @@ async def test_whatsapp_send_uses_cloud_api(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-send",
@@ -8461,7 +8461,7 @@ async def test_whatsapp_send_uses_cloud_api(
     ).json()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "15551234567", "text": "hello"},
     )
 
@@ -8494,7 +8494,7 @@ async def test_whatsapp_delivery_worker_uses_structured_provider_payload(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-structured-send",
@@ -8505,7 +8505,7 @@ async def test_whatsapp_delivery_worker_uses_structured_provider_payload(
     ).json()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "15551234567:3@s.whatsapp.net", "text": "fallback"},
     )
     assert sent.status_code == 201
@@ -8556,7 +8556,7 @@ async def test_channel_delivery_worker_fails_invalid_whatsapp_provider_payload(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-invalid-structured-send",
@@ -8566,7 +8566,7 @@ async def test_channel_delivery_worker_fails_invalid_whatsapp_provider_payload(
         )
     ).json()
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "15551234567", "text": "fallback"},
     )
     assert sent.status_code == 201
@@ -8607,7 +8607,7 @@ async def test_whatsapp_delivery_worker_uses_structured_audio_provider_payload(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-audio-structured-send",
@@ -8617,7 +8617,7 @@ async def test_whatsapp_delivery_worker_uses_structured_audio_provider_payload(
         )
     ).json()
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "15551234567", "text": "fallback"},
     )
     assert sent.status_code == 201
@@ -8655,7 +8655,7 @@ async def test_imessage_send_uses_bluebubbles_api(
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "imessage",
                 "name": "imessage-send",
@@ -8666,7 +8666,7 @@ async def test_imessage_send_uses_bluebubbles_api(
     ).json()
 
     sent = await client.post(
-        f"/api/channels/{created['id']}/messages",
+        f"/v1/channels/{created['id']}/messages",
         json={"external_chat_id": "iMessage;-;+15551234567", "text": "hello"},
     )
 

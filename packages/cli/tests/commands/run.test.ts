@@ -886,7 +886,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ RUNTIME_VALUE: "from-vault" }),
 			},
 		]);
@@ -904,7 +904,7 @@ describe("run command project folder selection", () => {
 			restore();
 		}
 
-		expect(captured.map((request) => request.path)).toEqual(["/api/vault/resolve"]);
+		expect(captured.map((request) => request.path)).toEqual(["/v1/vault/resolve"]);
 		expect(sidecar.calls).toHaveLength(1);
 		expect(sidecar.calls[0].secretFile).toBe(join(runRoot, "secrets", "runtime-secrets.json"));
 		expect(calls).toHaveLength(1);
@@ -919,7 +919,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ DEPLOY_TOKEN: "vault-secret" }),
 			},
 		]);
@@ -938,7 +938,7 @@ describe("run command project folder selection", () => {
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0].method).toBe("POST");
-		expect(captured[0].path).toContain("/api/vault/resolve");
+		expect(captured[0].path).toContain("/v1/vault/resolve");
 		expect(captured[0].path).toContain("project_id=project-linked");
 		expect(calls).toHaveLength(1);
 		expect(calls[0]).toMatchObject({ command: "npm", args: ["run", "deploy"] });
@@ -956,7 +956,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ API_TOKEN: "from-default-project" }),
 			},
 		]);
@@ -974,7 +974,7 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("/api/vault/resolve");
+		expect(captured[0].path).toContain("/v1/vault/resolve");
 		expect(captured[0].path).not.toContain("project_id=");
 		expect(calls).toHaveLength(1);
 		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
@@ -987,7 +987,7 @@ describe("run command project folder selection", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					new Response("null", {
 						status: 200,
@@ -1019,7 +1019,7 @@ describe("run command project folder selection", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ detail: "project not found" }, 404),
 			},
 		]);
@@ -1056,7 +1056,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -1087,7 +1087,7 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("/api/vault/resolve/bulk");
+		expect(captured[0].path).toContain("/v1/vault/resolve/bulk");
 		expect(captured[0].body).toMatchObject({
 			references: [
 				{
@@ -1132,7 +1132,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/custom-openai/auth/resolve",
+				path: "/v1/ai-providers/custom-openai/auth/resolve",
 				response: () => jsonResponse({ value: "sk-managed-provider" }),
 			},
 		]);
@@ -1150,7 +1150,7 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toBe("/api/ai-providers/custom-openai/auth/resolve");
+		expect(captured[0].path).toBe("/v1/ai-providers/custom-openai/auth/resolve");
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBe("sk-managed-provider");
 		const out = lines.join("\n");
@@ -1165,7 +1165,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -1221,7 +1221,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -1239,7 +1239,7 @@ describe("run command project folder selection", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ OPENAI_API_KEY: "sk-broad" }),
 			},
 		]);
@@ -1270,7 +1270,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -1309,7 +1309,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -1350,7 +1350,7 @@ describe("run command project folder selection", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {

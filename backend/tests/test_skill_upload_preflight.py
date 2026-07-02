@@ -48,7 +48,7 @@ async def test_skill_upload_preflight_rejects_invalid_key_before_inner_app():
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/api/projects/00000000-0000-0000-0000-000000000000/skills/upload",
+            "/v1/projects/00000000-0000-0000-0000-000000000000/skills/upload",
             content=body,
             headers={"Content-Type": content_type},
         )
@@ -80,7 +80,7 @@ async def test_skill_upload_preflight_replays_valid_upload_to_inner_app():
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/api/projects/00000000-0000-0000-0000-000000000000/skills/upload",
+            "/v1/projects/00000000-0000-0000-0000-000000000000/skills/upload",
             content=body,
             headers={"Content-Type": content_type},
         )
@@ -110,7 +110,7 @@ async def test_skill_upload_preflight_replays_when_skill_key_is_not_in_prefix():
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/api/projects/00000000-0000-0000-0000-000000000000/skills/upload",
+            "/v1/projects/00000000-0000-0000-0000-000000000000/skills/upload",
             content=body,
             headers={"Content-Type": content_type},
         )

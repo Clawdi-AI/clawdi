@@ -68,7 +68,7 @@ export default function MemoriesPage() {
 
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: async () => unwrap(await api.GET("/api/settings")),
+		queryFn: async () => unwrap(await api.GET("/v1/settings")),
 	});
 
 	const provider =
@@ -78,7 +78,7 @@ export default function MemoriesPage() {
 
 	const updateSettings = useMutation({
 		mutationFn: async (patch: Record<string, string>) =>
-			unwrap(await api.PATCH("/api/settings", { body: { settings: patch } })),
+			unwrap(await api.PATCH("/v1/settings", { body: { settings: patch } })),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
@@ -90,7 +90,7 @@ export default function MemoriesPage() {
 		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/memories", {
+				await api.GET("/v1/memories", {
 					params: {
 						query: {
 							page: pagination.pageIndex + 1,
@@ -109,7 +109,7 @@ export default function MemoriesPage() {
 	const deleteMemory = useMutation({
 		mutationFn: async (id: string) =>
 			unwrap(
-				await api.DELETE("/api/memories/{memory_id}", {
+				await api.DELETE("/v1/memories/{memory_id}", {
 					params: { path: { memory_id: id } },
 				}),
 			),
@@ -367,7 +367,7 @@ function AddMemoryForm() {
 	const createMemory = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/api/memories", {
+				await api.POST("/v1/memories", {
 					body: { content, category: addCategory, source: "web" },
 				}),
 			),

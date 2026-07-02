@@ -47,7 +47,7 @@ from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
 from app.services import sync_events
 
-router = APIRouter(prefix="/api/sync", tags=["sync"])
+router = APIRouter(prefix="/sync", tags=["sync"])
 log = logging.getLogger(__name__)
 
 

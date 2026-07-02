@@ -34,7 +34,10 @@ from app.models.channel import (
 from app.services.vault_crypto import decrypt, encrypt
 
 WA_MEDIA_HOST = "mmg.whatsapp.net"
-MEDIA_PROXY_PREFIX = "/api/channels/whatsapp/media"
+MEDIA_PROXY_PREFIX = "/v1/channels/whatsapp/media"
+# Proxy URLs minted before the /v1 migration are persisted inside message
+# payloads; keep parsing them.
+_LEGACY_MEDIA_PROXY_PREFIX = "/api/channels/whatsapp/media"
 
 BinaryNode = dict[str, Any]
 RelayDropReason = Literal[
@@ -1997,9 +2000,12 @@ def rewrite_whatsapp_media_to_upstream_url(
     upstream_host: str = WA_MEDIA_HOST,
 ) -> str | None:
     parsed = urlparse(incoming_url)
-    if not parsed.path.startswith(MEDIA_PROXY_PREFIX):
+    for prefix in (MEDIA_PROXY_PREFIX, _LEGACY_MEDIA_PROXY_PREFIX):
+        if parsed.path.startswith(prefix):
+            direct_path = parsed.path[len(prefix) :]
+            break
+    else:
         return None
-    direct_path = parsed.path[len(MEDIA_PROXY_PREFIX) :]
     if not direct_path.startswith("/"):
         return None
     return urlunparse(
@@ -2239,9 +2245,9 @@ async def revoke_whatsapp_agent_credential(
 
 def whatsapp_agent_websocket_url(account_id: UUID | str | None = None) -> str:
     path = (
-        f"/api/channels/whatsapp/{account_id}/baileys"
+        f"/v1/channels/whatsapp/{account_id}/baileys"
         if account_id is not None
-        else "/api/channels/whatsapp/baileys"
+        else "/v1/channels/whatsapp/baileys"
     )
     return _public_ws_url(path)
 

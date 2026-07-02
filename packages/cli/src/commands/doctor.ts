@@ -41,7 +41,7 @@ async function checkApiReachable(): Promise<Check> {
 	}
 	try {
 		const api = new ApiClient();
-		unwrap(await api.GET("/api/auth/me"));
+		unwrap(await api.GET("/v1/auth/me"));
 		return { name: "API reachability", ok: true, detail: config.apiUrl };
 	} catch (e) {
 		const msg =
@@ -113,7 +113,7 @@ async function checkVault(): Promise<Check> {
 	try {
 		const api = new ApiClient();
 		const page = unwrap(
-			await api.GET("/api/vault", {
+			await api.GET("/v1/vault", {
 				params: { query: { page_size: 1 } },
 			}),
 		);
@@ -138,7 +138,7 @@ async function checkMcp(): Promise<Check> {
 	}
 	try {
 		const api = new ApiClient();
-		unwrap(await api.GET("/api/connectors/mcp-config"));
+		unwrap(await api.GET("/v1/connectors/mcp-config"));
 		return { name: "MCP connectors", ok: true, detail: "config reachable" };
 	} catch (e) {
 		return {

@@ -19,7 +19,7 @@ from app.models.device_authorization import DeviceAuthorization
 
 
 async def _start(client: httpx.AsyncClient, label: str = "test cli") -> dict:
-    r = await client.post("/api/cli/auth/device", json={"client_label": label})
+    r = await client.post("/v1/cli/auth/device", json={"client_label": label})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -43,25 +43,25 @@ async def test_pending_then_approve_then_one_shot_poll(client: httpx.AsyncClient
     started = await _start(client)
 
     # First poll while pending.
-    r = await client.post("/api/cli/auth/poll", json={"device_code": started["device_code"]})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": started["device_code"]})
     assert r.status_code == 200
     assert r.json()["status"] == "pending"
 
     # Approve as the dashboard user. The fixture's `client` runs as a Clerk-
     # auth'd seed_user via dependency override.
-    r = await client.post("/api/cli/auth/approve", json={"user_code": started["user_code"]})
+    r = await client.post("/v1/cli/auth/approve", json={"user_code": started["user_code"]})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "approved"
 
     # First post-approve poll returns the api key.
-    r = await client.post("/api/cli/auth/poll", json={"device_code": started["device_code"]})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": started["device_code"]})
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "approved"
     assert body["api_key"] and body["api_key"].startswith("clawdi_")
 
     # Second poll must NOT return the api key — one-shot delivery.
-    r = await client.post("/api/cli/auth/poll", json={"device_code": started["device_code"]})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": started["device_code"]})
     assert r.status_code == 200
     assert r.json()["status"] == "expired"
     assert r.json().get("api_key") is None
@@ -70,9 +70,9 @@ async def test_pending_then_approve_then_one_shot_poll(client: httpx.AsyncClient
 @pytest.mark.asyncio
 async def test_deny_short_circuits_poll(client: httpx.AsyncClient):
     started = await _start(client)
-    r = await client.post("/api/cli/auth/deny", json={"user_code": started["user_code"]})
+    r = await client.post("/v1/cli/auth/deny", json={"user_code": started["user_code"]})
     assert r.status_code == 200
-    r = await client.post("/api/cli/auth/poll", json={"device_code": started["device_code"]})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": started["device_code"]})
     assert r.json()["status"] == "denied"
 
 
@@ -80,7 +80,7 @@ async def test_deny_short_circuits_poll(client: httpx.AsyncClient):
 async def test_unknown_device_code_looks_like_expired(client: httpx.AsyncClient):
     """A poller without a valid code shouldn't be able to enumerate codes;
     fold "not found" into the same response shape as "expired"."""
-    r = await client.post("/api/cli/auth/poll", json={"device_code": "not-a-real-code"})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": "not-a-real-code"})
     assert r.status_code == 200
     assert r.json()["status"] == "expired"
 
@@ -101,14 +101,14 @@ async def test_approve_after_expiry_returns_410(
     da.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
 
-    r = await client.post("/api/cli/auth/approve", json={"user_code": started["user_code"]})
+    r = await client.post("/v1/cli/auth/approve", json={"user_code": started["user_code"]})
     assert r.status_code == 410
 
 
 @pytest.mark.asyncio
 async def test_lookup_returns_status_and_label(client: httpx.AsyncClient):
     started = await _start(client, label="Claude Code · ci-runner")
-    r = await client.get("/api/cli/auth/lookup", params={"code": started["user_code"]})
+    r = await client.get("/v1/cli/auth/lookup", params={"code": started["user_code"]})
     assert r.status_code == 200
     body = r.json()
     assert body["user_code"] == started["user_code"]
@@ -247,7 +247,7 @@ async def test_poll_rate_limit_keyed_per_device_code(client: httpx.AsyncClient, 
     # connection host.
     for _ in range(_DEVICE_PER_IP_MAX):
         r = await client.post(
-            "/api/cli/auth/poll",
+            "/v1/cli/auth/poll",
             json={"device_code": flow_a["device_code"]},
             headers={"X-Forwarded-For": "1.1.1.1"},
         )
@@ -255,7 +255,7 @@ async def test_poll_rate_limit_keyed_per_device_code(client: httpx.AsyncClient, 
 
     # One more poll from ipA → 429 (its IP bucket is full).
     r_a = await client.post(
-        "/api/cli/auth/poll",
+        "/v1/cli/auth/poll",
         json={"device_code": flow_a["device_code"]},
         headers={"X-Forwarded-For": "1.1.1.1"},
     )
@@ -266,7 +266,7 @@ async def test_poll_rate_limit_keyed_per_device_code(client: httpx.AsyncClient, 
     # it would have shared A's bucket via the connection-level
     # client IP and 429'd immediately.
     r_b = await client.post(
-        "/api/cli/auth/poll",
+        "/v1/cli/auth/poll",
         json={"device_code": flow_b["device_code"]},
         headers={"X-Forwarded-For": "2.2.2.2"},
     )
@@ -305,7 +305,7 @@ async def test_poll_rate_limiter_evicts_unbounded_random_device_codes(
     saw_429 = False
     for i in range(200):
         r = await client.post(
-            "/api/cli/auth/poll",
+            "/v1/cli/auth/poll",
             json={"device_code": f"forged-{i}-{_secrets.token_urlsafe(8)}"},
         )
         if r.status_code == 200:
@@ -342,7 +342,7 @@ async def test_poll_rejects_oversized_device_code(client: httpx.AsyncClient):
         before_keys = set(_device_per_ip_attempts.keys())
 
     huge = "x" * 200_000
-    r = await client.post("/api/cli/auth/poll", json={"device_code": huge})
+    r = await client.post("/v1/cli/auth/poll", json={"device_code": huge})
 
     # Pydantic constraint violation surfaces as 422.
     assert r.status_code == 422, r.text
@@ -401,7 +401,7 @@ async def test_poll_rate_limit_hard_cap_429s_when_buckets_full_in_window(
 
     # 1) full + in-window → next /poll must 429.
     r = await client.post(
-        "/api/cli/auth/poll",
+        "/v1/cli/auth/poll",
         json={"device_code": "fresh-attacker-code"},
     )
     assert r.status_code == 429, r.text
@@ -422,7 +422,7 @@ async def test_poll_rate_limit_hard_cap_429s_when_buckets_full_in_window(
     # "expired" by design (don't leak existence); the relevant
     # assertion is "no longer 429".
     r2 = await client.post(
-        "/api/cli/auth/poll",
+        "/v1/cli/auth/poll",
         json={"device_code": "post-aged-flow"},
     )
     assert r2.status_code != 429, (r2.status_code, r2.text)

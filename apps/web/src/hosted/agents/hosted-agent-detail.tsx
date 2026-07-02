@@ -254,7 +254,7 @@ export function HostedAgentDetail({
 		queryKey: ["agent", environmentId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/environments/{environment_id}", {
+				await api.GET("/v1/environments/{environment_id}", {
 					params: { path: { environment_id: environmentId } },
 				}),
 			),
@@ -1013,7 +1013,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 	const link = useMutation({
 		mutationFn: async (channelId: string) =>
 			unwrap(
-				await api.POST("/api/channels/{account_id}/agent-links", {
+				await api.POST("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: channelId } },
 					body: { agent_id: environmentId },
 				}),

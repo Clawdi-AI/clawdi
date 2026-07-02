@@ -243,7 +243,7 @@ function parseRateLimit(reason: string): number | null {
 }
 
 async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise<void> {
-	const url = `${opts.apiUrl.replace(/\/+$/, "")}/api/sync/events`;
+	const url = `${opts.apiUrl.replace(/\/+$/, "")}/v1/sync/events`;
 	const res = await fetch(url, {
 		method: "GET",
 		headers: {

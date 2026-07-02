@@ -101,11 +101,11 @@ async function findVisibleProject(
 
 async function fetchDefaultProject(): Promise<ProjectBrief | null> {
 	const { apiUrl, apiKey } = requireProjectAuth();
-	const r = await fetch(`${apiUrl}/api/projects/default`, {
+	const r = await fetch(`${apiUrl}/v1/projects/default`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!r.ok) return null;
-	const body = await readJson<{ project_id: string }>(r, "/api/projects/default");
+	const body = await readJson<{ project_id: string }>(r, "/v1/projects/default");
 	const projects = await listProjects(apiUrl, apiKey).catch(() => []);
 	return projects.find((item) => item.id === body.project_id) ?? null;
 }

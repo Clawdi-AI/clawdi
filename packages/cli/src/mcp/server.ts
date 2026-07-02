@@ -304,7 +304,7 @@ export async function loadConnectorToolContext(): Promise<ConnectorToolContext> 
 	const cliConfig = getConfig();
 	let mcpConfig: { mcp_url: string; mcp_token: string } | null = null;
 	try {
-		const raw = unwrap(await api.GET("/api/connectors/mcp-config"));
+		const raw = unwrap(await api.GET("/v1/connectors/mcp-config"));
 		mcpConfig = {
 			...raw,
 			// Backend may return localhost in dev; keep its selected path while
@@ -384,7 +384,7 @@ export async function createClawdiMcpServer(
 			const limit = optionalNumberParam(params, "limit");
 			try {
 				const { items: results } = unwrap(
-					await api.GET("/api/memories", {
+					await api.GET("/v1/memories", {
 						params: { query: { q: query, page_size: limit ?? 10 } },
 					}),
 				);
@@ -440,7 +440,7 @@ export async function createClawdiMcpServer(
 					};
 				}
 				const result = unwrap(
-					await api.POST("/api/memories", {
+					await api.POST("/v1/memories", {
 						body: { content, category: category ?? "fact", source: "mcp" },
 					}),
 				);
@@ -519,9 +519,9 @@ export async function createClawdiMcpServer(
 			//   - bare UUID → owner route (CLI api-key auth)
 			const urlMatch = ref.match(SHARE_URL_RE);
 			if (urlMatch) {
-				url = `${apiBase}/api/public/sessions/${urlMatch[1]}/export.md`;
+				url = `${apiBase}/v1/public/sessions/${urlMatch[1]}/export.md`;
 			} else if (UUID_RE.test(ref)) {
-				url = `${apiBase}/api/sessions/${ref}/export.md`;
+				url = `${apiBase}/v1/sessions/${ref}/export.md`;
 			} else {
 				return {
 					content: [
@@ -606,7 +606,7 @@ export async function createClawdiMcpServer(
 			const cap = limit ?? 10;
 			try {
 				const { items } = unwrap(
-					await api.GET("/api/sessions", {
+					await api.GET("/v1/sessions", {
 						params: { query: { q: query, page_size: cap } },
 					}),
 				);

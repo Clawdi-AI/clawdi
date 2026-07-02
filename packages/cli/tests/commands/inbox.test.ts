@@ -78,7 +78,7 @@ describe("inboxAcceptCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/me/invitations/invite-mode/accept",
+				path: "/v1/me/invitations/invite-mode/accept",
 				response: () => jsonResponse({}),
 			},
 		]);
@@ -100,7 +100,7 @@ describe("inboxAcceptCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/me/invitations/invite-attached/accept",
+				path: "/v1/me/invitations/invite-attached/accept",
 				response: () =>
 					jsonResponse({
 						id: "membership-attached",
@@ -114,7 +114,7 @@ describe("inboxAcceptCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [] }),
 			},
 		]);
@@ -142,7 +142,7 @@ describe("inboxAcceptCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/me/invitations/invite-home/accept",
+				path: "/v1/me/invitations/invite-home/accept",
 				response: () => jsonResponse({}),
 			},
 		]);
@@ -165,7 +165,7 @@ describe("inboxAcceptCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: `/api/share/${rawToken}/upgrade`,
+				path: `/v1/share/${rawToken}/upgrade`,
 				response: () =>
 					jsonResponse({
 						membership_id: "membership-1",
@@ -178,12 +178,12 @@ describe("inboxAcceptCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [] }),
 			},
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{

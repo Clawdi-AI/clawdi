@@ -48,7 +48,7 @@ function CliAuthorizeContent() {
 		queryKey: ["cli-authorize", code],
 		queryFn: async (): Promise<DeviceLookup> =>
 			unwrap(
-				await api.GET("/api/cli/auth/lookup", {
+				await api.GET("/v1/cli/auth/lookup", {
 					params: { query: { code } },
 				}),
 			) as DeviceLookup,
@@ -56,7 +56,7 @@ function CliAuthorizeContent() {
 
 	const approve = useMutation({
 		mutationFn: async () => {
-			const res = await api.POST("/api/cli/auth/approve", { body: { user_code: code } });
+			const res = await api.POST("/v1/cli/auth/approve", { body: { user_code: code } });
 			unwrap(res);
 		},
 		onSuccess: () => setTerminalState("approved"),
@@ -64,7 +64,7 @@ function CliAuthorizeContent() {
 
 	const deny = useMutation({
 		mutationFn: async () => {
-			const res = await api.POST("/api/cli/auth/deny", { body: { user_code: code } });
+			const res = await api.POST("/v1/cli/auth/deny", { body: { user_code: code } });
 			unwrap(res);
 		},
 		onSuccess: () => setTerminalState("denied"),

@@ -41,7 +41,7 @@ async def _create_env(client: httpx.AsyncClient) -> str:
         "agent_type": "claude_code",
         "os": "darwin",
     }
-    r = await client.post("/api/environments", json=body)
+    r = await client.post("/v1/environments", json=body)
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -58,12 +58,12 @@ async def test_heartbeat_writes_observability_fields(
         "queue_depth": 3,
         "dropped_count_delta": 0,
     }
-    r = await client.post(f"/api/agents/{env_id}/sync-heartbeat", json=payload)
+    r = await client.post(f"/v1/agents/{env_id}/sync-heartbeat", json=payload)
     assert r.status_code == 204, r.text
 
     # Round-trip through the public env GET — what the daemon
     # wrote must be what the dashboard reads.
-    detail = (await client.get(f"/api/environments/{env_id}")).json()
+    detail = (await client.get(f"/v1/environments/{env_id}")).json()
     assert detail["last_revision_seen"] == 7
     assert detail["queue_depth_high_water"] == 3
     assert detail["last_sync_error"] is None
@@ -75,19 +75,19 @@ async def test_environment_identity_update_round_trips(client: httpx.AsyncClient
     env_id = await _create_env(client)
 
     updated = await client.patch(
-        f"/api/environments/{env_id}",
+        f"/v1/environments/{env_id}",
         json={"display_name": "Build runner"},
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["display_name"] == "Build runner"
     assert updated.json()["avatar_url"] is None
 
-    detail = await client.get(f"/api/environments/{env_id}")
+    detail = await client.get(f"/v1/environments/{env_id}")
     assert detail.status_code == 200, detail.text
     assert detail.json()["display_name"] == "Build runner"
 
     cleared = await client.patch(
-        f"/api/environments/{env_id}",
+        f"/v1/environments/{env_id}",
         json={"display_name": ""},
     )
     assert cleared.status_code == 200, cleared.text
@@ -99,7 +99,7 @@ async def test_environment_update_rejects_avatar_url_field(client: httpx.AsyncCl
     env_id = await _create_env(client)
 
     response = await client.patch(
-        f"/api/environments/{env_id}",
+        f"/v1/environments/{env_id}",
         json={"avatar_url": "https://example.com/agent.png"},
     )
     assert response.status_code == 422, response.text
@@ -110,7 +110,7 @@ async def test_environment_update_rejects_avatar_preset_field(client: httpx.Asyn
     env_id = await _create_env(client)
 
     response = await client.patch(
-        f"/api/environments/{env_id}",
+        f"/v1/environments/{env_id}",
         json={"avatar_preset": "aurora"},
     )
     assert response.status_code == 422, response.text
@@ -122,12 +122,12 @@ async def test_environment_avatar_upload_stores_public_asset(client: httpx.Async
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
     response = await client.post(
-        f"/api/environments/{env_id}/avatar",
+        f"/v1/environments/{env_id}/avatar",
         files={"file": ("agent.png", png, "image/png")},
     )
     assert response.status_code == 200, response.text
     avatar_url = response.json()["avatar_url"]
-    assert "/api/assets/agent-avatars/" in avatar_url
+    assert "/v1/assets/agent-avatars/" in avatar_url
     assert avatar_url.endswith(".png")
 
     path = urlparse(avatar_url).path
@@ -136,7 +136,7 @@ async def test_environment_avatar_upload_stores_public_asset(client: httpx.Async
     assert asset.content == png
     assert asset.headers["content-type"].startswith("image/png")
 
-    cleared = await client.delete(f"/api/environments/{env_id}/avatar")
+    cleared = await client.delete(f"/v1/environments/{env_id}/avatar")
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["avatar_url"] is None
 
@@ -148,14 +148,14 @@ async def test_environment_avatar_reupload_uses_new_asset_url(client: httpx.Asyn
     second_png = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
 
     first = await client.post(
-        f"/api/environments/{env_id}/avatar",
+        f"/v1/environments/{env_id}/avatar",
         files={"file": ("agent.png", first_png, "image/png")},
     )
     assert first.status_code == 200, first.text
     first_path = urlparse(first.json()["avatar_url"]).path
 
     second = await client.post(
-        f"/api/environments/{env_id}/avatar",
+        f"/v1/environments/{env_id}/avatar",
         files={"file": ("agent.png", second_png, "image/png")},
     )
     assert second.status_code == 200, second.text
@@ -181,7 +181,7 @@ async def test_environment_avatar_failed_reupload_keeps_existing_asset(
     second_png = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
 
     first = await client.post(
-        f"/api/environments/{env_id}/avatar",
+        f"/v1/environments/{env_id}/avatar",
         files={"file": ("agent.png", first_png, "image/png")},
     )
     assert first.status_code == 200, first.text
@@ -212,11 +212,11 @@ async def test_environment_avatar_failed_reupload_keeps_existing_asset(
 
     with pytest.raises(RuntimeError, match="object store unavailable"):
         await client.post(
-            f"/api/environments/{env_id}/avatar",
+            f"/v1/environments/{env_id}/avatar",
             files={"file": ("agent.png", second_png, "image/png")},
         )
 
-    detail = await client.get(f"/api/environments/{env_id}")
+    detail = await client.get(f"/v1/environments/{env_id}")
     assert detail.status_code == 200, detail.text
     assert urlparse(detail.json()["avatar_url"]).path == first_path
 
@@ -230,7 +230,7 @@ async def test_environment_avatar_upload_rejects_non_image(client: httpx.AsyncCl
     env_id = await _create_env(client)
 
     response = await client.post(
-        f"/api/environments/{env_id}/avatar",
+        f"/v1/environments/{env_id}/avatar",
         files={"file": ("agent.txt", b"not an image", "text/plain")},
     )
     assert response.status_code == 415, response.text
@@ -243,14 +243,14 @@ async def test_environment_reorder_persists_list_order(client: httpx.AsyncClient
     third_id = await _create_env(client)
 
     response = await client.patch(
-        "/api/environments/order",
+        "/v1/environments/order",
         json={"environment_ids": [third_id, first_id, second_id]},
     )
     assert response.status_code == 200, response.text
     assert [item["id"] for item in response.json()][:3] == [third_id, first_id, second_id]
     assert [item["sort_order"] for item in response.json()][:3] == [0, 1, 2]
 
-    listed = await client.get("/api/environments")
+    listed = await client.get("/v1/environments")
     assert listed.status_code == 200, listed.text
     assert [item["id"] for item in listed.json()][:3] == [third_id, first_id, second_id]
 
@@ -260,7 +260,7 @@ async def test_environment_reorder_rejects_duplicate_ids(client: httpx.AsyncClie
     env_id = await _create_env(client)
 
     response = await client.patch(
-        "/api/environments/order",
+        "/v1/environments/order",
         json={"environment_ids": [env_id, env_id]},
     )
     assert response.status_code == 400, response.text
@@ -271,7 +271,7 @@ async def test_environment_reorder_rejects_unknown_ids(client: httpx.AsyncClient
     env_id = await _create_env(client)
 
     response = await client.patch(
-        "/api/environments/order",
+        "/v1/environments/order",
         json={"environment_ids": [env_id, str(uuid.uuid4())]},
     )
     assert response.status_code == 404, response.text
@@ -286,14 +286,14 @@ async def test_heartbeat_high_water_only_grows(client: httpx.AsyncClient):
     env_id = await _create_env(client)
 
     await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 50},
     )
     await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 5},
     )
-    detail = (await client.get(f"/api/environments/{env_id}")).json()
+    detail = (await client.get(f"/v1/environments/{env_id}")).json()
     assert detail["queue_depth_high_water"] == 50
 
 
@@ -305,21 +305,21 @@ async def test_heartbeat_dropped_count_accumulates(client: httpx.AsyncClient):
     env_id = await _create_env(client)
 
     await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"dropped_count_delta": 3},
     )
     await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"dropped_count_delta": 2},
     )
-    detail = (await client.get(f"/api/environments/{env_id}")).json()
+    detail = (await client.get(f"/v1/environments/{env_id}")).json()
     assert detail["dropped_count"] == 5
 
 
 @pytest.mark.asyncio
 async def test_heartbeat_unknown_env_is_404(client: httpx.AsyncClient):
     fake_id = uuid.uuid4()
-    r = await client.post(f"/api/agents/{fake_id}/sync-heartbeat", json={"queue_depth": 0})
+    r = await client.post(f"/v1/agents/{fake_id}/sync-heartbeat", json={"queue_depth": 0})
     assert r.status_code == 404
 
 
@@ -384,7 +384,7 @@ async def env_bound_cli_client(
 @pytest.mark.asyncio
 async def test_bound_key_can_heartbeat_its_own_env(env_bound_cli_client):
     client, bound_id, _other_id = env_bound_cli_client
-    r = await client.post(f"/api/agents/{bound_id}/sync-heartbeat", json={"queue_depth": 1})
+    r = await client.post(f"/v1/agents/{bound_id}/sync-heartbeat", json={"queue_depth": 1})
     assert r.status_code == 204, r.text
 
 
@@ -410,7 +410,7 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
         "channels": {"etag": '"channels-etag"'},
     }
     r = await client.post(
-        f"/api/agents/{bound_id}/sync-heartbeat",
+        f"/v1/agents/{bound_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
     assert r.status_code == 204, r.text
@@ -449,12 +449,12 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "channels": {"etag": '"channels-etag"'},
     }
     heartbeat = await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["environment"]["id"] == env_id
@@ -498,7 +498,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
         "manifest": {"etag": '"manifest-etag"'},
     }
     first = await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
     assert first.status_code == 204, first.text
@@ -506,7 +506,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
     assert state.observed == observed
 
     second = await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={
             "runtime_observed": {
                 **observed,
@@ -552,12 +552,12 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
         },
     }
     heartbeat = await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["health"]["status"] == "error"
@@ -598,12 +598,12 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         },
     }
     heartbeat = await client.post(
-        f"/api/agents/{env_id}/sync-heartbeat",
+        f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["health"]["status"] == "error"
@@ -628,7 +628,7 @@ async def test_runtime_observed_endpoint_reports_not_configured(
 ):
     env_id = await _create_env(client)
 
-    response = await client.get(f"/api/environments/{env_id}/runtime-observed")
+    response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["environment"]["id"] == env_id
@@ -645,11 +645,11 @@ async def test_runtime_observed_endpoint_reports_not_configured(
 async def test_bound_key_runtime_observed_is_env_scoped(env_bound_cli_client):
     client, bound_id, other_id = env_bound_cli_client
 
-    own = await client.get(f"/api/environments/{bound_id}/runtime-observed")
+    own = await client.get(f"/v1/environments/{bound_id}/runtime-observed")
     assert own.status_code == 200, own.text
     assert own.json()["environment"]["id"] == bound_id
 
-    other = await client.get(f"/api/environments/{other_id}/runtime-observed")
+    other = await client.get(f"/v1/environments/{other_id}/runtime-observed")
     assert other.status_code == 404, other.text
 
 
@@ -699,17 +699,17 @@ async def test_runtime_observed_summary_counts_health_by_environment(
         },
     }
     ok_heartbeat = await client.post(
-        f"/api/agents/{ok_env_id}/sync-heartbeat",
+        f"/v1/agents/{ok_env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": ok_observed},
     )
     assert ok_heartbeat.status_code == 204, ok_heartbeat.text
     error_heartbeat = await client.post(
-        f"/api/agents/{error_env_id}/sync-heartbeat",
+        f"/v1/agents/{error_env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": error_observed},
     )
     assert error_heartbeat.status_code == 204, error_heartbeat.text
 
-    response = await client.get("/api/environments/runtime-observed")
+    response = await client.get("/v1/environments/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["counts"] == {
@@ -728,5 +728,5 @@ async def test_runtime_observed_summary_counts_health_by_environment(
 @pytest.mark.asyncio
 async def test_bound_key_cannot_heartbeat_another_env(env_bound_cli_client):
     client, _bound_id, other_id = env_bound_cli_client
-    r = await client.post(f"/api/agents/{other_id}/sync-heartbeat", json={"queue_depth": 1})
+    r = await client.post(f"/v1/agents/{other_id}/sync-heartbeat", json={"queue_depth": 1})
     assert r.status_code == 403, r.text

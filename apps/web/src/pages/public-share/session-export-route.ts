@@ -9,14 +9,14 @@ import { env } from "@/lib/env";
  * those extension paths directly to this handler.
  *
  * `id` is always a session UUID — matches the backend's canonical
- * `/api/public/sessions/{session_id}` route.
+ * `/v1/public/sessions/{session_id}` route.
  *
  * **Anonymous-only proxy**: no Clerk token is forwarded to the backend.
  * TanStack Start may still run Clerk request middleware for browser state,
  * but this handler intentionally avoids `auth()`. The target consumer is
  * unauthenticated agents (ChatGPT / Claude WebFetch / curl); the owner-private
  * "export my session" path goes through the dashboard's owner-auth
- * `/api/sessions/{id}/export.md` instead.
+ * `/v1/sessions/{id}/export.md` instead.
  *
  * Behavior: 200 when the session has an active `kind='link'` permission,
  * 401 otherwise (backend status passed through verbatim).
@@ -45,12 +45,12 @@ export async function GET(
 	const api = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
 	const result =
 		format === "md"
-			? await api.GET("/api/public/sessions/{session_id}/export.md", {
+			? await api.GET("/v1/public/sessions/{session_id}/export.md", {
 					params: { path: { session_id: id } },
 					parseAs: "text",
 					cache: "no-store",
 				})
-			: await api.GET("/api/public/sessions/{session_id}/export.json", {
+			: await api.GET("/v1/public/sessions/{session_id}/export.json", {
 					params: { path: { session_id: id } },
 					parseAs: "text",
 					cache: "no-store",

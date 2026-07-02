@@ -8,7 +8,7 @@
  * A cloud-api environment id is a UUID. The post-deploy redirect can briefly
  * land on the agent route with a *deployment* id before env ids are minted, so
  * per-env queries (sessions, channel links) must gate on this to avoid firing
- * a 422 against `/api/sessions`.
+ * a 422 against `/v1/sessions`.
  */
 const CLOUD_ENV_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

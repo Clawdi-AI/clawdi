@@ -45,7 +45,7 @@ async function fetchAllSkills(api: ApiClient, projectId?: string): Promise<Skill
 	const pageSize = 200;
 	while (page <= 50) {
 		const result = unwrap(
-			await api.GET("/api/skills", {
+			await api.GET("/v1/skills", {
 				params: {
 					query: projectId
 						? { ...(page === 1 ? {} : { page }), page_size: pageSize, project_id: projectId }
@@ -268,7 +268,7 @@ export async function skillAdd(
 		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/api/environments"));
+		const envs = unwrap(await api.GET("/v1/environments"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
@@ -379,7 +379,7 @@ export async function skillInstall(
 		// that project. Mirrors the dashboard's "Install" semantics
 		// when no env is selected.
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/api/environments"));
+		const envs = unwrap(await api.GET("/v1/environments"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		// Match the owning env to a LOCAL env on THIS machine. The
 		// account's default project can belong to a sibling machine
@@ -410,7 +410,7 @@ export async function skillInstall(
 		}
 	}
 	const installResult = unwrap(
-		await api.POST("/api/projects/{project_id}/skills/install", {
+		await api.POST("/v1/projects/{project_id}/skills/install", {
 			params: { path: { project_id: projectId } },
 			body: { repo, path },
 		}),
@@ -460,7 +460,7 @@ export async function skillInstall(
 			// project has a newer copy of the same skill_key would
 			// land that other agent's bytes locally.
 			tarBytes = await api.getBytes(
-				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(installResult.skill_key)}/download`,
+				`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(installResult.skill_key)}/download`,
 			);
 		} catch (e) {
 			console.log(
@@ -557,7 +557,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/api/environments"));
+		const envs = unwrap(await api.GET("/v1/environments"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
@@ -575,7 +575,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		}
 	}
 	unwrap(
-		await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+		await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 			params: { path: { project_id: projectId, skill_key: key } },
 		}),
 	);

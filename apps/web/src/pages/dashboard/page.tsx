@@ -75,19 +75,19 @@ export default function DashboardPage() {
 
 	const { data: stats, isLoading: statsLoading } = useQuery({
 		queryKey: ["dashboard-stats"],
-		queryFn: async () => unwrap(await api.GET("/api/dashboard/stats")),
+		queryFn: async () => unwrap(await api.GET("/v1/dashboard/stats")),
 		staleTime: DASHBOARD_STALE_MS,
 	});
 
 	const { data: projects, isLoading: projectsLoading } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		staleTime: DASHBOARD_STALE_MS,
 	});
 
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 		// Daemon-status badge classification is time-sensitive — a
 		// daemon that paused while the tab was open would otherwise
 		// stay green indefinitely. Match the agent detail page's

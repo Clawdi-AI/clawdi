@@ -7,7 +7,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_create_project_generates_workspace_slug(client, db_session, seed_user):
-    response = await client.post("/api/projects", json={"name": "Engineering Toolkit"})
+    response = await client.post("/v1/projects", json={"name": "Engineering Toolkit"})
 
     assert response.status_code == 201
     body = response.json()
@@ -27,8 +27,8 @@ async def test_create_project_generates_workspace_slug(client, db_session, seed_
 
 
 async def test_create_project_suffixes_duplicate_slug(client):
-    first = await client.post("/api/projects", json={"name": "Client Alpha"})
-    second = await client.post("/api/projects", json={"name": "Client Alpha"})
+    first = await client.post("/v1/projects", json={"name": "Client Alpha"})
+    second = await client.post("/v1/projects", json={"name": "Client Alpha"})
 
     assert first.status_code == 201
     assert second.status_code == 201
@@ -38,11 +38,11 @@ async def test_create_project_suffixes_duplicate_slug(client):
 
 async def test_create_project_rejects_duplicate_explicit_slug(client):
     first = await client.post(
-        "/api/projects",
+        "/v1/projects",
         json={"name": "Client Alpha", "slug": "client-alpha"},
     )
     second = await client.post(
-        "/api/projects", json={"name": "Another Client", "slug": "client-alpha"}
+        "/v1/projects", json={"name": "Another Client", "slug": "client-alpha"}
     )
 
     assert first.status_code == 201
@@ -51,7 +51,7 @@ async def test_create_project_rejects_duplicate_explicit_slug(client):
 
 async def test_create_project_rejects_invalid_slug(client):
     response = await client.post(
-        "/api/projects",
+        "/v1/projects",
         json={"name": "Valid Name", "slug": "../bad"},
     )
 

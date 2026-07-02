@@ -313,7 +313,7 @@ async function downloadOneAgent(
 					// Project-explicit download so duplicate skill_keys across
 					// projects resolve to the right bytes for THIS agent.
 					const tarBytes = await api.getBytes(
-						`/api/projects/${encodeURIComponent(scan.skillProjectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+						`/v1/projects/${encodeURIComponent(scan.skillProjectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 					);
 					if (scan.sharedOwnerHandle) {
 						await adapter.writeSharedSkillArchive(
@@ -383,7 +383,7 @@ async function fetchCloudSkills(api: ApiClient, projectId: string): Promise<Skil
 	const pageSize = 200;
 	for (let page = 1; page <= 50; page++) {
 		const result = unwrap(
-			await api.GET("/api/skills", {
+			await api.GET("/v1/skills", {
 				params: {
 					query: { ...(page === 1 ? {} : { page }), page_size: pageSize, project_id: projectId },
 				},
@@ -404,7 +404,7 @@ async function fetchCloudSessions(
 	const pageSize = 200;
 	for (let page = 1; page <= 50; page++) {
 		const result = unwrap(
-			await api.GET("/api/sessions", {
+			await api.GET("/v1/sessions", {
 				params: { query: { agent: agentType, page, page_size: pageSize } },
 			}),
 		);

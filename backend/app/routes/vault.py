@@ -50,7 +50,7 @@ from app.schemas.vault import (
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.vault_crypto import decrypt, encrypt
 
-router = APIRouter(prefix="/api/vault", tags=["vault"])
+router = APIRouter(prefix="/vault", tags=["vault"])
 VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
 VaultItemLookupRow = tuple[UUID, str, Vault, VaultItem]
 ExactVaultReferenceFilter = tuple[str, str, str]

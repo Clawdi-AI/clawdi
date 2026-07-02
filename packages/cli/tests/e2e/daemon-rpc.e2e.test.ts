@@ -45,14 +45,14 @@ beforeAll(() => {
 				body,
 			});
 
-			if (req.method === "GET" && url.pathname === `/api/environments/${ENV_ID}`) {
+			if (req.method === "GET" && url.pathname === `/v1/environments/${ENV_ID}`) {
 				return json({
 					id: ENV_ID,
 					default_project_id: PROJECT_ID,
 				});
 			}
 
-			if (req.method === "GET" && url.pathname === "/api/skills") {
+			if (req.method === "GET" && url.pathname === "/v1/skills") {
 				return json(
 					{
 						items: [],
@@ -65,11 +65,11 @@ beforeAll(() => {
 				);
 			}
 
-			if (req.method === "GET" && url.pathname === "/api/sync/events") {
+			if (req.method === "GET" && url.pathname === "/v1/sync/events") {
 				return sse();
 			}
 
-			if (req.method === "POST" && url.pathname === `/api/agents/${ENV_ID}/sync-heartbeat`) {
+			if (req.method === "POST" && url.pathname === `/v1/agents/${ENV_ID}/sync-heartbeat`) {
 				return json({ ok: true });
 			}
 
@@ -148,9 +148,9 @@ if (process.platform !== "win32") {
 				const staleToken = await postRpcWithToken(rpcPort, oldToken);
 				expect(staleToken.status).toBe(401);
 
-				expect(apiCalls.some((call) => call.path === `/api/environments/${ENV_ID}`)).toBe(true);
-				expect(apiCalls.some((call) => call.path.startsWith("/api/skills?"))).toBe(true);
-				expect(apiCalls.some((call) => call.path === `/api/agents/${ENV_ID}/sync-heartbeat`)).toBe(
+				expect(apiCalls.some((call) => call.path === `/v1/environments/${ENV_ID}`)).toBe(true);
+				expect(apiCalls.some((call) => call.path.startsWith("/v1/skills?"))).toBe(true);
+				expect(apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`)).toBe(
 					true,
 				);
 				expect(apiCalls.every((call) => call.auth === `Bearer ${API_KEY}`)).toBe(true);

@@ -76,7 +76,7 @@ from app.services.channels import (
     verify_webhook_secret,
 )
 
-router = APIRouter(prefix="/api/channels/discord", tags=["channels"])
+router = APIRouter(prefix="/channels/discord", tags=["channels"])
 
 _DISCORD_GATEWAY_RESUME_BUFFER_SIZE = 100
 _DISCORD_GATEWAY_SESSIONS: dict[str, dict[str, Any]] = {}
@@ -105,7 +105,7 @@ async def discord_agent_rest(
     segments = [segment for segment in discord_path.strip("/").split("/") if segment]
     if segments in (["gateway"], ["gateway", "bot"]):
         return {
-            "url": _public_ws_url("/api/channels/discord/gateway"),
+            "url": _public_ws_url("/v1/channels/discord/gateway"),
             "shards": 1,
             "session_start_limit": {
                 "total": 1000,
@@ -412,7 +412,7 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                         "d": {
                             "v": 10,
                             "session_id": session_id,
-                            "resume_gateway_url": _public_ws_url("/api/channels/discord/gateway"),
+                            "resume_gateway_url": _public_ws_url("/v1/channels/discord/gateway"),
                             "user": _discord_bot_user(account),
                             "application": {"id": _discord_application_id(account)},
                             "guilds": [

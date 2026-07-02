@@ -24,7 +24,7 @@ export function getEnvIdByAgent(agentType: string): string | null {
  * (rare in CLI use) it's the most-recently-active env's project or
  * Personal as a fallback.
  *
- * Phase-2 project-explicit URLs (e.g. `/api/projects/{project_id}/skills/upload`)
+ * Phase-2 project-explicit URLs (e.g. `/v1/projects/{project_id}/skills/upload`)
  * need a project_id in the path. Calling this once at command start
  * lets the CLI not have to track env_id locally.
  *
@@ -44,10 +44,10 @@ export async function fetchDefaultProjectId(
 	const headers: Record<string, string> = {};
 	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
 
-	const projectRes = await fetch(`${baseUrl}/api/projects/default`, { headers });
+	const projectRes = await fetch(`${baseUrl}/v1/projects/default`, { headers });
 	const body: { project_id?: string } = await readJson<{ project_id?: string }>(
 		projectRes,
-		"/api/projects/default",
+		"/v1/projects/default",
 	).catch(() => ({}));
 	if (body.project_id) return body.project_id;
 	if (!projectRes.ok) {
@@ -75,7 +75,7 @@ export async function fetchProjectIdForEnv(
 ): Promise<string> {
 	const { unwrap } = await import("./api-client");
 	const env = unwrap(
-		await api.GET("/api/environments/{environment_id}", {
+		await api.GET("/v1/environments/{environment_id}", {
 			params: { path: { environment_id: envId } },
 		}),
 	);

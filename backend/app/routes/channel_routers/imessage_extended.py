@@ -33,7 +33,7 @@ from app.services.bluebubbles_compat import (
     synthetic_operation_response,
 )
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 
 
 @router.post("/facetime/session", include_in_schema=False)

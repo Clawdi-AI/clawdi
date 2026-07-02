@@ -33,7 +33,7 @@ from app.services.composio import (
 )
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/connectors", tags=["connectors"])
+router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 
 def _is_composio_auth_error(exc: Exception) -> bool:

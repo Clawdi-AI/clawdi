@@ -65,12 +65,12 @@ export function CopyKeysDialog({
 	const vaultsQuery = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 		enabled: open,
 	});
 	const projectsQuery = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
 	const ownVaults = useMemo(
@@ -123,7 +123,7 @@ export function CopyKeysDialog({
 				}
 				if (!writableProject) throw new Error("No writable Project available yet");
 				await unwrap(
-					await api.POST("/api/vault", {
+					await api.POST("/v1/vault", {
 						params: { query: { project_id: writableProject.id, create_only: true } },
 						body: { slug: targetSlug, name },
 					}),
@@ -146,7 +146,7 @@ export function CopyKeysDialog({
 					let copiedInChunk = 0;
 					try {
 						const result = unwrap(
-							await api.POST("/api/vault/{slug}/items/copy", {
+							await api.POST("/v1/vault/{slug}/items/copy", {
 								params: {
 									path: { slug: vault.slug },
 									query: { project_id: anyProjectId ?? undefined },
@@ -164,7 +164,7 @@ export function CopyKeysDialog({
 						try {
 							if (copiedInChunk > 0) {
 								await unwrap(
-									await api.DELETE("/api/vault/{slug}/items", {
+									await api.DELETE("/v1/vault/{slug}/items", {
 										params: {
 											path: { slug: vault.slug },
 											query: { project_id: anyProjectId ?? undefined, global_delete: true },

@@ -80,7 +80,7 @@ export default function SharePage({ token }: { token: string }) {
 	const preview = useQuery({
 		queryKey: ["share-preview", token],
 		queryFn: async (): Promise<SharePreview> => {
-			const result = await api.GET("/api/share/{token}/preview", {
+			const result = await api.GET("/v1/share/{token}/preview", {
 				params: { path: { token } },
 			});
 			if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
@@ -93,7 +93,7 @@ export default function SharePage({ token }: { token: string }) {
 		mutationFn: async () => {
 			const bearer = await getToken();
 			if (!bearer) throw new ShareError("unknown");
-			const result = await api.POST("/api/share/{token}/upgrade", {
+			const result = await api.POST("/v1/share/{token}/upgrade", {
 				params: { path: { token } },
 				body: { use_as: "attached" },
 			});

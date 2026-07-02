@@ -150,7 +150,7 @@ function SessionsListInner() {
 
 	const { data: envs } = useQuery({
 		queryKey: ["environments-for-filter"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 	});
 	const agentOptions = useMemo(() => {
 		const set = new Set<string>();

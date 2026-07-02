@@ -32,13 +32,13 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
     monkeypatch.setattr(st, "mem0_available", lambda: True)
 
     r = await client.patch(
-        "/api/settings",
+        "/v1/settings",
         json={"settings": {"memory_provider": "mem0", "mem0_api_key": "mem0_live_supersecret"}},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "updated"}
 
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert body["memory_provider"] == "mem0"
     # Secret fields must be masked — the actual key value must never be returned.
     masked = body["mem0_api_key"]
@@ -49,9 +49,9 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
 
 @pytest.mark.asyncio
 async def test_settings_patch_merges_rather_than_replaces(client: httpx.AsyncClient):
-    await client.patch("/api/settings", json={"settings": {"a": 1, "b": 2}})
-    await client.patch("/api/settings", json={"settings": {"b": 99}})
-    body = (await client.get("/api/settings")).json()
+    await client.patch("/v1/settings", json={"settings": {"a": 1, "b": 2}})
+    await client.patch("/v1/settings", json={"settings": {"b": 99}})
+    body = (await client.get("/v1/settings")).json()
     # "a" must survive the second patch — PATCH semantics are merge, not replace.
     assert body["a"] == 1
     assert body["b"] == 99
@@ -68,19 +68,19 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
     can't accidentally drop arbitrary-key support and silently
     revive the banner forever."""
     # Initial state: key absent → banner should show client-side.
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert "project_migration_banner_dismissed_at" not in body
 
     # Dashboard dismisses the banner.
     dismissed_at = "2026-04-29T08:30:00Z"
     r = await client.patch(
-        "/api/settings",
+        "/v1/settings",
         json={"settings": {"project_migration_banner_dismissed_at": dismissed_at}},
     )
     assert r.status_code == 200, r.text
 
     # Subsequent reads (any device) see the dismissed timestamp.
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert body["project_migration_banner_dismissed_at"] == dismissed_at
 
 
@@ -106,7 +106,7 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get("/api/connectors/mcp-config")
+            r = await ac.get("/v1/connectors/mcp-config")
     finally:
         app.dependency_overrides.clear()
 
@@ -120,11 +120,11 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
 async def test_mcp_bridge_rejects_missing_and_invalid_tokens():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r_missing = await ac.post("/api/mcp/composio", json={"method": "tools/list"})
+        r_missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
         assert r_missing.status_code == 401, r_missing.text
 
         r_bad = await ac.post(
-            "/api/mcp/composio",
+            "/v1/mcp/composio",
             json={"method": "tools/list"},
             headers={"Authorization": "Bearer not.a.valid.jwt"},
         )
@@ -175,7 +175,7 @@ async def test_mcp_composio_bridge_forwards_json_rpc_with_user_scoped_session(mo
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post(
-            "/api/mcp/composio",
+            "/v1/mcp/composio",
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -230,7 +230,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
                 },
             )
             legacy_listed = await ac.post(
-                "/api/mcp/clawdi",
+                "/v1/mcp/clawdi",
                 json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             )
     finally:
@@ -332,7 +332,7 @@ async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             response = await ac.post(
-                "/api/mcp/clawdi",
+                "/v1/mcp/clawdi",
                 json={
                     "jsonrpc": "2.0",
                     "id": 3,
@@ -408,7 +408,7 @@ async def test_clawdi_mcp_session_search_escapes_like_wildcards(
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             response = await ac.post(
-                "/api/mcp/clawdi",
+                "/v1/mcp/clawdi",
                 json={
                     "jsonrpc": "2.0",
                     "id": 4,

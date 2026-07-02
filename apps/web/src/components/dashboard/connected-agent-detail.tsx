@@ -106,7 +106,7 @@ export function ConnectedAgentDetail({
 		queryKey: ["agent", id],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/environments/{environment_id}", {
+				await api.GET("/v1/environments/{environment_id}", {
 					params: { path: { environment_id: id } },
 				}),
 			),
@@ -114,7 +114,7 @@ export function ConnectedAgentDetail({
 
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 		enabled: !!agent,
 	});
 	const writableProjectIds = useMemo(
@@ -131,7 +131,7 @@ export function ConnectedAgentDetail({
 		queryKey: ["agent-project-bindings", id],
 		queryFn: async (): Promise<ProjectBindingRow[]> =>
 			unwrap(
-				await api.GET("/api/agents/{agent_id}/project-bindings", {
+				await api.GET("/v1/agents/{agent_id}/project-bindings", {
 					params: { path: { agent_id: id } },
 				}),
 			),
@@ -164,7 +164,7 @@ export function ConnectedAgentDetail({
 			fetchAllPages<SkillSummary>(
 				async (page, pageSize) =>
 					unwrap(
-						await api.GET("/api/skills", {
+						await api.GET("/v1/skills", {
 							params: {
 								query: {
 									page,
@@ -189,7 +189,7 @@ export function ConnectedAgentDetail({
 	const uninstallSkill = useMutation({
 		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
 			unwrap(
-				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: projectId, skill_key: skillKey } },
 				}),
 			),
@@ -381,7 +381,7 @@ function AgentProjectsPanel({
 	const addContext = useMutation({
 		mutationFn: async () => {
 			await unwrap(
-				await api.POST("/api/agents/{agent_id}/project-bindings/context", {
+				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
 					params: { path: { agent_id: agentId } },
 					body: { project_id: contextProjectId },
 				}),
@@ -398,7 +398,7 @@ function AgentProjectsPanel({
 	const removeBinding = useMutation({
 		mutationFn: async (bindingId: string) => {
 			await unwrap(
-				await api.DELETE("/api/agents/{agent_id}/project-bindings/{binding_id}", {
+				await api.DELETE("/v1/agents/{agent_id}/project-bindings/{binding_id}", {
 					params: { path: { agent_id: agentId, binding_id: bindingId } },
 				}),
 			);
@@ -413,7 +413,7 @@ function AgentProjectsPanel({
 	const reorder = useMutation({
 		mutationFn: async (items: Array<{ binding_id: string; priority: number }>) => {
 			await unwrap(
-				await api.PATCH("/api/agents/{agent_id}/project-bindings/context/reorder", {
+				await api.PATCH("/v1/agents/{agent_id}/project-bindings/context/reorder", {
 					params: { path: { agent_id: agentId } },
 					body: { items },
 				}),

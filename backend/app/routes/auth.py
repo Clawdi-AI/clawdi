@@ -17,7 +17,7 @@ from app.schemas.api_key import (
 from app.schemas.user import CurrentUserResponse
 from app.services.api_key import mint_api_key
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/keys", response_model=ApiKeyCreated)

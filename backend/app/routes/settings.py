@@ -14,7 +14,7 @@ from app.schemas.settings import (
 from app.services.memory_provider import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/settings", tags=["settings"])
 
 # Mask shown to clients in place of actual secret values.
 _SECRET_MASK = "••••••••"

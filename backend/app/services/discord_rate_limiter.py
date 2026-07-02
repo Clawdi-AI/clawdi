@@ -110,6 +110,7 @@ class DiscordRateLimiter:
 
     def route_key(self, method: str, path: str) -> str:
         normalized = path.split("?", 1)[0]
+        normalized = normalized.removeprefix("/v1/channels/discord/v10")
         normalized = normalized.removeprefix("/api/channels/discord/v10")
         normalized = normalized.removeprefix("/api/v10")
         segments = [segment for segment in normalized.split("/") if segment]

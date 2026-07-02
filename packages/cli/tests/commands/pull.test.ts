@@ -75,7 +75,7 @@ describe("pull — Hermes fixture", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/sessions",
+				path: "/v1/sessions",
 				response: () => jsonResponse({ items: page, total: 100_000 }),
 			},
 		]);
@@ -86,7 +86,7 @@ describe("pull — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		expect(captured.filter((request) => request.path.startsWith("/api/sessions"))).toHaveLength(50);
+		expect(captured.filter((request) => request.path.startsWith("/v1/sessions"))).toHaveLength(50);
 	});
 
 	it("downloads the cloud skill into $HOME/.hermes/skills/<key>/", async () => {
@@ -107,12 +107,12 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`,
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/demo/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
 			},
 		]);
@@ -128,9 +128,9 @@ content
 		expect(readFileSync(skillMd, "utf-8")).toContain("description: pulled from cloud");
 
 		// Both list + project-explicit download should have been called
-		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
+		expect(captured.some((c) => c.path.startsWith("/v1/skills") && c.method === "GET")).toBe(true);
 		expect(
-			captured.some((c) => c.path === `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`),
+			captured.some((c) => c.path === `/v1/projects/${TEST_PROJECT_ID}/skills/demo/download`),
 		).toBe(true);
 	});
 
@@ -140,12 +140,12 @@ content
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/projects/${TEST_PROJECT_ID}/skills/demo/download`,
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/demo/download`,
 				response: () => jsonResponse({}),
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
 			},
 		]);
@@ -156,7 +156,7 @@ content
 		}
 
 		// The list is needed to show the summary; the download must not fire.
-		expect(captured.some((c) => c.path.startsWith("/api/skills") && c.method === "GET")).toBe(true);
+		expect(captured.some((c) => c.path.startsWith("/v1/skills") && c.method === "GET")).toBe(true);
 		expect(captured.some((c) => c.path.endsWith("/download"))).toBe(false);
 		// Nothing written locally
 		expect(existsSync(join(tmpHome, ".hermes", "skills", "demo", "SKILL.md"))).toBe(
@@ -169,7 +169,7 @@ content
 		setup("hermes");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
-			{ method: "GET", path: "/api/skills", response: () => jsonResponse({ items: [] }) },
+			{ method: "GET", path: "/v1/skills", response: () => jsonResponse({ items: [] }) },
 		]);
 		try {
 			await pull({ agent: "hermes", modules: "skills" });
@@ -208,12 +208,12 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);
@@ -241,12 +241,12 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);
@@ -274,12 +274,12 @@ description: new
 			okEnvironmentProbe(),
 			{
 				method: "GET",
-				path: `/api/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
 				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
 			},
 		]);

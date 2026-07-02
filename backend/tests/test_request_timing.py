@@ -8,7 +8,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.middleware.request_timing import RequestTimingMiddleware
 
 
-def _scope(*, path: str = "/api/sessions", query_string: bytes = b"secret=value") -> Scope:
+def _scope(*, path: str = "/v1/sessions", query_string: bytes = b"secret=value") -> Scope:
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -71,9 +71,9 @@ async def test_request_timing_logs_errors_without_query_string(caplog: pytest.Lo
     caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
     await _collect(
         RequestTimingMiddleware(inner, slow_ms=750),
-        _scope(path="/api/sessions", query_string=b"token=secret"),
+        _scope(path="/v1/sessions", query_string=b"token=secret"),
     )
 
-    assert "request_error method=GET path=/api/sessions status=500" in caplog.text
+    assert "request_error method=GET path=/v1/sessions status=500" in caplog.text
     assert "request_id=req_test" in caplog.text
     assert "token=secret" not in caplog.text

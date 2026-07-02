@@ -30,7 +30,7 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "telegram", "name": "debug-telegram"},
         )
     ).json()
@@ -62,7 +62,7 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
     await db_session.refresh(seed_user)
 
     response = await client.get(
-        "/api/channels/debug/events",
+        "/v1/channels/debug/events",
         params={"provider": "telegram", "outcome": "failure", "limit": 10},
     )
 
@@ -89,7 +89,7 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "discord", "name": "debug-discord"},
         )
     ).json()
@@ -140,7 +140,7 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
     await db_session.commit()
     await db_session.refresh(seed_user)
 
-    response = await client.get("/api/channels/debug/health")
+    response = await client.get("/v1/channels/debug/health")
 
     assert response.status_code == 200
     channels = response.json()["channels"]
@@ -167,12 +167,12 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
 
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "debug-whatsapp-native"},
         )
     ).json()
 
-    unavailable = await client.get("/api/channels/debug/health")
+    unavailable = await client.get("/v1/channels/debug/health")
     assert unavailable.status_code == 200
     health = next(
         channel
@@ -191,7 +191,7 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
     account_id = UUID(created["id"])
     register_whatsapp_shared_bot_transport(account_id, FakeWhatsAppTransport())
     try:
-        available = await client.get("/api/channels/debug/health")
+        available = await client.get("/v1/channels/debug/health")
     finally:
         unregister_whatsapp_shared_bot_transport(account_id)
 

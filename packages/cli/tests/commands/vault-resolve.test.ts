@@ -33,7 +33,7 @@ describe("vaultResolveCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						key: "OPENAI_API_KEY",
@@ -74,12 +74,12 @@ describe("vaultResolveCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects/default",
+				path: "/v1/projects/default",
 				response: () => jsonResponse({ project_id: "project-parent" }),
 			},
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						key: "OPENAI_API_KEY",
@@ -127,7 +127,7 @@ describe("vaultResolveCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ key: "OPENAI_API_KEY", value: "sk-test" }),
 			},
 		]);
@@ -150,7 +150,7 @@ describe("vaultResolveCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						key: "OPENAI_API_KEY",
@@ -186,7 +186,7 @@ describe("vaultResolveCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () => jsonResponse({ detail: "project not found" }, 404),
 			},
 		]);

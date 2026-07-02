@@ -27,7 +27,7 @@ from app.services.agent_bindings import (
     get_owned_agent_or_404,
 )
 
-router = APIRouter(prefix="/api/agents", tags=["agent-project-bindings"])
+router = APIRouter(prefix="/agents", tags=["agent-project-bindings"])
 
 
 def _to_response(binding: AgentProjectBinding) -> AgentProjectBindingResponse:

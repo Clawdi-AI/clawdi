@@ -42,7 +42,7 @@ export async function projectInviteCommand(
 	}
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
-	const r = await fetch(`${apiUrl}/api/projects/${projectId}/invitations`, {
+	const r = await fetch(`${apiUrl}/v1/projects/${projectId}/invitations`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${apiKey}`,

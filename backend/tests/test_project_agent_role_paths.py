@@ -116,7 +116,7 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
 
     try:
         link_response = await client.post(
-            f"/api/share/{raw}/upgrade",
+            f"/v1/share/{raw}/upgrade",
             json={
                 "agent_ids": [str(env.id)],
                 "use_as": "attached",
@@ -126,7 +126,7 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         assert link_response.json()["project_id"] == str(link_project.id)
         assert link_response.json()["bound_agent_ids"] == [str(env.id)]
 
-        invite_response = await client.post(f"/api/me/invitations/{invitation_id}/accept")
+        invite_response = await client.post(f"/v1/me/invitations/{invitation_id}/accept")
         assert invite_response.status_code == 200, invite_response.text
         assert invite_response.json()["project_id"] == str(invite_project.id)
 
@@ -172,14 +172,14 @@ async def test_agent_binding_list_materializes_default_primary_and_blocks_delete
         machine_name="atlas",
     )
 
-    listed = await client.get(f"/api/agents/{env.id}/project-bindings")
+    listed = await client.get(f"/v1/agents/{env.id}/project-bindings")
     assert listed.status_code == 200, listed.text
     rows = listed.json()
     assert len(rows) == 1
     assert rows[0]["binding_type"] == "primary"
     assert rows[0]["project_id"] == str(env.default_project_id)
 
-    delete_primary = await client.delete(f"/api/agents/{env.id}/project-bindings/{rows[0]['id']}")
+    delete_primary = await client.delete(f"/v1/agents/{env.id}/project-bindings/{rows[0]['id']}")
     assert delete_primary.status_code == 400
 
 
@@ -214,7 +214,7 @@ async def test_agent_binding_list_restores_default_primary_and_demotes_stale_pri
     )
     await db_session.commit()
 
-    listed = await client.get(f"/api/agents/{env.id}/project-bindings")
+    listed = await client.get(f"/v1/agents/{env.id}/project-bindings")
     assert listed.status_code == 200, listed.text
     rows = listed.json()
     primary_rows = [row for row in rows if row["binding_type"] == "primary"]
@@ -255,7 +255,7 @@ async def test_agent_binding_attach_repairs_stale_primary_before_returning_conte
     await db_session.commit()
 
     response = await client.post(
-        f"/api/agents/{env.id}/project-bindings/context",
+        f"/v1/agents/{env.id}/project-bindings/context",
         json={"project_id": str(workspace.id)},
     )
     assert response.status_code == 200, response.text
@@ -293,7 +293,7 @@ async def test_agent_context_attach_rejects_managed_projects(
 
     for project in (seed_project, environment_project):
         response = await client.post(
-            f"/api/agents/{env.id}/project-bindings/context",
+            f"/v1/agents/{env.id}/project-bindings/context",
             json={"project_id": str(project.id)},
         )
         assert response.status_code == 400, response.text
@@ -332,7 +332,7 @@ async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
     stale_id = stale.id
     await db_session.commit()
 
-    response = await client.delete(f"/api/agents/{env.id}/project-bindings/{stale_id}")
+    response = await client.delete(f"/v1/agents/{env.id}/project-bindings/{stale_id}")
     assert response.status_code == 200, response.text
 
     rows = (
@@ -380,7 +380,7 @@ async def test_recipient_leave_removes_attached_agent_project(client, db_session
     await db_session.commit()
 
     try:
-        response = await client.post(f"/api/projects/{shared_project.id}/leave")
+        response = await client.post(f"/v1/projects/{shared_project.id}/leave")
         assert response.status_code == 200, response.text
         assert response.json()["agent_bindings_removed"] == 1
         remaining = (
@@ -431,7 +431,7 @@ async def test_owner_unshare_removes_member_agent_context_binding(db_session, se
 
     try:
         async for owner_client in _client_for_user(db_session, owner):
-            response = await owner_client.post(f"/api/projects/{shared_project.id}/unshare")
+            response = await owner_client.post(f"/v1/projects/{shared_project.id}/unshare")
         assert response.status_code == 200, response.text
         assert response.json()["members_removed"] == 1
         assert response.json()["agent_bindings_removed"] == 1
@@ -474,7 +474,7 @@ async def test_context_reorder_can_swap_priorities(client, db_session, seed_user
     await db_session.commit()
 
     response = await client.patch(
-        f"/api/agents/{env.id}/project-bindings/context/reorder",
+        f"/v1/agents/{env.id}/project-bindings/context/reorder",
         json={
             "items": [
                 {"binding_id": str(bindings[0].id), "priority": 2},
@@ -560,14 +560,14 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
     await db_session.commit()
 
     blocked = await cli_client.post(
-        f"/api/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}&debug=true"
+        f"/v1/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}&debug=true"
     )
     assert blocked.status_code == 409, blocked.text
     assert blocked.json()["detail"]["code"] == "vault_conflicts_blocked"
     assert "value" not in blocked.json()["detail"]
 
     allowed = await cli_client.post(
-        f"/api/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}&allow_conflicts=true&debug=true"
+        f"/v1/vault/resolve?key=OPENAI_API_KEY&agent_id={env.id}&allow_conflicts=true&debug=true"
     )
     assert allowed.status_code == 200, allowed.text
     body = allowed.json()
@@ -577,5 +577,5 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
 
 
 async def test_web_jwt_cannot_resolve_plaintext_vault(client):
-    response = await client.post("/api/vault/resolve?key=OPENAI_API_KEY")
+    response = await client.post("/v1/vault/resolve?key=OPENAI_API_KEY")
     assert response.status_code == 403

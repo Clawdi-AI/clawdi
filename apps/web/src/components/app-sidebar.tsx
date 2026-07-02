@@ -856,7 +856,7 @@ function FocusRailContent({
 	const reorderAgents = useMutation({
 		mutationFn: async (environmentIds: string[]) =>
 			unwrap(
-				await api.PATCH("/api/environments/order", { body: { environment_ids: environmentIds } }),
+				await api.PATCH("/v1/environments/order", { body: { environment_ids: environmentIds } }),
 			),
 		onMutate: async (environmentIds) => {
 			await queryClient.cancelQueries({ queryKey: ["environments"] });
@@ -1401,7 +1401,7 @@ export function AppSidebar({
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
 	const hydratedEnvironments = mounted ? environments : undefined;

@@ -10,7 +10,7 @@ import app.services.memory_provider as mp
 
 @pytest.mark.asyncio
 async def test_capabilities_includes_builtin_always(client: httpx.AsyncClient):
-    r = await client.get("/api/capabilities")
+    r = await client.get("/v1/capabilities")
     assert r.status_code == 200, r.text
     body = r.json()
     assert "memory_providers" in body
@@ -34,7 +34,7 @@ def _patch_mem0_available(monkeypatch, *, available: bool) -> None:
 @pytest.mark.asyncio
 async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
     _patch_mem0_available(monkeypatch, available=False)
-    r = await client.get("/api/capabilities")
+    r = await client.get("/v1/capabilities")
     assert r.status_code == 200, r.text
     assert "mem0" not in r.json()["memory_providers"]
 
@@ -42,7 +42,7 @@ async def test_capabilities_excludes_mem0_when_unavailable(client: httpx.AsyncCl
 @pytest.mark.asyncio
 async def test_capabilities_includes_mem0_when_available(client: httpx.AsyncClient, monkeypatch):
     _patch_mem0_available(monkeypatch, available=True)
-    r = await client.get("/api/capabilities")
+    r = await client.get("/v1/capabilities")
     assert r.status_code == 200, r.text
     assert "mem0" in r.json()["memory_providers"]
 
@@ -56,14 +56,14 @@ async def test_capabilities_requires_auth():
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as raw:
-        r = await raw.get("/api/capabilities")
+        r = await raw.get("/v1/capabilities")
         assert r.status_code in (401, 403), r.text
 
 
 @pytest.mark.asyncio
 async def test_settings_refuses_mem0_when_unavailable(client: httpx.AsyncClient, monkeypatch):
     _patch_mem0_available(monkeypatch, available=False)
-    r = await client.patch("/api/settings", json={"settings": {"memory_provider": "mem0"}})
+    r = await client.patch("/v1/settings", json={"settings": {"memory_provider": "mem0"}})
     assert r.status_code == 400, r.text
     assert r.json().get("detail", {}).get("code") == "memory_provider_unavailable"
 
@@ -71,5 +71,5 @@ async def test_settings_refuses_mem0_when_unavailable(client: httpx.AsyncClient,
 @pytest.mark.asyncio
 async def test_settings_accepts_mem0_when_available(client: httpx.AsyncClient, monkeypatch):
     _patch_mem0_available(monkeypatch, available=True)
-    r = await client.patch("/api/settings", json={"settings": {"memory_provider": "mem0"}})
+    r = await client.patch("/v1/settings", json={"settings": {"memory_provider": "mem0"}})
     assert r.status_code == 200, r.text

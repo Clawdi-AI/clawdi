@@ -23,7 +23,7 @@ from app.core.skill_key import (
 )
 
 _PROJECT_SKILL_UPLOAD_RE = re.compile(
-    r"^/api/projects/[0-9a-fA-F-]{36}/skills/upload$",
+    r"^/(api|v1)/projects/[0-9a-fA-F-]{36}/skills/upload$",
 )
 _MAX_PREFLIGHT_BYTES = 64 * 1024
 
@@ -73,7 +73,9 @@ def _should_preflight(scope: Scope) -> bool:
         return False
 
     path = str(scope.get("path", ""))
-    if path != "/api/skills/upload" and not _PROJECT_SKILL_UPLOAD_RE.match(path):
+    if path not in ("/api/skills/upload", "/v1/skills/upload") and not (
+        _PROJECT_SKILL_UPLOAD_RE.match(path)
+    ):
         return False
 
     content_type = _header(scope, b"content-type")

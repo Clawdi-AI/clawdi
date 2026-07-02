@@ -133,7 +133,7 @@ bold "5) verifying push: edit local skill, expect cloud row"
 # initialSync push at boot) so we can detect the edit's
 # distinct hash, not just any non-empty value.
 get_cloud_hash() {
-  curl -s -o "$LOG_DIR/skill-detail.json" "http://127.0.0.1:$TEST_PORT/api/skills/e2e-hello" \
+  curl -s -o "$LOG_DIR/skill-detail.json" "http://127.0.0.1:$TEST_PORT/v1/skills/e2e-hello" \
     -H "Authorization: Bearer $RAW_KEY"
   python3 -c 'import json,sys; d=json.load(open("'"$LOG_DIR/skill-detail.json"'")); print(d.get("content_hash",""))' 2>/dev/null
 }
@@ -192,11 +192,11 @@ bold "6) verifying pull: cloud-side change → local file"
 # the seed step already has project visibility on its bound env.
 PROJECT_RESP_FILE="$LOG_DIR/project-default.json"
 PROJECT_HTTP=$(curl -s -o "$PROJECT_RESP_FILE" -w '%{http_code}' \
-  "http://127.0.0.1:$TEST_PORT/api/projects/default" \
+  "http://127.0.0.1:$TEST_PORT/v1/projects/default" \
   -H "Authorization: Bearer $RAW_KEY")
-[ "$PROJECT_HTTP" = "200" ] || fail "GET /api/projects/default returned $PROJECT_HTTP — body: $(head -c 400 "$PROJECT_RESP_FILE")"
+[ "$PROJECT_HTTP" = "200" ] || fail "GET /v1/projects/default returned $PROJECT_HTTP — body: $(head -c 400 "$PROJECT_RESP_FILE")"
 PROJECT_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project_id",""))' "$PROJECT_RESP_FILE" 2>/dev/null)
-[ -n "$PROJECT_ID" ] || fail "GET /api/projects/default 200 but project_id missing — body: $(head -c 400 "$PROJECT_RESP_FILE")"
+[ -n "$PROJECT_ID" ] || fail "GET /v1/projects/default 200 but project_id missing — body: $(head -c 400 "$PROJECT_RESP_FILE")"
 
 NEW_BODY="---
 name: e2e-hello
@@ -213,7 +213,7 @@ TAR=$(mktemp)
 ( cd "$SCRATCH" && mkdir -p e2e-hello && echo "$NEW_BODY" > e2e-hello/SKILL.md && COPYFILE_DISABLE=1 tar czf "$TAR" e2e-hello && rm -rf e2e-hello )
 UPLOAD_RESP="$LOG_DIR/project-upload.json"
 UPLOAD_HTTP=$(curl -s -o "$UPLOAD_RESP" -w '%{http_code}' \
-  -X POST "http://127.0.0.1:$TEST_PORT/api/projects/$PROJECT_ID/skills/upload" \
+  -X POST "http://127.0.0.1:$TEST_PORT/v1/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
   -F "skill_key=e2e-hello" \
   -F "file=@$TAR")
@@ -240,7 +240,7 @@ bold "7) verifying delete propagation: server DELETE → local skill removed"
 # Hit the project-explicit DELETE. The deploy key has skills:write,
 # so this works.
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-  -X DELETE "http://127.0.0.1:$TEST_PORT/api/projects/$PROJECT_ID/skills/e2e-hello" \
+  -X DELETE "http://127.0.0.1:$TEST_PORT/v1/projects/$PROJECT_ID/skills/e2e-hello" \
   -H "Authorization: Bearer $RAW_KEY")
 [ "$HTTP_CODE" = "200" ] || fail "delete returned $HTTP_CODE, expected 200"
 
@@ -260,9 +260,9 @@ done
 ok "local skill dir removed"
 
 bold "8) verifying heartbeat observability fields"
-# Read last_sync_at via GET /api/environments/{id}; same DB-name
+# Read last_sync_at via GET /v1/environments/{id}; same DB-name
 # decoupling rationale as step 6.
-HEARTBEAT_AGE=$(curl -sf "http://127.0.0.1:$TEST_PORT/api/environments/$ENV_ID" \
+HEARTBEAT_AGE=$(curl -sf "http://127.0.0.1:$TEST_PORT/v1/environments/$ENV_ID" \
   -H "Authorization: Bearer $RAW_KEY" \
   | python3 -c '
 import json, sys

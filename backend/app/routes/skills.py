@@ -58,7 +58,7 @@ from app.services.tar_utils import (
     validate_tar,
 )
 
-router = APIRouter(prefix="/api/skills", tags=["skills"])
+router = APIRouter(prefix="/skills", tags=["skills"])
 
 # Phase-2 router: project-explicit skill routes. Same handlers as the
 # legacy router; the only difference is where `project_id` comes from
@@ -66,13 +66,13 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 # Mounted in `app/main.py` alongside the legacy router. After all
 # callers migrate, the legacy write paths return 410 (see step 3
 # of phase 2).
-project_router = APIRouter(prefix="/api/projects/{project_id}/skills", tags=["skills"])
+project_router = APIRouter(prefix="/projects/{project_id}/skills", tags=["skills"])
 
 # Back-compat for binaries built during the Scope -> Project migration.
 # The table row id was preserved, so old `/api/scopes/{id}/skills/...`
 # read URLs can be served by the project-explicit handlers.
 scope_router = APIRouter(
-    prefix="/api/scopes/{scope_id}/skills",
+    prefix="/scopes/{scope_id}/skills",
     tags=["skills"],
     include_in_schema=False,
 )

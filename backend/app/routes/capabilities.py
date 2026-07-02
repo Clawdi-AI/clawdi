@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from app.core.auth import AuthContext, require_user_auth
 from app.services.memory_provider import mem0_available
 
-router = APIRouter(prefix="/api", tags=["capabilities"])
+router = APIRouter(prefix="", tags=["capabilities"])
 
 
 class CapabilitiesResponse(BaseModel):

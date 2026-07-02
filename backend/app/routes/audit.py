@@ -12,7 +12,7 @@ from app.schemas.audit import (
     ControlPlaneAuditEventResponse,
 )
 
-router = APIRouter(prefix="/api/audit", tags=["audit"])
+router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 @router.get("/events")

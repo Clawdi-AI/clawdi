@@ -56,7 +56,7 @@ async def admin_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncClient
 async def test_admin_mint_requires_admin_key(admin_client, seed_user):
     """Without the X-Admin-Key header, endpoint returns 401."""
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         json={"target_clerk_id": seed_user.clerk_id, "label": "test"},
     )
     assert r.status_code == 401, r.text
@@ -66,7 +66,7 @@ async def test_admin_mint_requires_admin_key(admin_client, seed_user):
 async def test_admin_mint_rejects_wrong_key(admin_client, seed_user):
     """Wrong header value: 401."""
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers={"X-Admin-Key": "wrong-key"},
         json={"target_clerk_id": seed_user.clerk_id, "label": "test"},
     )
@@ -90,7 +90,7 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.post(
-                "/api/admin/auth/keys",
+                "/v1/admin/auth/keys",
                 headers={"X-Admin-Key": "anything"},
                 json={"target_clerk_id": seed_user.clerk_id, "label": "test"},
             )
@@ -109,7 +109,7 @@ async def test_admin_mint_default_grants_full_account_access(admin_client, db_se
     from app.models.api_key import ApiKey
 
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "default-scopes"},
     )
@@ -137,7 +137,7 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
     from app.models.api_key import ApiKey
 
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -165,7 +165,7 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
     from app.models.api_key import ApiKey
 
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -213,7 +213,7 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     assert pre is None
 
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": novel_clerk_id, "label": "first-deploy"},
     )
@@ -254,7 +254,7 @@ async def test_admin_mint_existing_user_reuses_row(admin_client, db_session, see
     pre_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
 
     r = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "second-mint"},
     )
@@ -397,14 +397,14 @@ async def test_admin_revoke_happy_path(admin_client, db_session, seed_user):
     from app.models.api_key import ApiKey
 
     minted_resp = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "to-revoke"},
     )
     key_id = minted_resp.json()["id"]
 
     r = await admin_client.delete(
-        f"/api/admin/auth/keys/{key_id}",
+        f"/v1/admin/auth/keys/{key_id}",
         headers=_AUTH,
     )
     assert r.status_code == 200
@@ -420,18 +420,18 @@ async def test_admin_revoke_idempotent_on_already_revoked(admin_client, db_sessi
     """Revoking an already-revoked key returns 200 (idempotent), not
     an error. Useful for migration retry semantics."""
     minted_resp = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "double-revoke"},
     )
     key_id = minted_resp.json()["id"]
 
     await admin_client.delete(
-        f"/api/admin/auth/keys/{key_id}",
+        f"/v1/admin/auth/keys/{key_id}",
         headers=_AUTH,
     )
     r = await admin_client.delete(
-        f"/api/admin/auth/keys/{key_id}",
+        f"/v1/admin/auth/keys/{key_id}",
         headers=_AUTH,
     )
     assert r.status_code == 200
@@ -443,7 +443,7 @@ async def test_admin_revoke_unknown_key(admin_client):
     import uuid
 
     r = await admin_client.delete(
-        f"/api/admin/auth/keys/{uuid.uuid4()}",
+        f"/v1/admin/auth/keys/{uuid.uuid4()}",
         headers=_AUTH,
     )
     assert r.status_code == 404
@@ -465,7 +465,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
 
     raw_key = "sk-admin-managed-secret"
     r = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed-v2",
+        "/v1/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -530,7 +530,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     from app.services.vault_crypto import decrypt
 
     first = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed-v2",
+        "/v1/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -541,7 +541,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     assert first.status_code == 200, first.text
     second_key = "sk-second-admin-managed-secret"
     second = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed-v2",
+        "/v1/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -588,7 +588,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
 async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_client, seed_user):
     raw_key = "sk-invalid-url-secret"
     r = await admin_client.put(
-        "/api/admin/ai-providers/clawdi-managed-v2",
+        "/v1/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -614,7 +614,7 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
     )
 
     created = await admin_client.post(
-        "/api/admin/channels",
+        "/v1/admin/channels",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -644,7 +644,7 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
     assert await get_channel_secret(db_session, account=account, name="app_secret") == "secret-v1"
 
     listed = await admin_client.get(
-        "/api/admin/channels",
+        "/v1/admin/channels",
         headers=_AUTH,
         params={"visibility": "public", "provider": "telegram"},
     )
@@ -652,7 +652,7 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
     assert body["id"] in {item["id"] for item in listed.json()}
 
     patched = await admin_client.patch(
-        f"/api/admin/channels/{body['id']}",
+        f"/v1/admin/channels/{body['id']}",
         headers=_AUTH,
         json={
             "name": "admin-public-renamed",
@@ -672,19 +672,19 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
     assert await get_channel_secret(db_session, account=account, name="app_secret") == "secret-v2"
 
     rotated = await admin_client.post(
-        f"/api/admin/channels/{body['id']}/webhook-secret/rotate",
+        f"/v1/admin/channels/{body['id']}/webhook-secret/rotate",
         headers=_AUTH,
     )
     assert rotated.status_code == 200
     await db_session.refresh(account)
     assert verify_hashed_token(rotated.json()["webhook_secret"], account.webhook_secret_hash)
 
-    deleted = await admin_client.delete(f"/api/admin/channels/{body['id']}", headers=_AUTH)
+    deleted = await admin_client.delete(f"/v1/admin/channels/{body['id']}", headers=_AUTH)
     assert deleted.status_code == 204
     await db_session.refresh(account)
     assert account.archived_at is not None
 
-    archived = await admin_client.get(f"/api/admin/channels/{body['id']}", headers=_AUTH)
+    archived = await admin_client.get(f"/v1/admin/channels/{body['id']}", headers=_AUTH)
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
 
@@ -692,7 +692,7 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
 @pytest.mark.asyncio
 async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
     r = await admin_client.post(
-        "/api/admin/channels",
+        "/v1/admin/channels",
         json={
             "target_clerk_id": seed_user.clerk_id,
             "provider": "telegram",
@@ -713,7 +713,7 @@ async def test_admin_register_env_creates_with_project(admin_client, db_session,
     from app.models.session import AgentEnvironment
 
     r = await admin_client.post(
-        "/api/admin/environments",
+        "/v1/admin/environments",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -744,12 +744,12 @@ async def test_admin_register_env_idempotent(admin_client, db_session, seed_user
         "agent_type": "openclaw",
     }
     r1 = await admin_client.post(
-        "/api/admin/environments",
+        "/v1/admin/environments",
         headers=_AUTH,
         json=body,
     )
     r2 = await admin_client.post(
-        "/api/admin/environments",
+        "/v1/admin/environments",
         headers=_AUTH,
         json=body,
     )
@@ -774,7 +774,7 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
 
     novel_clerk_id = f"user_env_register_{uuid.uuid4().hex[:12]}"
     r = await admin_client.post(
-        "/api/admin/environments",
+        "/v1/admin/environments",
         headers=_AUTH,
         json={
             "target_clerk_id": novel_clerk_id,
@@ -829,7 +829,7 @@ async def test_admin_mint_rejects_cross_tenant_environment_id(admin_client, db_s
 
     try:
         r = await admin_client.post(
-            "/api/admin/auth/keys",
+            "/v1/admin/auth/keys",
             headers=_AUTH,
             json={
                 "target_clerk_id": seed_user.clerk_id,
@@ -860,7 +860,7 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_u
     r = await admin_client.get("/openapi.json")
     assert r.status_code == 200
     schema = r.json()
-    admin_paths = [p for p in schema.get("paths", {}) if p.startswith("/api/admin")]
+    admin_paths = [p for p in schema.get("paths", {}) if p.startswith("/v1/admin")]
     assert admin_paths == [], (
         f"admin endpoints leaked into OpenAPI schema: {admin_paths}. "
         "Add `include_in_schema=False` to the admin router."
@@ -870,7 +870,7 @@ async def test_admin_endpoints_excluded_from_openapi_schema(admin_client, seed_u
     # 404 — confirms the router is still wired up under the schema-
     # excluded prefix.
     mint = await admin_client.post(
-        "/api/admin/auth/keys",
+        "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "reachability-check"},
     )

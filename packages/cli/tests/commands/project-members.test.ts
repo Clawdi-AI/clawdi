@@ -57,7 +57,7 @@ describe("project member lifecycle commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects/project-owned/members",
+				path: "/v1/projects/project-owned/members",
 				response: () =>
 					jsonResponse([
 						{
@@ -74,10 +74,10 @@ describe("project member lifecycle commands", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/projects/project-owned/members/user-bob",
+				path: "/v1/projects/project-owned/members/user-bob",
 				response: () => jsonResponse({ status: "removed" }),
 			},
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 		]);
 		const orig = console.log;
 		let out = "";
@@ -92,9 +92,9 @@ describe("project member lifecycle commands", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /api/projects",
-			"GET /api/projects/project-owned/members",
-			"DELETE /api/projects/project-owned/members/user-bob",
+			"GET /v1/projects",
+			"GET /v1/projects/project-owned/members",
+			"DELETE /v1/projects/project-owned/members/user-bob",
 		]);
 		expect(JSON.parse(out)).toEqual({
 			project_id: "project-owned",
@@ -105,10 +105,10 @@ describe("project member lifecycle commands", () => {
 
 	it("leaves a shared project", async () => {
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/projects/project-shared/leave",
+				path: "/v1/projects/project-shared/leave",
 				response: () => jsonResponse({ status: "left" }),
 			},
 		]);
@@ -132,10 +132,10 @@ describe("project member lifecycle commands", () => {
 
 	it("unshares an owned project", async () => {
 		const { restore } = mockFetch([
-			{ method: "GET", path: "/api/projects", response: () => jsonResponse(projects) },
+			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
 			{
 				method: "POST",
-				path: "/api/projects/project-owned/unshare",
+				path: "/v1/projects/project-owned/unshare",
 				response: () =>
 					jsonResponse({
 						links_revoked: 1,

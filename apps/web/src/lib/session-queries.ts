@@ -12,7 +12,7 @@ export const SESSION_MESSAGES_STALE_MS = 5 * 60_000;
 export const SESSION_MESSAGES_GC_MS = 30 * 60_000;
 
 type ApiClient = ReturnType<typeof useApi>;
-export type SessionListQuery = NonNullable<paths["/api/sessions"]["get"]["parameters"]["query"]>;
+export type SessionListQuery = NonNullable<paths["/v1/sessions"]["get"]["parameters"]["query"]>;
 
 const DEFAULT_SESSION_LIST_QUERY = {
 	page: 1,
@@ -81,7 +81,7 @@ export function sessionListQueryOptions(api: ApiClient, query: SessionListQuery 
 		queryKey: sessionListQueryKey(normalized),
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/sessions", {
+				await api.GET("/v1/sessions", {
 					params: { query: normalized },
 				}),
 			),

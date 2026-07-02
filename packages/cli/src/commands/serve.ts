@@ -1142,19 +1142,19 @@ interface AuthPollResponse {
 }
 
 async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<AuthMeResponse> {
-	const response = await fetch(`${apiUrl}/api/auth/me`, {
+	const response = await fetch(`${apiUrl}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!response.ok) {
 		throw new Error(`API key verification failed with HTTP ${response.status}`);
 	}
-	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/api/auth/me");
+	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/v1/auth/me");
 	setAuth({ apiKey, userId: me.id, email: me.email });
 	return me;
 }
 
 async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
-	const response = await fetch(`${apiUrl}/api/cli/auth/device`, {
+	const response = await fetch(`${apiUrl}/v1/cli/auth/device`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ client_label: `clawdi daemon control · ${hostname()}` }),
@@ -1165,7 +1165,7 @@ async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
 	const start = await readJsonObject<DeviceStartResponse>(
 		response,
 		isDeviceStartResponse,
-		"/api/cli/auth/device",
+		"/v1/cli/auth/device",
 	);
 	const pending = {
 		deviceCode: start.device_code,
@@ -1217,13 +1217,13 @@ async function pollPendingAuthRpc(
 }
 
 async function pollAuthOnce(apiUrl: string, deviceCode: string): Promise<AuthPollResponse> {
-	const response = await fetch(`${apiUrl}/api/cli/auth/poll`, {
+	const response = await fetch(`${apiUrl}/v1/cli/auth/poll`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ device_code: deviceCode }),
 	});
 	if (!response.ok) throw new Error(`Auth polling failed with HTTP ${response.status}`);
-	return readJsonObject<AuthPollResponse>(response, isAuthPollResponse, "/api/cli/auth/poll");
+	return readJsonObject<AuthPollResponse>(response, isAuthPollResponse, "/v1/cli/auth/poll");
 }
 
 async function readJsonObject<T>(

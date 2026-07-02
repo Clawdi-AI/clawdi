@@ -33,7 +33,7 @@ async def test_unauthenticated_request_rejected():
     """Protected endpoints reject requests without a bearer token."""
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/api/memories")
+        r = await ac.get("/v1/memories")
     # HTTPBearer returns 403 when the Authorization header is absent.
     assert r.status_code in (401, 403), r.text
 
@@ -41,7 +41,7 @@ async def test_unauthenticated_request_rejected():
 @pytest.mark.asyncio
 async def test_list_memories_empty(client: httpx.AsyncClient):
     """A fresh user sees an empty paginated memories page, not an error."""
-    r = await client.get("/api/memories")
+    r = await client.get("/v1/memories")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["items"] == []
@@ -53,12 +53,12 @@ async def test_list_memories_empty(client: httpx.AsyncClient):
 async def test_create_and_list_memory(client: httpx.AsyncClient):
     """Creating a memory round-trips through the full provider + list path."""
     r = await client.post(
-        "/api/memories",
+        "/v1/memories",
         json={"content": "smoke test memory", "category": "fact"},
     )
     assert r.status_code in (200, 201), r.text
 
-    r = await client.get("/api/memories")
+    r = await client.get("/v1/memories")
     assert r.status_code == 200
     items = r.json()["items"]
     assert any("smoke test memory" in (m.get("content") or m.get("text") or "") for m in items), (
@@ -69,7 +69,7 @@ async def test_create_and_list_memory(client: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_create_memory_rejects_likely_secret(client: httpx.AsyncClient):
     r = await client.post(
-        "/api/memories",
+        "/v1/memories",
         json={
             "content": "OpenAI key is sk-abcdefghijklmnopqrstuvwxyz123456",
             "category": "fact",

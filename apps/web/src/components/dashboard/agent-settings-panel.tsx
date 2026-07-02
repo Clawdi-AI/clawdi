@@ -60,7 +60,7 @@ export function AgentSettingsPanel({
 		queryKey: ["agent", environmentId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/environments/{environment_id}", {
+				await api.GET("/v1/environments/{environment_id}", {
 					params: { path: { environment_id: environmentId } },
 				}),
 			),
@@ -74,7 +74,7 @@ export function AgentSettingsPanel({
 	const updateIdentity = useMutation({
 		mutationFn: async (body: EnvironmentUpdate) =>
 			unwrap(
-				await api.PATCH("/api/environments/{environment_id}", {
+				await api.PATCH("/v1/environments/{environment_id}", {
 					params: { path: { environment_id: environmentId } },
 					body,
 				}),
@@ -98,7 +98,7 @@ export function AgentSettingsPanel({
 	const clearAvatar = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/api/environments/{environment_id}/avatar", {
+				await api.DELETE("/v1/environments/{environment_id}/avatar", {
 					params: { path: { environment_id: environmentId } },
 				}),
 			),
@@ -112,7 +112,7 @@ export function AgentSettingsPanel({
 	const disconnect = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/api/environments/{environment_id}", {
+				await api.DELETE("/v1/environments/{environment_id}", {
 					params: { path: { environment_id: environmentId } },
 				}),
 			),

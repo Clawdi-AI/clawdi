@@ -254,7 +254,7 @@ async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> N
 async def _running_smoke_backend(seeded: dict[str, Any]):
     port = _free_port()
     seeded["ws_url"] = (
-        f"ws://127.0.0.1:{port}/api/channels/whatsapp/{seeded['account_id']}/baileys"
+        f"ws://127.0.0.1:{port}/v1/channels/whatsapp/{seeded['account_id']}/baileys"
     )
     server = uvicorn.Server(
         uvicorn.Config(

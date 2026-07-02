@@ -315,13 +315,13 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	});
 
 	// Fetch this env's default_project_id at boot. The daemon writes
-	// to `/api/projects/{project_id}/skills/upload`, so we need the
+	// to `/v1/projects/{project_id}/skills/upload`, so we need the
 	// project_id before any upload can run. Throw on missing so the
 	// supervisor restarts — without a project_id we can't tell which
 	// SSE events belong to us.
 	const fetchDefaultProjectId = async (): Promise<string> => {
 		const envInfo = unwrap(
-			await api.GET("/api/environments/{environment_id}", {
+			await api.GET("/v1/environments/{environment_id}", {
 				params: { path: { environment_id: opts.environmentId } },
 			}),
 		);
@@ -389,7 +389,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// `auth_revoked` `last_sync_error` and the daemon just
 		// "goes stale" silently.
 		void shutdownApi
-			.POST("/api/agents/{environment_id}/sync-heartbeat", {
+			.POST("/v1/agents/{environment_id}/sync-heartbeat", {
 				params: { path: { environment_id: opts.environmentId } },
 				body: {
 					// Report the peak since boot, not current depth.
@@ -1306,7 +1306,7 @@ async function uploadSessionFromQueue(
 	const actualHash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
 
 	const result = unwrap(
-		await api.POST("/api/sessions/batch", {
+		await api.POST("/v1/sessions/batch", {
 			body: {
 				sessions: [
 					{
@@ -1522,7 +1522,7 @@ async function listAllCloudSkills(
 		if (page === 1 && knownEtag) {
 			headerInit["If-None-Match"] = knownEtag;
 		}
-		const res = await api.GET("/api/skills", {
+		const res = await api.GET("/v1/skills", {
 			params: { query: { page, page_size: PAGE_SIZE, project_id: projectId } },
 			headers: headerInit,
 		});
@@ -1984,7 +1984,7 @@ async function reconcileFromCloud(
 			// project's bytes on a multi-agent unbound key. See
 			// `pullSkill()` doc for the duplicate-skill_key case.
 			const tarBytes = await api.getBytes(
-				`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+				`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
 			await opts.adapter.writeSkillArchive(skill.skill_key, tarBytes);
 			lastPushedHash.set(skill.skill_key, skill.content_hash);
@@ -2183,7 +2183,7 @@ async function pullSkill(
 	projectId: string,
 ): Promise<void> {
 	const tarBytes = await api.getBytes(
-		`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}/download`,
+		`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}/download`,
 	);
 	await opts.adapter.writeSkillArchive(skillKey, tarBytes);
 	// Recompute the on-disk hash so the watcher's next tick
@@ -2225,7 +2225,7 @@ async function heartbeatLoop(
 		const dropped = queue.drainDroppedDelta();
 		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			await api.POST("/api/agents/{environment_id}/sync-heartbeat", {
+			await api.POST("/v1/agents/{environment_id}/sync-heartbeat", {
 				params: { path: { environment_id: opts.environmentId } },
 				body: {
 					// Peak since boot rather than sampled current

@@ -58,11 +58,11 @@ function openInBrowser(url: string): void {
 }
 
 async function verifyAndSave(apiKey: string, apiUrl: string): Promise<MeResponse | null> {
-	const res = await fetch(`${apiUrl}/api/auth/me`, {
+	const res = await fetch(`${apiUrl}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!res.ok) return null;
-	const me = await readJson<MeResponse>(res, "/api/auth/me");
+	const me = await readJson<MeResponse>(res, "/v1/auth/me");
 	setAuth({ apiKey, userId: me.id, email: me.email });
 	return me;
 }
@@ -77,11 +77,11 @@ async function verifyAndSave(apiKey: string, apiUrl: string): Promise<MeResponse
  */
 async function saveThenVerify(apiKey: string, apiUrl: string): Promise<MeResponse | null> {
 	setAuth({ apiKey });
-	const res = await fetch(`${apiUrl}/api/auth/me`, {
+	const res = await fetch(`${apiUrl}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!res.ok) return null;
-	const me = await readJson<MeResponse>(res, "/api/auth/me");
+	const me = await readJson<MeResponse>(res, "/v1/auth/me");
 	setAuth({ apiKey, userId: me.id, email: me.email });
 	return me;
 }
@@ -120,7 +120,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	const outcomes = await Promise.all(
 		tokens.map(async (t): Promise<Outcome> => {
 			try {
-				const r = await fetch(`${apiUrl}/api/share/${t.token}/upgrade`, {
+				const r = await fetch(`${apiUrl}/v1/share/${t.token}/upgrade`, {
 					method: "POST",
 					headers: {
 						Authorization: `Bearer ${apiKey}`,
@@ -287,7 +287,7 @@ async function startDeviceFlow(apiUrl: string): Promise<PendingAuth | null> {
 	let start: DeviceStart;
 	try {
 		start = unwrap(
-			await api.POST("/api/cli/auth/device", {
+			await api.POST("/v1/cli/auth/device", {
 				body: { client_label: clientLabel },
 			}),
 		);
@@ -366,7 +366,7 @@ async function pollUntilApproved(
 		let poll: { status: string; api_key?: string | null };
 		try {
 			poll = unwrap(
-				await api.POST("/api/cli/auth/poll", {
+				await api.POST("/v1/cli/auth/poll", {
 					body: { device_code: pending.deviceCode },
 				}),
 			);

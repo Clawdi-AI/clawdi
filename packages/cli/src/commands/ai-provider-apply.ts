@@ -539,7 +539,7 @@ async function writeAiProviderSecretMaterial(
 
 async function resolveProviderAuthPayload(providerId: string, profile: string): Promise<string> {
 	const response = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
-		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
+		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
 		{ profile },
 	);
 	if (!response.payload) {

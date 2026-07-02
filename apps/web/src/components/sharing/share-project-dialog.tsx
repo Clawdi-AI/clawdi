@@ -165,7 +165,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 		queryKey: ["share-links", projectId],
 		queryFn: async (): Promise<ShareLinkRow[]> =>
 			unwrap(
-				await api.GET("/api/projects/{project_id}/share-links", {
+				await api.GET("/v1/projects/{project_id}/share-links", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
@@ -175,7 +175,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
 			const trimmedLabel = nextLabel.trim();
 			return unwrap(
-				await api.POST("/api/projects/{project_id}/share-links", {
+				await api.POST("/v1/projects/{project_id}/share-links", {
 					params: { path: { project_id: projectId } },
 					body: { label: trimmedLabel.length > 0 ? trimmedLabel : null },
 				}),
@@ -209,7 +209,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 	const revoke = useMutation({
 		mutationFn: async (linkId: string) => {
 			await unwrap(
-				await api.DELETE("/api/projects/{project_id}/share-links/{link_id}", {
+				await api.DELETE("/v1/projects/{project_id}/share-links/{link_id}", {
 					params: { path: { project_id: projectId, link_id: linkId } },
 				}),
 			);
@@ -490,7 +490,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		queryKey: ["invitations", projectId],
 		queryFn: async (): Promise<Invitation[]> =>
 			unwrap(
-				await api.GET("/api/projects/{project_id}/invitations", {
+				await api.GET("/v1/projects/{project_id}/invitations", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
@@ -499,7 +499,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 	const invite = useMutation({
 		mutationFn: async (inviteEmail: string) =>
 			unwrap(
-				await api.POST("/api/projects/{project_id}/invitations", {
+				await api.POST("/v1/projects/{project_id}/invitations", {
 					params: { path: { project_id: projectId } },
 					body: { email: inviteEmail },
 				}),
@@ -522,7 +522,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 	const cancel = useMutation({
 		mutationFn: async (invitationId: string) => {
 			await unwrap(
-				await api.DELETE("/api/projects/{project_id}/invitations/{invitation_id}", {
+				await api.DELETE("/v1/projects/{project_id}/invitations/{invitation_id}", {
 					params: { path: { project_id: projectId, invitation_id: invitationId } },
 				}),
 			);
@@ -662,7 +662,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		queryKey: ["project-members", projectId],
 		queryFn: async (): Promise<Member[]> =>
 			unwrap(
-				await api.GET("/api/projects/{project_id}/members", {
+				await api.GET("/v1/projects/{project_id}/members", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
@@ -679,7 +679,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 	const remove = useMutation({
 		mutationFn: async (userId: string) => {
 			return unwrap(
-				await api.DELETE("/api/projects/{project_id}/members/{member_user_id}", {
+				await api.DELETE("/v1/projects/{project_id}/members/{member_user_id}", {
 					params: { path: { project_id: projectId, member_user_id: userId } },
 				}),
 			);
@@ -697,7 +697,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 	const unshare = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/api/projects/{project_id}/unshare", {
+				await api.POST("/v1/projects/{project_id}/unshare", {
 					params: { path: { project_id: projectId } },
 				}),
 			),

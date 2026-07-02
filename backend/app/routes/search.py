@@ -40,7 +40,7 @@ def _has_scope(auth: AuthContext, scope: str) -> bool:
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/search", tags=["search"])
+router = APIRouter(prefix="/search", tags=["search"])
 
 SearchType = Literal["session", "memory", "skill", "vault"]
 
