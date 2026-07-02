@@ -34,7 +34,11 @@ export interface RuntimeBootStatus {
 		installInventory: string[];
 		projections: string[];
 		runConfigs: string[];
-		supervisorConfig: string;
+		processManager: "systemd";
+		systemdSystemUnitRoot: string;
+		systemdSystemUnits: string[];
+		systemdUserUnitRoot: string;
+		systemdUserUnits: string[];
 		mitmProfileBundle: string | null;
 		mitmSecretFile: string | null;
 		liveSyncEnvironments: string[];
@@ -64,8 +68,9 @@ export interface RuntimeBootStatus {
 		runConfigRoot: string;
 		mitmProfileRoot: string;
 		mitmProfileBundle: string;
-		supervisorRoot: string;
-		supervisorConfig: string;
+		systemdSystemRoot: string;
+		systemdUserRoot: string;
+		systemdEnvRoot: string;
 		cliManagedBin: string;
 		cliNpmPrefix: string;
 		cliBootstrapStatus: string;
@@ -105,8 +110,9 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		runConfigRoot: paths.runConfigRoot,
 		mitmProfileRoot: paths.mitmProfileRoot,
 		mitmProfileBundle: paths.mitmProfileBundle,
-		supervisorRoot: paths.supervisorRoot,
-		supervisorConfig: paths.supervisorConfig,
+		systemdSystemRoot: paths.systemdSystemRoot,
+		systemdUserRoot: paths.systemdUserRoot,
+		systemdEnvRoot: paths.systemdEnvRoot,
 		cliManagedBin: paths.cliManagedBin,
 		cliNpmPrefix: paths.cliNpmPrefix,
 		cliBootstrapStatus: paths.cliBootstrapStatus,
@@ -171,7 +177,9 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		paths.projectionRoot,
 		paths.runConfigRoot,
 		paths.mitmProfileRoot,
-		paths.supervisorRoot,
+		paths.systemdSystemRoot,
+		paths.systemdUserRoot,
+		paths.systemdEnvRoot,
 		dirname(paths.managedConfig),
 		dirname(paths.syncState),
 		paths.runRoot,

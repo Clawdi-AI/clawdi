@@ -1,16 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { readRuntimeBootStatus } from "./state";
+import {
+	isGeneratedRuntimeSystemdFile,
+	runtimeUserName,
+	runtimeUserSystemdEnvArgs,
+} from "./systemd-user";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
 
-const SUPERVISOR_STATUS_TIMEOUT_MS = 1_000;
-const SUPERVISOR_HARD_ERROR_STATES = new Set(["BACKOFF", "EXITED", "FATAL", "STOPPED", "UNKNOWN"]);
-const SUPERVISOR_TRANSIENT_STATES = new Set(["STARTING", "STOPPING"]);
+const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
 
 export function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
@@ -21,14 +24,14 @@ export function readHostedRuntimeObserved(
 	const channelsEtag = readTrimmed(paths.channelsEtag);
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
-	const supervisor = readSupervisorObserved(paths);
+	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
 
 	const observed: JsonRecord = {
 		schemaVersion: "clawdi.hostedRuntimeObserved.v1",
 		reportedAt: new Date().toISOString(),
 		runtimeMode: paths.mode,
-		status: observedStatus(boot.status, watchStatus, supervisor, providers),
+		status: observedStatus(boot.status, watchStatus, systemd, providers),
 		manifest: {
 			etag: manifestEtag,
 			lastGoodExists: existsSync(paths.manifestLastGood),
@@ -40,7 +43,7 @@ export function readHostedRuntimeObserved(
 		watch: summarizeWatchStatus(watchStatus),
 		cli: summarizeCliBootstrap(cliBootstrap),
 	};
-	if (supervisor) observed.supervisor = supervisor;
+	if (systemd) observed.systemd = systemd;
 	if (providers) observed.providers = providers;
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
@@ -70,19 +73,20 @@ function readJsonRecord(path: string): JsonRecord | null {
 function observedStatus(
 	bootStatus: { status: string; errors?: string[] } | undefined,
 	watchStatus: JsonRecord | null,
-	supervisor: JsonRecord | null,
+	systemd: JsonRecord | null,
 	providers: JsonRecord | null,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (watchEvent?.status === "error") return "error";
 	if (bootStatus?.status === "error") return "error";
-	if (supervisor?.status === "error") return "error";
+	if (systemd?.status === "error") return "error";
 	if (
 		providers &&
 		Object.values(providers).some((provider) => recordValue(provider)?.status === "error")
 	) {
 		return "error";
 	}
+	if (systemd?.status === "unknown") return "unknown";
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
@@ -229,94 +233,150 @@ function isOpenAiCompatibleMode(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
-function readSupervisorObserved(paths: RuntimePaths): JsonRecord | null {
-	if (!existsSync(paths.supervisorConfig)) return null;
-	const socketPath = join(paths.runRoot, "supervisor.sock");
-	if (!existsSync(socketPath)) {
-		return {
-			status: "unknown",
-			available: false,
-			socketExists: false,
-			programs: [],
-			error: "supervisor_socket_missing",
-		};
-	}
+function readSystemdObserved(paths: RuntimePaths): JsonRecord | null {
+	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
+		systemdUnitStatus("system", unit, paths),
+	);
+	const userUnits = managedSystemdUnitNames(paths.systemdUserRoot).map((unit) =>
+		systemdUnitStatus("user", unit, paths),
+	);
+	const units = [...systemUnits, ...userUnits].slice(0, 30);
+	if (units.length === 0) return null;
+	return {
+		status: systemdUnitsStatus(units),
+		unitCount: units.length,
+		units,
+	};
+}
 
-	const command = process.env.CLAWDI_SUPERVISORCTL_PATH?.trim() || "supervisorctl";
-	const result = spawnSync(command, ["-c", paths.supervisorConfig, "status"], {
+function managedSystemdUnitNames(root: string): string[] {
+	if (!existsSync(root)) return [];
+	const units = new Set<string>();
+	for (const entry of readdirSync(root)) {
+		if (entry.endsWith(".service")) {
+			if (entry.startsWith("clawdi-") || isGeneratedSystemdPath(join(root, entry))) {
+				units.add(entry);
+			}
+			continue;
+		}
+		if (!entry.endsWith(".service.d")) continue;
+		const unitName = entry.slice(0, -".d".length);
+		if (isGeneratedSystemdPath(join(root, entry, "10-clawdi-hosted.conf"))) {
+			units.add(unitName);
+		}
+	}
+	return [...units].sort();
+}
+
+function isGeneratedSystemdPath(path: string): boolean {
+	try {
+		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
+	} catch {
+		return false;
+	}
+}
+
+function systemdUnitStatus(
+	scope: "system" | "user",
+	unit: string,
+	paths: RuntimePaths,
+): JsonRecord {
+	const result =
+		scope === "system"
+			? runSystemctl(["show", unit, "--property=ActiveState", "--property=SubState"])
+			: runRuntimeUserSystemctl(paths, [
+					"show",
+					unit,
+					"--property=ActiveState",
+					"--property=SubState",
+				]);
+	const parsed = parseSystemctlShow(result.output);
+	return {
+		scope,
+		name: unit,
+		activeState: parsed.ActiveState ?? "unknown",
+		subState: parsed.SubState ?? "unknown",
+		status: systemdUnitObservedStatus(parsed.ActiveState, result.exitCode),
+		error: result.exitCode === 0 ? null : result.output.slice(0, 500) || "systemctl show failed",
+	};
+}
+
+function runSystemctl(args: string[]): { exitCode: number | null; output: string } {
+	const result = spawnSync(systemctlPath(), args, {
 		encoding: "utf8",
 		maxBuffer: 64 * 1024,
-		timeout: SUPERVISOR_STATUS_TIMEOUT_MS,
+		timeout: SYSTEMD_STATUS_TIMEOUT_MS,
 	});
-	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-	if (result.error) {
+	return {
+		exitCode: result.status,
+		output: [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n").trim(),
+	};
+}
+
+function runRuntimeUserSystemctl(
+	paths: RuntimePaths,
+	args: string[],
+): { exitCode: number | null; output: string } {
+	const runtimeUser = runtimeUserName();
+	if (process.getuid?.() === 0 && runtimeUser !== "root") {
+		const uid = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" }).stdout.trim();
+		const result = spawnSync(
+			"gosu",
+			[
+				runtimeUser,
+				"env",
+				...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
+				"systemctl",
+				"--user",
+				...args,
+			],
+			{
+				encoding: "utf8",
+				maxBuffer: 64 * 1024,
+				timeout: SYSTEMD_STATUS_TIMEOUT_MS,
+			},
+		);
 		return {
-			status: "unknown",
-			available: false,
-			socketExists: true,
-			programs: [],
-			error: result.error.message,
-		};
-	}
-	if (result.status !== 0) {
-		return {
-			status: "error",
-			available: false,
-			socketExists: true,
 			exitCode: result.status,
-			programs: [],
-			error: output.slice(0, 1000) || "supervisorctl status failed",
+			output: [result.stdout, result.stderr, result.error?.message]
+				.filter(Boolean)
+				.join("\n")
+				.trim(),
 		};
 	}
-
-	const programs = parseSupervisorStatus(output).slice(0, 20);
-	return {
-		status: supervisorProgramsStatus(programs),
-		available: true,
-		socketExists: true,
-		programCount: programs.length,
-		programs,
-	};
+	return runSystemctl(["--user", ...args]);
 }
 
-function parseSupervisorStatus(output: string): JsonRecord[] {
-	return output
-		.split(/\r?\n/)
-		.map((line) => line.trim())
-		.filter(Boolean)
-		.map(parseSupervisorStatusLine);
+function systemctlPath(): string {
+	return process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
 }
 
-function parseSupervisorStatusLine(line: string): JsonRecord {
-	const match = /^(\S+)\s+([A-Z_]+)\s*(.*)$/.exec(line);
-	if (!match) {
-		return {
-			name: line.slice(0, 120),
-			state: "UNKNOWN",
-			status: "error",
-			description: null,
-		};
-	}
-	const name = match[1] ?? line.slice(0, 120);
-	const state = match[2] ?? "UNKNOWN";
-	return {
-		name,
-		state,
-		status: supervisorProgramStatus(state),
-		description: state === "RUNNING" ? null : match[3]?.trim() || null,
-	};
+function parseSystemctlShow(output: string): Record<string, string> {
+	return Object.fromEntries(
+		output
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const index = line.indexOf("=");
+				return index === -1 ? [line, ""] : [line.slice(0, index), line.slice(index + 1)];
+			}),
+	);
 }
 
-function supervisorProgramsStatus(programs: JsonRecord[]): ObservedStatus {
-	if (programs.some((program) => program.status === "error")) return "error";
-	if (programs.some((program) => program.status === "unknown")) return "unknown";
+function systemdUnitsStatus(units: JsonRecord[]): ObservedStatus {
+	if (units.some((unit) => unit.status === "error")) return "error";
+	if (units.some((unit) => unit.status === "unknown")) return "unknown";
 	return "ok";
 }
 
-function supervisorProgramStatus(state: string): ObservedStatus {
-	if (SUPERVISOR_HARD_ERROR_STATES.has(state)) return "error";
-	if (SUPERVISOR_TRANSIENT_STATES.has(state)) return "unknown";
-	if (state === "RUNNING") return "ok";
+function systemdUnitObservedStatus(
+	activeState: string | undefined,
+	exitCode: number | null,
+): ObservedStatus {
+	if (activeState === "failed" || activeState === "deactivating") return "error";
+	if (exitCode !== 0) return "unknown";
+	if (activeState === "active") return "ok";
 	return "unknown";
 }
 

@@ -170,10 +170,10 @@ Public contract: [`managed-runtime.md`](managed-runtime.md).
   validates desired state, installs or verifies runtimes when the CLI is used
   in a local/single-container fallback, writes projections, writes run configs,
   and prepares support process state.
-- The primary hosted runtime model is a Linux-like host. Supervisor starts
-  Clawdi support programs and official Hermes/OpenClaw programs directly from
-  the manifest-derived process plan. It does not go through `clawdi run`, a
-  generated shell script, or a PATH shim.
+- The primary hosted runtime model is a Linux-like host. Systemd starts Clawdi
+  support programs and official Hermes/OpenClaw programs directly from local
+  service definitions. The bootstrap only prepares the user manager and calls
+  `clawdi runtime init`; it does not supervise OpenClaw or Hermes itself.
 - `clawdi run -- <command>` remains an explicit interactive/local execution
   boundary. Shell commands such as `openclaw` and `hermes` resolve to official
   binaries directly.
@@ -215,12 +215,14 @@ flowchart TB
         RunConfigs[config/run/<runtime>.json]
         Projections[config/projections/<runtime>.json]
         Inventory[install-inventory/<runtime>.json]
+        UserUnits[$HOME/.config/systemd/user/*.service]
     end
 
     subgraph Ephemeral["Ephemeral runtime state"]
-        SupervisorConfig[$CLAWDI_RUN_DIR/supervisor/supervisord.conf]
+        SystemUnits[$CLAWDI_RUN_DIR or /run/systemd/system/clawdi-*.service]
+        UnitEnv[$CLAWDI_RUN_DIR/systemd/env/*.service.env]
         RuntimeSecrets[$CLAWDI_RUN_DIR/secrets/*]
-        MitmCA[$CLAWDI_RUN_DIR/mitm/supervisor/ca.pem + sidecar-private key]
+        MitmCA[$CLAWDI_RUN_DIR/mitm/systemd/ca.pem + sidecar-private key]
     end
 
     subgraph Support["Clawdi support programs"]
@@ -239,17 +241,20 @@ flowchart TB
 
     Init --> Durable
     Init --> Ephemeral
-    SupervisorConfig --> Supervisor[supervisord or equivalent]
+    SystemUnits --> Systemd[systemd PID 1]
+    UserUnits --> UserSystemd[systemd --user]
+    UnitEnv --> Systemd
+    UnitEnv --> UserSystemd
     Watch --> Durable
     Daemon --> Durable
-    Supervisor --> Watch
-    Supervisor --> Daemon
-    Supervisor --> Sidecar
+    Systemd --> Watch
+    Systemd --> Daemon
+    UserSystemd --> Sidecar
     Sidecar --> Bridge
     Sidecar --> Mitm
-    Supervisor --> HermesGateway
-    Supervisor --> HermesDashboard
-    Supervisor --> OpenClaw
+    UserSystemd --> HermesGateway
+    UserSystemd --> HermesDashboard
+    UserSystemd --> OpenClaw
     Bridge -->|Control UI HTTP/WebSocket| HermesDashboard
     Bridge -->|Control UI HTTP/WebSocket| OpenClaw
     Mitm -. proxy and CA env .-> HermesGateway
@@ -266,19 +271,33 @@ MCP/tool projections, MITM profiles, live-sync settings, and recovery policy.
 
 ### Runtime Launch
 
-Hosted daemon runtimes are direct supervisor programs. Each `[program:*]` entry
-names the official binary, args, cwd, and env. Clawdi does not become a wrapper
-around the runtime command.
+Hosted daemon runtimes are direct systemd services. Clawdi support processes
+that need root-owned state are `clawdi-*` system units; official runtime
+gateway base units are runtime-user services under `systemd --user` generated
+by the runtime's official service installer, with names such as
+`openclaw-gateway.service` and `hermes-gateway.service`. Clawdi may add only a
+transparent hosted drop-in/env file for those units. Clawdi does not become a
+wrapper around the runtime command.
+
+OpenClaw and Hermes own their installers, user HOME state, native config
+semantics, update commands, and foreground runtime programs. `clawdi runtime
+init` acts as the local machine administrator: it invokes official installers
+and config surfaces, then invokes official non-interactive service installers
+for runtime gateway units. When desired state removes one of those gateway
+services, it invokes the matching official uninstaller before removing the
+hosted drop-in/env files. Clawdi-owned support or compatibility units must use
+`clawdi-*` names.
 
 Interactive shell commands are not intercepted. If a user or an official UI
 runs `openclaw update`, the command resolves to OpenClaw's own binary and update
 flow. `clawdi run -- <command>` remains available only when the caller asks for
 that explicit Clawdi execution boundary.
 
-When bridge surfaces or MITM profiles are enabled, supervisor starts one Clawdi
-runtime sidecar. Runtime programs receive only final proxy and trust env such as
-`HTTPS_PROXY`, `OPENCLAW_PROXY_URL`, and `NODE_EXTRA_CA_CERTS`; sidecar control
-env and secret-file paths stay out of the agent runtime process.
+When bridge surfaces or MITM profiles are enabled, the user manager starts one
+Clawdi runtime sidecar. Runtime programs receive only final proxy and trust env
+such as `HTTPS_PROXY`, `OPENCLAW_PROXY_URL`, and `NODE_EXTRA_CA_CERTS`;
+sidecar control env and secret-file paths stay out of the agent runtime
+process.
 
 The sidecar consolidates Clawdi-owned runtime-local support modules, but their
 authority boundaries stay explicit:
@@ -296,14 +315,12 @@ The MITM module stores its root CA certificate and private key under
 running runtimes. Runtime programs receive only the CA certificate path in trust
 environment variables; the private key path remains sidecar-private.
 
-Hermes dashboard and Hermes gateway both run as official Hermes commands when a
-deployment needs both. The dashboard is the browser Control UI surface. The
-gateway is supervised directly, but it is not a bridge target unless a
-deployment configures an actual HTTP/WebSocket listener for it. The Hermes
-official Docker image is useful prior art for that fan-out, but the Linux-like
-host preserves in-place official updater behavior. The sidecar bridge module is
-optional and exists only when Clawdi must own browser-facing auth, cookie,
-header, WebSocket, or path policy.
+Hermes dashboard and Hermes gateway are separate official Hermes commands, but
+runtime-owned systemd units should exist only when Hermes provides official
+service installers for them. The hosted default starts the official Hermes
+gateway service and does not synthesize `hermes-dashboard.service`. The sidecar
+bridge module is optional and exists only when Clawdi must own browser-facing
+auth, cookie, header, WebSocket, or path policy.
 
 ### Runtime UI And Terminal
 

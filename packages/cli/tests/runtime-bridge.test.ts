@@ -29,7 +29,7 @@ describe("runtime bridge configuration", () => {
 		);
 	});
 
-	it("uses bridge surfaces declared in the supervisor environment", async () => {
+	it("uses bridge surfaces declared in the runtime environment", async () => {
 		const upstream = createServer((_req, res) => {
 			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
 			res.end("env-surface");

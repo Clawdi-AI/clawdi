@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public boundary note |
-| Last updated | 2026-07-01 |
+| Last updated | 2026-07-02 |
 | Owner | CLI runtime layer |
 
 This note defines what belongs in the open-source runtime projection layer. It
@@ -25,12 +25,12 @@ clawdi run -- <command>
 
 `clawdi run` prepares environment variables and local config, then executes the
 target command when a caller explicitly opts into Clawdi env injection. Normal
-hosted daemon startup uses direct supervisor process entries instead.
+hosted daemon startup uses direct systemd service entries instead.
 
 Hosted runtime mode does not intercept managed runtime names. Shell commands
 resolve to official runtime binaries. Clawdi only participates when a caller
-explicitly invokes `clawdi run -- <command>` or when supervisor starts a direct
-runtime program from the rendered process plan.
+explicitly invokes `clawdi run -- <command>` or when systemd starts a direct
+runtime program from the local service plan.
 
 ## Projection Flow
 
@@ -46,7 +46,7 @@ flowchart LR
         CLI --> Channel[Channel projection]
         CLI --> Sidecar[Optional MITM profile projection]
         CLI --> RunConfig[Runtime run config]
-        CLI --> SupervisorPlan[Supervisor process plan]
+        CLI --> SystemdPlan[Systemd service plan]
     end
 
     Provider --> OpenClaw[OpenClaw config]
@@ -54,7 +54,7 @@ flowchart LR
     Channel --> OpenClaw
     Sidecar --> Runner[clawdi run environment]
     RunConfig --> Runner
-    SupervisorPlan --> Target
+    SystemdPlan --> Target
     Runner --> Target[Target agent process]
     Sidecar -. proxy and CA env .-> Target
 ```
@@ -126,11 +126,13 @@ keep those responsibilities separate.
 The CLI may own:
 
 - generated run config files;
-- direct supervisor process entries for daemon runtime startup;
+- local systemd service entries for daemon runtime startup;
 - no new wrapper or launcher generation for daemon runtime startup;
 - PATH cleanup before launching runtime child processes;
 - disabled-runtime enforcement;
-- supervisor commands that start official runtime binaries directly;
+- generated systemd entries that start official runtime binaries directly when
+  the runtime's own installer cannot express the complete hosted service
+  contract;
 - runtime-owned auxiliary services as explicit official service commands,
   without user command shims;
 - support for future runtime names when an explicit `run.command` is supplied.
@@ -148,12 +150,15 @@ information for the CLI to launch them deterministically.
 
 Hosted runtime processes map to official runtime commands. If an official
 runtime exposes multiple long-running commands, such as Hermes dashboard and
-Hermes gateway, declare those commands explicitly in the process plan. Clawdi
-must not add a shell wrapper to multiplex the commands.
+Hermes gateway, each runtime-owned unit must come from an official service
+installer. Clawdi must not add a shell wrapper to multiplex the commands.
+Clawdi-owned support and compatibility units keep `clawdi-*` names;
+OpenClaw/Hermes still own their official installer, config, and update
+behavior.
 
 Official runtime Docker images remain useful reference implementations. Hermes'
-Docker image demonstrates that gateway and dashboard can be supervised as
-separate official services. OpenClaw's Docker image demonstrates that direct
+Docker image demonstrates that gateway and dashboard can run as separate
+official services. OpenClaw's Docker image demonstrates that direct
 non-loopback exposure should require runtime-native auth. Docker image rollout
 updates are a different update model, so they are not the primary path when
 in-place official UI updates are required.

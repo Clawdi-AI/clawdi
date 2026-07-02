@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readFileSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -39,6 +39,11 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
+import {
+	isGeneratedRuntimeSystemdFile,
+	runtimeUserName,
+	runtimeUserSystemdEnvArgs,
+} from "../runtime/systemd-user";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -1249,67 +1254,175 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
-const RUNTIME_WATCH_PROGRAM = "clawdi-runtime-watch";
-
-function supervisorctl(
-	paths: ReturnType<typeof getRuntimePaths>,
-	args: string[],
-	opts: { allowNonZero?: boolean } = {},
-): string {
-	const command = process.env.CLAWDI_SUPERVISORCTL_PATH?.trim() || "supervisorctl";
-	const result = spawnSync(command, ["-c", paths.supervisorConfig, ...args], {
-		encoding: "utf8",
-	});
-	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-	if (result.status === 0 || opts.allowNonZero) return output;
-	const action = args.join(" ");
-	throw new Error(
-		`supervisorctl ${action} failed${result.status === null ? "" : ` (${result.status})`}${
-			result.error ? `: ${result.error.message}` : ""
-		}${output ? `: ${output.slice(0, 1000)}` : ""}`,
-	);
-}
-
 function readFileIfExists(path: string): string | null {
 	if (!existsSync(path)) return null;
 	return readFileSync(path, "utf-8");
 }
 
-function applySupervisorRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): void {
-	const targets = supervisorRuntimeUpdateTargets(paths);
-	supervisorctl(paths, ["reread"]);
-	for (const target of targets) {
-		supervisorctl(paths, ["update", target]);
-	}
+interface SystemdUnitSnapshot {
+	system: Map<string, string>;
+	user: Map<string, string>;
 }
 
-function supervisorRuntimeUpdateTargets(paths: ReturnType<typeof getRuntimePaths>): string[] {
-	const targets = new Set<string>();
-	for (const program of supervisorStatusPrograms(paths)) {
-		targets.add(program);
-	}
-	for (const program of supervisorConfigPrograms(paths)) {
-		targets.add(program);
-	}
-	targets.delete(RUNTIME_WATCH_PROGRAM);
-	return [...targets].sort();
+function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
+	return {
+		system: readManagedSystemdUnits(paths.systemdSystemRoot),
+		user: readManagedSystemdUnits(paths.systemdUserRoot),
+	};
 }
 
-function supervisorStatusPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
-	const output = supervisorctl(paths, ["status"], { allowNonZero: true });
-	return output
-		.split(/\r?\n/)
-		.map((line) => line.trim().match(/^([A-Za-z0-9_.-]+)\s+/)?.[1])
-		.filter((program): program is string => Boolean(program));
+function readManagedSystemdUnits(root: string): Map<string, string> {
+	const units = new Map<string, string>();
+	if (!existsSync(root)) return units;
+	for (const entry of readdirSync(root)) {
+		if (entry.endsWith(".service")) {
+			const path = join(root, entry);
+			const contents = readFileIfExists(path);
+			if (
+				contents === null ||
+				(!entry.startsWith("clawdi-") && !isGeneratedRuntimeSystemdFile(contents))
+			) {
+				continue;
+			}
+			units.set(entry, contents);
+			continue;
+		}
+		if (!entry.endsWith(".service.d")) {
+			continue;
+		}
+		const unitName = entry.slice(0, -".d".length);
+		const dropInPath = join(root, entry, "10-clawdi-hosted.conf");
+		const dropIn = readFileIfExists(dropInPath);
+		if (!dropIn || !isGeneratedRuntimeSystemdFile(dropIn)) continue;
+		const base = readFileIfExists(join(root, unitName)) ?? "";
+		units.set(unitName, `${base}\n${dropIn}`);
+	}
+	return units;
 }
 
-function supervisorConfigPrograms(paths: ReturnType<typeof getRuntimePaths>): string[] {
-	try {
-		const config = readFileSync(paths.supervisorConfig, "utf-8");
-		return [...config.matchAll(/^\[program:([^\]]+)\]$/gm)].map((match) => match[1]);
-	} catch {
-		return [];
+function changedSystemdUnits(
+	before: Map<string, string>,
+	after: Map<string, string>,
+): { changed: string[]; removed: string[]; present: string[] } {
+	const changed: string[] = [];
+	const removed: string[] = [];
+	for (const [name, contents] of after) {
+		if (before.get(name) !== contents) changed.push(name);
 	}
+	for (const name of before.keys()) {
+		if (!after.has(name)) removed.push(name);
+	}
+	return {
+		changed: changed.sort(),
+		removed: removed.sort(),
+		present: [...after.keys()].sort(),
+	};
+}
+
+function applySystemdRuntimeUpdate(
+	paths: ReturnType<typeof getRuntimePaths>,
+	before: SystemdUnitSnapshot,
+	after: SystemdUnitSnapshot,
+): { systemUnitsChanged: string[]; userUnitsChanged: string[] } {
+	const system = changedSystemdUnits(before.system, after.system);
+	const user = changedSystemdUnits(before.user, after.user);
+	if (
+		system.changed.length === 0 &&
+		system.removed.length === 0 &&
+		user.changed.length === 0 &&
+		user.removed.length === 0
+	) {
+		return { systemUnitsChanged: [], userUnitsChanged: [] };
+	}
+	if (!shouldApplySystemdRuntimeUpdate(paths)) {
+		return { systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+	}
+
+	const removableSystemUnits = system.removed.filter(
+		(unit) => unit !== "clawdi-runtime-watch.service",
+	);
+	if (removableSystemUnits.length > 0) {
+		systemctl(["stop", ...removableSystemUnits], { allowNonZero: true });
+	}
+	systemctl(["daemon-reload"]);
+	if (system.present.length > 0) systemctl(["start", ...system.present]);
+	const restartSystemUnits = system.changed.filter(
+		(unit) => unit !== "clawdi-runtime-watch.service",
+	);
+	if (restartSystemUnits.length > 0) {
+		systemctl(["restart", ...restartSystemUnits]);
+	}
+
+	if (user.removed.length > 0) {
+		runtimeUserSystemctl(paths, ["stop", ...user.removed], {
+			allowNonZero: true,
+		});
+	}
+	runtimeUserSystemctl(paths, ["daemon-reload"]);
+	if (user.present.length > 0) runtimeUserSystemctl(paths, ["enable", "--now", ...user.present]);
+	if (user.removed.length > 0) {
+		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
+	}
+	if (user.changed.length > 0) runtimeUserSystemctl(paths, ["restart", ...user.changed]);
+	return { systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+}
+
+function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {
+	const override = process.env.CLAWDI_SYSTEMD_APPLY?.trim().toLowerCase();
+	if (override === "1" || override === "true") return true;
+	if (override === "0" || override === "false") return false;
+	return paths.systemdSystemRoot === "/run/systemd/system";
+}
+
+function systemctl(args: string[], opts: { allowNonZero?: boolean } = {}): string {
+	return runCommand(systemctlPath(), args, opts);
+}
+
+function systemctlPath(): string {
+	return process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
+}
+
+function runtimeUserSystemctl(
+	paths: ReturnType<typeof getRuntimePaths>,
+	args: string[],
+	opts: { allowNonZero?: boolean } = {},
+): string {
+	const runtimeUser = runtimeUserName();
+	if (process.getuid?.() === 0 && runtimeUser !== "root") {
+		const uid = commandOutput("id", ["-u", runtimeUser]).trim();
+		return runCommand(
+			"gosu",
+			[
+				runtimeUser,
+				"env",
+				...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
+				"systemctl",
+				"--user",
+				...args,
+			],
+			opts,
+		);
+	}
+	return runCommand(systemctlPath(), ["--user", ...args], opts);
+}
+
+function commandOutput(command: string, args: string[]): string {
+	return runCommand(command, args);
+}
+
+function runCommand(
+	command: string,
+	args: string[],
+	opts: { allowNonZero?: boolean } = {},
+): string {
+	const result = spawnSync(command, args, { encoding: "utf8" });
+	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+	if (result.status === 0 || opts.allowNonZero) return output;
+	throw new Error(
+		`${command} ${args.join(" ")} failed${result.status === null ? "" : ` (${result.status})`}${
+			result.error ? `: ${result.error.message}` : ""
+		}${output ? `: ${output.slice(0, 1000)}` : ""}`,
+	);
 }
 
 function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void {
@@ -1540,6 +1653,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		}
 
 		let applyResult: RuntimeApplyResult;
+		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		try {
 			applyResult = withRuntimeConvergeLock(paths, () =>
 				applyRuntimeDesiredState(convergenceLoad, paths),
@@ -1581,7 +1695,21 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			return;
 		}
 		const { convergence } = applyResult;
-		const installOk = convergence.installErrors.length === 0;
+		let systemdApplyError: string | null = null;
+		if (convergence.installErrors.length === 0) {
+			try {
+				applySystemdRuntimeUpdate(paths, previousSystemdUnits, readSystemdUnitSnapshot(paths));
+			} catch (error) {
+				systemdApplyError = `systemd apply failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`;
+			}
+		}
+		const runtimeErrors = [
+			...convergence.installErrors,
+			...(systemdApplyError ? [systemdApplyError] : []),
+		];
+		const installOk = runtimeErrors.length === 0;
 		if (installOk && loaded.source === "remote-datasource") {
 			writeRuntimeManifestEtag(paths, loaded.etag);
 			if (channelsLoad) {
@@ -1598,8 +1726,8 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 				activeGeneration: convergence.manifest.generation,
 				instanceId: convergence.manifest.instanceId,
 				enabledRuntimes: convergence.enabledRuntimes,
-				error: convergence.installErrors[0],
-				errors: convergence.installErrors,
+				error: runtimeErrors[0],
+				errors: runtimeErrors,
 				exitCode: installOk ? 0 : 23,
 				datasource: "RuntimeSource",
 				hostPolicy: hostPolicySummary(hostPolicy),
@@ -1700,7 +1828,7 @@ async function runtimeWatchTick(
 	}
 
 	try {
-		const previousSupervisorConfig = readFileIfExists(paths.supervisorConfig);
+		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
 		const { convergence, cliUpdate } = withRuntimeConvergeLock(paths, () =>
 			applyRuntimeDesiredState(loaded, paths, {
@@ -1711,13 +1839,33 @@ async function runtimeWatchTick(
 		);
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
-		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
-		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
-		const supervisorConfigChanged =
-			readFileIfExists(paths.supervisorConfig) !== previousSupervisorConfig;
-		if (convergence.installErrors.length === 0 && supervisorConfigChanged) {
-			applySupervisorRuntimeUpdate(paths);
+		let systemdApplyResult = {
+			systemUnitsChanged: [] as string[],
+			userUnitsChanged: [] as string[],
+		};
+		let systemdApplyError: string | null = null;
+		if (convergence.installErrors.length === 0) {
+			try {
+				systemdApplyResult = applySystemdRuntimeUpdate(
+					paths,
+					previousSystemdUnits,
+					readSystemdUnitSnapshot(paths),
+				);
+			} catch (error) {
+				systemdApplyError = `systemd apply failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`;
+			}
 		}
+		const errors = [
+			...(cliUpdateError ? [cliUpdateError] : []),
+			...convergence.installErrors,
+			...(systemdApplyError ? [systemdApplyError] : []),
+		];
+		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		const systemdUnitsChanged =
+			systemdApplyResult.systemUnitsChanged.length > 0 ||
+			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
 			if (convergence.installErrors.length === 0 && !("notModified" in manifestLoad)) {
 				writeRuntimeManifestEtag(paths, manifestLoad.etag);
@@ -1734,7 +1882,8 @@ async function runtimeWatchTick(
 				activeGeneration: convergence.manifest.generation,
 				cliUpdate,
 				selfReexec,
-				supervisorConfigChanged,
+				systemdUnitsChanged,
+				systemdApply: systemdApplyResult,
 				convergence: convergence.outputs,
 			};
 		}
@@ -1762,7 +1911,8 @@ async function runtimeWatchTick(
 			enabledRuntimes: convergence.enabledRuntimes,
 			cliUpdate,
 			selfReexec,
-			supervisorConfigChanged,
+			systemdUnitsChanged,
+			systemdApply: systemdApplyResult,
 			convergence: convergence.outputs,
 		};
 	} catch (error) {
@@ -1992,7 +2142,7 @@ export async function runtimeSidecar(): Promise<void> {
 		}
 		if (shouldStartMitm && profileBundlePath) {
 			mitm = await startRuntimeMitmSidecar({
-				runtime: "supervisor",
+				runtime: "systemd",
 				env: process.env,
 				profileBundlePath,
 			});

@@ -34,8 +34,9 @@ export interface RuntimePaths {
 	runConfigRoot: string;
 	mitmProfileRoot: string;
 	mitmProfileBundle: string;
-	supervisorRoot: string;
-	supervisorConfig: string;
+	systemdSystemRoot: string;
+	systemdUserRoot: string;
+	systemdEnvRoot: string;
 	bootRoot: string;
 	bootStatus: string;
 	runtimeWatchStatus: string;
@@ -63,6 +64,15 @@ function defaultHome(mode: RuntimeMode): string {
 		return envPath("CLAWDI_RUNTIME_HOME") ?? process.env.HOME ?? "/home/clawdi";
 	}
 	return process.env.HOME || homedir();
+}
+
+function runningAsRoot(): boolean {
+	return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function defaultSystemdSystemRoot(mode: RuntimeMode, runRoot: string): string {
+	if (mode === "hosted" && runningAsRoot()) return "/run/systemd/system";
+	return join(runRoot, "systemd", "system");
 }
 
 export function getHostPolicyPath(): string {
@@ -124,8 +134,10 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
 		mitmProfileRoot: join(serviceStateRoot, "config", "mitm"),
 		mitmProfileBundle: join(serviceStateRoot, "config", "mitm", "profiles.json"),
-		supervisorRoot: join(runRoot, "supervisor"),
-		supervisorConfig: join(runRoot, "supervisor", "supervisord.conf"),
+		systemdSystemRoot:
+			envPath("CLAWDI_SYSTEMD_SYSTEM_ROOT") ?? defaultSystemdSystemRoot(mode, runRoot),
+		systemdUserRoot: join(userHome, ".config", "systemd", "user"),
+		systemdEnvRoot: join(runRoot, "systemd", "env"),
 		bootRoot,
 		bootStatus: join(cacheRoot, "boot-status.json"),
 		runtimeWatchStatus: join(serviceStateRoot, "status", "runtime-watch.json"),
