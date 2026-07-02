@@ -267,9 +267,13 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	if (tile.env) {
 		meta.push(
 			<span className="relative z-10">
+				{/* Legacy hosted envs run a supervised daemon in the v1 runtime
+				 * image — same story as on-clawdi, so they share the hosted copy
+				 * variant. The self-managed copy would tell the user to run CLI
+				 * commands they have no shell for. */}
 				<DaemonStatusBadge
 					env={tile.env}
-					source={onClawdi ? "on-clawdi" : "self-managed"}
+					source={onClawdi || legacyHosted ? "on-clawdi" : "self-managed"}
 					manageHref={tile.manageHref}
 				/>
 			</span>,

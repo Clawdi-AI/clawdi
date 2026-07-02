@@ -47,14 +47,14 @@ describe("legacyConnectedAgentTiles", () => {
 		]);
 	});
 
-	it("omits env so the tile never renders self-managed daemon remediation", () => {
+	it("carries env so the sync badge renders (with the hosted copy variant)", () => {
 		const hostedManaged = env({
 			id: "33333333-3333-4333-8333-333333333333",
 			hosted_managed: true,
 		});
 
 		const [tile] = legacyConnectedAgentTiles([hostedManaged]);
-		expect(tile.env).toBeUndefined();
+		expect(tile.env).toBe(hostedManaged);
 	});
 
 	it("excludes environments already claimed by a Cloud deploy-API tile", () => {

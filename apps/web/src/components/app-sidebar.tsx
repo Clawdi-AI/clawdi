@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -114,6 +114,8 @@ import {
 } from "@/lib/settings-routes";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
 /** Tinted chip around a nav icon — the identity-palette hue carries the
  * "vivid, colourful" art direction into the app chrome itself, and each
  * resource keeps the same hue here, in the overview Resources rail, and
@@ -145,7 +147,7 @@ function RailIconChip({ tint, children }: { tint: string; children: React.ReactN
 	);
 }
 
-const CONNECTED_AGENT_SECTIONS: {
+export const CONNECTED_AGENT_SECTIONS: {
 	id: AgentSectionId;
 	icon: LucideIcon;
 	tooltip: string;
@@ -177,7 +179,7 @@ const CONNECTED_AGENT_SECTIONS: {
 	},
 ];
 
-const HOSTED_AGENT_SECTIONS: {
+export const HOSTED_AGENT_SECTIONS: {
 	id: AgentSectionId;
 	icon: LucideIcon;
 	tooltip: string;
@@ -431,7 +433,7 @@ function ConsoleResourcesSection({
 	return <SidebarNavSection label="Resources" items={resourceItems} onNavigate={onNavigate} />;
 }
 
-function AgentSectionList({
+export function AgentSectionList({
 	agentId,
 	sections,
 	activeSection,
@@ -485,6 +487,19 @@ function AgentSectionList({
 	);
 }
 
+// `hosted_managed` alone can't pick the section set: legacy v1 environments
+// carry it too, but have no Cloud deploy-API deployment, so their console /
+// terminal / ai / channels routes all fall back to the connected detail. The
+// hosted chunk resolves the deployment (same join as `AgentHome`) and picks
+// the set the detail page will actually serve.
+const HostedAgentFocusSections = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/agents/sidebar-focus-sections").then((m) => ({
+				default: m.HostedAgentFocusSections,
+			})),
+		)
+	: null;
+
 function AgentFocusSections({
 	agent,
 	activeSection,
@@ -497,6 +512,25 @@ function AgentFocusSections({
 	onNavigate?: () => void;
 }) {
 	const hosted = showCloudFeatures && isHostedAgentEnvironment(agent);
+	if (hosted && HostedAgentFocusSections) {
+		return (
+			<Suspense
+				fallback={
+					<AgentFocusLoadingSections
+						agentId={agent.id}
+						activeSection={activeSection}
+						onNavigate={onNavigate}
+					/>
+				}
+			>
+				<HostedAgentFocusSections
+					agentId={agent.id}
+					activeSection={activeSection}
+					onNavigate={onNavigate}
+				/>
+			</Suspense>
+		);
+	}
 	return (
 		<AgentSectionList
 			agentId={agent.id}
@@ -526,7 +560,7 @@ function AgentFocusHostedFallbackSections({
 	);
 }
 
-function AgentFocusLoadingSections({
+export function AgentFocusLoadingSections({
 	agentId,
 	activeSection,
 	onNavigate,
