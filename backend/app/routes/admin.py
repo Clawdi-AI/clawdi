@@ -635,6 +635,27 @@ async def admin_register_environment(
     return EnvironmentCreatedResponse(id=str(env.id))
 
 
+@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_environment(
+    environment_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete an AgentEnvironment row on behalf of first-party hosted infra.
+
+    Sessions keep their history via ON DELETE SET NULL, matching the
+    dashboard-only `/api/environments/{id}` semantics.
+    """
+    env = (
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await db.delete(env)
+    await db.commit()
+    logger.info("admin_environment_deleted env_id=%s", environment_id)
+
+
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
     value = (
         await db.execute(
