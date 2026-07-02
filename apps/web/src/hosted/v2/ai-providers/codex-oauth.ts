@@ -1,6 +1,6 @@
 "use client";
 
-import type { AiProviderUpsert } from "@/v2/ai-providers/types";
+import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 /**
  * Codex "Sign in with ChatGPT" OAuth — v2 parity with the monorepo v1 flow

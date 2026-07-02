@@ -4,7 +4,7 @@ import { lazy, Suspense } from "react";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AgentSectionId } from "@/lib/agent-routes";
-import { useV2Access } from "@/lib/v2-access";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -23,18 +23,25 @@ export function AgentDetailClient({
 	environmentId: string;
 	section: AgentSectionId;
 }) {
-	const v2Access = useV2Access();
-	if (AgentHome && v2Access.isLoading) {
+	const hostedAccess = useHostedProductAccess();
+	if (AgentHome && hostedAccess.isLoading) {
 		return <AgentDetailSkeleton />;
 	}
-	if (AgentHome && v2Access.canUseV2) {
+	if (AgentHome && hostedAccess.canUseCloudAgents) {
 		return (
 			<Suspense fallback={<AgentDetailSkeleton />}>
 				<AgentHome environmentId={environmentId} section={section} />
 			</Suspense>
 		);
 	}
-	return <ConnectedAgentDetail environmentId={environmentId} section={section} />;
+	const showSourceBadge = IS_HOSTED_BUILD ? hostedAccess.canUseCloudAgents : true;
+	return (
+		<ConnectedAgentDetail
+			environmentId={environmentId}
+			section={section}
+			showSourceBadge={showSourceBadge}
+		/>
+	);
 }
 
 function AgentDetailSkeleton() {

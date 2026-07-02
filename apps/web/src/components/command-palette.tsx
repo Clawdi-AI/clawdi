@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Brain,
+	Cloud,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
@@ -27,6 +28,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import {
+	isLegacyHostedDashboardConfigured,
+	legacyHostedDashboardUrl,
+} from "@/lib/legacy-hosted-dashboard";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	projectResourceDefinitionsForGroup,
@@ -39,7 +45,6 @@ import {
 	settingsQueryHref,
 } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { useV2Access } from "@/lib/v2-access";
 
 interface NavShortcut {
 	label: string;
@@ -70,7 +75,7 @@ const BASE_NAV_SHORTCUTS: NavShortcut[] = [
 	),
 ];
 
-const V2_NAV_SHORTCUTS: NavShortcut[] = [
+const CLOUD_NAV_SHORTCUTS: NavShortcut[] = [
 	{
 		label: "Channels",
 		href: "/channels",
@@ -155,7 +160,7 @@ function CommandPalette({
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
 	const navShortcuts = useMemo(() => {
@@ -166,10 +171,28 @@ function CommandPalette({
 			subtitle: "General, Profile, API Keys",
 			searchText: "settings general profile api keys model providers billing preferences account",
 		};
-		return IS_HOSTED && v2Access.canUseV2
-			? [...BASE_NAV_SHORTCUTS, settingsShortcut, ...V2_NAV_SHORTCUTS]
-			: [...BASE_NAV_SHORTCUTS, settingsShortcut];
-	}, [v2Access.canUseV2]);
+		const shortcuts = [...BASE_NAV_SHORTCUTS, settingsShortcut];
+		if (
+			IS_HOSTED &&
+			hostedAccess.canUseLegacyHostedDashboard &&
+			isLegacyHostedDashboardConfigured()
+		) {
+			const url = legacyHostedDashboardUrl();
+			if (url) {
+				shortcuts.push({
+					label: "Hosted Dashboard",
+					href: url,
+					icon: Cloud,
+					subtitle: "V1 hosted app",
+					searchText: "hosted dashboard legacy v1 billing settings agents",
+				});
+			}
+		}
+		if (IS_HOSTED && hostedAccess.canUseCloudAgents) {
+			shortcuts.push(...CLOUD_NAV_SHORTCUTS);
+		}
+		return shortcuts;
+	}, [hostedAccess.canUseLegacyHostedDashboard, hostedAccess.canUseCloudAgents]);
 
 	// Reset the input when the palette closes so reopening is a fresh state
 	// — otherwise stale results from the previous query briefly flash before
@@ -200,6 +223,10 @@ function CommandPalette({
 				void router.navigate({
 					href: settingsQueryHref(section, new URLSearchParams(window.location.search)),
 				});
+				return;
+			}
+			if (/^https?:\/\//i.test(href) && typeof window !== "undefined") {
+				window.location.assign(href);
 				return;
 			}
 			void router.navigate({ href });

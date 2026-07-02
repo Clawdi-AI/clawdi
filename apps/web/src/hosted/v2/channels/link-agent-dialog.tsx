@@ -27,8 +27,8 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChannelError, TokenReveal } from "@/v2/channels/channel-ui";
-import { useEnvironments, useLinkAgent } from "@/v2/channels/channels-hooks";
+import { ChannelError, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import { useEnvironments, useLinkAgent } from "@/hosted/v2/channels/channels-hooks";
 
 type Environment = components["schemas"]["EnvironmentResponse"];
 
@@ -79,7 +79,7 @@ export function LinkAgentDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent data-v2="true" className="sm:max-w-md">
+			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Link an agent</DialogTitle>
 					<DialogDescription>

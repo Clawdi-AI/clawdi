@@ -11,6 +11,7 @@ import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
 import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
+import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -29,7 +30,15 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * the data is the same shape; only the "Clawdi" pill distinguishes
  * hosted in the UI.
  */
-export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
+export function useHostedAgentTiles({
+	cloudEnvs,
+	includeDeployments = true,
+	includeLegacyDashboard = false,
+}: {
+	cloudEnvs: Env[];
+	includeDeployments?: boolean;
+	includeLegacyDashboard?: boolean;
+}) {
 	const client = useBillingClient();
 	// Not configured (preview/self-hosted mirror pointing at the default
 	// localhost deploy API) → don't fetch, don't error-banner. See
@@ -37,7 +46,7 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	const configured = isDeployApiConfigured();
 	const query = useQuery<HostedDeployment[], Error>({
 		queryKey: billingKeys.deployments,
-		enabled: configured,
+		enabled: configured && includeDeployments,
 		queryFn: () => client.listDeployments(),
 		retry: billingQueryRetry,
 		// Status changes (Provisioning → Ready) — refetch periodically
@@ -70,10 +79,13 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	// rebuild N×M JSX trees on every poll when nothing actually changed.
 	// TanStack Query gives the same `data` reference back on no-op
 	// refetches, so the memo deps stay stable.
-	const tiles = useMemo<AgentTile[]>(
-		() => (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById)),
-		[query.data, envById],
-	);
+	const tiles = useMemo<AgentTile[]>(() => {
+		const deploymentTiles = includeDeployments
+			? (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById))
+			: [];
+		const legacyUrl = includeLegacyDashboard ? legacyHostedDashboardUrl() : null;
+		return legacyUrl ? [legacyDashboardTile(legacyUrl), ...deploymentTiles] : deploymentTiles;
+	}, [includeDeployments, includeLegacyDashboard, query.data, envById]);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
@@ -83,13 +95,14 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 	// case-sensitivity defense as `envById`.
 	const claimedEnvIds = useMemo(() => {
 		const s = new Set<string>();
+		if (!includeDeployments) return s;
 		for (const d of query.data ?? []) {
 			for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
 				if (envId) s.add(envId.toLowerCase());
 			}
 		}
 		return s;
-	}, [query.data]);
+	}, [includeDeployments, query.data]);
 
 	// CORS/network-level failures (fetch throws TypeError before any HTTP
 	// response is readable) mean this origin can't talk to the deploy API
@@ -104,8 +117,28 @@ export function useHostedAgentTiles({ cloudEnvs }: { cloudEnvs: Env[] }) {
 		claimedEnvIds,
 		// Disabled queries report isLoading=true forever in v5 (status
 		// stays 'pending'); mask both flags when we never fetch.
-		isLoading: configured ? query.isLoading : false,
-		error: configured && !unreachableFromOrigin ? query.error : null,
+		isLoading: configured && includeDeployments ? query.isLoading : false,
+		error: configured && includeDeployments && !unreachableFromOrigin ? query.error : null,
+	};
+}
+
+function legacyDashboardTile(url: string): AgentTile {
+	return {
+		id: "legacy-hosted-dashboard",
+		source: "legacy-hosted" as const,
+		name: "Hosted Dashboard",
+		displayName: null,
+		avatarUrl: null,
+		sortOrder: -1000,
+		agentType: null,
+		runtimeLabel: "V1 app",
+		statusLabel: "Available",
+		href: url,
+		external: true,
+		active: true,
+		env: null,
+		computeId: "legacy-hosted-dashboard",
+		computeName: "Hosted Dashboard",
 	};
 }
 

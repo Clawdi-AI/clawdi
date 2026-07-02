@@ -10,18 +10,22 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatModelLabel } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
+import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	useAiProviders,
 	useDeleteProvider,
 	useValidateProvider,
-} from "@/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ManagedProviderCard } from "@/v2/ai-providers/ai-providers-ui";
-import { API_MODE_LABEL, type ApiMode, providerTypeMeta } from "@/v2/ai-providers/provider-types";
-import type { AiProvider } from "@/v2/ai-providers/types";
-import { ChannelError } from "@/v2/channels/channel-ui";
+} from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ManagedProviderCard } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import {
+	API_MODE_LABEL,
+	type ApiMode,
+	providerTypeMeta,
+} from "@/hosted/v2/ai-providers/provider-types";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { ChannelError } from "@/hosted/v2/channels/channel-ui";
+import { formatModelLabel } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
 
@@ -33,7 +37,7 @@ export function AiProvidersPage() {
 	const list = providers.data?.providers ?? [];
 
 	return (
-		<div data-v2="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" data-v2="true" className="space-y-6 px-4 lg:px-6">
 			<PageHeader
 				title="Model Providers"
 				description={DESCRIPTION}

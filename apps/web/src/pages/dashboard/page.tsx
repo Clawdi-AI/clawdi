@@ -20,9 +20,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { isLegacyHostedDashboardConfigured } from "@/lib/legacy-hosted-dashboard";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { relativeTime } from "@/lib/utils";
-import { useV2Access } from "@/lib/v2-access";
 
 const RECENT_SESSIONS_LIMIT = 15;
 const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
@@ -71,7 +72,7 @@ const HostedSecondaryCTA = IS_HOSTED_BUILD
 
 export default function DashboardPage() {
 	const api = useApi();
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 
 	const { data: stats, isLoading: statsLoading } = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -130,8 +131,15 @@ export default function DashboardPage() {
 	const hasAgents = !envsLoading && selfManagedCount > 0;
 	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
 	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
-	const hostedAccessLoading = Boolean(HostedAgentsSection && v2Access.isLoading);
-	const hostedAgentsEnabled = Boolean(HostedAgentsSection && v2Access.canUseV2);
+	const hostedAccessLoading = Boolean(HostedAgentsSection && hostedAccess.isLoading);
+	const hostedAgentsEnabled = Boolean(HostedAgentsSection && hostedAccess.canUseCloudAgents);
+	const legacyHostedAgentsEnabled = Boolean(
+		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
+	);
+	const legacyHostedDashboardEnabled = Boolean(
+		legacyHostedAgentsEnabled && isLegacyHostedDashboardConfigured(),
+	);
+	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
@@ -151,13 +159,16 @@ export default function DashboardPage() {
 				<div className="min-w-0 space-y-4 lg:col-span-2">
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
-					) : hostedAgentsEnabled && HostedAgentsSection ? (
+					) : hostedSectionEnabled && HostedAgentsSection ? (
 						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 							<HostedAgentsSection
 								selfManagedTiles={selfManagedTiles}
 								envsLoading={envsLoading}
 								selfManagedCount={selfManagedCount}
 								cloudEnvs={environments ?? []}
+								showCloudDeployments={hostedAgentsEnabled}
+								showLegacyAgents={legacyHostedAgentsEnabled}
+								showLegacyDashboard={legacyHostedDashboardEnabled}
 							/>
 						</Suspense>
 					) : ossIsEmptyState ? (
@@ -214,12 +225,15 @@ export default function DashboardPage() {
 				    to a sibling component so it can include hosted tiles in
 				    the count. */}
 				<div className="min-w-0 space-y-4">
-					{hostedAccessLoading ? null : hostedAgentsEnabled && HostedSecondaryCTA ? (
+					{hostedAccessLoading ? null : hostedSectionEnabled && HostedSecondaryCTA ? (
 						<Suspense fallback={null}>
 							<HostedSecondaryCTA
 								selfManagedCount={selfManagedCount}
 								envsLoading={envsLoading}
 								cloudEnvs={environments ?? []}
+								showCloudDeployments={hostedAgentsEnabled}
+								showLegacyAgents={legacyHostedAgentsEnabled}
+								showLegacyDashboard={legacyHostedDashboardEnabled}
 							/>
 						</Suspense>
 					) : hasAgents ? (
@@ -231,7 +245,7 @@ export default function DashboardPage() {
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
 						hasConnectedAgent={
-							hostedAccessLoading || hostedAgentsEnabled || envsLoading ? undefined : hasAgents
+							hostedAccessLoading || hostedSectionEnabled || envsLoading ? undefined : hasAgents
 						}
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />

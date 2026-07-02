@@ -22,13 +22,13 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
 } from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
-import { useV2Access } from "@/lib/v2-access";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -55,7 +55,7 @@ type SettingsNavItem = {
 	label: string;
 	description: string;
 	icon: LucideIcon;
-	v2Only?: boolean;
+	cloudOnly?: boolean;
 };
 
 const SETTINGS_NAV: SettingsNavItem[] = [
@@ -82,21 +82,21 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 		label: "Wallet",
 		description: "Balance and top-ups",
 		icon: WalletCards,
-		v2Only: true,
+		cloudOnly: true,
 	},
 	{
 		id: "billing-plan",
 		label: "Compute",
 		description: "Plans and new agents",
 		icon: CreditCard,
-		v2Only: true,
+		cloudOnly: true,
 	},
 	{
 		id: "billing-usage",
 		label: "Usage",
 		description: "AI Credit consumption",
 		icon: BarChart3,
-		v2Only: true,
+		cloudOnly: true,
 	},
 ];
 
@@ -112,13 +112,13 @@ export function SettingsDialog({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const activeButtonRef = useRef<HTMLButtonElement | null>(null);
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showBilling = mounted && IS_HOSTED_BUILD && v2Access.canUseV2;
-	const items = SETTINGS_NAV.filter((item) => !item.v2Only || showBilling);
+	const showBilling = mounted && IS_HOSTED_BUILD && hostedAccess.canUseCloudAgents;
+	const items = SETTINGS_NAV.filter((item) => !item.cloudOnly || showBilling);
 	const activeSection = items.some((item) => item.id === section)
 		? section
 		: DEFAULT_SETTINGS_SECTION;

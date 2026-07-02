@@ -11,6 +11,7 @@ import {
 	cleanMachineName,
 	compareAgentEnvironments,
 	isHostedAgentEnvironment,
+	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
@@ -84,7 +85,7 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
  */
 export interface AgentTile {
 	id: string;
-	source: "self-managed" | "on-clawdi";
+	source: "self-managed" | "on-clawdi" | "legacy-hosted";
 	name: string;
 	displayName?: string | null;
 	avatarUrl?: string | null;
@@ -223,6 +224,7 @@ export function AgentTileGrid({ tiles }: { tiles: AgentTile[] }) {
 
 function AgentTileView({ tile }: { tile: AgentTile }) {
 	const onClawdi = tile.source === "on-clawdi";
+	const legacyHosted = tile.source === "legacy-hosted";
 	// Source pill is an identity adornment, not metadata — it sits
 	// next to the title so it stays glued to the agent name no matter
 	// how the meta wraps. Hosted agents get the same live-sync badge
@@ -230,7 +232,11 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// in a future release, so the surface stays consistent today and
 	// the data reflects reality once that lands.
 	const source = onClawdi ? "hosted" : "connected";
-	const sourcePill = onClawdi ? <AgentSourceBadge source={source} /> : null;
+	const sourcePill = onClawdi ? (
+		<AgentSourceBadge source={source} />
+	) : legacyHosted ? (
+		<LegacyAgentBadge />
+	) : null;
 	// `tile.env` adds a sync badge that renders a `<button>`
 	// (clicks open a status dialog). It MUST live in the meta
 	// line under the agent name — same row as `statusLabel` so
@@ -256,12 +262,16 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// managed tiles already convey the runtime via the
 	// AgentLabel `type` prop (the icon badge), so adding
 	// runtimeLabel there would just duplicate the agent type.
-	if (onClawdi && tile.runtimeLabel) meta.push(tile.runtimeLabel);
+	if ((onClawdi || legacyHosted) && tile.runtimeLabel) meta.push(tile.runtimeLabel);
 	if (tile.statusLabel) meta.push(tile.statusLabel);
 	if (tile.env) {
 		meta.push(
 			<span className="relative z-10">
-				<DaemonStatusBadge env={tile.env} source={tile.source} manageHref={tile.manageHref} />
+				<DaemonStatusBadge
+					env={tile.env}
+					source={onClawdi ? "on-clawdi" : "self-managed"}
+					manageHref={tile.manageHref}
+				/>
 			</span>,
 		);
 	}

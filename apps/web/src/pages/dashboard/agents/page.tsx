@@ -5,7 +5,8 @@ import { lazy, Suspense, useMemo } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { unwrap, useApi } from "@/lib/api";
-import { useV2Access } from "@/lib/v2-access";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { isLegacyHostedDashboardConfigured } from "@/lib/legacy-hosted-dashboard";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -28,7 +29,7 @@ const HostedAgentsByCompute = IS_HOSTED_BUILD
 
 export default function AgentsIndexPage() {
 	const api = useApi();
-	const v2Access = useV2Access();
+	const hostedAccess = useHostedProductAccess();
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
 		queryFn: async () => unwrap(await api.GET("/v1/environments")),
@@ -39,21 +40,31 @@ export default function AgentsIndexPage() {
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedCount = selfManagedTiles.length;
-	const hostedAccessLoading = Boolean(HostedAgentsByCompute && v2Access.isLoading);
-	const hostedAgentsEnabled = Boolean(HostedAgentsByCompute && v2Access.canUseV2);
+	const hostedAccessLoading = Boolean(HostedAgentsByCompute && hostedAccess.isLoading);
+	const hostedAgentsEnabled = Boolean(HostedAgentsByCompute && hostedAccess.canUseCloudAgents);
+	const legacyHostedAgentsEnabled = Boolean(
+		HostedAgentsByCompute && hostedAccess.canUseLegacyHostedDashboard,
+	);
+	const legacyHostedDashboardEnabled = Boolean(
+		legacyHostedAgentsEnabled && isLegacyHostedDashboardConfigured(),
+	);
+	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
 		<div className="space-y-6 px-4 lg:px-6">
 			<PageHeader title="Agents" description="Every agent connected to your account." />
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
-			) : hostedAgentsEnabled && HostedAgentsByCompute ? (
+			) : hostedSectionEnabled && HostedAgentsByCompute ? (
 				<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 					<HostedAgentsByCompute
 						selfManagedTiles={selfManagedTiles}
 						envsLoading={envsLoading}
 						selfManagedCount={selfManagedCount}
 						cloudEnvs={environments ?? []}
+						showCloudDeployments={hostedAgentsEnabled}
+						showLegacyAgents={legacyHostedAgentsEnabled}
+						showLegacyDashboard={legacyHostedDashboardEnabled}
 					/>
 				</Suspense>
 			) : (

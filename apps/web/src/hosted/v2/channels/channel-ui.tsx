@@ -14,9 +14,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
-import { providerMeta } from "@/v2/channels/channel-providers";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
@@ -44,7 +44,7 @@ export function ChannelError({
 }) {
 	const expired = isApiAuthError(error);
 	return (
-		<Alert data-v2="true" variant="destructive">
+		<Alert data-hosted="true" data-v2="true" variant="destructive">
 			<CircleAlert />
 			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">
@@ -141,7 +141,11 @@ export function TokenReveal({
 }) {
 	const { copied, copy } = useCopy();
 	return (
-		<div data-v2="true" className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+		<div
+			data-hosted="true"
+			data-v2="true"
+			className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
+		>
 			<div className="text-xs font-medium text-primary">{label}</div>
 			<div className="flex items-center gap-2">
 				<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
@@ -168,6 +172,7 @@ export function CopyInline({ value, className }: { value: string; className?: st
 	return (
 		<button
 			type="button"
+			data-hosted="true"
 			data-v2="true"
 			onClick={() => copy(value)}
 			className={cn(

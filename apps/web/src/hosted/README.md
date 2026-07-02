@@ -4,6 +4,8 @@ Components and helpers for the hosted agent service and hosted billing surfaces.
 They render only in the hosted build (`VITE_CLAWDI_HOSTED=true`).
 
 OSS users running their own Clawdi instance see none of this UI.
+Hosted-only rollout names such as v1/v2 stay under this directory; the OSS
+dashboard should not grow public v1/v2 product concepts.
 
 ## Conventions
 
@@ -54,10 +56,12 @@ OSS users running their own Clawdi instance see none of this UI.
 ## What lives here today
 
 - `use-hosted-agent-tiles.ts` — Lists the user's deployed agents on
-  the v2 hosted runtime API, polled while any tile is in a transient
+  the Cloud deploy API, polled while any tile is in a transient
   state.
 - `agents/` — Hosted agent detail, runtime controls, and AI-provider configuration.
 - `billing/` — Wallet, subscription, usage, and managed agent deployment.
+- `v2/` — Hosted-only Cloud capabilities such as channel management and AI
+  provider configuration.
 - `analytics-client.tsx` — Hosted-only analytics identity bridge.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted

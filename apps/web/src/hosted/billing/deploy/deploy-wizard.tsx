@@ -36,18 +36,18 @@ import {
 } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { agentSectionHref } from "@/lib/agent-routes";
-import { cn } from "@/lib/utils";
-import { AddProviderDialog } from "@/v2/ai-providers/add-provider-dialog";
-import { useAiProviders } from "@/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/v2/ai-providers/ai-providers-ui";
+import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
+import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	aiProviderRuntimeId,
 	buildAiProviderBootstrap,
 	type RuntimeAiProviderAuthKind,
-} from "@/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/v2/ai-providers/types";
-import { ConnectBotDialog } from "@/v2/channels/connect-bot-dialog";
+} from "@/hosted/v2/ai-providers/runtime-bootstrap";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
+import { agentSectionHref } from "@/lib/agent-routes";
+import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
