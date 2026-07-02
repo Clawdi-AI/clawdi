@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { agentOwnershipKindFromId } from "@/lib/agent-ownership";
+import { agentOwnershipKindFromId, EMPTY_AGENT_OWNERSHIP } from "@/lib/agent-ownership";
 
 describe("agentOwnershipKindFromId", () => {
 	it("classifies environments from ownership sets with case-insensitive ids", () => {
@@ -14,8 +14,14 @@ describe("agentOwnershipKindFromId", () => {
 	});
 
 	it("defaults to connected while ownership is unknown", () => {
+		// Cosmetic fallback only — destructive consumers (Disconnect) must
+		// additionally require a non-null (resolved) ownership value.
 		expect(agentOwnershipKindFromId("aaaa", null)).toBe("connected");
 		expect(agentOwnershipKindFromId(null, null)).toBe("connected");
+	});
+
+	it("resolved empty ownership classifies everything as connected", () => {
+		expect(agentOwnershipKindFromId("aaaa", EMPTY_AGENT_OWNERSHIP)).toBe("connected");
 	});
 
 	it("prefers cloud when both sets contain the same environment", () => {

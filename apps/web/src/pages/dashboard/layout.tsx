@@ -7,7 +7,11 @@ import { CommandPaletteProvider } from "@/components/command-palette";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
-import { type AgentOwnership, AgentOwnershipProvider } from "@/lib/agent-ownership";
+import {
+	type AgentOwnership,
+	AgentOwnershipProvider,
+	EMPTY_AGENT_OWNERSHIP,
+} from "@/lib/agent-ownership";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
@@ -67,6 +71,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 		mounted &&
 		IS_HOSTED &&
 		(hostedAccess.canUseCloudAgents || hostedAccess.canUseLegacyHostedDashboard);
+	// `null` strictly means "resolving" (destructive actions wait on it), so
+	// the provider must decide when there is nothing to resolve: OSS builds
+	// and hosted users without hosted capabilities get the resolved empty
+	// ownership immediately. Hosted users keep `null` until access is known
+	// AND the sensor has reported, closing the loading window in which a
+	// live hosted agent could be disconnected as if it were connected.
+	const noExternalControlPlane =
+		!IS_HOSTED ||
+		(mounted &&
+			!hostedAccess.isLoading &&
+			!hostedAccess.canUseCloudAgents &&
+			!hostedAccess.canUseLegacyHostedDashboard);
+	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
 
 	return (
 		<SidebarProvider
@@ -79,7 +96,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 				} as React.CSSProperties
 			}
 		>
-			<AgentOwnershipProvider value={ownership}>
+			<AgentOwnershipProvider value={providedOwnership}>
 				{HostedAgentOwnershipSensor && showOwnershipSensor ? (
 					<Suspense fallback={null}>
 						<HostedAgentOwnershipSensor onChange={setOwnership} />

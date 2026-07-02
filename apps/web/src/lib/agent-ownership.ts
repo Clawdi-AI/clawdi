@@ -8,11 +8,25 @@ export type AgentOwnership = {
 	/**
 	 * Environment ids managed by an external control plane.
 	 *
-	 * `null` context means ownership is unknown, unavailable, or still loading;
-	 * callers should treat unknown environments as connected.
+	 * A `null` context strictly means "still resolving": the provider is
+	 * expecting ownership data that has not arrived yet. Cosmetic consumers
+	 * (badges, labels, section chrome) may fall back to "connected" while
+	 * resolving, but DESTRUCTIVE actions (Disconnect) must wait for a
+	 * non-null value. When no external control plane applies (OSS builds,
+	 * hosted users without hosted capabilities) the provider supplies
+	 * `EMPTY_AGENT_OWNERSHIP` — resolved, everything connected — so those
+	 * surfaces never wait.
 	 */
 	cloudEnvIds: ReadonlySet<string>;
 	legacyEnvIds: ReadonlySet<string>;
+};
+
+const EMPTY_ENV_ID_SET: ReadonlySet<string> = new Set();
+
+/** Resolved "no external control plane" value — see the type docs. */
+export const EMPTY_AGENT_OWNERSHIP: AgentOwnership = {
+	cloudEnvIds: EMPTY_ENV_ID_SET,
+	legacyEnvIds: EMPTY_ENV_ID_SET,
 };
 
 const AgentOwnershipContext = createContext<AgentOwnership | null>(null);

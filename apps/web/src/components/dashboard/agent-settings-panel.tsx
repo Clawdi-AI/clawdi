@@ -179,7 +179,11 @@ export function AgentSettingsPanel({
 	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
 	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
-	const externallyManaged = ownershipKind !== "connected";
+	// Disconnect deregisters the environment — destructive, so it must wait
+	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
+	// is still resolving, a live hosted/legacy agent would otherwise briefly
+	// classify as connected and expose a working Disconnect.
+	const disconnectUnavailable = ownership === null || ownershipKind !== "connected";
 	const isBusy =
 		updateIdentity.isPending ||
 		uploadMutation.isPending ||
@@ -316,7 +320,7 @@ export function AgentSettingsPanel({
 				</div>
 			</SettingsSection>
 
-			{!externallyManaged ? (
+			{!disconnectUnavailable ? (
 				<SettingsSection
 					title="Disconnect"
 					description="Remove this connected agent from your dashboard."
