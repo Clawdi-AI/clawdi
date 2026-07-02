@@ -759,6 +759,60 @@ async def test_admin_register_env_idempotent(admin_client, db_session, seed_user
 
 
 @pytest.mark.asyncio
+async def test_admin_delete_env_removes_environment_and_orphans_sessions(
+    admin_client, db_session, seed_user
+):
+    """Hosted compute delete needs an admin path to remove the
+    cloud-api machine tile while preserving historical sessions."""
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment, Session
+
+    created = await admin_client.post(
+        "/api/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "delete-machine-1",
+            "machine_name": "delete-pod",
+            "agent_type": "codex",
+        },
+    )
+    assert created.status_code == 200, created.text
+    env_id = UUID(created.json()["id"])
+
+    session_row = Session(
+        user_id=seed_user.id,
+        environment_id=env_id,
+        local_session_id="local-delete-env-session",
+        project_path="/tmp/project",
+        started_at=datetime.now(UTC),
+        last_activity_at=datetime.now(UTC),
+    )
+    db_session.add(session_row)
+    await db_session.commit()
+
+    deleted = await admin_client.delete(f"/api/admin/environments/{env_id}", headers=_AUTH)
+    assert deleted.status_code == 204, deleted.text
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one_or_none()
+    assert env is None
+    await db_session.refresh(session_row)
+    assert session_row.environment_id is None
+
+    deleted_again = await admin_client.delete(
+        f"/api/admin/environments/{env_id}",
+        headers=_AUTH,
+    )
+    assert deleted_again.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     """Same lazy-create contract for env registration: a brand-new
     user clicking Deploy registers their first env. Without this,
