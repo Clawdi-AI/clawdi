@@ -1926,6 +1926,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.etag).toBe('"etag-watch-12"');
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
+				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: [],
 			});
@@ -2133,7 +2134,11 @@ exit 64
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(22);
 			expect(event.systemdUnitsChanged).toBe(false);
-			expect(event.systemdApply).toEqual({ systemUnitsChanged: [], userUnitsChanged: [] });
+			expect(event.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
 			const secrets = JSON.parse(
 				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 			);
@@ -2850,6 +2855,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.cliUpdate.packageSpec).toBe("clawdi@0.13.1-beta.0");
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
+				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: [],
 			});
@@ -3191,6 +3197,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			);
 			expect(event.systemdApply).toEqual({
+				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: [],
 			});

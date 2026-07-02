@@ -1531,8 +1531,10 @@ function shouldRunRuntime(runtime: string, manifest: RuntimeManifest): boolean {
 }
 
 function runtimeServiceProgramName(runtime: string, service: string): string {
-	if (runtime === "openclaw" && service === "gateway") return "openclaw-gateway";
-	if (runtime === "hermes" && service === "gateway") return "hermes-gateway";
+	const official = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(descriptor) => descriptor.runtime === runtime && descriptor.service === service,
+	);
+	if (official) return official.programName;
 	if (runtime === "hermes" && service === "dashboard") return "clawdi-hermes-dashboard";
 	return `clawdi-${systemdUnitNameSegment(runtime)}-${systemdUnitNameSegment(service)}`;
 }
@@ -1632,6 +1634,11 @@ type OfficialRuntimeServiceDescriptor = {
 	command: string;
 	installArgs: string[];
 	uninstallArgs: string[];
+	// Manifest `services` key the official unit corresponds to; used for
+	// program naming even when such an entry is not official for the runtime.
+	service: string;
+	// Extra env projected into the unit's environment file.
+	unitEnv?: (unitName: string) => Record<string, string>;
 	// Which desired programs the official unit covers. Deliberately
 	// asymmetric: openclaw's default program is its gateway, while hermes may
 	// express the gateway as the default program or an explicit
@@ -1646,6 +1653,8 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		command: "openclaw",
 		installArgs: ["gateway", "install", "--force", "--json"],
 		uninstallArgs: ["gateway", "uninstall"],
+		service: "gateway",
+		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
 		matchesProgram: (program) => !program.service,
 	},
 	{
@@ -1654,6 +1663,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		command: "hermes",
 		installArgs: ["gateway", "install"],
 		uninstallArgs: ["gateway", "uninstall"],
+		service: "gateway",
 		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
 	},
 ];
@@ -1911,9 +1921,13 @@ function uninstallOfficialRuntimeUserService(input: {
 	}
 }
 
+function systemdUnitNameFromPath(unitPath: string): string {
+	return unitPath.split("/").at(-1) ?? "";
+}
+
 function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: string[]): string[] {
 	if (!existsSync(paths.systemdUserRoot)) return [];
-	const writtenNames = new Set(writtenUnits.map((unit) => unit.split("/").at(-1)));
+	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	const stale: string[] = [];
 	for (const entry of readdirSync(paths.systemdUserRoot)) {
 		if (!entry.endsWith(".service.d")) continue;
@@ -1931,7 +1945,7 @@ function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: str
 
 function removeStaleSystemdUserUnits(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdUserRoot)) return;
-	const writtenNames = new Set(writtenUnits.map((unit) => unit.split("/").at(-1)));
+	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	for (const entry of readdirSync(paths.systemdUserRoot)) {
 		if (!entry.endsWith(".service")) continue;
 		const path = join(paths.systemdUserRoot, entry);
@@ -1976,7 +1990,7 @@ function isGeneratedSystemdFile(path: string): boolean {
 function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdSystemRoot)) return;
 	const managed = new Set(["clawdi-runtime-watch.service", "clawdi-daemon.service"]);
-	const writtenNames = new Set(writtenUnits.map((unit) => unit.split("/").at(-1)));
+	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	for (const entry of readdirSync(paths.systemdSystemRoot)) {
 		if (!managed.has(entry) || writtenNames.has(entry)) continue;
 		rmSync(join(paths.systemdSystemRoot, entry), { force: true });
@@ -1985,7 +1999,7 @@ function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string
 
 function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdEnvRoot)) return;
-	const writtenNames = new Set(writtenUnits.map((unit) => `${unit.split("/").at(-1) ?? ""}.env`));
+	const writtenNames = new Set(writtenUnits.map((unit) => `${systemdUnitNameFromPath(unit)}.env`));
 	for (const entry of readdirSync(paths.systemdEnvRoot)) {
 		if (!entry.endsWith(".service.env")) continue;
 		const path = join(paths.systemdEnvRoot, entry);
@@ -2101,9 +2115,7 @@ function writeSystemdUnits(
 			...program.env,
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(manifest, program, secretValues),
-			...(program.runtime === "openclaw" && !program.service
-				? { OPENCLAW_SYSTEMD_UNIT: unitName }
-				: {}),
+			...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
 		};
 		if (officialRuntimeServiceInstallArgs(program)) {
 			// Without a base unit the drop-in cannot converge to a startable

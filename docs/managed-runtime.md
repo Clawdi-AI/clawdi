@@ -165,7 +165,11 @@ that boundary convergent in both directions:
 Official service installers/uninstallers run only when the CLI runs as root
 (the hosted PID 1 path). `CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES=1|0`
 overrides that default for development and tests; when installers are skipped,
-convergence still writes the hosted drop-in/env files.
+convergence still writes the hosted drop-in/env files. Similarly, systemctl
+apply runs only where the environment owns a live systemd
+(`/run/systemd/system`, overridable with `CLAWDI_SYSTEMD_APPLY=1|0`); when unit
+files changed but apply was skipped, init/watch status reports
+`systemdApply.applied=false` instead of hiding the divergence.
 
 Hermes gateway and dashboard are separate official commands in this model. A
 deployment that needs both must use an official service installer for each

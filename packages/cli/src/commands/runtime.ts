@@ -1323,7 +1323,7 @@ function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
-): { systemUnitsChanged: string[]; userUnitsChanged: string[] } {
+): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
 	const system = changedSystemdUnits(before.system, after.system);
 	const user = changedSystemdUnits(before.user, after.user);
 	if (
@@ -1332,10 +1332,12 @@ function applySystemdRuntimeUpdate(
 		user.changed.length === 0 &&
 		user.removed.length === 0
 	) {
-		return { systemUnitsChanged: [], userUnitsChanged: [] };
+		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 	}
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		return { systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+		// Unit files changed on disk but this environment does not own a live
+		// systemd (non-root/dev); report the divergence instead of hiding it.
+		return { applied: false, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
 	}
 
 	const removableSystemUnits = system.removed.filter(
@@ -1364,7 +1366,7 @@ function applySystemdRuntimeUpdate(
 		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
 	}
 	if (user.changed.length > 0) runtimeUserSystemctl(paths, ["restart", ...user.changed]);
-	return { systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+	return { applied: true, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
 }
 
 function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {
@@ -1841,6 +1843,7 @@ async function runtimeWatchTick(
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
 		let systemdApplyResult = {
+			applied: false,
 			systemUnitsChanged: [] as string[],
 			userUnitsChanged: [] as string[],
 		};
