@@ -38,9 +38,16 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
 
 	return useMemo(() => {
 		if (!enabled) return EMPTY_ENV_IDS;
-		if (query.isPending && !query.data && !query.error) return null;
-		if (query.error) return EMPTY_ENV_IDS;
-		return envIdSet(query.data?.environment_ids);
+		// Definitive answers resolve the set: fresh/stale data, or a 404 (no
+		// v1 surface access server-side). Anything else — transport/server
+		// errors, still pending — leaves it UNRESOLVED so destructive
+		// consumers fail closed instead of treating live legacy agents as
+		// connected.
+		if (query.data) return envIdSet(query.data.environment_ids);
+		if (query.error instanceof BillingApiError && query.error.status === 404) {
+			return EMPTY_ENV_IDS;
+		}
+		return null;
 	}, [enabled, query.data, query.error, query.isPending]);
 }
 
@@ -48,8 +55,10 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
  * Reports cloud-api environment ids managed by hosted-only control planes.
  *
  * The OSS dashboard receives only this neutral ownership context. Deploy API
- * reads stay quarantined in `apps/web/src/hosted/`, and failures degrade to
- * empty ownership sets so connected-agent UX remains usable.
+ * reads stay quarantined in `apps/web/src/hosted/`. Only definitive answers
+ * resolve a set (success, or 404 = no v1 surface); transport/server errors
+ * leave ownership `null` so destructive actions fail closed while cosmetic
+ * consumers fall back to connected.
  */
 export function HostedAgentOwnershipSensor({
 	onChange,
@@ -62,9 +71,10 @@ export function HostedAgentOwnershipSensor({
 
 	const cloudEnvIds = useMemo(() => {
 		if (!access.canUseCloudAgents || !isDeployApiConfigured()) return EMPTY_ENV_IDS;
-		if (cloudQuery.isPending && !cloudQuery.data && !cloudQuery.error) return null;
-		if (cloudQuery.error) return EMPTY_ENV_IDS;
-		return claimedEnvIdsFromDeployments(cloudQuery.data ?? []);
+		// Fresh/stale data resolves; errors or pending leave the set
+		// UNRESOLVED so destructive consumers fail closed.
+		if (cloudQuery.data) return claimedEnvIdsFromDeployments(cloudQuery.data);
+		return null;
 	}, [access.canUseCloudAgents, cloudQuery.data, cloudQuery.error, cloudQuery.isPending]);
 
 	const ownership = useMemo<AgentOwnership | null>(() => {

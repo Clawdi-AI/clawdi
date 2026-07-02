@@ -13,6 +13,7 @@ import {
 	EMPTY_AGENT_OWNERSHIP,
 } from "@/lib/agent-ownership";
 import { IS_HOSTED } from "@/lib/hosted";
+import { isDeployApiConfigured } from "@/lib/hosted-api";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
@@ -72,15 +73,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 		IS_HOSTED &&
 		(hostedAccess.canUseCloudAgents || hostedAccess.canUseLegacyHostedDashboard);
 	// `null` strictly means "resolving" (destructive actions wait on it), so
-	// the provider must decide when there is nothing to resolve: OSS builds
-	// and hosted users without hosted capabilities get the resolved empty
-	// ownership immediately. Hosted users keep `null` until access is known
-	// AND the sensor has reported, closing the loading window in which a
-	// live hosted agent could be disconnected as if it were connected.
+	// the provider must decide when there is nothing to resolve: OSS builds,
+	// hosted mirrors without a configured deploy API, and hosted users whose
+	// access check SUCCEEDED with no hosted capabilities get the resolved
+	// empty ownership immediately. Everything else — loading, or the access
+	// check erroring — stays `null`: destructive actions fail closed, since a
+	// failed /me cannot distinguish a capability-less user from a legacy user
+	// whose live agents must not expose Disconnect.
 	const noExternalControlPlane =
 		!IS_HOSTED ||
+		!isDeployApiConfigured() ||
 		(mounted &&
 			!hostedAccess.isLoading &&
+			!hostedAccess.error &&
 			!hostedAccess.canUseCloudAgents &&
 			!hostedAccess.canUseLegacyHostedDashboard);
 	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
