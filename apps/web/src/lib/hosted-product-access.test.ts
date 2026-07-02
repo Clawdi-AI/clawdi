@@ -20,7 +20,7 @@ describe("hostedProductAccessFromProfile", () => {
 		});
 	});
 
-	it("uses the backend per-user legacy hosted dashboard gate", () => {
+	it("uses the backend per-user legacy agent gate", () => {
 		expect(
 			hostedProductAccessFromProfile({
 				capabilities: { can_use_v1: true, can_use_v2: false },
