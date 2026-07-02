@@ -16,6 +16,24 @@ import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 type Env = components["schemas"]["EnvironmentResponse"];
 
 /**
+ * Env ids claimed by Cloud deploy-API deployments (lower-cased —
+ * see the case note on `envById`). Shared by the tile dedup here and
+ * the sidebar's cloud-vs-legacy chrome classification so the two can
+ * never disagree about which hosted_managed env is a Cloud agent.
+ */
+export function claimedEnvIdsFromDeployments(
+	deployments: readonly HostedDeployment[],
+): Set<string> {
+	const s = new Set<string>();
+	for (const d of deployments) {
+		for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
+			if (envId) s.add(envId.toLowerCase());
+		}
+	}
+	return s;
+}
+
+/**
  * Bridges hosted deploy API `Deployment` records to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
@@ -94,14 +112,8 @@ export function useHostedAgentTiles({
 	// a hosted tile and a self-managed tile. Lower-cased for the same
 	// case-sensitivity defense as `envById`.
 	const claimedEnvIds = useMemo(() => {
-		const s = new Set<string>();
-		if (!includeDeployments) return s;
-		for (const d of query.data ?? []) {
-			for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
-				if (envId) s.add(envId.toLowerCase());
-			}
-		}
-		return s;
+		if (!includeDeployments) return new Set<string>();
+		return claimedEnvIdsFromDeployments(query.data ?? []);
 	}, [includeDeployments, query.data]);
 
 	// CORS/network-level failures (fetch throws TypeError before any HTTP
