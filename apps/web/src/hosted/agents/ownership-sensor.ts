@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import { BillingApiError, billingQueryRetry } from "@/hosted/billing/errors";
+// (BillingApiError kept for the retry policy only — a 404 is not worth
+// retrying, but it is NOT a definitive answer either; see useLegacyEnvIds.)
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
 import { claimedEnvIdsFromDeployments } from "@/hosted/use-hosted-agent-tiles";
 import type { AgentOwnership } from "@/lib/agent-ownership";
@@ -38,15 +40,13 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
 
 	return useMemo(() => {
 		if (!enabled) return EMPTY_ENV_IDS;
-		// Definitive answers resolve the set: fresh/stale data, or a 404 (no
-		// v1 surface access server-side). Anything else — transport/server
-		// errors, still pending — leaves it UNRESOLVED so destructive
-		// consumers fail closed instead of treating live legacy agents as
-		// connected.
+		// Only data (fresh or stale cache) resolves the set. The endpoint has
+		// no 404 in its success contract — users without live v1 deployments
+		// get an empty list — so a 404 can only mean "route not deployed
+		// yet" (rollout skew) and, like every other error, stays UNRESOLVED:
+		// destructive consumers fail closed instead of treating live legacy
+		// agents as connected.
 		if (query.data) return envIdSet(query.data.environment_ids);
-		if (query.error instanceof BillingApiError && query.error.status === 404) {
-			return EMPTY_ENV_IDS;
-		}
 		return null;
 	}, [enabled, query.data, query.error, query.isPending]);
 }
