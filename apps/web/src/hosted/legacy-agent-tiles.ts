@@ -16,24 +16,39 @@ type Env = components["schemas"]["EnvironmentResponse"];
  * cloud-api but intentionally not fetched through the Cloud deploy API.
  * Product-wise these behave like connected agents in the new dashboard; their
  * v1-only management surface stays behind the separate legacy dashboard entry.
+ *
+ * `source: "legacy-hosted"` gives the tile the Legacy pill (the v1 counterpart
+ * of the Cloud pill on deploy-API tiles). The tile deliberately omits `env`:
+ * daemon sync for these environments is supervised by the legacy app, so
+ * rendering the self-managed DaemonStatusBadge (whose remediation copy points
+ * at CLI commands) would mislead.
+ *
+ * `claimedEnvIds` (lower-cased env ids, from `useHostedAgentTiles`) excludes
+ * environments already represented by a Cloud deploy-API tile so an env is
+ * never shown twice.
  */
-export function legacyConnectedAgentTiles(environments: Env[] | undefined): AgentTile[] {
-	return (environments ?? []).filter(isHostedManagedEnv).map((env) => ({
-		id: env.id,
-		source: "self-managed" as const,
-		name:
-			cleanMachineName(env.display_name) ||
-			cleanMachineName(env.machine_name) ||
-			formatRuntime(env.agent_type),
-		displayName: env.display_name,
-		avatarUrl: env.avatar_url,
-		sortOrder: env.sort_order,
-		agentType: env.agent_type,
-		runtimeLabel: formatRuntime(env.agent_type),
-		statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
-		lastSeenAt: env.last_seen_at,
-		href: agentSectionHref(env.id),
-		active: isAgentActive(env.last_seen_at),
-		env,
-	}));
+export function legacyConnectedAgentTiles(
+	environments: Env[] | undefined,
+	claimedEnvIds?: ReadonlySet<string>,
+): AgentTile[] {
+	return (environments ?? [])
+		.filter(isHostedManagedEnv)
+		.filter((env) => !claimedEnvIds?.has(env.id.toLowerCase()))
+		.map((env) => ({
+			id: env.id,
+			source: "legacy-hosted" as const,
+			name:
+				cleanMachineName(env.display_name) ||
+				cleanMachineName(env.machine_name) ||
+				formatRuntime(env.agent_type),
+			displayName: env.display_name,
+			avatarUrl: env.avatar_url,
+			sortOrder: env.sort_order,
+			agentType: env.agent_type,
+			runtimeLabel: formatRuntime(env.agent_type),
+			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
+			lastSeenAt: env.last_seen_at,
+			href: agentSectionHref(env.id),
+			active: isAgentActive(env.last_seen_at),
+		}));
 }

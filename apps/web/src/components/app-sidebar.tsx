@@ -398,7 +398,7 @@ function ConsoleResourcesSection({
 				href: url,
 				icon: Cloud,
 				tint: "bg-identity-5-bg text-identity-5-fg",
-				tooltip: "V1 hosted dashboard",
+				tooltip: "Legacy hosted dashboard",
 				active: false,
 				external: true,
 			});

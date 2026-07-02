@@ -131,7 +131,7 @@ function legacyDashboardTile(url: string): AgentTile {
 		avatarUrl: null,
 		sortOrder: -1000,
 		agentType: null,
-		runtimeLabel: "V1 app",
+		runtimeLabel: "Legacy app",
 		statusLabel: "Available",
 		href: url,
 		external: true,

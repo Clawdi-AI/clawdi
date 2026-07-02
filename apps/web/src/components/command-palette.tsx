@@ -183,7 +183,7 @@ function CommandPalette({
 					label: "Hosted Dashboard",
 					href: url,
 					icon: Cloud,
-					subtitle: "V1 hosted app",
+					subtitle: "Legacy hosted app",
 					searchText: "hosted dashboard legacy v1 billing settings agents",
 				});
 			}

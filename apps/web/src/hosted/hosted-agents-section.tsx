@@ -132,9 +132,7 @@ function legacyConnectedTilesForAccess({
 	// When Cloud deployments are enabled, wait for the deployment query before
 	// projecting legacy environments so a Cloud-claimed env is not briefly duplicated.
 	if (showCloudDeployments && hosted.isLoading) return [];
-	return legacyConnectedAgentTiles(cloudEnvs).filter(
-		(tile) => !hosted.claimedEnvIds.has(tile.id.toLowerCase()),
-	);
+	return legacyConnectedAgentTiles(cloudEnvs, hosted.claimedEnvIds);
 }
 
 /**
@@ -273,7 +271,7 @@ export function HostedAgentsByCompute({
 						)}
 						<span className="text-xs text-muted-foreground">
 							{group.key === LEGACY_HOSTED_COMPUTE_ID
-								? "v1 app"
+								? "Legacy app"
 								: `${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
 						</span>
 					</div>
