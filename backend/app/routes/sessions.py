@@ -85,7 +85,6 @@ _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
-_LEGACY_HOSTED_MACHINE_NAME_RE = re.compile(r"^v2-hosted-[a-f0-9]{6,16}$")
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -736,7 +735,10 @@ def _env_to_response(
     resolved_hosted_deployment_id = (
         hosted_state.deployment_id if hosted_state is not None else hosted_deployment_id
     )
-    hosted_managed = resolved_hosted_deployment_id is not None or _is_legacy_hosted_managed_env(env)
+    # Deprecated signal: dashboards now classify agents through their control
+    # plane's ownership surface. Kept (runtime-state-derived only) for older
+    # API consumers until the field is removed from EnvironmentResponse.
+    hosted_managed = resolved_hosted_deployment_id is not None
     return EnvironmentResponse(
         id=str(env.id),
         machine_name=env.machine_name,
@@ -829,17 +831,6 @@ async def _hosted_deployment_id_for_machine(
             .limit(1)
         )
     ).scalar_one_or_none()
-
-
-def _is_legacy_hosted_managed_env(env: AgentEnvironment) -> bool:
-    # Older hosted runtimes registered cloud-api envs before the dedicated
-    # hosted_runtime_states table existed. Keep those envs out of the
-    # self-managed UI, but keep hosted_deployment_id null because there is no
-    # authoritative deployment id to expose.
-    return (
-        env.agent_type in _HOSTED_MANAGED_AGENT_TYPES
-        and _LEGACY_HOSTED_MACHINE_NAME_RE.fullmatch(env.machine_name.strip().lower()) is not None
-    )
 
 
 def _runtime_observed_desired(

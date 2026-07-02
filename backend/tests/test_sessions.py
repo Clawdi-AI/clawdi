@@ -143,12 +143,16 @@ async def test_environments_mark_hosted_runtime_siblings(
 
 
 @pytest.mark.asyncio
-async def test_legacy_hosted_runtime_envs_are_marked_without_fake_deployment_id(
+async def test_machine_name_conventions_never_mark_envs_hosted_managed(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
+    """hosted_managed derives from runtime state only. Machine-name patterns
+    (e.g. the old `v2-hosted-*` convention) are external-product naming that
+    cloud-api must not interpret — control planes classify their own agents
+    through their own ownership surfaces."""
     from tests.conftest import create_env_with_project
 
-    legacy = await create_env_with_project(
+    old_convention = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"legacy-hosted-{uuid.uuid4().hex[:8]}",
@@ -167,8 +171,8 @@ async def test_legacy_hosted_runtime_envs_are_marked_without_fake_deployment_id(
     assert r.status_code == 200, r.text
     by_id = {item["id"]: item for item in r.json()}
 
-    assert by_id[str(legacy.id)]["hosted_managed"] is True
-    assert by_id[str(legacy.id)]["hosted_deployment_id"] is None
+    assert by_id[str(old_convention.id)]["hosted_managed"] is False
+    assert by_id[str(old_convention.id)]["hosted_deployment_id"] is None
     assert by_id[str(similarly_named_self_managed.id)]["hosted_managed"] is False
 
 
