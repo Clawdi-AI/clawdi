@@ -38,10 +38,10 @@ describe("MCP connector helpers", () => {
 	it("normalizes localhost MCP URLs without changing the backend-selected path", () => {
 		expect(
 			normalizeMcpUrl(
-				"http://localhost:8000/api/mcp/composio?session=abc#tools",
+				"http://localhost:8000/v1/mcp/composio?session=abc#tools",
 				"https://cloud-api.clawdi.ai",
 			),
-		).toBe("https://cloud-api.clawdi.ai/api/mcp/composio?session=abc#tools");
+		).toBe("https://cloud-api.clawdi.ai/v1/mcp/composio?session=abc#tools");
 	});
 
 	it("leaves non-local MCP URLs unchanged", () => {
