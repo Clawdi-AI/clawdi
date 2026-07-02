@@ -1864,6 +1864,13 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 }
 
 function shouldInstallOfficialRuntimeServices(): boolean {
+	// Official gateway installers need a live systemd user bus to converge.
+	// When the systemd apply phase is explicitly disabled (headless CI and
+	// smoke containers without systemd), fall back to writing complete
+	// clawdi-* units instead of failing the whole convergence; the next
+	// convergence under real systemd retries the official install.
+	const applyOverride = process.env.CLAWDI_SYSTEMD_APPLY?.trim().toLowerCase();
+	if (applyOverride === "0" || applyOverride === "false") return false;
 	const override = process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES?.trim().toLowerCase();
 	if (override === "1" || override === "true") return true;
 	if (override === "0" || override === "false") return false;

@@ -291,6 +291,79 @@ describe("runtime manifest services", () => {
 		expect(disabled.outputs.systemdUserUnits).toEqual([]);
 	});
 
+	test("skips official installers when systemd apply is disabled", () => {
+		// Official gateway installers need a live systemd user bus, so a
+		// container without systemd (CLAWDI_SYSTEMD_APPLY=0 — headless CI,
+		// image smokes) must skip them instead of failing the whole
+		// convergence. Drop-ins are still written; the next convergence
+		// under real systemd retries the official install.
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "official-service-commands.log");
+		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		writeFakeGatewayCli({
+			path: openclawCommand,
+			logPath,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			logPath,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		});
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_no_systemd",
+			environmentId: "env_no_systemd",
+			instanceId: "hri_no_systemd",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			workspaceRoot: join(paths.userHome, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: runSettings(openclawCommand, ["gateway", "run"]),
+					services: {},
+				},
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			recovery: {},
+		};
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "fixture-file",
+				sourcePath: "inline-no-systemd",
+				offline: false,
+			},
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(existsSync(logPath)).toBe(false);
+		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"hermes-gateway.service",
+			"openclaw-gateway.service",
+		]);
+		for (const unit of ["openclaw-gateway", "hermes-gateway"]) {
+			// No official install ran, so no base unit — only the hosted drop-in.
+			expect(existsSync(join(paths.systemdUserRoot, `${unit}.service`))).toBe(false);
+			expect(
+				existsSync(join(paths.systemdUserRoot, `${unit}.service.d`, "10-clawdi-hosted.conf")),
+			).toBe(true);
+		}
+	});
+
 	test("skips hosted drop-ins when official install fails without a base unit", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
