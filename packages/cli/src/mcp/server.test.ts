@@ -1,7 +1,40 @@
 import { describe, expect, it } from "bun:test";
-import { createConnectorToolDefinition, type McpTool, normalizeMcpUrl } from "./server";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	createClawdiMcpServer,
+	createConnectorToolDefinition,
+	type McpTool,
+	mcpHttpRequestAuthorized,
+	normalizeMcpUrl,
+} from "./server";
 
 describe("MCP connector helpers", () => {
+	it("requires the expected bearer token for MCP HTTP requests", () => {
+		expect(mcpHttpRequestAuthorized("Bearer sidecar-token", "sidecar-token")).toBe(true);
+		expect(mcpHttpRequestAuthorized("Bearer wrong", "sidecar-token")).toBe(false);
+		expect(mcpHttpRequestAuthorized(undefined, "sidecar-token")).toBe(false);
+		expect(mcpHttpRequestAuthorized("Basic sidecar-token", "sidecar-token")).toBe(false);
+	});
+
+	it("throws instead of exiting when MCP HTTP request setup has no CLI auth", async () => {
+		const previousClawdiHome = process.env.CLAWDI_HOME;
+		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const clawdiHome = mkdtempSync(join(tmpdir(), "clawdi-mcp-auth-"));
+		process.env.CLAWDI_HOME = clawdiHome;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			await expect(createClawdiMcpServer()).rejects.toThrow("Not logged in");
+		} finally {
+			if (previousClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = previousClawdiHome;
+			if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
+			rmSync(clawdiHome, { recursive: true, force: true });
+		}
+	});
+
 	it("normalizes localhost MCP URLs without changing the backend-selected path", () => {
 		expect(
 			normalizeMcpUrl(

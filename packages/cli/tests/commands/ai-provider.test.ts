@@ -990,6 +990,7 @@ describe("ai-provider commands", () => {
 		).toHaveLength(3);
 		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(codexProfile).toContain('model_provider = "openai"');
+		expect(codexProfile).not.toContain('model = "');
 		const codexAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(codexAuth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		const hermesConfig = parseYaml(readFileSync(join(hermesDir, "config.yaml"), "utf-8"));
@@ -1208,7 +1209,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('model_provider = \\"openai\\"');
-		expect(output()).toContain('model = \\"gpt-5.2\\"');
+		expect(output()).not.toContain('model = \\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
@@ -1233,6 +1234,7 @@ describe("ai-provider commands", () => {
 
 		const profile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(profile).toContain('model_provider = "openai"');
+		expect(profile).not.toContain('model = "');
 		const auth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(auth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		expect(auth.tokens.refresh_token).toBe(FAKE_CODEX_REFRESH_TOKEN);
@@ -1283,8 +1285,8 @@ describe("ai-provider commands", () => {
 
 		expect(output()).toContain("Provider anthropic-main skipped for codex");
 		expect(output()).toContain("Default provider anthropic-main cannot be applied to codex");
-		expect(output()).toContain('model = \\"gpt-5.2\\"');
 		expect(output()).toContain('model_provider = \\"openai\\"');
+		expect(output()).not.toContain('model = \\"');
 	});
 
 	it("dry-runs Hermes apply without mutating config.yaml or printing existing inline secrets", async () => {
