@@ -97,6 +97,10 @@ export function SkillDetailContent({
 		error,
 	} = useQuery({
 		queryKey: ["skill", skillKey, selectedProjectId],
+		// An empty key would interpolate to `GET /v1/skills/`, which the
+		// backend's `{skill_key:path}` catch-all rejects with a 422.
+		// Nothing useful can load without a key, so don't fire at all.
+		enabled: skillKey.length > 0,
 		queryFn: async () => {
 			if (selectedProjectId) {
 				return unwrap(
@@ -286,7 +290,9 @@ export function SkillDetailContent({
 
 	return (
 		<div className="space-y-5 px-4 lg:px-6">
-			{error ? (
+			{!skillKey ? (
+				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
+			) : error ? (
 				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
 			) : isLoading ? (
 				<div className="space-y-3 py-2">
