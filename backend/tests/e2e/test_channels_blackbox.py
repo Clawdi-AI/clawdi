@@ -118,9 +118,7 @@ async def _wait_for_health(backend: RunningBackend) -> None:
     async with httpx.AsyncClient(base_url=backend.base_url, timeout=2.0) as client:
         while asyncio.get_running_loop().time() < deadline:
             if backend.process.poll() is not None:
-                raise AssertionError(
-                    "backend exited during startup\n" + _backend_logs(backend)
-                )
+                raise AssertionError("backend exited during startup\n" + _backend_logs(backend))
             try:
                 response = await client.get("/health")
                 if response.status_code == 200 and response.json().get("status") == "ok":
@@ -583,7 +581,10 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 "/v1/channels/discord/v10/gateway/bot",
                 headers=discord_headers,
             )
-            assert gateway["url"] == f"ws://127.0.0.1:{client.base_url.port}/v1/channels/discord/gateway"
+            assert (
+                gateway["url"]
+                == f"ws://127.0.0.1:{client.base_url.port}/v1/channels/discord/gateway"
+            )
             discord_me = await _request_json(
                 client,
                 "GET",

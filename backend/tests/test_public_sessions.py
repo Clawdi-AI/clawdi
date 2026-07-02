@@ -192,9 +192,7 @@ async def test_public_messages_paginate(client: httpx.AsyncClient, anon_client: 
     assert len(page1["items"]) == 10
     assert page1["items"][0]["content"] == "m0"
 
-    page2 = (
-        await anon_client.get(f"/v1/public/sessions/{sid}/messages?offset=10&limit=10")
-    ).json()
+    page2 = (await anon_client.get(f"/v1/public/sessions/{sid}/messages?offset=10&limit=10")).json()
     assert page2["items"][0]["content"] == "m10"
 
 

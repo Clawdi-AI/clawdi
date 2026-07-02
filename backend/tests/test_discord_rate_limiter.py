@@ -15,10 +15,13 @@ def _headers(entries: dict[str, str | None]) -> _Headers:
 def test_discord_route_key_collapses_snowflakes_and_keeps_major_parameter():
     limiter = DiscordRateLimiter()
 
-    assert limiter.route_key(
-        "PATCH",
-        "/api/v10/channels/1494815997981491361/messages/1494831575131492536",
-    ) == "PATCH /channels/:major/messages/:id|1494815997981491361"
+    assert (
+        limiter.route_key(
+            "PATCH",
+            "/api/v10/channels/1494815997981491361/messages/1494831575131492536",
+        )
+        == "PATCH /channels/:major/messages/:id|1494815997981491361"
+    )
 
 
 def test_discord_route_key_templates_webhook_tokens():

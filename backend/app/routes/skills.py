@@ -1471,9 +1471,7 @@ async def install_skill_legacy(
     project_id = await resolve_default_write_project(db, auth)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
-    response.headers["Link"] = (
-        '</v1/projects/{project_id}/skills/install>; rel="successor-version"'
-    )
+    response.headers["Link"] = '</v1/projects/{project_id}/skills/install>; rel="successor-version"'
     return await _do_install_skill(db=db, auth=auth, project_id=project_id, body=body)
 
 

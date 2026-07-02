@@ -575,9 +575,7 @@ def test_whatsapp_message_proto_bytes_preserves_quoted_reply_fixture_shape():
                 "contextInfo": {
                     "stanzaId": "3EB0CA8C2FE5219FEA4DF0",
                     "participant": "10000000001@s.whatsapp.net",
-                    "quotedMessage": {
-                        "extendedTextMessage": {"text": "quoted base message"}
-                    },
+                    "quotedMessage": {"extendedTextMessage": {"text": "quoted base message"}},
                 },
             },
             "messageContextInfo": {
@@ -1333,9 +1331,7 @@ def test_relay_outbound_extra_attrs_strips_relay_managed_attrs():
         )
         == {}
     )
-    assert relay_outbound_extra_attrs({"id": "x", "to": "g@g.us", "edit": "8"}) == {
-        "edit": "8"
-    }
+    assert relay_outbound_extra_attrs({"id": "x", "to": "g@g.us", "edit": "8"}) == {"edit": "8"}
 
 
 @pytest.mark.asyncio
@@ -1550,9 +1546,7 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
     assert first_found.id == UUID(first["credential_id"])
     assert second_found.id == UUID(second["credential_id"])
 
-    listed = (
-        await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")
-    ).json()
+    listed = (await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")).json()
     assert {item["identity_pub_key_hex"] for item in listed} == {
         first["identity_pub_key_hex"],
         second["identity_pub_key_hex"],

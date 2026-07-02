@@ -57,10 +57,15 @@ def discord_rest_pairs(fixture: DiscordFixture) -> list[DiscordRestPair]:
 
 
 def is_multipart_fixture_body(body: Any) -> bool:
-    return isinstance(body, dict) and isinstance(body.get("_boundary"), str) and isinstance(
-        body.get("files"),
-        list,
-    ) and "payload_json" in body
+    return (
+        isinstance(body, dict)
+        and isinstance(body.get("_boundary"), str)
+        and isinstance(
+            body.get("files"),
+            list,
+        )
+        and "payload_json" in body
+    )
 
 
 def build_multipart_fixture_body(body: dict[str, Any]) -> tuple[bytes, str]:
@@ -78,10 +83,10 @@ def build_multipart_fixture_body(body: dict[str, Any]) -> tuple[bytes, str]:
     for file in body["files"]:
         push(f"--{boundary}\r\n")
         push(
-            'Content-Disposition: form-data; '
+            "Content-Disposition: form-data; "
             f'name="{file["field"]}"; filename="{file["filename"]}"\r\n'
         )
-        push(f'Content-Type: {file["content_type"]}\r\n\r\n')
+        push(f"Content-Type: {file['content_type']}\r\n\r\n")
         push(base64.b64decode(file["data_base64"]))
         push("\r\n")
     push(f"--{boundary}--\r\n")
@@ -109,9 +114,7 @@ def test_discord_fixture_loads_send_channel_message_rest_pair():
 def test_discord_fixture_loads_user_single_image_attachment():
     fixture = load_discord_fixture("22-user-send-single-image")
     message = next(
-        frame
-        for frame in discord_ws_frames(fixture, "s2c")
-        if frame.get("t") == "MESSAGE_CREATE"
+        frame for frame in discord_ws_frames(fixture, "s2c") if frame.get("t") == "MESSAGE_CREATE"
     )
     assert len(message["d"]["attachments"]) == 1
 
@@ -134,4 +137,4 @@ def test_discord_fixture_reconstructs_multipart_body():
     assert 'name="payload_json"' in text
     assert json.dumps(body["payload_json"], separators=(",", ":")) in text
     assert f'filename="{body["files"][0]["filename"]}"' in text
-    assert f'--{body["_boundary"]}--\r\n' in text
+    assert f"--{body['_boundary']}--\r\n" in text

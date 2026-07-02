@@ -197,9 +197,7 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
 
     assert available.status_code == 200
     health = next(
-        channel
-        for channel in available.json()["channels"]
-        if channel["accountId"] == created["id"]
+        channel for channel in available.json()["channels"] if channel["accountId"] == created["id"]
     )
     assert health["nativeTransport"] == {
         "available": True,

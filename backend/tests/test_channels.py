@@ -2848,9 +2848,7 @@ async def test_telegram_bot_api_set_webhook_conflicts_with_get_updates(
         f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
         json={"url": "https://agent.example/webhook", "secret_token": "agent-secret"},
     )
-    get_updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
-    )
+    get_updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
 
     assert set_webhook.status_code == 200
     assert set_webhook.json() == {"ok": True, "result": True}
@@ -6386,9 +6384,7 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
         ],
         fallback_stop,
     )
-    connect_factory = _FakeDiscordGatewayConnect(
-        [first_socket, resume_socket, fallback_socket]
-    )
+    connect_factory = _FakeDiscordGatewayConnect([first_socket, resume_socket, fallback_socket])
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = DiscordGatewayWorker(sessionmaker, connect_factory=connect_factory)
     state = _GatewayState()
