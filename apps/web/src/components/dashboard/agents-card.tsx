@@ -10,7 +10,6 @@ import {
 	agentDisplayName,
 	cleanMachineName,
 	compareAgentEnvironments,
-	isHostedAgentEnvironment,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
@@ -29,10 +28,6 @@ const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 	if (!lastSeenAt) return false;
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
-}
-
-export function isHostedManagedEnv(env: Env): boolean {
-	return isHostedAgentEnvironment(env);
 }
 
 /** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
@@ -58,23 +53,21 @@ export function formatRuntime(agentType: string): string {
  * across both surfaces (single source of truth for the connected-agent row).
  */
 export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTile[] {
-	return (environments ?? [])
-		.filter((env) => !isHostedManagedEnv(env))
-		.map((env) => ({
-			id: env.id,
-			source: "self-managed" as const,
-			name: agentDisplayName(env),
-			displayName: env.display_name,
-			avatarUrl: env.avatar_url,
-			sortOrder: env.sort_order,
-			agentType: env.agent_type,
-			runtimeLabel: formatRuntime(env.agent_type),
-			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
-			lastSeenAt: env.last_seen_at,
-			href: agentSectionHref(env.id),
-			active: isAgentActive(env.last_seen_at),
-			env,
-		}));
+	return (environments ?? []).map((env) => ({
+		id: env.id,
+		source: "self-managed" as const,
+		name: agentDisplayName(env),
+		displayName: env.display_name,
+		avatarUrl: env.avatar_url,
+		sortOrder: env.sort_order,
+		agentType: env.agent_type,
+		runtimeLabel: formatRuntime(env.agent_type),
+		statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
+		lastSeenAt: env.last_seen_at,
+		href: agentSectionHref(env.id),
+		active: isAgentActive(env.last_seen_at),
+		env,
+	}));
 }
 
 /**

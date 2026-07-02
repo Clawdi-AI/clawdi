@@ -21,56 +21,51 @@ function env(overrides: Partial<Env> = {}): Env {
 		queue_depth_high_water: 0,
 		dropped_count: 0,
 		sync_enabled: false,
-		hosted_managed: false,
 		default_project_id: "22222222-2222-4222-8222-222222222222",
 		...overrides,
-	};
+	} as Env;
 }
 
 describe("legacyConnectedAgentTiles", () => {
-	it("projects legacy hosted environments as legacy-badged connected agent tiles", () => {
-		const hostedManaged = env({
+	it("projects legacy-owned environments as legacy-badged connected agent tiles", () => {
+		const legacy = env({
 			id: "33333333-3333-4333-8333-333333333333",
 			machine_name: "v1-hosted-runtime",
-			hosted_managed: true,
-			hosted_deployment_id: "hdep_test",
 		});
 
-		expect(legacyConnectedAgentTiles([env(), hostedManaged])).toEqual([
+		expect(legacyConnectedAgentTiles([env(), legacy], new Set([legacy.id]))).toEqual([
 			expect.objectContaining({
-				id: hostedManaged.id,
+				id: legacy.id,
 				source: "legacy-hosted",
 				name: "v1-hosted-runtime",
 				runtimeLabel: "OpenClaw",
-				href: `/agents/${hostedManaged.id}`,
+				href: `/agents/${legacy.id}`,
 			}),
 		]);
 	});
 
 	it("carries env so the sync badge renders (with the hosted copy variant)", () => {
-		const hostedManaged = env({
+		const legacy = env({
 			id: "33333333-3333-4333-8333-333333333333",
-			hosted_managed: true,
 		});
 
-		const [tile] = legacyConnectedAgentTiles([hostedManaged]);
-		expect(tile.env).toBe(hostedManaged);
+		const [tile] = legacyConnectedAgentTiles([legacy], new Set([legacy.id]));
+		expect(tile.env).toBe(legacy);
 	});
 
 	it("excludes environments already claimed by a Cloud deploy-API tile", () => {
 		const claimed = env({
 			id: "44444444-4444-4444-8444-444444444444",
 			machine_name: "v2-cloud-runtime",
-			hosted_managed: true,
 		});
 		const legacyOnly = env({
 			id: "55555555-5555-4555-8555-555555555555",
 			machine_name: "v1-hosted-runtime",
-			hosted_managed: true,
 		});
 
 		const tiles = legacyConnectedAgentTiles(
 			[claimed, legacyOnly],
+			new Set([claimed.id.toLowerCase(), legacyOnly.id.toLowerCase()]),
 			// claimedEnvIds is lower-cased at insertion in useHostedAgentTiles;
 			// mixed-case env ids on the cloud-api side must still match.
 			new Set([claimed.id.toLowerCase()]),

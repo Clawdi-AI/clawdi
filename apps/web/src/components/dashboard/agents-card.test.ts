@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { isHostedManagedEnv, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import { selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -19,28 +19,22 @@ function env(overrides: Partial<Env> = {}): Env {
 		queue_depth_high_water: 0,
 		dropped_count: 0,
 		sync_enabled: false,
-		hosted_managed: false,
 		default_project_id: "22222222-2222-4222-8222-222222222222",
 		...overrides,
-	};
+	} as Env;
 }
 
 describe("selfManagedAgentTiles", () => {
-	it("keeps hosted-managed environments out of connected-agent tiles", () => {
-		const selfManaged = env();
-		const hostedManaged = env({
+	it("projects cloud-api environments without reading deployment ownership fields", () => {
+		const first = env();
+		const second = env({
 			id: "33333333-3333-4333-8333-333333333333",
-			machine_name: "v2-hosted-runtime",
-			hosted_managed: true,
+			machine_name: "workstation-two",
 		});
 
-		expect(isHostedManagedEnv(hostedManaged)).toBe(true);
-		expect(selfManagedAgentTiles([hostedManaged, selfManaged]).map((tile) => tile.id)).toEqual([
-			selfManaged.id,
+		expect(selfManagedAgentTiles([second, first]).map((tile) => tile.id)).toEqual([
+			second.id,
+			first.id,
 		]);
-	});
-
-	it("treats hosted_deployment_id as a backwards-compatible hosted marker", () => {
-		expect(isHostedManagedEnv(env({ hosted_deployment_id: "hdep_test" }))).toBe(true);
 	});
 });

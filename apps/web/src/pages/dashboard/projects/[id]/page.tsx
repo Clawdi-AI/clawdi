@@ -68,6 +68,11 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import {
+	type AgentOwnership,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
@@ -89,6 +94,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	const ownership = useAgentOwnership();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
@@ -544,7 +550,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						{(boundAgents.data ?? []).map(({ env, home }) => (
 							<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 								<AgentLabel
-									machineName={env.machine_name}
+									machineName={displayAgentName(env, ownership)}
 									displayName={env.display_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
@@ -566,7 +572,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 									params={{ id: env.id }}
 									className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
-									<span className="sr-only">Open agent {displayAgentName(env)}</span>
+									<span className="sr-only">Open agent {displayAgentName(env, ownership)}</span>
 								</Link>
 							</div>
 						))}
@@ -771,6 +777,7 @@ function UseProjectWithAgentDialog({
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	const ownership = useAgentOwnership();
 	const projectName = displayProjectName(project);
 	const [selectedAgentId, setSelectedAgentId] = useState("");
 	const orderedEnvironments = useMemo(
@@ -810,7 +817,7 @@ function UseProjectWithAgentDialog({
 			);
 		},
 		onSuccess: () => {
-			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
+			const agentName = selectedEnv ? displayAgentName(selectedEnv, ownership) : "the agent";
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["vaults"] });
@@ -865,7 +872,7 @@ function UseProjectWithAgentDialog({
 								>
 									{selectedEnv ? (
 										<AgentLabel
-											machineName={selectedEnv.machine_name}
+											machineName={displayAgentName(selectedEnv, ownership)}
 											displayName={selectedEnv.display_name}
 											type={selectedEnv.agent_type}
 											avatarUrl={selectedEnv.avatar_url}
@@ -882,11 +889,11 @@ function UseProjectWithAgentDialog({
 										<SelectItem
 											key={env.id}
 											value={env.id}
-											textValue={displayAgentName(env)}
+											textValue={displayAgentName(env, ownership)}
 											className="py-2"
 										>
 											<AgentLabel
-												machineName={env.machine_name}
+												machineName={displayAgentName(env, ownership)}
 												displayName={env.display_name}
 												type={env.agent_type}
 												avatarUrl={env.avatar_url}
@@ -1160,8 +1167,10 @@ function compareEnvironmentsForUse(a: Env, b: Env) {
 	return compareAgentEnvironments(a, b);
 }
 
-function displayAgentName(env: Env) {
-	return agentDisplayName(env);
+function displayAgentName(env: Env, ownership: AgentOwnership | null) {
+	return agentDisplayName(env, {
+		ownershipKind: agentOwnershipKindFromId(env.id, ownership),
+	});
 }
 
 function formatShortDate(value: string) {

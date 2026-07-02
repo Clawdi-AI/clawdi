@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import {
 	type AgentSectionId,
 	agentSectionHref,
@@ -92,6 +93,7 @@ export function ConnectedAgentDetail({
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
+	const ownership = useAgentOwnership();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const activeTab = parseAgentTab(section) ?? "overview";
 
@@ -219,7 +221,8 @@ export function ConnectedAgentDetail({
 		search: skill.project_id ? { project: skill.project_id } : undefined,
 	});
 
-	const agentTitle = agent ? agentDisplayName(agent) : null;
+	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
+	const agentTitle = agent ? agentDisplayName(agent, { ownershipKind }) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (
@@ -245,7 +248,13 @@ export function ConnectedAgentDetail({
 										<ActiveTabIcon className="size-4 text-muted-foreground" />
 									) : null}
 									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-									{showSourceBadge ? <AgentSourceBadgeForEnvironment env={agent} compact /> : null}
+									{showSourceBadge ? (
+										<AgentSourceBadgeForEnvironment
+											env={agent}
+											ownershipKind={ownershipKind}
+											compact
+										/>
+									) : null}
 								</div>
 								{activeTabMeta.description ? (
 									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>

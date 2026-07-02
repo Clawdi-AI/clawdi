@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
+	agentDisplayName,
 	agentTextLabel,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -32,6 +33,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -60,6 +62,7 @@ export function SendSkillDialog({
 	const api = useApi();
 	const uploadSkillArchive = useSkillArchiveUploader();
 	const qc = useQueryClient();
+	const ownership = useAgentOwnership();
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
 	const [removeFromSource, setRemoveFromSource] = useState(false);
@@ -93,10 +96,12 @@ export function SendSkillDialog({
 				)
 				.map((e) => ({
 					value: e.default_project_id as string,
-					label: agentTextLabel(e),
+					label: agentTextLabel(e, {
+						ownershipKind: agentOwnershipKindFromId(e.id, ownership),
+					}),
 					env: e,
 				})),
-		[envs, skills],
+		[envs, ownership, skills],
 	);
 	const projectTargets = useMemo(
 		() =>
@@ -279,9 +284,11 @@ export function SendSkillDialog({
 }
 
 function AgentTargetOption({ env }: { env: Environment }) {
+	const ownership = useAgentOwnership();
+	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
-			machineName={env.machine_name}
+			machineName={agentDisplayName(env, { ownershipKind })}
 			displayName={env.display_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
