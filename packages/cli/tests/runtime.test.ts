@@ -61,6 +61,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_MANIFEST_URL",
 	"CLAWDI_RUNTIME_SOURCE_PATH",
 	"CLAWDI_RUNTIME_AUTH_ENV",
+	"CLAWDI_RUNTIME_DEFAULT_CLI_PACKAGE_SPEC",
 	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
@@ -418,7 +419,7 @@ describe("runtime manifest datasource", () => {
 				generation: 3,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: false } },
+				runtimes: { openclaw: { type: "openclaw", enabled: false } },
 				projection: {
 					providers: {
 						default: {
@@ -493,11 +494,13 @@ describe("runtime manifest datasource", () => {
 							},
 							runtimes: {
 								openclaw: {
+									type: "openclaw",
 									enabled: true,
 									install: { source: "official", channel: "stable" },
 									paths: { home },
 								},
 								hermes: {
+									type: "hermes",
 									enabled: false,
 									install: { source: "official", channel: "stable" },
 									paths: { home },
@@ -575,7 +578,55 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("recovers hosted bridge token from pid1 env for runtime-watch and runtime sidecar bridge module", async () => {
+	it("uses the sidecar image CLI bootstrap package as the hosted default when configured", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "hosted-manifest.json");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_DEFAULT_CLI_PACKAGE_SPEC =
+			"/usr/local/share/clawdi/bootstrap/clawdi-runtime-bootstrap.tgz";
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					deploymentId: "dep_bootstrap",
+					environmentId: "env_bootstrap",
+					instanceId: "iid_bootstrap",
+					generation: 1,
+					issuedAt: "2026-07-01T00:00:00Z",
+					system: { home },
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					runtimeTargets: {
+						"openclaw-a": {
+							type: "openclaw",
+							enabled: true,
+							execution: {
+								mode: "external",
+								stateDir: "/state/openclaw-a",
+							},
+						},
+					},
+				},
+				secretValues: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
+		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(
+			"/usr/local/share/clawdi/bootstrap/clawdi-runtime-bootstrap.tgz",
+		);
+	});
+
+	it("recovers hosted bridge token from pid1 env for runtime-watch and runtime bridge supervisor programs", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -643,11 +694,13 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 							},
 							runtimes: {
 								openclaw: {
+									type: "openclaw",
 									enabled: true,
 									install: { source: "official", channel: "stable" },
 									paths: { home },
 								},
 								hermes: {
+									type: "hermes",
 									enabled: false,
 									install: { source: "official", channel: "stable" },
 									paths: { home },
@@ -734,8 +787,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: { type: "openclaw", enabled: false },
+								hermes: { type: "hermes", enabled: false },
 							},
 							providers: {
 								default: {
@@ -802,8 +855,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: { type: "openclaw", enabled: false },
+								hermes: { type: "hermes", enabled: false },
 							},
 							providers: {
 								default: {
@@ -850,6 +903,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			openclawBin,
 			[
 				"#!/bin/sh",
+				'if [ "$1" = "--version" ]; then',
+				"  printf 'OpenClaw test\\n'",
+				"  exit 0",
+				"fi",
 				`printf '%s\\n' "$*" > '${openclawCommand}'`,
 				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
 				`  cat > '${openclawPatch}'`,
@@ -867,8 +924,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			sourcePath: "https://runtime-source.test/desired-state",
 			offline: false,
 			secretValues: {
-				"provider.default.apiKey": "sk-runtime-provider",
-				"secret://provider.default.apiKey": "sk-runtime-provider",
+				"provider.openclaw.apiKey": "sk-runtime-provider",
+				"secret://provider.openclaw.apiKey": "sk-runtime-provider",
 			},
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -881,6 +938,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -890,19 +948,19 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 							args: ["--json", "--no-onboard"],
 						},
 					},
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				projection: {
 					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: { home },
 					providers: {
-						default: {
+						openclaw: {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.4-mini",
 							apiMode: "openai_chat",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
-							apiKeySecretRef: "provider.default.apiKey",
+							apiKeySecretRef: "provider.openclaw.apiKey",
 						},
 					},
 				},
@@ -918,7 +976,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			"config patch --stdin --replace-path models.providers",
 		);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
+		expect(patch.agents.defaults.model.primary).toBe("openclaw/gpt-5.4-mini");
 		expect(patch.secrets).toEqual({
 			providers: {
 				default: { source: "env" },
@@ -927,7 +985,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				env: "default",
 			},
 		});
-		expect(patch.models.providers.default).toMatchObject({
+		expect(patch.models.providers.openclaw).toMatchObject({
 			baseUrl: "https://ai-gateway.example.test/v1",
 			apiKey: {
 				source: "env",
@@ -935,14 +993,14 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				id: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			},
 		});
-		expect(patch.models.providers.default.api).toBeUndefined();
+		expect(patch.models.providers.openclaw.api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
 		expect(runConfig.secretEnv).toEqual({
-			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
+			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.openclaw.apiKey",
 		});
 		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
@@ -996,6 +1054,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -1006,6 +1065,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						},
 					},
 					hermes: {
+						type: "hermes",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -1114,6 +1174,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -1192,6 +1253,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					hermes: {
+						type: "hermes",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -1258,23 +1320,23 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
+						openclaw: { type: "openclaw", enabled: true },
+						hermes: { type: "hermes", enabled: false },
 					},
 					providers: {
-						default: {
+						openclaw: {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.5",
 							apiMode: "openai_responses",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
-							apiKeySecretRef: "provider.default.apiKey",
+							apiKeySecretRef: "provider.openclaw.apiKey",
 						},
 					},
 					recovery: { cacheManifest: true, allowOfflineBoot: true },
 				},
 				secretValues: {
-					"provider.default.apiKey": "sk-runtime-provider",
+					"provider.openclaw.apiKey": "sk-runtime-provider",
 				},
 			}),
 		);
@@ -1290,12 +1352,12 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
 		expect(runConfig.secretEnv).toEqual({
-			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
+			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.openclaw.apiKey",
 		});
 		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 		const secrets = JSON.parse(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"));
-		expect(secrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
+		expect(secrets["secret://provider.openclaw.apiKey"]).toBe("sk-runtime-provider");
 	});
 
 	it("does not infer runtime entries from the runtime bridge token", async () => {
@@ -1322,7 +1384,12 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
+						openclaw: {
+							type: "openclaw",
+							enabled: true,
+							install: { source: "official" },
+							paths: { home },
+						},
 					},
 				},
 				secretValues: {},
@@ -1361,8 +1428,18 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
-						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+						openclaw: {
+							type: "openclaw",
+							enabled: true,
+							install: { source: "official" },
+							paths: { home },
+						},
+						hermes: {
+							type: "hermes",
+							enabled: false,
+							install: { source: "official" },
+							paths: { home },
+						},
 					},
 				},
 				secretValues: {},
@@ -1412,7 +1489,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-							runtimes: { hermes: { enabled: false } },
+							runtimes: { hermes: { type: "hermes", enabled: false } },
 						},
 						secretValues: {},
 					}),
@@ -1565,8 +1642,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
-					openclaw: { enabled: true },
-					hermes: { enabled: false },
+					openclaw: { type: "openclaw", enabled: true },
+					hermes: { type: "hermes", enabled: false },
 				},
 			},
 			source: "remote-datasource",
@@ -1599,8 +1676,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
-					openclaw: { enabled: true },
-					hermes: { enabled: false },
+					openclaw: { type: "openclaw", enabled: true },
+					hermes: { type: "hermes", enabled: false },
 				},
 				mitmProfiles: {
 					profiles: [
@@ -1695,8 +1772,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				issuedAt: "2026-06-14T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
-					openclaw: { enabled: true },
-					hermes: { enabled: false },
+					openclaw: { type: "openclaw", enabled: true },
+					hermes: { type: "hermes", enabled: false },
 				},
 				projection: {
 					providers: {
@@ -1843,8 +1920,8 @@ fi
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: { type: "openclaw", enabled: false },
+									hermes: { type: "hermes", enabled: false },
 								},
 							},
 							secretValues: {},
@@ -1953,11 +2030,12 @@ fi
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: { source: "official", channel: "stable" },
 						paths: { home },
 					},
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				providers: {
 					default: {
@@ -2233,7 +2311,10 @@ fi
 								issuedAt: "2026-06-06T00:00:00Z",
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-								runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+								runtimes: {
+									openclaw: { type: "openclaw", enabled: false },
+									hermes: { type: "hermes", enabled: false },
+								},
 							},
 							secretValues: {},
 						}),
@@ -2488,7 +2569,7 @@ fi
 				generation: 9,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true } },
+				runtimes: { openclaw: { type: "openclaw", enabled: true } },
 				projection: {
 					providers: {
 						default: {
@@ -2571,7 +2652,7 @@ fi
 				generation: 10,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true } },
+				runtimes: { openclaw: { type: "openclaw", enabled: true } },
 				projection: {
 					providers: {
 						default: {
@@ -2729,8 +2810,8 @@ fi
 									packageSpec: "clawdi@0.13.1-beta.0",
 								},
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: { type: "openclaw", enabled: false },
+									hermes: { type: "hermes", enabled: false },
 								},
 							},
 							secretValues: {},
@@ -2869,7 +2950,10 @@ chmod +x "$prefix/bin/clawdi"
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
-					runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+					runtimes: {
+						openclaw: { type: "openclaw", enabled: false },
+						hermes: { type: "hermes", enabled: false },
+					},
 				},
 				paths,
 			);
@@ -2989,8 +3073,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.3-beta.0" },
 								runtimes: {
-									openclaw: { enabled: true },
-									hermes: { enabled: false },
+									openclaw: { type: "openclaw", enabled: true },
+									hermes: { type: "hermes", enabled: false },
 								},
 							},
 							secretValues: {},
@@ -3114,8 +3198,8 @@ fi
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.4-beta.0" },
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: { type: "openclaw", enabled: false },
+									hermes: { type: "hermes", enabled: false },
 								},
 							},
 							secretValues: {},
@@ -3218,8 +3302,8 @@ chmod +x "$prefix/bin/clawdi"
 				packageSpec: "clawdi@0.13.2-beta.0",
 			},
 			runtimes: {
-				openclaw: { enabled: false },
-				hermes: { enabled: false },
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
 			},
 			recovery: {},
 		};
@@ -3254,7 +3338,10 @@ chmod +x "$prefix/bin/clawdi"
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.2-beta.0" },
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			runtimes: {
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
+			},
 			recovery: {},
 		};
 
@@ -3335,7 +3422,10 @@ chmod +x "$prefix/bin/clawdi"
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.6-beta.0" },
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			runtimes: {
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
+			},
 			recovery: {},
 		};
 
@@ -3408,7 +3498,10 @@ chmod +x "$prefix/bin/clawdi"
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: { source: "npm:clawdi", packageSpec },
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			runtimes: {
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
+			},
 			recovery: {},
 		});
 
@@ -3511,10 +3604,11 @@ exit 64
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								runtimes: {
 									openclaw: {
+										type: "openclaw",
 										enabled: true,
 										install: { source: "official", args: [] },
 									},
-									hermes: { enabled: false },
+									hermes: { type: "hermes", enabled: false },
 								},
 							},
 							secretValues: {},
@@ -3657,6 +3751,7 @@ exit 0
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -3666,7 +3761,7 @@ exit 0
 							args: [],
 						},
 					},
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				projection: {
 					system: { home, workspace },
@@ -3738,6 +3833,7 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -3747,7 +3843,7 @@ exit 64
 							args: [],
 						},
 					},
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				projection: {
 					system: { home, workspace },
@@ -3837,6 +3933,7 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -3846,7 +3943,7 @@ exit 64
 							args: [],
 						},
 					},
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				projection: {
 					system: { home, workspace },
@@ -3900,7 +3997,7 @@ exit 64
 							system: { home, workspace },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							runtimes: {
-								hermes: { enabled: false },
+								hermes: { type: "hermes", enabled: false },
 							},
 						},
 						secretValues: {},
@@ -3954,6 +4051,7 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					"future-agent": {
+						type: "codex",
 						enabled: true,
 						run: {
 							command: futureBin,
@@ -4009,7 +4107,7 @@ exit 64
 					system: { home },
 					controlPlane: { apiUrl: "https://api.test" },
 					runtimes: {
-						hermes: { enabled: false },
+						hermes: { type: "hermes", enabled: false },
 					},
 				},
 				secretValues: {},
@@ -4048,6 +4146,7 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
 						hermes: {
+							type: "hermes",
 							enabled: false,
 							paths: { workspace: runtimeWorkspace },
 						},
@@ -4118,6 +4217,7 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -4128,6 +4228,7 @@ exit 64
 						},
 					},
 					hermes: {
+						type: "hermes",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -4195,6 +4296,7 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -4205,6 +4307,7 @@ exit 64
 						},
 					},
 					hermes: {
+						type: "hermes",
 						enabled: true,
 						install: {
 							authority: "official",
@@ -4253,8 +4356,8 @@ exit 64
 					issuedAt: "2026-06-15T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
+						openclaw: { type: "openclaw", enabled: true },
+						hermes: { type: "hermes", enabled: false },
 					},
 					recovery: {},
 				},
@@ -4294,8 +4397,8 @@ exit 64
 					issuedAt: "2026-06-15T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
+						openclaw: { type: "openclaw", enabled: true },
+						hermes: { type: "hermes", enabled: false },
 					},
 					bridge: {
 						surfaces: [
@@ -4361,8 +4464,8 @@ exit 64
 					issuedAt: "2026-06-26T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
+						openclaw: { type: "openclaw", enabled: true },
+						hermes: { type: "hermes", enabled: false },
 					},
 					bridge: {
 						surfaces: [
@@ -4564,7 +4667,10 @@ exit 64
 			generation: 1,
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			runtimes: {
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
+			},
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
 		writeFileSync(cachePath, JSON.stringify(previousManifest));
@@ -4572,7 +4678,10 @@ exit 64
 			manifest: {
 				...previousManifest,
 				generation: 2,
-				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+				runtimes: {
+					openclaw: { type: "openclaw", enabled: true },
+					hermes: { type: "hermes", enabled: false },
+				},
 			} as RuntimeManifest,
 			source: "fixture-file",
 			sourcePath: "test://install-error",
@@ -4608,8 +4717,8 @@ exit 64
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.0-test" },
 			runtimes: {
-				openclaw: { enabled: true },
-				hermes: { enabled: false },
+				openclaw: { type: "openclaw", enabled: true },
+				hermes: { type: "hermes", enabled: false },
 			},
 			recovery: {},
 		};
@@ -4645,7 +4754,7 @@ exit 64
 				...baseManifest,
 				runtimes: {
 					...baseManifest.runtimes,
-					hermes: { enabled: true },
+					hermes: { type: "hermes", enabled: true },
 				},
 			},
 			"openclaw",
@@ -4674,7 +4783,10 @@ exit 64
 			generation: 42,
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			runtimes: {
+				openclaw: { type: "openclaw", enabled: false },
+				hermes: { type: "hermes", enabled: false },
+			},
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
 		writeFileSync(paths.manifestLastGood, JSON.stringify(previousManifest));
@@ -4714,7 +4826,10 @@ exit 64
 				generation: 1,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+				runtimes: {
+					openclaw: { type: "openclaw", enabled: false },
+					hermes: { type: "hermes", enabled: false },
+				},
 				mitmProfiles: {
 					profiles: [
 						{
@@ -4774,8 +4889,8 @@ exit 64
 								manifestUrl: "https://runtime-source.test/v1/desired-state/",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: { type: "openclaw", enabled: false },
+								hermes: { type: "hermes", enabled: false },
 							},
 						},
 						secretValues: {},
@@ -4823,8 +4938,18 @@ exit 64
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-								hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+								openclaw: {
+									type: "openclaw",
+									enabled: false,
+									install: { source: "official" },
+									paths: { home },
+								},
+								hermes: {
+									type: "hermes",
+									enabled: false,
+									install: { source: "official" },
+									paths: { home },
+								},
 							},
 							providers: {
 								default: {
@@ -4913,7 +5038,7 @@ exit 64
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				mitmProfiles: { profiles: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
@@ -4954,7 +5079,7 @@ exit 64
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
 			runtimes: {
-				hermes: { enabled: false },
+				hermes: { type: "hermes", enabled: false },
 			},
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
@@ -4999,7 +5124,7 @@ exit 64
 				expiresAt: "2000-01-01T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 			}),
@@ -5034,7 +5159,7 @@ exit 64
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				secrets: [{ ref: "secret://old", exposeAs: "OLD_SECRET" }],
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
@@ -5050,7 +5175,7 @@ exit 64
 		expect(loaded.errors.join("\n")).toContain("secrets");
 	});
 
-	it("registers live-sync environments and starts one hosted daemon", async () => {
+	it("registers live-sync environments and starts target-scoped hosted daemons", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5080,14 +5205,28 @@ exit 64
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-								hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+								openclaw: {
+									type: "openclaw",
+									enabled: false,
+									install: { source: "official" },
+									paths: { home },
+								},
+								hermes: {
+									type: "hermes",
+									enabled: false,
+									install: { source: "official" },
+									paths: { home },
+								},
 							},
 							liveSync: {
 								enabled: true,
 								agents: [
-									{ agentType: "openclaw", environmentId: "env-openclaw" },
-									{ agentType: "codex", environmentId: "env-codex" },
+									{
+										agentType: "openclaw",
+										agentId: "openclaw",
+										environmentId: "env-openclaw",
+									},
+									{ agentType: "codex", agentId: "codex", environmentId: "env-codex" },
 								],
 							},
 						},
@@ -5126,16 +5265,17 @@ exit 64
 			} else {
 				expect(supervisorConfig).not.toContain("chown=root:root");
 			}
-			expect(supervisorConfig).toContain("[program:clawdi-daemon]");
-			expect(supervisorConfig).toContain(
-				`command=/usr/bin/env clawdi daemon run --auth-token-file '${join(
-					run,
-					"secrets",
-					"auth-token",
-				)}'`,
-			);
-			expect(supervisorConfig).not.toContain("command=/bin/sh -lc");
+			expect(supervisorConfig).toContain("[program:clawdi-daemon-openclaw]");
+			expect(supervisorConfig).toContain("[program:clawdi-daemon-codex]");
+			expect(supervisorConfig).toContain("clawdi daemon run");
 			expect(supervisorConfig).toContain('CLAWDI_SERVE_MODE="container"');
+			expect(supervisorConfig).toContain('CLAWDI_AGENT_ID="openclaw"');
+			expect(supervisorConfig).toContain('CLAWDI_AGENT_TYPE="openclaw"');
+			expect(supervisorConfig).toContain('CLAWDI_ENVIRONMENT_ID="env-openclaw"');
+			expect(supervisorConfig).toContain('CLAWDI_AGENT_ID="codex"');
+			expect(supervisorConfig).toContain('CLAWDI_AGENT_TYPE="codex"');
+			expect(supervisorConfig).toContain('CLAWDI_ENVIRONMENT_ID="env-codex"');
+			expect(supervisorConfig).toContain('CLAWDI_DAEMON_RPC_DISABLED="1"');
 			expect(supervisorConfig).toContain('CLAWDI_RUNTIME_REV="');
 			expect(supervisorConfig).toContain("https://cloud-api.test");
 			expect(supervisorConfig).not.toContain("runtime-auth-token");
@@ -5163,8 +5303,18 @@ exit 64
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+						openclaw: {
+							type: "openclaw",
+							enabled: false,
+							install: { source: "official" },
+							paths: { home },
+						},
+						hermes: {
+							type: "hermes",
+							enabled: false,
+							install: { source: "official" },
+							paths: { home },
+						},
 					},
 					providers: {
 						default: { kind: "openai-compatible", baseUrl: "https://sub2api.test/v1" },
@@ -5200,7 +5350,7 @@ exit 64
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						hermes: { enabled: false },
+						hermes: { type: "hermes", enabled: false },
 					},
 					mitmProfiles: {
 						profiles: [
@@ -5254,8 +5404,8 @@ exit 64
 					packageSpec: "clawdi@0.13.0-test",
 				},
 				runtimes: {
-					openclaw: { enabled: false },
-					hermes: { enabled: false },
+					openclaw: { type: "openclaw", enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 			}),
@@ -5293,7 +5443,7 @@ exit 64
 				issuedAt: "2026-06-04T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
-					hermes: { enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				mitmProfiles: {
 					profiles: [

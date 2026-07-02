@@ -27,6 +27,8 @@ export interface RuntimeBridgeSurface {
 	listenPort: number;
 	upstreamHost: string;
 	upstreamPort: number;
+	upstreamHeaders: Record<string, string>;
+	upstreamHeaderEnv: Record<string, string>;
 }
 
 export interface RuntimeBridgeServer {
@@ -186,6 +188,8 @@ function resolveRuntimeBridgeSurfaceInputs(
 			listenHost: parsed.data.listenHost?.trim() || defaultListenHost,
 			upstreamHost: parsed.data.upstreamHost.trim(),
 		};
+		assertNoDuplicateUpstreamHeaders(surface, index);
+		assertUpstreamHeaderEnvValues(surface, index);
 		const key = `${surface.listenHost}:${surface.listenPort}`;
 		if (surface.listenPort !== 0 && seen.has(key)) {
 			throw new Error(`duplicate runtime bridge listen address: ${key}`);
@@ -193,6 +197,33 @@ function resolveRuntimeBridgeSurfaceInputs(
 		if (surface.listenPort !== 0) seen.add(key);
 		return surface;
 	});
+}
+
+function assertNoDuplicateUpstreamHeaders(surface: RuntimeBridgeSurface, index: number): void {
+	const staticHeaders = new Set(
+		Object.keys(surface.upstreamHeaders).map((name) => name.toLowerCase()),
+	);
+	const duplicates = Object.keys(surface.upstreamHeaderEnv).filter((name) =>
+		staticHeaders.has(name.toLowerCase()),
+	);
+	if (duplicates.length > 0) {
+		throw new Error(
+			`invalid runtime bridge surface ${index}: duplicate upstream header declarations: ${duplicates.join(
+				", ",
+			)}`,
+		);
+	}
+}
+
+function assertUpstreamHeaderEnvValues(surface: RuntimeBridgeSurface, index: number): void {
+	for (const [headerName, envName] of Object.entries(surface.upstreamHeaderEnv)) {
+		const value = process.env[envName]?.trim();
+		if (!value) {
+			throw new Error(
+				`invalid runtime bridge surface ${index}: ${headerName} requires ${envName} to be set`,
+			);
+		}
+	}
 }
 
 function createBridgeServer(
@@ -548,6 +579,10 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, surface: RuntimeBridge
 	const isUpgrade = isUpgradeRequest(parsed.headers);
 	const authority = upstreamAuthority(surface);
 	const origin = `http://${authority}`;
+	const upstreamHeaders = resolvedUpstreamHeaders(surface);
+	const controlledUpstreamHeaders = new Set(
+		Object.keys(upstreamHeaders).map((name) => name.toLowerCase()),
+	);
 	let originWritten = false;
 	let refererWritten = false;
 	const lines = [
@@ -561,6 +596,7 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, surface: RuntimeBridge
 		const lowerName = name.toLowerCase();
 		if (isProxyForwardingHeader(lowerName)) continue;
 		if (lowerName === "host" || HOP_BY_HOP_HEADERS.has(lowerName)) continue;
+		if (controlledUpstreamHeaders.has(lowerName)) continue;
 		if (lowerName === "origin") {
 			if (!originWritten) {
 				lines.push(`Origin: ${origin}`);
@@ -582,7 +618,28 @@ function buildProxyRequestHead(parsed: ParsedHttpRequest, surface: RuntimeBridge
 		}
 		lines.push(`${name}: ${value}`);
 	}
+	for (const [name, value] of Object.entries(upstreamHeaders)) {
+		if (value) lines.push(`${name}: ${value}`);
+	}
 	return `${lines.join("\r\n")}\r\n\r\n`;
+}
+
+function resolvedUpstreamHeaders(surface: RuntimeBridgeSurface): Record<string, string> {
+	const headers: Record<string, string> = {};
+	for (const [name, value] of Object.entries(surface.upstreamHeaders)) {
+		if (isForwardableUpstreamHeader(name)) headers[name] = value;
+	}
+	for (const [name, envName] of Object.entries(surface.upstreamHeaderEnv)) {
+		if (!isForwardableUpstreamHeader(name)) continue;
+		const value = process.env[envName]?.trim();
+		if (value) headers[name] = value;
+	}
+	return headers;
+}
+
+function isForwardableUpstreamHeader(name: string): boolean {
+	const lowerName = name.toLowerCase();
+	return lowerName !== "host" && !HOP_BY_HOP_HEADERS.has(lowerName);
 }
 
 function isProxyForwardingHeader(lowerName: string): boolean {

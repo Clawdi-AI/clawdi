@@ -1,0 +1,101 @@
+# syntax=docker/dockerfile:1.7
+
+FROM oven/bun:1.3.14 AS cli-builder
+
+WORKDIR /app
+
+COPY package.json bun.lock turbo.json tsconfig.base.json biome.json ./
+COPY apps/web/package.json apps/web/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/cli/package.json packages/cli/package.json
+COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
+
+RUN bun install --frozen-lockfile --ignore-scripts
+
+COPY packages/shared packages/shared
+COPY packages/cli packages/cli
+
+RUN bun run --cwd packages/cli build
+
+FROM golang:1.26-bookworm AS mitm-builder
+
+WORKDIR /src
+
+COPY packages/cli/native/mitm-sidecar/go.mod packages/cli/native/mitm-sidecar/go.mod
+COPY packages/cli/native/mitm-sidecar/*.go packages/cli/native/mitm-sidecar/
+
+RUN cd packages/cli/native/mitm-sidecar \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/clawdi-mitm-sidecar .
+
+FROM node:24-bookworm-slim AS runtime
+
+ARG CLAWDI_UID=10001
+ARG CLAWDI_GID=10001
+
+ENV NODE_ENV=production \
+    HOME=/home/clawdi \
+    CLAWDI_RUNTIME_MODE=hosted \
+    CLAWDI_RUNTIME_HOME=/home/clawdi \
+    CLAWDI_RUNTIME_USER=clawdi \
+    CLAWDI_SERVICE_STATE_DIR=/var/lib/clawdi \
+    CLAWDI_RUN_DIR=/run/clawdi \
+    CLAWDI_HOST_POLICY_PATH=/etc/clawdi/host-policy.json \
+    CLAWDI_RUNTIME_SOURCE_PATH=/etc/clawdi/runtime-source.json \
+    CLAWDI_SHARE_DIR=/usr/local/share/clawdi \
+    CLAWDI_IMAGE_SHIM_PATH=/usr/local/bin/clawdi \
+    CLAWDI_MITM_SIDECAR_BUNDLE=/usr/local/lib/clawdi/clawdi-mitm-sidecar \
+    CLAWDI_RUNTIME_DEFAULT_CLI_PACKAGE_SPEC=/usr/local/share/clawdi/bootstrap/clawdi-runtime-bootstrap.tgz \
+    PATH=/var/lib/clawdi/bin:/home/clawdi/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gosu \
+        supervisor \
+        util-linux \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid "${CLAWDI_GID}" clawdi \
+    && useradd --uid "${CLAWDI_UID}" --gid "${CLAWDI_GID}" --create-home --home-dir /home/clawdi --shell /bin/bash clawdi \
+    && mkdir -p \
+        /etc/clawdi \
+        /run/clawdi \
+        /usr/local/lib/clawdi/bin \
+        /usr/local/lib/clawdi/clawdi-mitm-sidecar/bin \
+        /usr/local/share/clawdi/bootstrap \
+        /var/lib/clawdi \
+        /home/clawdi/clawdi \
+    && chown -R clawdi:clawdi /home/clawdi \
+    && chmod 0755 /etc/clawdi /run/clawdi /usr/local/lib/clawdi /usr/local/share/clawdi /var/lib/clawdi
+
+COPY --from=cli-builder /app/packages/cli/bin /usr/local/lib/clawdi/bin
+COPY --from=cli-builder /app/packages/cli/dist /usr/local/lib/clawdi/dist
+COPY --from=cli-builder /app/packages/cli/package.json /usr/local/lib/clawdi/package.json
+COPY --from=cli-builder /app/packages/cli/README.md /usr/local/lib/clawdi/README.md
+COPY --from=cli-builder /app/packages/cli/LICENSE /usr/local/lib/clawdi/LICENSE
+COPY --from=mitm-builder /out/clawdi-mitm-sidecar /usr/local/lib/clawdi/clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar
+COPY packages/cli/docker/runtime-sidecar-entrypoint.sh /usr/local/bin/clawdi-runtime-sidecar
+COPY packages/cli/docker/runtime-nsenter-control.sh /usr/local/bin/clawdi-runtime-nsenter
+
+RUN chmod 0755 \
+        /usr/local/lib/clawdi/bin/clawdi.mjs \
+        /usr/local/lib/clawdi/clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar \
+        /usr/local/bin/clawdi-runtime-sidecar \
+        /usr/local/bin/clawdi-runtime-nsenter \
+    && printf '%s\n' '#!/usr/bin/env sh' 'exec node /usr/local/lib/clawdi/bin/clawdi.mjs "$@"' > /usr/local/bin/clawdi \
+    && chmod 0755 /usr/local/bin/clawdi \
+    && cd /usr/local/lib/clawdi \
+    && npm pack --pack-destination /usr/local/share/clawdi/bootstrap \
+    && mv /usr/local/share/clawdi/bootstrap/clawdi-*.tgz /usr/local/share/clawdi/bootstrap/clawdi-runtime-bootstrap.tgz \
+    && chmod 0644 /usr/local/share/clawdi/bootstrap/clawdi-runtime-bootstrap.tgz
+
+WORKDIR /home/clawdi/clawdi
+
+EXPOSE 8788
+
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/usr/local/bin/clawdi-runtime-sidecar"]
+CMD ["serve"]

@@ -43,6 +43,7 @@ describe("runtime manifest services", () => {
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
 			runtimes: {
 				hermes: {
+					type: "hermes",
 					enabled: true,
 					run: runSettings("hermes", ["gateway", "run"]),
 					services: {
@@ -57,6 +58,7 @@ describe("runtime manifest services", () => {
 					},
 				},
 			},
+			runtimeTargets: {},
 			recovery: {},
 		};
 		const load: RuntimeManifestLoad = {

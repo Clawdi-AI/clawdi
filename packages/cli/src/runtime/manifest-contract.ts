@@ -8,6 +8,13 @@ import {
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
+const runtimeTypeSchema = z.enum(["codex", "openclaw", "hermes"]);
+const runtimeTargetIdSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[a-z0-9][a-z0-9._-]*$/, "must be a lowercase runtime target id");
+
 export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	openclaw: "https://openclaw.ai/install-cli.sh",
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
@@ -28,15 +35,84 @@ const installSchema = z
 	})
 	.strict();
 
+const envKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+
+const runtimeExecutionCommandSchema = z
+	.object({
+		command: z.string().min(1),
+		args: z.array(z.string()).default([]),
+		env: z.record(envKeySchema, z.string()).default({}),
+		cwd: z.string().min(1).optional(),
+	})
+	.strict();
+
+const runtimeExternalMcpSchema = z
+	.object({
+		source: z.enum(["backend-direct", "sidecar-local"]).optional(),
+		url: z.string().url().optional(),
+		transport: z.enum(["streamable-http"]).default("streamable-http"),
+	})
+	.strict();
+
+const runtimeTerminalSchema = z
+	.object({
+		container: z.string().min(1).optional(),
+		user: z.string().min(1).optional(),
+		cwd: z.string().min(1).optional(),
+		env: z.record(envKeySchema, z.string()).default({}),
+	})
+	.strict();
+
+const runtimeExecutionSchema = z
+	.object({
+		mode: z.enum(["managed-process", "external"]).default("managed-process"),
+		home: z.string().min(1).optional(),
+		stateDir: z.string().min(1).optional(),
+		workspace: z.string().min(1).optional(),
+		controlCommand: runtimeExecutionCommandSchema.optional(),
+		versionCommand: runtimeExecutionCommandSchema.optional(),
+		mcp: runtimeExternalMcpSchema.optional(),
+		terminal: runtimeTerminalSchema.optional(),
+	})
+	.strict();
+
+const runtimeImageSchema = z
+	.object({
+		ref: z.string().min(1).optional(),
+		repository: z.string().min(1).optional(),
+		tag: z.string().min(1).optional(),
+		digest: z.string().min(1).optional(),
+		pullPolicy: z.enum(["IfNotPresent", "Always", "Never"]).optional(),
+	})
+	.strict();
+
+const runtimeVersionSchema = z
+	.object({
+		desired: z.string().min(1).optional(),
+		observed: z.string().min(1).optional(),
+		observedAt: z.string().min(1).optional(),
+		upgradeAvailable: z.boolean().optional(),
+		upgradePolicy: z.enum(["pinned", "track-channel", "manual"]).optional(),
+	})
+	.strict();
+
 const runtimeSchema = z
 	.object({
+		type: runtimeTypeSchema,
 		enabled: z.boolean(),
+		displayName: z.string().min(1).optional(),
+		environmentId: z.string().min(1).optional(),
+		image: runtimeImageSchema.optional(),
+		version: runtimeVersionSchema.optional(),
 		updateChannel: z.string().min(1).optional(),
+		execution: runtimeExecutionSchema.optional(),
 		install: installSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
 	})
 	.strict();
+
+const runtimeTargetSchema = runtimeSchema;
 
 const cliPayloadPolicySchema = z
 	.object({
@@ -54,7 +130,8 @@ export const DEFAULT_CLAWDI_CLI_POLICY = {
 
 const liveSyncAgentSchema = z
 	.object({
-		agentType: runtimeNameSchema,
+		agentType: runtimeTypeSchema,
+		agentId: runtimeTargetIdSchema,
 		environmentId: z.string().min(1),
 	})
 	.strict();
@@ -72,6 +149,11 @@ const runtimeBridgeSurfaceNameSchema = z
 	.min(1)
 	.max(64)
 	.regex(/^[a-z0-9][a-z0-9._-]*$/, "must be a lowercase surface id");
+const httpHeaderNameSchema = z
+	.string()
+	.min(1)
+	.max(128)
+	.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "must be a valid HTTP header name");
 
 export const runtimeBridgeSurfaceSchema = z
 	.object({
@@ -81,6 +163,8 @@ export const runtimeBridgeSurfaceSchema = z
 		listenPort: tcpPortSchema,
 		upstreamHost: z.string().min(1).default("127.0.0.1"),
 		upstreamPort: tcpPortSchema,
+		upstreamHeaders: z.record(httpHeaderNameSchema, z.string()).default({}),
+		upstreamHeaderEnv: z.record(httpHeaderNameSchema, envKeySchema).default({}),
 	})
 	.strict();
 
@@ -116,11 +200,12 @@ const runtimeDesiredStateShape = {
 		})
 		.strict(),
 	clawdiCli: cliPayloadPolicySchema.optional(),
-	runtimes: z.record(runtimeNameSchema, runtimeSchema),
+	runtimes: z.record(runtimeNameSchema, runtimeSchema).default({}),
 	bridge: runtimeBridgeSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
 	mitmProfiles: mitmProfileInputBundleSchema.optional(),
 	liveSync: liveSyncSchema.optional(),
+	runtimeTargets: z.record(runtimeTargetIdSchema, runtimeTargetSchema).default({}),
 	recovery: z
 		.object({
 			cacheManifest: z.boolean().optional(),
@@ -147,19 +232,28 @@ const hostedRuntimeInstallSchema = z
 
 const hostedRuntimeEntrySchema = z
 	.object({
+		type: runtimeTypeSchema,
 		enabled: z.boolean(),
+		displayName: z.string().min(1).optional(),
+		environmentId: z.string().min(1).optional(),
+		image: runtimeImageSchema.optional(),
+		version: runtimeVersionSchema.optional(),
 		install: hostedRuntimeInstallSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
 		paths: z
 			.object({
 				home: z.string().min(1).optional(),
+				stateDir: z.string().min(1).optional(),
 				workspace: z.string().min(1).optional(),
 			})
 			.passthrough()
 			.optional(),
+		execution: runtimeExecutionSchema.optional(),
 	})
 	.passthrough();
+
+const hostedRuntimeTargetEntrySchema = hostedRuntimeEntrySchema;
 
 const hostedProviderAuthSchema = z
 	.object({
@@ -199,7 +293,8 @@ export const hostedRuntimeManifestSchema = z
 				path: ["apiUrl"],
 			}),
 		clawdiCli: cliPayloadPolicySchema.optional(),
-		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
+		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema).default({}),
+		runtimeTargets: z.record(runtimeTargetIdSchema, hostedRuntimeTargetEntrySchema).default({}),
 		bridge: runtimeBridgeSchema.optional(),
 		providers: z
 			.record(
@@ -241,7 +336,10 @@ export const hostedRuntimeManifestResponseSchema = z
 
 export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
+export type RuntimeExecution = z.output<typeof runtimeExecutionSchema>;
+export type RuntimeExecutionCommand = z.output<typeof runtimeExecutionCommandSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
+export type RuntimeType = z.infer<typeof runtimeTypeSchema>;
 export type RuntimeBridgeSurfaceInput = z.input<typeof runtimeBridgeSurfaceSchema>;
 export type RuntimeBridgeSurfaceSpec = z.output<typeof runtimeBridgeSurfaceSchema>;

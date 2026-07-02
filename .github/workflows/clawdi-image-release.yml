@@ -56,6 +56,7 @@ concurrency:
 env:
   BACKEND_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-backend
   WEB_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-web
+  SIDECAR_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-runtime-sidecar
 
 jobs:
   build:
@@ -67,7 +68,9 @@ jobs:
     timeout-minutes: 30
     outputs:
       image_tag: ${{ steps.rev.outputs.sha }}
-      build_required: ${{ steps.runtime-changes.outputs.build }}
+      build_required: ${{ steps.image-changes.outputs.any }}
+      backend_build_required: ${{ steps.image-changes.outputs.backend }}
+      sidecar_build_required: ${{ steps.image-changes.outputs.sidecar }}
       deploy_scope: ${{ steps.deploy-mode.outputs.deploy_scope }}
       should_deploy: ${{ steps.deploy-mode.outputs.should_deploy }}
     steps:
@@ -113,11 +116,13 @@ jobs:
           echo "deploy_scope=${deploy_scope}" >> "$GITHUB_OUTPUT"
           echo "should_deploy=${should_deploy}" >> "$GITHUB_OUTPUT"
 
-      - name: Detect backend image changes
-        id: runtime-changes
+      - name: Detect image changes
+        id: image-changes
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "sidecar=true" >> "$GITHUB_OUTPUT"
+            echo "any=true" >> "$GITHUB_OUTPUT"
             echo "reason=workflow_dispatch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -125,35 +130,46 @@ jobs:
           changed_files="$(git diff-tree --no-commit-id --name-only -r -m --first-parent "${{ steps.rev.outputs.sha }}")"
           printf '%s\n' "$changed_files"
 
-          build=false
+          backend=false
+          sidecar=false
           readarray -t files <<< "$changed_files"
           for file in "${files[@]}"; do
             case "$file" in
               backend/*|.dockerignore|infra/deploy/coolify/production-stack.json|infra/deploy/coolify/deploy_ghcr_runtime.py|.github/workflows/clawdi-image-release.yml)
-                build=true
+                backend=true
+                ;;
+            esac
+            case "$file" in
+              packages/cli/*|packages/shared/*|package.json|bun.lock|turbo.json|tsconfig.base.json|biome.json|.dockerignore|.github/workflows/clawdi-image-release.yml)
+                sidecar=true
                 ;;
             esac
           done
 
-          echo "build=${build}" >> "$GITHUB_OUTPUT"
-          if [ "$build" = "true" ]; then
-            echo "reason=backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
+          if [ "$backend" = "true" ] || [ "$sidecar" = "true" ]; then
+            any=true
+            reason=image_inputs_changed
           else
-            echo "reason=no_backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
+            any=false
+            reason=no_image_inputs_changed
           fi
+          echo "backend=${backend}" >> "$GITHUB_OUTPUT"
+          echo "sidecar=${sidecar}" >> "$GITHUB_OUTPUT"
+          echo "any=${any}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
-        if: steps.runtime-changes.outputs.build == 'true'
+        if: steps.image-changes.outputs.any == 'true'
 
       - uses: docker/login-action@v4
-        if: steps.runtime-changes.outputs.build == 'true'
+        if: steps.image-changes.outputs.any == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - name: Resolve OCI label metadata
-        if: steps.runtime-changes.outputs.build == 'true'
+        if: steps.image-changes.outputs.any == 'true'
         id: labels
         run: |
           created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -162,7 +178,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend image
-        if: steps.runtime-changes.outputs.build == 'true'
+        if: steps.image-changes.outputs.backend == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -182,7 +198,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=clawdi-backend-image
 
       - name: Validate web image inputs
-        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        if: steps.image-changes.outputs.backend == 'true' && inputs.build_web
         env:
           WEB_CLERK_PUBLISHABLE_KEY: ${{ inputs.web_clerk_publishable_key }}
         run: |
@@ -192,7 +208,7 @@ jobs:
           fi
 
       - name: Build and push web image
-        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        if: steps.image-changes.outputs.backend == 'true' && inputs.build_web
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -216,30 +232,59 @@ jobs:
           cache-from: type=gha,scope=clawdi-web-image
           cache-to: type=gha,mode=max,scope=clawdi-web-image
 
+      - name: Build and push runtime sidecar image
+        if: steps.image-changes.outputs.sidecar == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/cli/Dockerfile.runtime-sidecar
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.SIDECAR_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.created=${{ steps.labels.outputs.created }}
+            org.opencontainers.image.title=Clawdi Runtime Sidecar
+            org.opencontainers.image.description=Clawdi managed-runtime sidecar image for official external agent containers.
+          provenance: false
+          cache-from: type=gha,scope=clawdi-runtime-sidecar-image
+          cache-to: type=gha,mode=max,scope=clawdi-runtime-sidecar-image
+
       - name: Print image summary
-        if: steps.runtime-changes.outputs.build == 'true'
+        if: steps.image-changes.outputs.any == 'true'
         run: |
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backend: \`${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ inputs.build_web }}" = "true" ]; then
+          if [ "${{ steps.image-changes.outputs.backend }}" = "true" ]; then
+            echo "- Backend: \`${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Backend: skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ steps.image-changes.outputs.backend }}" = "true" ] && [ "${{ inputs.build_web }}" = "true" ]; then
             echo "- Web: \`${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Web: skipped" >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ "${{ steps.image-changes.outputs.sidecar }}" = "true" ]; then
+            echo "- Runtime sidecar: \`${{ env.SIDECAR_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Runtime sidecar: skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Print skipped image summary
-        if: steps.runtime-changes.outputs.build != 'true'
+        if: steps.image-changes.outputs.any != 'true'
         run: |
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backend image build: skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Reason: \`${{ steps.runtime-changes.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image build: skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reason: \`${{ steps.image-changes.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Ref: \`${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     needs: build
-    if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
+    if: needs.build.outputs.backend_build_required == 'true' && needs.build.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -288,7 +333,7 @@ jobs:
 
   audit:
     needs: build
-    if: needs.build.outputs.build_required != 'true' && needs.build.outputs.should_deploy == 'true'
+    if: needs.build.outputs.backend_build_required != 'true' && needs.build.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

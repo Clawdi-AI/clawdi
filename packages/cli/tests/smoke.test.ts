@@ -281,6 +281,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
 			runtimes: {
 				openclaw: {
+					type: "openclaw",
 					enabled: true,
 					updateChannel: "stable",
 					install: {
@@ -292,6 +293,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					},
 				},
 				hermes: {
+					type: "hermes",
 					enabled: true,
 					updateChannel: "main",
 					install: {
@@ -346,7 +348,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			},
 			liveSync: {
 				enabled: true,
-				agents: [{ agentType: "codex", environmentId: "env-codex" }],
+				agents: [{ agentType: "codex", agentId: "codex", environmentId: "env-codex" }],
 			},
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
@@ -579,8 +581,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				issuedAt: "2026-06-04T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
-					openclaw: { enabled: false },
-					hermes: { enabled: false },
+					openclaw: { type: "openclaw", enabled: false },
+					hermes: { type: "hermes", enabled: false },
 				},
 				mitmProfiles: {
 					profiles: [
@@ -688,6 +690,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				runtimes: {
 					openclaw: {
+						type: "openclaw",
 						enabled: true,
 						updateChannel: "stable",
 						install: {
@@ -699,6 +702,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						},
 					},
 					hermes: {
+						type: "hermes",
 						enabled: false,
 					},
 				},

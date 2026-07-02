@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public boundary note |
-| Last updated | 2026-07-01 |
+| Last updated | 2026-06-30 |
 | Owner | CLI runtime layer |
 
 This note defines what belongs in the open-source runtime projection layer. It
@@ -17,20 +17,27 @@ surface. Use Clawdi projection code to translate the standard provider/channel
 contract into target-runtime config. Use request rewriting only behind explicit
 profiles when native configuration cannot express the required behavior.
 
-The explicit local execution boundary is:
+The activation boundary is:
 
 ```bash
 clawdi run -- <command>
 ```
 
-`clawdi run` prepares environment variables and local config, then executes the
-target command when a caller explicitly opts into Clawdi env injection. Normal
-hosted daemon startup uses direct supervisor process entries instead.
+The wrapper prepares environment variables and local config, then executes the
+target command. Normal runtime startup should not require users to pass
+endpoint, token, or certificate flags manually.
 
-Hosted runtime mode does not intercept managed runtime names. Shell commands
-resolve to official runtime binaries. Clawdi only participates when a caller
-explicitly invokes `clawdi run -- <command>` or when supervisor starts a direct
-runtime program from the rendered process plan.
+In hosted runtime mode, managed runtime names are also exposed through generated
+command shims. The shim dispatcher immediately calls the same boundary:
+
+```bash
+clawdi run -- "$command_name" "$@"
+```
+
+This keeps the host image stable. The image only needs a generic shim directory
+at the front of PATH; runtime-specific behavior comes from the manifest and the
+CLI. If a runtime is disabled in the current manifest, `clawdi run` rejects it
+and the shim must not fall back to any native binary later on PATH.
 
 ## Projection Flow
 
@@ -44,19 +51,18 @@ flowchart LR
     subgraph Projection["Open-source projection layer"]
         CLI --> Provider[Provider projection]
         CLI --> Channel[Channel projection]
-        CLI --> Sidecar[Optional MITM profile projection]
+        CLI --> Broker[Optional MITM profile projection]
         CLI --> RunConfig[Runtime run config]
-        CLI --> SupervisorPlan[Supervisor process plan]
+        CLI --> Shims[Command shims]
     end
 
     Provider --> OpenClaw[OpenClaw config]
     Provider --> Hermes[Hermes config]
     Channel --> OpenClaw
-    Sidecar --> Runner[clawdi run environment]
+    Broker --> Runner[clawdi run environment]
     RunConfig --> Runner
-    SupervisorPlan --> Target
+    Shims --> Runner
     Runner --> Target[Target agent process]
-    Sidecar -. proxy and CA env .-> Target
 ```
 
 The diagram is intentionally limited to public contracts. It does not describe
@@ -76,12 +82,10 @@ example, a target runtime may need a native transport string that differs from
 `openai_responses`; that name should be generated only in the target runtime's
 projection file.
 
-Hosted runtime manifests should scope provider projections by runtime name when
-agents can have different provider bindings. For example,
-`providers.openclaw` is the OpenClaw provider projection and `providers.hermes`
-is the Hermes provider projection. The CLI must select the runtime-scoped entry
-for the runtime it is configuring instead of relying on a global default. The
-legacy `providers.default` shape remains valid for single-provider fixtures.
+Hosted runtime manifests scope provider projections by runtime target id. For
+example, `providers.openclaw-a` and `providers.openclaw-b` are distinct
+OpenClaw provider projections even though both targets have `type: openclaw`.
+The CLI selects only the target-id entry for the runtime it is configuring.
 
 ## Channel Boundary
 
@@ -93,16 +97,15 @@ Channel projection should:
 - redact secrets in logs and diagnostics;
 - avoid embedding private service assumptions in the CLI.
 
-## Sidecar Boundary
+## Broker Boundary
 
-The `clawdi runtime sidecar` command is the runtime-local Clawdi support process.
-It hosts the inbound bridge module when `bridge.surfaces` are declared and the
-outbound MITM module when a manifest profile requires it.
+The broker is an optional local transport child process used by `clawdi run`
+when an explicit profile requires it.
 
 The CLI may own:
 
 - profile validation;
-- local bridge and MITM module lifecycle;
+- local broker process lifecycle;
 - proxy and trust environment projection;
 - request matching for explicit profiles;
 - secret reference lookup from short-lived runtime state.
@@ -115,24 +118,15 @@ The CLI must not own:
 - target runtime update channels;
 - user BYOK provider traffic interception by default.
 
-The MITM module is not the bridge module and not the Clawdi daemon. They share
-the sidecar process, but module boundaries stay explicit: MITM owns outbound
-proxy and CA behavior, bridge owns inbound browser surface auth, and the daemon
-owns live-sync/API authority. Manifest state, status, token scope, and logs must
-keep those responsibilities separate.
-
 ## Runtime Command Boundary
 
 The CLI may own:
 
 - generated run config files;
-- direct supervisor process entries for daemon runtime startup;
-- no new wrapper or launcher generation for daemon runtime startup;
-- PATH cleanup before launching runtime child processes;
+- command shim creation and stale-shim cleanup;
+- PATH cleanup inside the shim dispatcher;
 - disabled-runtime enforcement;
-- supervisor commands that start official runtime binaries directly;
-- runtime-owned auxiliary services as explicit official service commands,
-  without user command shims;
+- supervisor commands that start runtimes through `clawdi run -- <runtime>`;
 - support for future runtime names when an explicit `run.command` is supplied.
 
 The CLI must not own:
@@ -146,32 +140,23 @@ Built-in installer/projection support is currently explicit. Unknown runtime
 names are acceptable only when the manifest includes enough `run.command`
 information for the CLI to launch them deterministically.
 
-Hosted runtime processes map to official runtime commands. If an official
-runtime exposes multiple long-running commands, such as Hermes dashboard and
-Hermes gateway, declare those commands explicitly in the process plan. Clawdi
-must not add a shell wrapper to multiplex the commands.
-
-Official runtime Docker images remain useful reference implementations. Hermes'
-Docker image demonstrates that gateway and dashboard can be supervised as
-separate official services. OpenClaw's Docker image demonstrates that direct
-non-loopback exposure should require runtime-native auth. Docker image rollout
-updates are a different update model, so they are not the primary path when
-in-place official UI updates are required.
-
 ## Control UI And Terminal Boundary
 
-Control UI is a runtime browser UI surface proxied by the sidecar bridge module.
-Terminal is a deployment shell surface exposed by the dashboard and hosted API
-contract. They are intentionally separate:
+Control UI is a runtime browser UI surface. In the official-container model it
+should be published by the deployment layer through an authenticated route to
+the upstream runtime UI. The local runtime bridge is an optional compatibility
+surface, not the default path. Terminal is a deployment shell surface exposed by
+the dashboard and hosted API contract. They are intentionally separate:
 
-- Runtime UI is runtime-specific and should use the runtime's own product
-  wording, such as OpenClaw Control UI or Hermes Dashboard.
+- Control UI is runtime-specific.
 - The bridge accepts explicitly declared runtime surfaces with listen/upstream
   targets and surface-specific policy; it must not become arbitrary port
   forwarding.
-- Terminal is deployment-scoped and not split per agent.
-- Terminal token transport should prefer WebSocket subprotocols, with query
-  string transport only as a compatibility fallback.
+- Terminal is deployment-scoped and should target the runtime container selected
+  by `agent_id` when the runtime is external. The dashboard carries the selection as
+  `agent_id`; the deployment-side broker should resolve the shell target from
+  the runtime target's `execution.terminal` contract.
+- Terminal token transport should use WebSocket subprotocols only.
 - The service-side shell bridge and deployment lifecycle are outside this
   repository.
 
@@ -182,9 +167,9 @@ In-repo tests should use local fixtures or fake upstreams for:
 - profile schema validation;
 - secret redaction;
 - deterministic provider and channel projection;
-- sidecar startup and shutdown around a child process;
-- explicit request rewrite behavior;
-- direct runtime routing and disabled-runtime behavior;
+- broker startup and shutdown around a child process;
+- explicit request rewrite behavior.
+- command shim routing and disabled-runtime behavior;
 - terminal WebSocket URL handling and theme/status behavior.
 
 Real service credentials and deployment-specific canaries belong outside the

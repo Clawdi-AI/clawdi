@@ -11,6 +11,7 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
+	type RuntimeType,
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
@@ -153,12 +154,23 @@ function zodErrors(error: z.ZodError): string[] {
 }
 
 function parseManifest(value: unknown): RuntimeManifest {
-	return manifestSchema.parse(value);
+	return normalizeRuntimeManifestTargets(manifestSchema.parse(value));
 }
 
 function parseManifestSafe(value: unknown): RuntimeManifest | null {
 	const result = manifestSchema.safeParse(value);
-	return result.success ? result.data : null;
+	return result.success ? normalizeRuntimeManifestTargets(result.data) : null;
+}
+
+function normalizeRuntimeManifestTargets(manifest: RuntimeManifest): RuntimeManifest {
+	if (!manifest.runtimeTargets || Object.keys(manifest.runtimeTargets).length === 0) {
+		return manifest;
+	}
+	const runtimes = { ...manifest.runtimes };
+	for (const [id, target] of Object.entries(manifest.runtimeTargets)) {
+		runtimes[id] = { ...target, type: target.type };
+	}
+	return { ...manifest, runtimes };
 }
 
 function normalizeManifestPayload(value: unknown): {
@@ -166,7 +178,7 @@ function normalizeManifestPayload(value: unknown): {
 	secretValues?: Record<string, string>;
 } {
 	const internal = manifestSchema.safeParse(value);
-	if (internal.success) return { manifest: internal.data };
+	if (internal.success) return { manifest: normalizeRuntimeManifestTargets(internal.data) };
 
 	const hostedResponse = hostedRuntimeManifestResponseSchema.safeParse(value);
 	if (hostedResponse.success) {
@@ -472,6 +484,40 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
 	const home = hosted.system?.home || "/home/clawdi";
 	const workspaceRoot = hosted.system?.workspace || join(home, "clawdi");
+	const targets = hostedRuntimeTargetEntries(hosted);
+	const defaultCliPolicy = defaultClawdiCliPolicy();
+	const runtimeEntries = targets.map(({ id, type, runtime }) => {
+		const execution = hostedRuntimeExecution(type, runtime, home);
+		const external = execution?.mode === "external";
+		const entry: RuntimeManifest["runtimes"][string] = {
+			type,
+			enabled: runtime.enabled,
+			displayName: runtime.displayName,
+			environmentId: runtime.environmentId,
+			image: runtime.image,
+			version: runtime.version,
+			updateChannel: runtime.install?.channel,
+			install:
+				runtime.enabled && !external && OFFICIAL_INSTALL_URLS[type]
+					? {
+							authority: "official" as const,
+							method: "official-installer" as const,
+							url: OFFICIAL_INSTALL_URLS[type] ?? "",
+							home: runtime.paths?.home || home,
+							args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[type] ?? [],
+						}
+					: undefined,
+			execution,
+			run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
+			services: Object.fromEntries(
+				Object.entries(runtime.services ?? {}).map(([service, run]) => [
+					service,
+					hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
+				]),
+			),
+		};
+		return [id, entry] as const;
+	});
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
@@ -486,37 +532,13 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 		},
 		clawdiCli: hosted.clawdiCli
 			? {
-					...DEFAULT_CLAWDI_CLI_POLICY,
+					...defaultCliPolicy,
 					...hosted.clawdiCli,
-					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
+					source: hosted.clawdiCli.source ?? defaultCliPolicy.source,
 				}
-			: { ...DEFAULT_CLAWDI_CLI_POLICY },
-		runtimes: Object.fromEntries(
-			Object.entries(hosted.runtimes).map(([name, runtime]) => [
-				name,
-				{
-					enabled: runtime.enabled,
-					updateChannel: runtime.install?.channel,
-					install:
-						runtime.enabled && OFFICIAL_INSTALL_URLS[name]
-							? {
-									authority: "official" as const,
-									method: "official-installer" as const,
-									url: OFFICIAL_INSTALL_URLS[name] ?? "",
-									home: runtime.paths?.home || home,
-									args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[name] ?? [],
-								}
-							: undefined,
-					run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
-					services: Object.fromEntries(
-						Object.entries(runtime.services ?? {}).map(([service, run]) => [
-							service,
-							hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
-						]),
-					),
-				},
-			]),
-		),
+			: defaultCliPolicy,
+		runtimes: Object.fromEntries(runtimeEntries),
+		runtimeTargets: Object.fromEntries(runtimeEntries),
 		bridge: hosted.bridge,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
@@ -532,6 +554,58 @@ function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): Runtime
 			allowOfflineBoot: hosted.recovery?.allowOfflineBoot ?? true,
 		},
 	};
+}
+
+function defaultClawdiCliPolicy(): NonNullable<RuntimeManifest["clawdiCli"]> {
+	const packageSpec = process.env.CLAWDI_RUNTIME_DEFAULT_CLI_PACKAGE_SPEC?.trim();
+	if (!packageSpec) return { ...DEFAULT_CLAWDI_CLI_POLICY };
+	return {
+		...DEFAULT_CLAWDI_CLI_POLICY,
+		packageSpec,
+	};
+}
+
+function hostedRuntimeTargetEntries(hosted: HostedRuntimeManifest): Array<{
+	id: string;
+	type: RuntimeType;
+	runtime: HostedRuntimeManifest["runtimes"][string];
+}> {
+	const targets = new Map<
+		string,
+		{ id: string; type: RuntimeType; runtime: HostedRuntimeManifest["runtimes"][string] }
+	>();
+	for (const [name, runtime] of Object.entries(hosted.runtimes)) {
+		targets.set(name, { id: name, type: runtime.type, runtime });
+	}
+	for (const [id, runtime] of Object.entries(hosted.runtimeTargets ?? {})) {
+		targets.set(id, { id, type: runtime.type, runtime });
+	}
+	return [...targets.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function hostedRuntimeExecution(
+	type: RuntimeType,
+	runtime: HostedRuntimeManifest["runtimes"][string],
+	defaultHome: string,
+): RuntimeManifest["runtimes"][string]["execution"] | undefined {
+	const explicit = runtime.execution;
+	if (!explicit) return undefined;
+	const home = explicit.home ?? runtime.paths?.home ?? defaultHome;
+	const workspace = explicit.workspace ?? runtime.paths?.workspace;
+	const stateDir =
+		explicit.stateDir ?? runtime.paths?.stateDir ?? defaultExternalStateDir(type, home);
+	return {
+		...explicit,
+		home,
+		...(stateDir ? { stateDir } : {}),
+		...(workspace ? { workspace } : {}),
+	};
+}
+
+function defaultExternalStateDir(type: RuntimeType, home: string): string | undefined {
+	if (type === "openclaw") return join(home, ".openclaw");
+	if (type === "hermes") return home;
+	return undefined;
 }
 
 function hostedRuntimeRunSettings(
@@ -634,8 +708,70 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		if (!runtime.enabled) continue;
+		const type = runtime.type;
+		const executionMode = runtime.execution?.mode ?? "managed-process";
+		if (executionMode === "external") {
+			if (runtime.install) {
+				errors.push(
+					`runtime ${name} uses external execution and must not declare install metadata`,
+				);
+			}
+			if (runtime.execution?.home && !isAbsolute(runtime.execution.home)) {
+				errors.push(`runtime ${name} execution.home must be absolute`);
+			}
+			if (runtime.execution?.stateDir && !isAbsolute(runtime.execution.stateDir)) {
+				errors.push(`runtime ${name} execution.stateDir must be absolute`);
+			}
+			if (runtime.execution?.workspace && !isAbsolute(runtime.execution.workspace)) {
+				errors.push(`runtime ${name} execution.workspace must be absolute`);
+			}
+			if (
+				runtime.execution?.controlCommand?.cwd &&
+				!isAbsolute(runtime.execution.controlCommand.cwd)
+			) {
+				errors.push(`runtime ${name} execution.controlCommand.cwd must be absolute`);
+			}
+			if (runtime.execution?.mcp?.url) {
+				const url = new URL(runtime.execution.mcp.url);
+				if (runtime.execution.mcp.source === "sidecar-local" && url.protocol !== "http:") {
+					errors.push(`runtime ${name} execution.mcp.url must use http:// for sidecar-local MCP`);
+				}
+				if (runtime.execution.mcp.source === undefined) {
+					errors.push(
+						`runtime ${name} execution.mcp.source is required when execution.mcp.url is set`,
+					);
+				}
+			}
+			if (runtime.execution?.mcp?.source === "sidecar-local" && !runtime.execution.mcp.url) {
+				errors.push(`runtime ${name} sidecar-local MCP requires execution.mcp.url`);
+			}
+			if (
+				runtime.execution?.mcp?.transport &&
+				runtime.execution.mcp.transport !== "streamable-http"
+			) {
+				errors.push(`runtime ${name} execution.mcp.transport must be streamable-http`);
+			}
+			if (type === "openclaw" && !runtime.execution?.stateDir) {
+				errors.push(`runtime ${name} external execution requires execution.stateDir`);
+			}
+			if (
+				type === "openclaw" &&
+				externalOpenClawProjectionDeclared(name, manifest) &&
+				!runtime.execution?.controlCommand
+			) {
+				errors.push(
+					`runtime ${name} external OpenClaw projection requires execution.controlCommand`,
+				);
+			}
+			if (type === "hermes" && !runtime.execution?.home && !runtime.execution?.stateDir) {
+				errors.push(
+					`runtime ${name} external execution requires execution.home or execution.stateDir`,
+				);
+			}
+			continue;
+		}
 		const runCommand = runtime.run?.command?.trim();
-		if (!isSupportedRuntimeName(name)) {
+		if (!type || !isSupportedRuntimeName(type)) {
 			if (runtime.install) {
 				errors.push(
 					`runtime ${name} install metadata is not supported by this Clawdi CLI; provide run.command or upgrade the CLI`,
@@ -653,7 +789,7 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 			continue;
 		}
 		if (!runtime.install) continue;
-		const expectedUrl = OFFICIAL_INSTALL_URLS[name];
+		const expectedUrl = OFFICIAL_INSTALL_URLS[type];
 		if (runtime.install.url !== expectedUrl) {
 			errors.push(`runtime ${name} must use official installer ${expectedUrl}`);
 		}
@@ -671,6 +807,16 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 		}
 	}
 	return errors;
+}
+
+function externalOpenClawProjectionDeclared(name: string, manifest: RuntimeManifest): boolean {
+	if (!manifest.projection) return false;
+	const providers = manifest.projection.providers;
+	if (providers && Object.hasOwn(providers, name)) return true;
+	if (manifest.projection.channels !== undefined) return true;
+	if (manifest.projection.mcp !== undefined) return true;
+	if (manifest.projection.tools !== undefined) return true;
+	return false;
 }
 
 export function runtimeManifestFixturePath(): string | undefined {

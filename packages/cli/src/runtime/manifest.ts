@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
 	accessSync,
 	chmodSync,
@@ -13,6 +13,7 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +35,12 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
-import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import type {
+	LiveSyncAgent,
+	RuntimeInstall,
+	RuntimeManifest,
+	RuntimeType,
+} from "./manifest-contract";
 
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 export {
@@ -68,6 +74,7 @@ import {
 	runtimeNameSchema,
 	runtimeRunConfigId,
 	runtimeServiceNameSchema,
+	type SupportedRuntimeName,
 	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
@@ -95,6 +102,7 @@ export interface RuntimeConvergenceResult {
 		mitmSecretFile: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
+		mcpHttpAuthTokenFile: string | null;
 		instanceSemaphores: string[];
 		bootFinished: string;
 	};
@@ -102,8 +110,9 @@ export interface RuntimeConvergenceResult {
 
 interface RuntimeInstallObservation {
 	runtime: string;
+	runtimeType: RuntimeType | null;
 	enabled: boolean;
-	status: "disabled" | "present" | "installed" | "configured" | "install_failed";
+	status: "disabled" | "present" | "installed" | "configured" | "external" | "install_failed";
 	executionUser: string | null;
 	commandPath: string | null;
 	appRoot: string | null;
@@ -117,6 +126,32 @@ interface RuntimeInstallObservation {
 	stdoutTail: string | null;
 	stderrTail: string | null;
 	error: string | null;
+}
+
+type RuntimeEntry = RuntimeManifest["runtimes"][string];
+
+interface RuntimeVersionObservation {
+	desired: string | null;
+	observed: string | null;
+	observedAt: string | null;
+	upgradeAvailable: boolean | null;
+	upgradePolicy: string | null;
+	source: "manifest" | "version-command" | "control-command" | "native-cli" | "unavailable";
+	error: string | null;
+}
+
+function runtimeTypeForEntry(_name: string, runtime?: RuntimeEntry | null): RuntimeType | null {
+	if (runtime?.type) return runtime.type;
+	return null;
+}
+const MCP_HTTP_AUTH_TOKEN_ENV = "CLAWDI_MCP_HTTP_TOKEN";
+
+export function runtimeExecutionMode(runtime: RuntimeEntry): "managed-process" | "external" {
+	return runtime.execution?.mode ?? "managed-process";
+}
+
+export function isExternalRuntime(runtime: RuntimeEntry): boolean {
+	return runtimeExecutionMode(runtime) === "external";
 }
 
 function writeJsonFile(path: string, payload: unknown): void {
@@ -312,33 +347,50 @@ function makeRuntimeUserPrivateDir(path: string): void {
 	}
 }
 
-function runtimeInstallerCommand(name: string, install: RuntimeInstall | undefined): string[] {
+function runtimeInstallerCommand(
+	_name: string,
+	type: RuntimeType | null,
+	install: RuntimeInstall | undefined,
+): string[] {
 	if (!install) return [];
-	if (name === "openclaw") {
+	if (type === "openclaw") {
 		return ["bash", "<downloaded-official-openclaw-installer>", ...install.args];
 	}
-	if (name === "hermes") {
+	if (type === "hermes") {
 		return ["bash", "<downloaded-official-hermes-installer>", ...install.args];
 	}
 	return [];
 }
 
-function runtimeCommandPath(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
-	if (name === "hermes") return join(home, ".local", "bin", "hermes");
+function runtimeCommandPath(type: RuntimeType | null, home: string): string | null {
+	if (type === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
+	if (type === "hermes") return join(home, ".local", "bin", "hermes");
 	return null;
 }
 
-function runtimeAppRoot(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".openclaw");
-	if (name === "hermes") return join(home, ".hermes", "hermes-agent");
+function runtimeAppRoot(type: RuntimeType | null, home: string): string | null {
+	if (type === "openclaw") return join(home, ".openclaw");
+	if (type === "hermes") return join(home, ".hermes", "hermes-agent");
 	return null;
 }
+
+const SUPPORTED_RUNTIME_NAMES = [
+	"hermes",
+	"openclaw",
+] as const satisfies readonly SupportedRuntimeName[];
+
+const runtimeCommandShimIndexSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeCommandShims.v1"),
+		commands: z.array(runtimeNameSchema).default([]),
+	})
+	.strict();
 
 const liveSyncEnvironmentIndexSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.liveSyncEnvironments.v1"),
 		agentTypes: z.array(runtimeNameSchema).default([]),
+		agentIds: z.array(runtimeNameSchema).default([]),
 	})
 	.strict();
 
@@ -436,14 +488,14 @@ function tail(value: string | null | undefined): string | null {
 	return value.slice(-4000);
 }
 
-function testInstallerEnvName(name: string): string | null {
-	if (name === "openclaw") return "CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER";
-	if (name === "hermes") return "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER";
+function testInstallerEnvName(type: RuntimeType | null): string | null {
+	if (type === "openclaw") return "CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER";
+	if (type === "hermes") return "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER";
 	return null;
 }
 
-function executionInstallerUrl(name: string, officialUrl: string): string {
-	const envName = testInstallerEnvName(name);
+function executionInstallerUrl(type: RuntimeType | null, officialUrl: string): string {
+	const envName = testInstallerEnvName(type);
 	const override = envName ? process.env[envName]?.trim() : undefined;
 	if (override) {
 		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
@@ -485,7 +537,11 @@ function materializeInstaller(
 	return { path, cleanup: dir };
 }
 
-function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
+function runOfficialInstaller(
+	name: string,
+	type: RuntimeType | null,
+	install: RuntimeInstall,
+): RuntimeInstallObservation {
 	const installStartedAt = new Date().toISOString();
 	const installStartedMs = Date.now();
 	const finish = (
@@ -499,11 +555,12 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 		installFinishedAt: new Date().toISOString(),
 		installDurationMs: Math.max(0, Date.now() - installStartedMs),
 	});
-	const commandPath = runtimeCommandPath(name, install.home);
-	const appRoot = runtimeAppRoot(name, install.home);
+	const commandPath = runtimeCommandPath(type, install.home);
+	const appRoot = runtimeAppRoot(type, install.home);
 	if (!commandPath || !appRoot) {
 		return finish({
 			runtime: name,
+			runtimeType: type,
 			enabled: true,
 			status: "install_failed",
 			executionUser: null,
@@ -521,6 +578,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	if (executableExists(commandPath)) {
 		return finish({
 			runtime: name,
+			runtimeType: type,
 			enabled: true,
 			status: "present",
 			executionUser: null,
@@ -538,7 +596,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 
 	mkdirSync(install.home, { recursive: true });
 	makeRuntimeUserOwned(install.home);
-	const url = executionInstallerUrl(name, install.url);
+	const url = executionInstallerUrl(type, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
 		const execution = runtimeInstallerExecution(install, materialized.path);
@@ -552,6 +610,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 		const installed = exitCode === 0 && executableExists(commandPath);
 		return finish({
 			runtime: name,
+			runtimeType: type,
 			enabled: true,
 			status: installed ? "installed" : "install_failed",
 			executionUser: execution.executionUser,
@@ -570,6 +629,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	} catch (error) {
 		return finish({
 			runtime: name,
+			runtimeType: type,
 			enabled: true,
 			status: "install_failed",
 			executionUser: null,
@@ -589,9 +649,11 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 }
 
 function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"][string]) {
+	const type = runtimeTypeForEntry(name, runtime);
 	if (!runtime.enabled) {
 		return {
 			runtime: name,
+			runtimeType: type,
 			enabled: false,
 			status: "disabled",
 			executionUser: null,
@@ -606,10 +668,29 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 			error: null,
 		} satisfies RuntimeInstallObservation;
 	}
+	if (isExternalRuntime(runtime)) {
+		return {
+			runtime: name,
+			runtimeType: type,
+			enabled: true,
+			status: "external",
+			executionUser: null,
+			commandPath: null,
+			appRoot: null,
+			install: null,
+			installerUrl: null,
+			executedInstallerUrl: null,
+			exitCode: null,
+			stdoutTail: null,
+			stderrTail: null,
+			error: null,
+		} satisfies RuntimeInstallObservation;
+	}
 	if (!runtime.install) {
 		if (runtime.run?.command?.trim()) {
 			return {
 				runtime: name,
+				runtimeType: type,
 				enabled: true,
 				status: "configured",
 				executionUser: null,
@@ -626,6 +707,7 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 		}
 		return {
 			runtime: name,
+			runtimeType: type,
 			enabled: true,
 			status: "install_failed",
 			executionUser: null,
@@ -640,7 +722,148 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 			error: `runtime ${name} is enabled but missing install metadata`,
 		} satisfies RuntimeInstallObservation;
 	}
-	return runOfficialInstaller(name, runtime.install);
+	return runOfficialInstaller(name, type, runtime.install);
+}
+
+function observeRuntimeVersion(
+	name: string,
+	runtime: RuntimeEntry,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+): RuntimeVersionObservation {
+	const desired =
+		runtime.version?.desired ??
+		runtime.image?.tag ??
+		runtime.updateChannel ??
+		runtime.image?.digest ??
+		runtime.image?.ref ??
+		null;
+	const explicitObserved = runtime.version?.observed ?? null;
+	if (explicitObserved) {
+		return {
+			desired,
+			observed: explicitObserved,
+			observedAt: runtime.version?.observedAt ?? null,
+			upgradeAvailable: runtime.version?.upgradeAvailable ?? null,
+			upgradePolicy: runtime.version?.upgradePolicy ?? null,
+			source: "manifest",
+			error: null,
+		};
+	}
+	if (
+		!runtime.enabled ||
+		observation.status === "disabled" ||
+		observation.status === "install_failed"
+	) {
+		return {
+			desired,
+			observed: null,
+			observedAt: null,
+			upgradeAvailable: runtime.version?.upgradeAvailable ?? null,
+			upgradePolicy: runtime.version?.upgradePolicy ?? null,
+			source: "unavailable",
+			error: observation.error,
+		};
+	}
+
+	const observed = runRuntimeVersionCommand(name, runtime, observation, manifest, workspaceRoot);
+	const upgradeAvailable =
+		runtime.version?.upgradeAvailable ??
+		(observed.observed && desired ? observed.observed !== desired : null);
+	return {
+		desired,
+		observed: observed.observed,
+		observedAt: observed.observed ? new Date().toISOString() : null,
+		upgradeAvailable,
+		upgradePolicy: runtime.version?.upgradePolicy ?? null,
+		source: observed.source,
+		error: observed.error,
+	};
+}
+
+function runRuntimeVersionCommand(
+	name: string,
+	runtime: RuntimeEntry,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+): Pick<RuntimeVersionObservation, "observed" | "source" | "error"> {
+	const timeout = Number.parseInt(process.env.CLAWDI_RUNTIME_VERSION_TIMEOUT ?? "5000", 10);
+	const home = runtimeProjectionHome(name, runtime, manifest);
+	const run = (
+		command: string,
+		args: string[],
+		env: NodeJS.ProcessEnv,
+		cwd: string,
+		source: RuntimeVersionObservation["source"],
+	): Pick<RuntimeVersionObservation, "observed" | "source" | "error"> => {
+		try {
+			const output = execFileSync(command, args, {
+				env,
+				cwd,
+				timeout: Number.isFinite(timeout) && timeout > 0 ? timeout : 5000,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			}).trim();
+			return { observed: firstVersionLine(output), source, error: null };
+		} catch (error) {
+			return {
+				observed: null,
+				source,
+				error: commandErrorText(error) || (error instanceof Error ? error.message : String(error)),
+			};
+		}
+	};
+
+	const explicit = runtime.execution?.versionCommand;
+	if (explicit) {
+		return run(
+			explicit.command,
+			explicit.args ?? [],
+			{
+				...process.env,
+				HOME: home,
+				...externalRuntimeExecutionEnvironment(name, runtime),
+				...(explicit.env ?? {}),
+			},
+			explicit.cwd ?? workspaceRoot,
+			"version-command",
+		);
+	}
+	if (isExternalRuntime(runtime) && runtime.execution?.controlCommand) {
+		const control = runtime.execution.controlCommand;
+		return run(
+			control.command,
+			[...(control.args ?? []), "--version"],
+			{
+				...process.env,
+				HOME: home,
+				...externalRuntimeExecutionEnvironment(name, runtime),
+				...(control.env ?? {}),
+			},
+			control.cwd ?? workspaceRoot,
+			"control-command",
+		);
+	}
+	if (observation.commandPath) {
+		return run(
+			observation.commandPath,
+			["--version"],
+			{ ...process.env, HOME: home },
+			workspaceRoot,
+			"native-cli",
+		);
+	}
+	return { observed: null, source: "unavailable", error: null };
+}
+
+function firstVersionLine(output: string): string | null {
+	const line = output
+		.split(/\r?\n/)
+		.map((value) => value.trim())
+		.find(Boolean);
+	return line || null;
 }
 
 function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
@@ -648,16 +871,18 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 		typeof manifest.projection === "object" && manifest.projection !== null
 			? manifest.projection
 			: undefined;
+	const type = runtimeTypeForEntry(name, manifest.runtimes[name]);
 	return {
 		schemaVersion: "clawdi.runtimeProjection.v1",
 		runtime: name,
+		runtimeType: type,
 		generation: manifest.generation,
 		instanceId: manifest.instanceId,
 		managedBy: "clawdi runtime init",
 		target:
-			name === "openclaw"
+			type === "openclaw"
 				? "openclaw config patch --stdin --replace-path models.providers"
-				: name === "hermes"
+				: type === "hermes"
 					? "official Hermes user config"
 					: "clawdi mcp",
 		projection: projection ?? null,
@@ -781,43 +1006,98 @@ function hostedProviderSecretEnv(
 	return env;
 }
 
+function externalRuntimeExecutionEnvironment(
+	name: string,
+	runtime: RuntimeEntry,
+): Record<string, string> {
+	const env: Record<string, string> = {};
+	const type = runtimeTypeForEntry(name, runtime);
+	if (type === "openclaw") {
+		const stateDir = runtime.execution?.stateDir ?? externalRuntimeDefaultStateDir(type, runtime);
+		if (stateDir) env.OPENCLAW_STATE_DIR = stateDir;
+	}
+	if (type === "hermes") {
+		const home = runtime.execution?.home ?? runtime.execution?.stateDir;
+		if (home) env.HERMES_HOME = home;
+	}
+	return env;
+}
+
+function externalRuntimeDefaultStateDir(
+	type: RuntimeType | null,
+	runtime: RuntimeEntry,
+): string | null {
+	const home = runtime.execution?.home;
+	if (!home) return null;
+	if (type === "openclaw") return join(home, ".openclaw");
+	if (type === "hermes") return home;
+	return null;
+}
+
+function runtimeProjectionHome(
+	name: string,
+	runtime: RuntimeEntry,
+	manifest: RuntimeManifest,
+): string {
+	if (isExternalRuntime(runtime)) {
+		const explicit = runtime.execution?.home ?? runtime.execution?.stateDir;
+		if (explicit) return explicit;
+	}
+	const type = runtimeTypeForEntry(name, runtime);
+	if (type === "hermes") {
+		return (
+			process.env.HERMES_HOME?.trim() ||
+			join(projectionSystemHome(manifest) ?? process.env.HOME ?? "", ".hermes")
+		);
+	}
+	return projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+}
+
+function hermesConfigPath(name: string, runtime: RuntimeEntry, manifest: RuntimeManifest): string {
+	return join(runtimeProjectionHome(name, runtime, manifest), "config.yaml");
+}
+
 function isEnvKey(value: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function applyHostedAiProviderProjection(
 	name: string,
+	runtime: RuntimeEntry,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 ): string | null {
-	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+	if (!observation.enabled || observation.status === "install_failed") {
 		return null;
 	}
+	const type = runtimeTypeForEntry(name, runtime);
 	const catalog = hostedAiProviderCatalog(manifest, name);
 	if (!catalog) return null;
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
-	if (name === "hermes") {
+	const home = runtimeProjectionHome(name, runtime, manifest);
+	if (type === "hermes") {
 		const projection = buildAgentTargetProjection("hermes", catalog);
 		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-		const configPath = join(home, ".hermes", "config.yaml");
+		const configPath = hermesConfigPath(name, runtime, manifest);
 		mergeHermesConfig(configPath, file.content);
 		makeRuntimeUserOwned(configPath);
 		return configPath;
 	}
-	if (name === "openclaw") {
+	if (type === "openclaw") {
 		const projection = buildAgentTargetProjection("openclaw", catalog);
 		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-		runRuntimeUserCommand(
-			observation.commandPath,
+		runRuntimeControlCommand(
+			name,
+			runtime,
+			observation,
 			["config", "patch", "--stdin", "--replace-path", "models.providers"],
 			file.content,
 			home,
 			workspaceRoot,
 		);
-		return observation.commandPath;
+		return observation.commandPath ?? runtime.execution?.controlCommand?.command ?? null;
 	}
 	return null;
 }
@@ -833,27 +1113,31 @@ function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unkn
 
 function applyHostedChannelProjection(
 	name: string,
+	runtime: RuntimeEntry,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 ): string | null {
-	if (name !== "openclaw") return null;
-	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+	const type = runtimeTypeForEntry(name, runtime);
+	if (type !== "openclaw") return null;
+	if (!observation.enabled || observation.status === "install_failed") {
 		return null;
 	}
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return null;
 
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
-	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
-	runRuntimeUserCommand(
-		observation.commandPath,
+	const home = runtimeProjectionHome(name, runtime, manifest);
+	installOpenClawChannelPlugins(name, runtime, observation, channels, home, workspaceRoot);
+	runRuntimeControlCommand(
+		name,
+		runtime,
+		observation,
 		["config", "patch", "--stdin"],
 		`${JSON.stringify(openClawManagedChannelsPatch(channels), null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
-	return observation.commandPath;
+	return observation.commandPath ?? runtime.execution?.controlCommand?.command ?? null;
 }
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
@@ -880,7 +1164,9 @@ function openClawManagedChannelDeletes(): Record<string, null> {
 }
 
 function installOpenClawChannelPlugins(
-	commandPath: string,
+	name: string,
+	runtime: RuntimeEntry,
+	observation: RuntimeInstallObservation,
 	channels: Record<string, unknown>,
 	home: string,
 	workspaceRoot: string,
@@ -888,12 +1174,14 @@ function installOpenClawChannelPlugins(
 	for (const channel of Object.keys(channels).sort()) {
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
-		runPluginInstallWithFallback(commandPath, specs, home, workspaceRoot);
+		runPluginInstallWithFallback(name, runtime, observation, specs, home, workspaceRoot);
 	}
 }
 
 function runPluginInstallWithFallback(
-	commandPath: string,
+	name: string,
+	runtime: RuntimeEntry,
+	observation: RuntimeInstallObservation,
 	specs: readonly string[],
 	home: string,
 	workspaceRoot: string,
@@ -901,7 +1189,15 @@ function runPluginInstallWithFallback(
 	let lastError: unknown = null;
 	for (const spec of specs) {
 		try {
-			runRuntimeUserCommand(commandPath, ["plugins", "install", spec], "", home, workspaceRoot);
+			runRuntimeControlCommand(
+				name,
+				runtime,
+				observation,
+				["plugins", "install", spec],
+				"",
+				home,
+				workspaceRoot,
+			);
 			return;
 		} catch (error) {
 			if (isOpenClawPluginAlreadyInstalledError(error)) return;
@@ -950,45 +1246,92 @@ function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
 	return Boolean(projection && (projection.mcp !== undefined || projection.tools !== undefined));
 }
 
+type HostedMcpServerConfig =
+	| { command: string; args: string[] }
+	| { url: string; transport?: "streamable-http"; headers?: Record<string, string> };
+
+function backendMcpUrl(manifest: RuntimeManifest): string {
+	const url = new URL(manifest.controlPlane.apiUrl);
+	url.pathname = "/mcp/clawdi";
+	url.search = "";
+	url.hash = "";
+	return url.toString();
+}
+
 function hostedMcpServerConfig(
 	manifest: RuntimeManifest,
 	authTokenFile: string,
-): { command: string; args: string[] } {
+): HostedMcpServerConfig {
 	return {
 		command: "clawdi",
 		args: ["mcp", "--api-url", manifest.controlPlane.apiUrl, "--auth-token-file", authTokenFile],
 	};
 }
 
+function externalHostedMcpServerConfig(
+	runtime: RuntimeEntry,
+	manifest: RuntimeManifest,
+	daemonAuthTokenFile?: string | null,
+	mcpHttpAuthTokenFile?: string | null,
+): HostedMcpServerConfig | null {
+	const source = runtime.execution?.mcp?.source ?? "backend-direct";
+	const url =
+		source === "sidecar-local"
+			? (runtime.execution?.mcp?.url?.trim() ?? "")
+			: runtime.execution?.mcp?.url?.trim() || backendMcpUrl(manifest);
+	if (!url) return null;
+	const tokenFile = source === "sidecar-local" ? mcpHttpAuthTokenFile : daemonAuthTokenFile;
+	const token = tokenFile ? readFileSync(tokenFile, "utf-8").trim() : "";
+	return {
+		url,
+		transport: runtime.execution?.mcp?.transport ?? "streamable-http",
+		...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+	};
+}
+
 function applyHostedMcpProjection(
 	name: string,
+	runtime: RuntimeEntry,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
+	mcpHttpAuthTokenFile: string | null,
 ): string | null {
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	const home = runtimeProjectionHome(name, runtime, manifest);
 	if (!hostedMcpProjectionDeclared(manifest)) return null;
 	if (!hostedMcpProjectionEnabled(manifest)) {
-		return removeHostedMcpProjection(name, observation, manifest, home, workspaceRoot);
+		return removeHostedMcpProjection(name, runtime, observation, manifest, home, workspaceRoot);
 	}
-	if (!daemonAuthTokenFile) return null;
-	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
+	if (!observation.enabled || observation.status === "install_failed") {
 		return null;
 	}
-	const server = hostedMcpServerConfig(manifest, daemonAuthTokenFile);
-	if (name === "openclaw") {
-		runRuntimeUserCommand(
-			observation.commandPath,
+	const server = isExternalRuntime(runtime)
+		? externalHostedMcpServerConfig(runtime, manifest, daemonAuthTokenFile, mcpHttpAuthTokenFile)
+		: daemonAuthTokenFile
+			? hostedMcpServerConfig(manifest, daemonAuthTokenFile)
+			: null;
+	if (!server) {
+		if (isExternalRuntime(runtime)) {
+			throw new Error(`runtime ${name} external MCP projection requires MCP auth token`);
+		}
+		return null;
+	}
+	const type = runtimeTypeForEntry(name, runtime);
+	if (type === "openclaw") {
+		runRuntimeControlCommand(
+			name,
+			runtime,
+			observation,
 			["mcp", "set", "clawdi", JSON.stringify(server)],
 			"",
 			home,
 			workspaceRoot,
 		);
-		return observation.commandPath;
+		return observation.commandPath ?? runtime.execution?.controlCommand?.command ?? null;
 	}
-	if (name === "hermes") {
-		const configPath = join(home, ".hermes", "config.yaml");
+	if (type === "hermes") {
+		const configPath = hermesConfigPath(name, runtime, manifest);
 		mergeHermesMcpServer(configPath, "clawdi", server);
 		makeRuntimeUserOwned(configPath);
 		return configPath;
@@ -998,19 +1341,31 @@ function applyHostedMcpProjection(
 
 function removeHostedMcpProjection(
 	name: string,
+	runtime: RuntimeEntry,
 	observation: RuntimeInstallObservation,
 	_manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
 ): string | null {
-	if (name === "openclaw") {
-		const commandPath = observation.commandPath ?? runtimeCommandPath(name, home);
-		if (!commandPath || !executableExists(commandPath)) return null;
-		runRuntimeUserCommand(commandPath, ["mcp", "unset", "clawdi"], "", home, workspaceRoot);
-		return commandPath;
+	const type = runtimeTypeForEntry(name, runtime);
+	if (type === "openclaw") {
+		if (!isExternalRuntime(runtime)) {
+			const commandPath = observation.commandPath ?? runtimeCommandPath(type, home);
+			if (!commandPath || !executableExists(commandPath)) return null;
+		}
+		runRuntimeControlCommand(
+			name,
+			runtime,
+			observation,
+			["mcp", "unset", "clawdi"],
+			"",
+			home,
+			workspaceRoot,
+		);
+		return observation.commandPath ?? runtime.execution?.controlCommand?.command ?? null;
 	}
-	if (name === "hermes") {
-		const configPath = join(home, ".hermes", "config.yaml");
+	if (type === "hermes") {
+		const configPath = hermesConfigPath(name, runtime, _manifest);
 		removeHermesMcpServer(configPath, "clawdi");
 		makeRuntimeUserOwned(configPath);
 		return configPath;
@@ -1069,6 +1424,41 @@ function runRuntimeUserCommand(
 	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
 }
 
+function runRuntimeControlCommand(
+	name: string,
+	runtime: RuntimeEntry,
+	observation: RuntimeInstallObservation,
+	args: string[],
+	stdin: string,
+	home: string,
+	cwd: string,
+): void {
+	if (isExternalRuntime(runtime)) {
+		const control = runtime.execution?.controlCommand;
+		if (!control) {
+			throw new Error(
+				`runtime ${name} external execution requires execution.controlCommand for native CLI projection`,
+			);
+		}
+		execFileSync(control.command, [...(control.args ?? []), ...args], {
+			input: stdin,
+			env: {
+				...process.env,
+				HOME: home,
+				...externalRuntimeExecutionEnvironment(name, runtime),
+				...(control.env ?? {}),
+			},
+			cwd: control.cwd ?? cwd,
+			stdio: "pipe",
+		});
+		return;
+	}
+	if (!observation.commandPath) {
+		throw new Error(`runtime ${name} native CLI is unavailable`);
+	}
+	runRuntimeUserCommand(observation.commandPath, args, stdin, home, cwd);
+}
+
 function clearMitmProfileBundle(paths: RuntimePaths): null {
 	rmSync(paths.mitmProfileBundle, { force: true });
 	return null;
@@ -1105,10 +1495,34 @@ const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp", "bluebubbl
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
 	if (manifest.liveSync?.enabled === false) return [];
-	const agents = manifest.liveSync?.agents ?? [];
-	const byAgent = new Map<LiveSyncAgent["agentType"], LiveSyncAgent>();
-	for (const agent of agents) byAgent.set(agent.agentType, agent);
-	return [...byAgent.values()].sort((a, b) => a.agentType.localeCompare(b.agentType));
+	const agents = [...runtimeTargetLiveSyncAgents(manifest), ...(manifest.liveSync?.agents ?? [])];
+	const byAgent = new Map<string, LiveSyncAgent>();
+	for (const agent of agents) byAgent.set(liveSyncAgentKey(agent), agent);
+	return [...byAgent.values()].sort((a, b) =>
+		liveSyncAgentKey(a).localeCompare(liveSyncAgentKey(b)),
+	);
+}
+
+function runtimeTargetLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
+	const targets = Object.entries(manifest.runtimes)
+		.map(([name, runtime]) => {
+			const environmentId = runtime.environmentId;
+			const type = runtimeTypeForEntry(name, runtime);
+			if (!runtime.enabled || !environmentId || type === null) return null;
+			return { environmentId, name, type };
+		})
+		.filter((target): target is { environmentId: string; name: string; type: RuntimeType } =>
+			Boolean(target),
+		);
+	return targets.map((target) => ({
+		agentType: target.type,
+		agentId: target.name,
+		environmentId: target.environmentId,
+	}));
+}
+
+function liveSyncAgentKey(agent: LiveSyncAgent): RuntimeName {
+	return runtimeNameSchema.parse(agent.agentId);
 }
 
 function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
@@ -1116,28 +1530,40 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	mkdirSync(envDir, { recursive: true });
 	makeRuntimeUserOwned(envDir);
 	const agents = desiredLiveSyncAgents(manifest);
-	const desiredTypes = new Set(agents.map((agent) => agent.agentType));
+	const desiredKeys = new Set(agents.map((agent) => liveSyncAgentKey(agent)));
 	const staleCandidates = new Set<RuntimeName>([
 		...readLiveSyncEnvironmentIndex(paths),
 		...MANAGED_LIVE_SYNC_AGENTS,
 	] as RuntimeName[]);
-	for (const agentType of staleCandidates) {
-		if (!desiredTypes.has(agentType)) {
-			rmSync(join(envDir, `${agentType}.json`), { force: true });
+	for (const key of staleCandidates) {
+		if (!desiredKeys.has(key)) {
+			rmSync(join(envDir, `${key}.json`), { force: true });
 		}
 	}
 	const written: string[] = [];
 	for (const agent of agents) {
-		const path = join(envDir, `${agent.agentType}.json`);
+		const key = liveSyncAgentKey(agent);
+		const runtime = manifest.runtimes[key];
+		const type = runtime ? runtimeTypeForEntry(key, runtime) : agent.agentType;
+		const path = join(envDir, `${key}.json`);
 		writePrivateFileAtomic(
 			path,
 			`${JSON.stringify(
 				{
 					id: agent.environmentId,
+					agentId: key,
 					agentType: agent.agentType,
 					managedBy: "clawdi runtime init",
 					deploymentId: manifest.deploymentId,
 					instanceId: manifest.instanceId,
+					executionMode: runtime ? runtimeExecutionMode(runtime) : null,
+					home: runtime ? runtimeProjectionHome(key, runtime, manifest) : null,
+					stateDir: runtime
+						? (runtime.execution?.stateDir ?? externalRuntimeDefaultStateDir(type, runtime))
+						: null,
+					workspace: runtime?.execution?.workspace ?? null,
+					image: runtime?.image ?? null,
+					version: runtime?.version ?? null,
 				},
 				null,
 				2,
@@ -1147,7 +1573,7 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 		makeRuntimeUserOwned(path);
 		written.push(path);
 	}
-	writeLiveSyncEnvironmentIndex(desiredTypes, paths);
+	writeLiveSyncEnvironmentIndex(desiredKeys, agents, paths);
 	return written;
 }
 
@@ -1160,19 +1586,24 @@ function readLiveSyncEnvironmentIndex(paths: RuntimePaths): RuntimeName[] {
 	if (!existsSync(path)) return [];
 	try {
 		const parsed = liveSyncEnvironmentIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
-		return parsed.agentTypes;
+		return [...new Set([...parsed.agentIds, ...parsed.agentTypes])];
 	} catch {
 		return [];
 	}
 }
 
-function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: RuntimePaths): void {
+function writeLiveSyncEnvironmentIndex(
+	agentIds: Set<RuntimeName>,
+	agents: LiveSyncAgent[],
+	paths: RuntimePaths,
+): void {
 	writePrivateFileAtomic(
 		liveSyncEnvironmentIndexPath(paths),
 		`${JSON.stringify(
 			{
 				schemaVersion: "clawdi.liveSyncEnvironments.v1",
-				agentTypes: [...agentTypes].sort(),
+				agentIds: [...agentIds].sort(),
+				agentTypes: [...new Set(agents.map((agent) => agent.agentType))].sort(),
 			},
 			null,
 			2,
@@ -1192,6 +1623,17 @@ function writeDaemonAuthToken(paths: RuntimePaths): string | null {
 		return null;
 	}
 	rmSync(legacyPath, { force: true });
+	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
+	makeRootOwned(dirname(path));
+	makeRootOwned(path);
+	return path;
+}
+
+function writeMcpHttpAuthToken(paths: RuntimePaths): string {
+	const path = paths.mcpHttpAuthToken;
+	const explicit = process.env[MCP_HTTP_AUTH_TOKEN_ENV]?.trim();
+	const existing = existsSync(path) ? readFileSync(path, "utf-8").trim() : "";
+	const token = explicit || existing || randomBytes(32).toString("base64url");
 	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
 	makeRootOwned(dirname(path));
 	makeRootOwned(path);
@@ -1386,6 +1828,75 @@ function daemonProgramRevision(manifest: RuntimeManifest): string {
 	});
 }
 
+function mcpHttpProgramRevision(manifest: RuntimeManifest): string {
+	return revisionHash({
+		clawdiCli: manifest.clawdiCli ?? null,
+		controlPlane: manifest.controlPlane,
+		mcp: manifest.projection?.mcp ?? null,
+		tools: manifest.projection?.tools ?? null,
+		runtimes: Object.fromEntries(
+			Object.entries(manifest.runtimes).map(([name, runtime]) => [
+				name,
+				isExternalRuntime(runtime) ? (runtime.execution?.mcp ?? null) : null,
+			]),
+		),
+	});
+}
+
+function externalMcpHttpEndpoint(
+	manifest: RuntimeManifest,
+): { host: string; port: number; path: string } | null {
+	if (!hostedMcpProjectionEnabled(manifest)) return null;
+	const endpoints: Array<{
+		runtime: string;
+		hostname: string;
+		port: number;
+		path: string;
+		url: string;
+	}> = [];
+	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
+		if (!runtime.enabled || !isExternalRuntime(runtime)) continue;
+		if (runtime.execution?.mcp?.source !== "sidecar-local") continue;
+		const rawUrl = runtime.execution.mcp.url?.trim();
+		if (!rawUrl) continue;
+		const url = new URL(rawUrl);
+		if (url.protocol !== "http:") {
+			throw new Error(`sidecar-local MCP URL must use http://: ${rawUrl}`);
+		}
+		const port = Number.parseInt(url.port || "80", 10);
+		if (!Number.isInteger(port) || port < 1 || port > 65535) {
+			throw new Error(`sidecar-local MCP URL has an invalid TCP port: ${rawUrl}`);
+		}
+		endpoints.push({
+			runtime: name,
+			hostname: url.hostname,
+			port,
+			path: url.pathname || "/mcp",
+			url: rawUrl,
+		});
+	}
+	if (endpoints.length === 0) return null;
+	const first = endpoints[0];
+	const mismatch = endpoints.find(
+		(endpoint) => endpoint.port !== first.port || endpoint.path !== first.path,
+	);
+	if (mismatch) {
+		throw new Error(
+			`sidecar-local MCP runtimes must share one sidecar port and path; ${first.runtime} uses ${first.url}, ${mismatch.runtime} uses ${mismatch.url}`,
+		);
+	}
+	const explicitHost = process.env.CLAWDI_MCP_HTTP_LISTEN_HOST?.trim();
+	const allHostsAreLocal = endpoints.every((endpoint) =>
+		["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(endpoint.hostname),
+	);
+	const host = explicitHost || (allHostsAreLocal ? first.hostname : "0.0.0.0");
+	return {
+		host,
+		port: first.port,
+		path: first.path,
+	};
+}
+
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -1523,6 +2034,26 @@ function runtimeSupervisorProgramRevision(
 	return runtimeProgramRevision(manifest, program.runtime, secretValues);
 }
 
+function supervisorProgramSuffix(value: string): string {
+	return value.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+function liveSyncDaemonEnvironment(
+	agent: LiveSyncAgent,
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+): Record<string, string> {
+	const runtime = manifest.runtimes[agent.agentId];
+	return {
+		CLAWDI_AGENT_ID: agent.agentId,
+		CLAWDI_AGENT_TYPE: agent.agentType,
+		CLAWDI_ENVIRONMENT_ID: agent.environmentId,
+		CLAWDI_STATE_DIR: join(paths.serviceStateRoot, "serve"),
+		CLAWDI_DAEMON_RPC_DISABLED: "1",
+		...(runtime ? externalRuntimeExecutionEnvironment(agent.agentId, runtime) : {}),
+	};
+}
+
 function writeSupervisorConfig(
 	runtimePrograms: RuntimeSupervisorProgram[],
 	mitmProgram: RuntimeMitmSupervisorProgram | null,
@@ -1530,6 +2061,7 @@ function writeSupervisorConfig(
 	paths: RuntimePaths,
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
+	mcpHttpAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
 ): string {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
@@ -1552,17 +2084,12 @@ function writeSupervisorConfig(
 		CLAWDI_AUTH_TOKEN: "",
 		[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
 	});
-	const daemonEnvironment = supervisorEnvironment({
-		...commonEnvironment,
-		CLAWDI_SERVE_MODE: "container",
-		CLAWDI_API_URL: manifest.controlPlane.apiUrl,
-		CLAWDI_NO_AUTO_UPDATE: "1",
-		CLAWDI_NO_UPDATE_CHECK: "1",
-		CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
-	});
-	const shouldRunDaemon =
-		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
+	const liveSyncAgents = desiredLiveSyncAgents(manifest);
+	const shouldRunDaemon = daemonAuthTokenFile !== null && liveSyncAgents.length > 0;
 	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
+	const mcpHttpEndpoint = externalMcpHttpEndpoint(manifest);
+	const shouldRunMcpHttp =
+		daemonAuthTokenFile !== null && mcpHttpAuthTokenFile !== null && mcpHttpEndpoint !== null;
 	const shouldRunMitm = mitmProgram !== null && runtimePrograms.length > 0;
 	const shouldRunSidecar = shouldRunBridge || shouldRunMitm;
 	const lines = [
@@ -1588,7 +2115,7 @@ function writeSupervisorConfig(
 		"",
 	];
 
-	if (runtimePrograms.length === 0 && !shouldRunDaemon) {
+	if (runtimePrograms.length === 0 && !shouldRunDaemon && !shouldRunMcpHttp && !shouldRunSidecar) {
 		lines.push("; No enabled agent runtimes in the current manifest.", "");
 	}
 
@@ -1613,9 +2140,59 @@ function writeSupervisorConfig(
 	}
 
 	if (shouldRunDaemon && daemonAuthTokenFile) {
+		const script = `export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(
+			daemonAuthTokenFile,
+		)})"; exec /usr/bin/env clawdi daemon run`;
+		for (const agent of liveSyncAgents) {
+			const daemonEnvironment = supervisorEnvironment({
+				...commonEnvironment,
+				...liveSyncDaemonEnvironment(agent, manifest, paths),
+				CLAWDI_SERVE_MODE: "container",
+				CLAWDI_API_URL: manifest.controlPlane.apiUrl,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+				CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
+			});
+			lines.push(
+				`[program:clawdi-daemon-${supervisorProgramSuffix(agent.agentId)}]`,
+				`command=/bin/sh -lc ${shellQuote(script)}`,
+				`directory=${workspaceRoot}`,
+				"autostart=true",
+				"autorestart=true",
+				"startsecs=2",
+				"startretries=5",
+				"stopasgroup=true",
+				"killasgroup=true",
+				"stdout_logfile=/dev/fd/1",
+				"stdout_logfile_maxbytes=0",
+				"stderr_logfile=/dev/fd/2",
+				"stderr_logfile_maxbytes=0",
+				`environment=${daemonEnvironment}`,
+				"",
+			);
+		}
+	}
+
+	if (shouldRunMcpHttp && daemonAuthTokenFile && mcpHttpAuthTokenFile && mcpHttpEndpoint) {
+		const script = [
+			`export CLAWDI_AUTH_TOKEN="$(cat ${shellQuote(daemonAuthTokenFile)})"`,
+			`export ${MCP_HTTP_AUTH_TOKEN_ENV}="$(cat ${shellQuote(mcpHttpAuthTokenFile)})"`,
+			`exec /usr/bin/env clawdi mcp http --host ${shellQuote(mcpHttpEndpoint.host)} --port ${shellQuote(
+				String(mcpHttpEndpoint.port),
+			)} --path ${shellQuote(mcpHttpEndpoint.path)} --auth-token-file ${shellQuote(
+				mcpHttpAuthTokenFile,
+			)}`,
+		].join("; ");
+		const mcpHttpEnvironment = supervisorEnvironment({
+			...commonEnvironment,
+			CLAWDI_API_URL: manifest.controlPlane.apiUrl,
+			CLAWDI_NO_AUTO_UPDATE: "1",
+			CLAWDI_NO_UPDATE_CHECK: "1",
+			CLAWDI_RUNTIME_REV: mcpHttpProgramRevision(manifest),
+		});
 		lines.push(
-			"[program:clawdi-daemon]",
-			`command=/usr/bin/env clawdi daemon run --auth-token-file ${shellQuote(daemonAuthTokenFile)}`,
+			"[program:clawdi-mcp-http]",
+			`command=/bin/sh -lc ${shellQuote(script)}`,
 			`directory=${workspaceRoot}`,
 			"autostart=true",
 			"autorestart=true",
@@ -1627,7 +2204,7 @@ function writeSupervisorConfig(
 			"stdout_logfile_maxbytes=0",
 			"stderr_logfile=/dev/fd/2",
 			"stderr_logfile_maxbytes=0",
-			`environment=${daemonEnvironment}`,
+			`environment=${mcpHttpEnvironment}`,
 			"",
 		);
 	}
@@ -1701,18 +2278,54 @@ function writeSupervisorConfig(
 	return paths.supervisorConfig;
 }
 
-function shouldSuperviseRuntime(runtime: string, manifest: RuntimeManifest): boolean {
-	const desired = manifest.runtimes[runtime];
-	if (!desired?.enabled) return false;
-	return isSupportedRuntimeName(runtime) || Boolean(desired.run?.command?.trim());
-}
-
 function runtimeServiceProgramName(runtime: string, service: string): string {
 	return `clawdi-${supervisorProgramSegment(runtime)}-${supervisorProgramSegment(service)}`;
 }
 
 function supervisorProgramSegment(value: string): string {
 	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
+}
+
+function shouldWriteRuntimeRunConfig(name: string, runtime: RuntimeEntry): boolean {
+	if (isExternalRuntime(runtime)) return false;
+	return runtimeNameSchema.safeParse(name).success;
+}
+
+function writeRuntimeCommandShims(commands: Iterable<RuntimeName>, paths: RuntimePaths): void {
+	const binDir = runtimeManagedBinDir(paths);
+	const dispatcherPath = join(binDir, ".clawdi-runtime-command-shim");
+	const active: Set<RuntimeName> = new Set(
+		[...commands]
+			.filter((command) => command !== "clawdi")
+			.filter((command) => isSupportedRuntimeName(command))
+			.sort(),
+	);
+	const previous = readRuntimeCommandShimIndex(paths);
+	const staleCandidates = new Set<RuntimeName>([
+		...previous,
+		"codex",
+		...SUPPORTED_RUNTIME_NAMES,
+	] as RuntimeName[]);
+	for (const command of staleCandidates) {
+		if (!active.has(command)) rmSync(join(binDir, command), { force: true });
+	}
+	if (active.size === 0) {
+		rmSync(dispatcherPath, { force: true });
+		rmSync(runtimeCommandShimIndexPath(paths), { force: true });
+		return;
+	}
+	writePrivateFileAtomic(dispatcherPath, runtimeCommandShimScript(paths), {
+		mode: 0o755,
+		dirMode: 0o755,
+	});
+	makeRuntimeUserOwned(dispatcherPath);
+	for (const command of active) {
+		const shimPath = join(binDir, command);
+		rmSync(shimPath, { force: true });
+		symlinkSync(".clawdi-runtime-command-shim", shimPath);
+		makeRuntimeUserOwned(shimPath);
+	}
+	writeRuntimeCommandShimIndex(active, paths);
 }
 
 export function runtimeCommandShimScript(paths: RuntimePaths): string {
@@ -1737,6 +2350,36 @@ export function runtimeCommandShimScript(paths: RuntimePaths): string {
 		`exec ${shellQuote(paths.cliManagedBin)} run -- "$command_name" "$@"`,
 		"",
 	].join("\n");
+}
+
+function runtimeCommandShimIndexPath(paths: RuntimePaths): string {
+	return join(paths.serviceStateRoot, "config", "runtime-command-shims.json");
+}
+
+function readRuntimeCommandShimIndex(paths: RuntimePaths): RuntimeName[] {
+	const path = runtimeCommandShimIndexPath(paths);
+	if (!existsSync(path)) return [];
+	try {
+		const parsed = runtimeCommandShimIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
+		return parsed.commands;
+	} catch {
+		return [];
+	}
+}
+
+function writeRuntimeCommandShimIndex(commands: Set<RuntimeName>, paths: RuntimePaths): void {
+	writePrivateFileAtomic(
+		runtimeCommandShimIndexPath(paths),
+		`${JSON.stringify(
+			{
+				schemaVersion: "clawdi.runtimeCommandShims.v1",
+				commands: [...commands].sort(),
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o644, dirMode: 0o755 },
+	);
 }
 
 function hostedRuntimeBridgeToken(): string {
@@ -1813,6 +2456,7 @@ export function convergeRuntimeManifest(
 	const runConfigs: string[] = [];
 	const runtimeSupervisorPrograms: RuntimeSupervisorProgram[] = [];
 	const installErrors: string[] = [];
+	const runtimeVersionObservations: Record<string, RuntimeVersionObservation> = {};
 
 	mkdirSync(workspaceRoot, { recursive: true });
 	makeRuntimeUserOwned(paths.userHome);
@@ -1845,14 +2489,27 @@ export function convergeRuntimeManifest(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		runtimes: Object.fromEntries(
-			Object.entries(manifest.runtimes).map(([name, runtime]) => [
-				name,
-				{
-					enabled: runtime.enabled,
-					updateChannel: runtime.updateChannel ?? null,
-					workspaceRoot,
-				},
-			]),
+			Object.entries(manifest.runtimes).map(([name, runtime]) => {
+				const type = runtimeTypeForEntry(name, runtime);
+				return [
+					name,
+					{
+						runtimeType: type,
+						displayName: runtime.displayName ?? null,
+						environmentId: runtime.environmentId ?? null,
+						enabled: runtime.enabled,
+						image: runtime.image ?? null,
+						version: runtime.version ?? null,
+						updateChannel: runtime.updateChannel ?? null,
+						executionMode: runtimeExecutionMode(runtime),
+						externalHome: isExternalRuntime(runtime) ? (runtime.execution?.home ?? null) : null,
+						externalStateDir: isExternalRuntime(runtime)
+							? (runtime.execution?.stateDir ?? externalRuntimeDefaultStateDir(type, runtime))
+							: null,
+						workspaceRoot,
+					},
+				];
+			}),
 		),
 	});
 	writeJsonFile(paths.instanceData, {
@@ -1891,12 +2548,25 @@ export function convergeRuntimeManifest(
 	);
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
+	const mcpHttpAuthTokenFile =
+		daemonAuthTokenFile !== null && externalMcpHttpEndpoint(manifest) !== null
+			? writeMcpHttpAuthToken(paths)
+			: null;
 	const writtenRunConfigIds = new Set<string>();
+	const commandShims = new Set<RuntimeName>();
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
 	)) {
 		const observation = observeRuntimeInstall(name, runtime);
+		const versionObservation = observeRuntimeVersion(
+			name,
+			runtime,
+			observation,
+			manifest,
+			workspaceRoot,
+		);
+		runtimeVersionObservations[name] = versionObservation;
 		if (observation.error) installErrors.push(observation.error);
 
 		const inventoryPath = join(paths.installInventory, `${name}.json`);
@@ -1904,13 +2574,19 @@ export function convergeRuntimeManifest(
 			schemaVersion: "clawdi.runtimeInstallInventory.v1",
 			generatedAt,
 			runtime: name,
+			runtimeType: runtimeTypeForEntry(name, runtime),
+			displayName: runtime.displayName ?? null,
+			environmentId: runtime.environmentId ?? null,
 			enabled: runtime.enabled,
+			image: runtime.image ?? null,
+			version: versionObservation,
 			updateChannel: runtime.updateChannel ?? null,
 			simulation: false,
 			status: observation.status,
 			executionUser: observation.executionUser,
+			execution: runtime.execution ?? null,
 			install: observation.install,
-			command: runtimeInstallerCommand(name, runtime.install),
+			command: runtimeInstallerCommand(name, runtimeTypeForEntry(name, runtime), runtime.install),
 			commandPath: observation.commandPath,
 			appRoot: observation.appRoot,
 			installerUrl: observation.installerUrl,
@@ -1929,7 +2605,7 @@ export function convergeRuntimeManifest(
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
 		try {
-			applyHostedAiProviderProjection(name, observation, manifest, workspaceRoot);
+			applyHostedAiProviderProjection(name, runtime, observation, manifest, workspaceRoot);
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} provider projection failed: ${
@@ -1938,7 +2614,7 @@ export function convergeRuntimeManifest(
 			);
 		}
 		try {
-			applyHostedChannelProjection(name, observation, manifest, workspaceRoot);
+			applyHostedChannelProjection(name, runtime, observation, manifest, workspaceRoot);
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} channel projection failed: ${
@@ -1947,7 +2623,15 @@ export function convergeRuntimeManifest(
 			);
 		}
 		try {
-			applyHostedMcpProjection(name, observation, manifest, workspaceRoot, daemonAuthTokenFile);
+			applyHostedMcpProjection(
+				name,
+				runtime,
+				observation,
+				manifest,
+				workspaceRoot,
+				daemonAuthTokenFile,
+				mcpHttpAuthTokenFile,
+			);
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} mcp projection failed: ${
@@ -1955,25 +2639,25 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		const runtimeName = runtimeNameSchema.parse(name);
-		const runConfig = buildRuntimeRunConfig({
-			runtime: runtimeName,
-			enabled: runtime.enabled,
-			generatedAt,
-			generation: manifest.generation,
-			instanceId: manifest.instanceId,
-			commandPath: observation.commandPath,
-			appRoot: observation.appRoot,
-			workspaceRoot,
-			mitmProfileBundlePath,
-			settings: runtime.run,
-			secretFilePath: mitmSecretFile,
-			secretEnv: hostedProviderSecretEnv(manifest, name),
-		});
-		const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
-		runConfigs.push(runConfigPath);
-		writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
-		if (runtime.enabled && shouldSuperviseRuntime(name, manifest)) {
+		if (shouldWriteRuntimeRunConfig(name, runtime)) {
+			const runtimeName = runtimeNameSchema.parse(name);
+			const runConfig = buildRuntimeRunConfig({
+				runtime: runtimeName,
+				enabled: runtime.enabled,
+				generatedAt,
+				generation: manifest.generation,
+				instanceId: manifest.instanceId,
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+				workspaceRoot,
+				mitmProfileBundlePath,
+				settings: runtime.run,
+				secretFilePath: mitmSecretFile,
+				secretEnv: hostedProviderSecretEnv(manifest, name),
+			});
+			const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
+			runConfigs.push(runConfigPath);
+			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
 			const program = buildRuntimeSupervisorProgram({
 				config: runConfig,
 				paths,
@@ -1983,34 +2667,34 @@ export function convergeRuntimeManifest(
 			if (program) {
 				runtimeSupervisorPrograms.push(program);
 			}
-		}
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const serviceRunConfig = buildRuntimeRunConfig({
-				runtime: runtimeName,
-				service,
-				enabled: runtime.enabled,
-				generatedAt,
-				generation: manifest.generation,
-				instanceId: manifest.instanceId,
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-				workspaceRoot,
-				settings: serviceSettings,
-				secretFilePath: null,
-				secretEnv: {},
-			});
-			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
-			runConfigs.push(serviceRunConfigPath);
-			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
-			const program = buildRuntimeSupervisorProgram({
-				config: serviceRunConfig,
-				paths,
-				secretValues: load.secretValues,
-				mitm: mitmSupervisorProgram,
-			});
-			if (program) {
-				runtimeSupervisorPrograms.push(program);
+			for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
+				const service = runtimeServiceNameSchema.parse(serviceName);
+				const serviceRunConfig = buildRuntimeRunConfig({
+					runtime: runtimeName,
+					service,
+					enabled: runtime.enabled,
+					generatedAt,
+					generation: manifest.generation,
+					instanceId: manifest.instanceId,
+					commandPath: observation.commandPath,
+					appRoot: observation.appRoot,
+					workspaceRoot,
+					settings: serviceSettings,
+					secretFilePath: null,
+					secretEnv: {},
+				});
+				const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
+				runConfigs.push(serviceRunConfigPath);
+				writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
+				const serviceProgram = buildRuntimeSupervisorProgram({
+					config: serviceRunConfig,
+					paths,
+					secretValues: load.secretValues,
+					mitm: mitmSupervisorProgram,
+				});
+				if (serviceProgram) {
+					runtimeSupervisorPrograms.push(serviceProgram);
+				}
 			}
 		}
 
@@ -2021,9 +2705,42 @@ export function convergeRuntimeManifest(
 		}
 	}
 
+	writeJsonFile(paths.syncState, {
+		schemaVersion: "clawdi.runtimeSyncState.v1",
+		generatedAt,
+		deploymentId: manifest.deploymentId,
+		environmentId: manifest.environmentId,
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		runtimes: Object.fromEntries(
+			Object.entries(manifest.runtimes).map(([name, runtime]) => {
+				const type = runtimeTypeForEntry(name, runtime);
+				return [
+					name,
+					{
+						runtimeType: type,
+						displayName: runtime.displayName ?? null,
+						environmentId: runtime.environmentId ?? null,
+						enabled: runtime.enabled,
+						image: runtime.image ?? null,
+						version: runtimeVersionObservations[name] ?? runtime.version ?? null,
+						updateChannel: runtime.updateChannel ?? null,
+						executionMode: runtimeExecutionMode(runtime),
+						externalHome: isExternalRuntime(runtime) ? (runtime.execution?.home ?? null) : null,
+						externalStateDir: isExternalRuntime(runtime)
+							? (runtime.execution?.stateDir ?? externalRuntimeDefaultStateDir(type, runtime))
+							: null,
+						workspaceRoot,
+					},
+				];
+			}),
+		),
+	});
+
 	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
 	writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
 	projections.push(mcpProjection);
+	writeRuntimeCommandShims(commandShims, paths);
 	const supervisorConfig = writeSupervisorConfig(
 		runtimeSupervisorPrograms,
 		mitmSupervisorProgram,
@@ -2031,6 +2748,7 @@ export function convergeRuntimeManifest(
 		paths,
 		workspaceRoot,
 		daemonAuthTokenFile,
+		mcpHttpAuthTokenFile,
 		load.secretValues,
 	);
 
@@ -2064,6 +2782,7 @@ export function convergeRuntimeManifest(
 			mitmSecretFile,
 			liveSyncEnvironments,
 			daemonAuthTokenFile,
+			mcpHttpAuthTokenFile,
 			instanceSemaphores,
 			bootFinished,
 		},

@@ -56,6 +56,8 @@ describe("runtime bridge configuration", () => {
 					listenPort,
 					upstreamHost: "127.0.0.1",
 					upstreamPort: serverPort(upstream),
+					upstreamHeaders: {},
+					upstreamHeaderEnv: {},
 				},
 			]);
 			const response = await fetch(`http://127.0.0.1:${listenPort}/`, {

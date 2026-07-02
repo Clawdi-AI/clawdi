@@ -11,6 +11,10 @@ create a Clawdi release from an already-deployed commit.
   day.
 - CLI/npm changes use semver GitHub releases and npm package versions:
   `clawdi-cli-vX.Y.Z` and `clawdi@X.Y.Z`.
+- Runtime sidecar image changes publish immutable Git-SHA tags to
+  `ghcr.io/clawdi-ai/clawdi-runtime-sidecar:<git-sha>`. The sidecar image is
+  an operational artifact, not an agent runtime image; OpenClaw and Hermes
+  containers stay on their official upstream image tracks.
 - GitHub generated notes seed the release body. Keep PR labels accurate; use
   `skip-changelog` for implementation-only PRs, then review and edit the body
   before treating it as final release copy.
@@ -83,6 +87,9 @@ releases.
    - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
      CLI publish workflow file, then publishes only when the local CLI version
      differs from npm.
+   - `.github/workflows/clawdi-image-release.yml` publishes backend/web images
+     and the runtime sidecar image independently. A sidecar-only change must
+     not trigger a backend deploy.
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
@@ -101,6 +108,10 @@ releases.
    release body when PR titles are too implementation-focused, a PR touched
    both release lines, generated notes include unrelated entries, or the notes
    omit user impact.
+6. For runtime sidecar changes, verify the image workflow summary includes:
+   `ghcr.io/clawdi-ai/clawdi-runtime-sidecar:<git-sha>`. Controller rollouts
+   should pin that tag or its digest separately from OpenClaw/Hermes image
+   tags.
 
 ## Production Deployment Checks
 
@@ -124,6 +135,9 @@ run these checks before traffic is considered healthy:
    - Backend health/API requests return 2xx.
    - CLI can authenticate and run `clawdi vault list --json`.
    - A Vault key resolves only through CLI/API-key auth, never through web auth.
+   - Runtime sidecar deployments run `clawdi runtime doctor --json`, expose MCP
+     HTTP only on the trusted pod network, and project terminal requests by
+     exact `agent_id`.
 4. Check logs for migration errors, 5xx spikes, auth failures, and frontend
    build/runtime errors.
 
