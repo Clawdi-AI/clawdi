@@ -61,7 +61,7 @@ describe("ApiClient construction", () => {
 			});
 		};
 		try {
-			await api.GET("/api/auth/me");
+			await api.GET("/v1/auth/me");
 		} finally {
 			globalThis.fetch = origFetch;
 		}
@@ -83,7 +83,7 @@ describe("ApiClient error classification", () => {
 			const api = new ApiClient();
 			let caught: unknown;
 			try {
-				unwrap(await api.GET("/api/auth/me"));
+				unwrap(await api.GET("/v1/auth/me"));
 			} catch (e) {
 				caught = e;
 			}
@@ -110,7 +110,7 @@ describe("ApiClient error classification", () => {
 		try {
 			const { ApiClient, unwrap } = await import("../src/lib/api-client");
 			const api = new ApiClient();
-			const result = unwrap(await api.GET("/api/auth/me"));
+			const result = unwrap(await api.GET("/v1/auth/me"));
 			expect(result).toMatchObject({ email: "e@x" });
 			expect(calls).toBe(3);
 		} finally {
@@ -132,7 +132,7 @@ describe("ApiClient error classification", () => {
 			let caught: unknown;
 			try {
 				unwrap(
-					await api.POST("/api/memories", {
+					await api.POST("/v1/memories", {
 						body: { content: "x", category: "fact", source: "test" },
 					}),
 				);
@@ -159,7 +159,7 @@ describe("ApiClient error classification", () => {
 			let caught: unknown;
 			try {
 				unwrap(
-					await api.DELETE("/api/memories/{memory_id}", {
+					await api.DELETE("/v1/memories/{memory_id}", {
 						params: { path: { memory_id: "abc" } },
 					}),
 				);

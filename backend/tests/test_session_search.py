@@ -19,7 +19,7 @@ import pytest
 
 async def _register_env(client: httpx.AsyncClient) -> str:
     r = await client.post(
-        "/api/environments",
+        "/v1/environments",
         json={
             "machine_id": "search-machine",
             "machine_name": "Search Mac",
@@ -57,13 +57,13 @@ async def _push_session(
     if messages:
         body_bytes = json.dumps(messages).encode("utf-8")
         payload["content_hash"] = hashlib.sha256(body_bytes).hexdigest()
-    r = await client.post("/api/sessions/batch", json={"sessions": [payload]})
+    r = await client.post("/v1/sessions/batch", json={"sessions": [payload]})
     assert r.status_code == 200, r.text
 
     if upload and messages:
         body_bytes = json.dumps(messages).encode("utf-8")
         await client.post(
-            f"/api/sessions/{local_session_id}/upload",
+            f"/v1/sessions/{local_session_id}/upload",
             files={
                 "file": (
                     f"{local_session_id}.json",
@@ -73,7 +73,7 @@ async def _push_session(
             },
         )
 
-    listing = (await client.get(f"/api/sessions?q={local_session_id}")).json()
+    listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
 
 
@@ -89,7 +89,7 @@ async def test_trgm_search_handles_typos(client: httpx.AsyncClient):
     await _push_session(client, env_id, local_session_id="dns-1", summary="DNS cache poisoning")
 
     # Typo: drop the 'u' in "authentication".
-    r = await client.get("/api/sessions?q=athentication")
+    r = await client.get("/v1/sessions?q=athentication")
     assert r.status_code == 200
     items = r.json()["items"]
     summaries = [s["summary"] for s in items]
@@ -109,7 +109,7 @@ async def test_relevance_sort_orders_by_similarity(client: httpx.AsyncClient):
     )
     await _push_session(client, env_id, local_session_id="other", summary="UI polish")
 
-    r = await client.get("/api/sessions?q=oauth+token+refresh&sort=relevance")
+    r = await client.get("/v1/sessions?q=oauth+token+refresh&sort=relevance")
     items = r.json()["items"]
     # The exact-match summary must appear first; below-threshold
     # rows ("UI polish") shouldn't appear at all.
@@ -146,12 +146,12 @@ async def test_filter_model_and_tag(client: httpx.AsyncClient):
     )
 
     # Filter by model.
-    items = (await client.get("/api/sessions?model=claude-sonnet-4-6")).json()["items"]
+    items = (await client.get("/v1/sessions?model=claude-sonnet-4-6")).json()["items"]
     ids = {s["local_session_id"] for s in items}
     assert ids == {"m1", "m3"}
 
     # Filter by tag — AND semantics: must include BOTH tags.
-    items = (await client.get("/api/sessions?tag=security&tag=audit")).json()["items"]
+    items = (await client.get("/v1/sessions?tag=security&tag=audit")).json()["items"]
     ids = {s["local_session_id"] for s in items}
     assert ids == {"m1"}
 
@@ -185,14 +185,14 @@ async def test_filter_min_messages_and_has_pr(client: httpx.AsyncClient):
     )
 
     # min_messages=3 → only big-pr.
-    items = (await client.get("/api/sessions?min_messages=3")).json()["items"]
+    items = (await client.get("/v1/sessions?min_messages=3")).json()["items"]
     assert {s["local_session_id"] for s in items} == {"big-pr"}
 
     # has_pr=true → only big-pr.
-    items = (await client.get("/api/sessions?has_pr=true")).json()["items"]
+    items = (await client.get("/v1/sessions?has_pr=true")).json()["items"]
     assert {s["local_session_id"] for s in items} == {"big-pr"}
 
     # has_pr=false → only small (and any other no-PR sessions).
-    items = (await client.get("/api/sessions?has_pr=false")).json()["items"]
+    items = (await client.get("/v1/sessions?has_pr=false")).json()["items"]
     assert "small" in {s["local_session_id"] for s in items}
     assert "big-pr" not in {s["local_session_id"] for s in items}

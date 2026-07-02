@@ -78,7 +78,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 	});
 	const vault: VaultSummary | null = vaults.data?.items.find((v) => v.slug === slug) ?? null;
 	const isOwner = vault?.is_owner !== false;
@@ -86,7 +86,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 	});
 	const projectById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p])),
@@ -97,7 +97,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		queryKey: ["vault-items", slug, anyProjectId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/vault/{slug}/items", {
+				await api.GET("/v1/vault/{slug}/items", {
 					params: { path: { slug }, query: { project_id: anyProjectId ?? undefined } },
 				}),
 			),
@@ -144,7 +144,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		mutationFn: async ({ section, name }: { section: string; name: string }) => {
 			if (!anyProjectId) throw new Error("No Project attachment");
 			return unwrap(
-				await api.DELETE("/api/vault/{slug}/items", {
+				await api.DELETE("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug },
 						query: { project_id: anyProjectId, global_delete: true },
@@ -171,7 +171,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 			for (const [section, names] of bySection) {
 				for (let i = 0; i < names.length; i += 150) {
 					unwrap(
-						await api.DELETE("/api/vault/{slug}/items", {
+						await api.DELETE("/v1/vault/{slug}/items", {
 							params: {
 								path: { slug },
 								query: { project_id: anyProjectId, global_delete: true },
@@ -195,7 +195,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		mutationFn: async (projectId: string) => {
 			if (!vault) throw new Error("Vault not loaded");
 			return unwrap(
-				await api.POST("/api/vault", {
+				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId } },
 					body: { slug: vault.slug, name: vault.name },
 				}),
@@ -211,7 +211,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const detachProject = useMutation({
 		mutationFn: async (projectId: string) =>
 			unwrap(
-				await api.DELETE("/api/vault/{slug}", {
+				await api.DELETE("/v1/vault/{slug}", {
 					params: { path: { slug }, query: { project_id: projectId } },
 				}),
 			),
@@ -226,7 +226,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const deleteVault = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/api/vault/{slug}", {
+				await api.DELETE("/v1/vault/{slug}", {
 					params: { path: { slug }, query: {} },
 				}),
 			),

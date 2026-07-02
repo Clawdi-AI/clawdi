@@ -14,7 +14,7 @@ prompt is too low, fix the prompt rather than add a filter pass.
 
 OpenAI's structured-output `response_format=json_schema` enforces the
 `ExtractionResult` shape so we don't defensively parse — bad output
-raises and the caller (`POST /api/sessions/{id}/extract`) bubbles it as
+raises and the caller (`POST /v1/sessions/{id}/extract`) bubbles it as
 5xx.
 """
 

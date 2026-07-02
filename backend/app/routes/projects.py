@@ -22,7 +22,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.user import User
 from app.services.sharing import safe_owner_display, safe_owner_handle
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 class ProjectResponse(BaseModel):

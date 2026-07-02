@@ -27,7 +27,7 @@ from app.services.managed_ai_provider import (
 )
 from app.services.vault_crypto import decrypt
 
-router = APIRouter(prefix="/api/runtime", tags=["runtime"])
+router = APIRouter(prefix="/runtime", tags=["runtime"])
 
 
 @dataclass(frozen=True)
@@ -168,7 +168,7 @@ def _control_plane(value: dict[str, Any] | None) -> dict[str, Any]:
         return value
     api_url = settings.public_api_url.rstrip("/")
     return {
-        "manifestUrl": f"{api_url}/api/runtime/manifest",
+        "manifestUrl": f"{api_url}/v1/runtime/manifest",
         "cloudApiUrl": api_url,
     }
 

@@ -79,7 +79,7 @@ beforeAll(() => {
 				body,
 			});
 
-			if (req.method === "POST" && url.pathname === "/api/vault/credential-profiles") {
+			if (req.method === "POST" && url.pathname === "/v1/vault/credential-profiles") {
 				const bodyRecord = asRecord(body);
 				const tool = asString(bodyRecord.tool);
 				const profile = asString(bodyRecord.profile);
@@ -97,7 +97,7 @@ beforeAll(() => {
 				});
 			}
 
-			if (req.method === "POST" && url.pathname === "/api/vault/credential-profiles/resolve") {
+			if (req.method === "POST" && url.pathname === "/v1/vault/credential-profiles/resolve") {
 				const bodyRecord = asRecord(body);
 				const tool = asString(bodyRecord.tool);
 				const profile = asString(bodyRecord.profile);
@@ -155,7 +155,7 @@ describe("credential profile process e2e", () => {
 				expect(imported.code).toBe(0);
 				expect(imported.stdout).not.toContain(testCase.secretNeedle);
 				expect(imported.stderr).not.toContain(testCase.secretNeedle);
-				const importCall = apiCalls.find((call) => call.path === "/api/vault/credential-profiles");
+				const importCall = apiCalls.find((call) => call.path === "/v1/vault/credential-profiles");
 				expect(importCall?.auth).toBe("Bearer test-key");
 				const importBody = asRecord(importCall?.body);
 				const payload = JSON.parse(asString(importBody.payload) ?? "{}");

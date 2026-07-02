@@ -62,7 +62,7 @@ export async function projectCreateCommand(
 	const slug = normalizeSlugInput(opts.slug);
 	if (slug) payload.slug = slug;
 
-	const r = await fetch(`${apiUrl}/api/projects`, {
+	const r = await fetch(`${apiUrl}/v1/projects`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${apiKey}`,

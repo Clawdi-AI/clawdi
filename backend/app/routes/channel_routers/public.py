@@ -98,7 +98,7 @@ from app.services.channels import (
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 
-router = APIRouter(prefix="/api/channels", tags=["channels"])
+router = APIRouter(prefix="/channels", tags=["channels"])
 
 SECRETISH_ACTIVITY_DETAIL_KEYS = (
     "secret",

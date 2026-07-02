@@ -575,9 +575,7 @@ def test_whatsapp_message_proto_bytes_preserves_quoted_reply_fixture_shape():
                 "contextInfo": {
                     "stanzaId": "3EB0CA8C2FE5219FEA4DF0",
                     "participant": "10000000001@s.whatsapp.net",
-                    "quotedMessage": {
-                        "extendedTextMessage": {"text": "quoted base message"}
-                    },
+                    "quotedMessage": {"extendedTextMessage": {"text": "quoted base message"}},
                 },
             },
             "messageContextInfo": {
@@ -1333,9 +1331,7 @@ def test_relay_outbound_extra_attrs_strips_relay_managed_attrs():
         )
         == {}
     )
-    assert relay_outbound_extra_attrs({"id": "x", "to": "g@g.us", "edit": "8"}) == {
-        "edit": "8"
-    }
+    assert relay_outbound_extra_attrs({"id": "x", "to": "g@g.us", "edit": "8"}) == {"edit": "8"}
 
 
 @pytest.mark.asyncio
@@ -1354,9 +1350,15 @@ async def test_respond_to_iq_refuses_missing_id():
 
 def test_whatsapp_media_url_rewrites():
     upstream = rewrite_whatsapp_media_to_upstream_url(
-        "http://clawdi.local/api/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4&oh=abc"
+        "http://clawdi.local/v1/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4&oh=abc"
     )
     assert upstream == "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4&oh=abc"
+    # Proxy URLs minted before the /v1 migration are persisted in message
+    # payloads and must keep parsing.
+    legacy = rewrite_whatsapp_media_to_upstream_url(
+        "http://clawdi.local/api/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4&oh=abc"
+    )
+    assert legacy == "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4&oh=abc"
     assert (
         rewrite_whatsapp_media_to_upstream_url(
             "http://clawdi.local/api/channels/whatsapp/media/v/t62/blob.enc",
@@ -1370,7 +1372,7 @@ def test_whatsapp_media_url_rewrites():
             "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4",
             "https://clawdi.example",
         )
-        == "https://clawdi.example/api/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4"
+        == "https://clawdi.example/v1/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4"
     )
     with pytest.raises(ValueError, match="non-WA url"):
         rewrite_whatsapp_media_to_proxy_url("https://evil.example/v/t62/blob.enc", "https://proxy")
@@ -1385,7 +1387,7 @@ async def test_whatsapp_media_proxy_forwards_head_without_body(
     monkeypatch.setattr("app.routes.channel_routers.whatsapp.httpx.AsyncClient", _FakeMediaClient)
 
     response = await client.head(
-        "/api/channels/whatsapp/media/v/t62/blob.enc",
+        "/v1/channels/whatsapp/media/v/t62/blob.enc",
         params={"ccb": "11-4"},
         headers={"Range": "bytes=0-14"},
     )
@@ -1400,13 +1402,13 @@ async def test_whatsapp_media_proxy_forwards_head_without_body(
 async def test_whatsapp_tenant_creds_route_persists_auth_cert(client: httpx.AsyncClient):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-baileys"},
         )
     ).json()
 
-    first = await client.post(f"/api/channels/whatsapp/{created['id']}/tenant-creds", json={})
-    second = await client.post(f"/api/channels/whatsapp/{created['id']}/tenant-creds", json={})
+    first = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
+    second = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
 
     assert first.status_code == 201
     assert second.status_code == 201
@@ -1417,7 +1419,7 @@ async def test_whatsapp_tenant_creds_route_persists_auth_cert(client: httpx.Asyn
     assert len(first_body["identity_pub_key_hex"]) == 64
     assert first_body["creds"]["noiseKey"]["public"]["type"] == "Buffer"
     assert first_body["auth_cert"]["ISSUER"] == "clawdi"
-    assert first_body["websocket_url"].endswith(f"/api/channels/whatsapp/{created['id']}/baileys")
+    assert first_body["websocket_url"].endswith(f"/v1/channels/whatsapp/{created['id']}/baileys")
     assert second_body["auth_cert"] == first_body["auth_cert"]
 
 
@@ -1430,7 +1432,7 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-creds-metadata",
@@ -1444,7 +1446,7 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
     }
 
     minted_response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={
             "agent_id": str(second_channel_agent.id),
             "phone_user": "15550007777",
@@ -1482,7 +1484,7 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
     assert found is not None
     assert found.id == credential.id
 
-    listed_response = await client.get(f"/api/channels/whatsapp/{created['id']}/tenant-creds")
+    listed_response = await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")
     assert listed_response.status_code == 200
     listed = listed_response.json()
     assert listed == [
@@ -1506,7 +1508,7 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-shared-self-identity"},
         )
     ).json()
@@ -1516,11 +1518,11 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
     }
 
     first_response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={"name": "tenant-a", "self_identity": shared_self},
     )
     second_response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={"name": "tenant-b", "self_identity": shared_self},
     )
 
@@ -1544,9 +1546,7 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
     assert first_found.id == UUID(first["credential_id"])
     assert second_found.id == UUID(second["credential_id"])
 
-    listed = (
-        await client.get(f"/api/channels/whatsapp/{created['id']}/tenant-creds")
-    ).json()
+    listed = (await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")).json()
     assert {item["identity_pub_key_hex"] for item in listed} == {
         first["identity_pub_key_hex"],
         second["identity_pub_key_hex"],
@@ -1561,19 +1561,19 @@ async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_r
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-creds-revoke"},
         )
     ).json()
     first_response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={},
     )
     assert first_response.status_code == 201
     first = first_response.json()
 
     deleted = await client.delete(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
     )
     assert deleted.status_code == 204
     credential = await db_session.get(ChannelAgentCredential, UUID(first["credential_id"]))
@@ -1587,12 +1587,12 @@ async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_r
         is None
     )
 
-    listed = await client.get(f"/api/channels/whatsapp/{created['id']}/tenant-creds")
+    listed = await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")
     second_delete = await client.delete(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
     )
     second_response = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={},
     )
 
@@ -1611,18 +1611,18 @@ async def test_channel_delete_revokes_whatsapp_tenant_credentials(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-creds-channel-delete"},
         )
     ).json()
     minted = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={},
         )
     ).json()
 
-    deleted = await client.delete(f"/api/channels/{created['id']}")
+    deleted = await client.delete(f"/v1/channels/{created['id']}")
 
     credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
     assert deleted.status_code == 204
@@ -1644,19 +1644,19 @@ async def test_channel_agent_link_delete_revokes_whatsapp_tenant_credentials(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-creds-link-delete"},
         )
     ).json()
     minted = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={},
         )
     ).json()
 
     deleted = await client.delete(
-        f"/api/channels/{created['id']}/agent-links/{minted['agent_link_id']}"
+        f"/v1/channels/{created['id']}/agent-links/{minted['agent_link_id']}"
     )
 
     credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
@@ -1681,7 +1681,7 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-link-scoped-inbox",
@@ -1691,13 +1691,13 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
     ).json()
     default_credential = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={"name": "default"},
         )
     ).json()
     workspace_credential = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={"agent_id": str(second_channel_agent.id), "name": "workspace"},
         )
     ).json()
@@ -1782,13 +1782,13 @@ async def test_whatsapp_lid_pairing_remembers_alias(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-lid-alias"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
@@ -1796,7 +1796,7 @@ async def test_whatsapp_lid_pairing_remembers_alias(
     phone_jid = "15551112222@s.whatsapp.net"
 
     paired = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1808,7 +1808,7 @@ async def test_whatsapp_lid_pairing_remembers_alias(
     assert paired.status_code == 200
 
     inbound = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1846,13 +1846,13 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-lid-unpair"},
         )
     ).json()
     pair = (
         await client.post(
-            f"/api/channels/{created['id']}/pair-codes",
+            f"/v1/channels/{created['id']}/pair-codes",
             json={"ttl_seconds": 900},
         )
     ).json()
@@ -1860,7 +1860,7 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
     phone_jid = "15551112222@s.whatsapp.net"
 
     await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1870,7 +1870,7 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
         },
     )
     unpaired = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1880,7 +1880,7 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
         },
     )
     after_unpair = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1916,7 +1916,7 @@ async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-lid-conflict",
@@ -1926,7 +1926,7 @@ async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
     ).json()
     second_link = (
         await client.post(
-            f"/api/channels/{created['id']}/agent-links",
+            f"/v1/channels/{created['id']}/agent-links",
             json={"agent_id": str(second_channel_agent.id)},
         )
     ).json()
@@ -1958,7 +1958,7 @@ async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
     await db_session.commit()
 
     inbound = await client.post(
-        f"/api/channels/whatsapp/{created['id']}/webhook",
+        f"/v1/channels/whatsapp/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
             "message": {
@@ -1986,7 +1986,7 @@ async def test_whatsapp_media_proxy_forwards_range(
     monkeypatch.setattr("app.routes.channel_routers.whatsapp.httpx.AsyncClient", _FakeMediaClient)
 
     response = await client.get(
-        "/api/channels/whatsapp/media/v/t62/blob.enc",
+        "/v1/channels/whatsapp/media/v/t62/blob.enc",
         params={"ccb": "11-4"},
         headers={"Range": "bytes=0-14"},
     )

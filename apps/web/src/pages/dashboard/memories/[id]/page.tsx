@@ -28,7 +28,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 		queryKey: ["memory", memoryId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/memories/{memory_id}", {
+				await api.GET("/v1/memories/{memory_id}", {
 					params: { path: { memory_id: memoryId } },
 				}),
 			),
@@ -43,7 +43,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const deleteMemory = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/api/memories/{memory_id}", {
+				await api.DELETE("/v1/memories/{memory_id}", {
 					params: { path: { memory_id: memoryId } },
 				}),
 			),

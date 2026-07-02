@@ -56,13 +56,13 @@ export default function ProjectsPage() {
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 	});
 
 	const rows = projects.data ?? [];
 	const environments = useQuery({
 		queryKey: ["environments"],
-		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/api/environments")),
+		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/environments")),
 		enabled: rows.some((project) => project.kind === "environment"),
 	});
 	const agentsById = useMemo(
@@ -77,16 +77,14 @@ export default function ProjectsPage() {
 		queryFn: async () =>
 			fetchAllPages<SkillSummary>(
 				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/api/skills", { params: { query: { page, page_size: pageSize } } }),
-					),
+					unwrap(await api.GET("/v1/skills", { params: { query: { page, page_size: pageSize } } })),
 				{ pageSize: 200, resourceName: "skills" },
 			),
 	});
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/vault", { params: { query: { page_size: 200 } } })),
+			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 	});
 	const skillCounts = useMemo(() => {
 		const m = new Map<string, number>();
@@ -144,7 +142,7 @@ export default function ProjectsPage() {
 			const payload: { name: string; slug?: string } = { name: newProjectName.trim() };
 			const slug = normalizeSlugInput(newProjectSlug);
 			if (slug) payload.slug = slug;
-			return unwrap(await api.POST("/api/projects", { body: payload }));
+			return unwrap(await api.POST("/v1/projects", { body: payload }));
 		},
 		onSuccess: (project) => {
 			setNewProjectName("");

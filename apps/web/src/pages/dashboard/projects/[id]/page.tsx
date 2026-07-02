@@ -102,7 +102,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	const projects = useQuery({
 		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/api/projects")),
+		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 	});
 
 	const rows = projects.data ?? [];
@@ -128,7 +128,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	const environments = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 		enabled: !!project,
 	});
 	const agentsById = useMemo(
@@ -144,7 +144,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			fetchAllPages<SkillSummary>(
 				async (page, pageSize) =>
 					unwrap(
-						await api.GET("/api/skills", {
+						await api.GET("/v1/skills", {
 							params: { query: { project_id: projectId, page, page_size: pageSize } },
 						}),
 					),
@@ -159,7 +159,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			fetchAllPages<VaultSummary>(
 				async (page, pageSize) =>
 					unwrap(
-						await api.GET("/api/vault", {
+						await api.GET("/v1/vault", {
 							params: { query: { project_id: projectId, page, page_size: pageSize } },
 						}),
 					),
@@ -174,7 +174,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		queryKey: ["project-members", projectId],
 		queryFn: async (): Promise<Member[]> =>
 			unwrap(
-				await api.GET("/api/projects/{project_id}/members", {
+				await api.GET("/v1/projects/{project_id}/members", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
@@ -193,7 +193,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					if (env.default_project_id === projectId) return { env, home: true };
 					try {
 						const bindings = unwrap(
-							await api.GET("/api/agents/{agent_id}/project-bindings", {
+							await api.GET("/v1/agents/{agent_id}/project-bindings", {
 								params: { path: { agent_id: env.id } },
 							}),
 						);
@@ -219,7 +219,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const leaveSharedProject = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/api/projects/{project_id}/leave", {
+				await api.POST("/v1/projects/{project_id}/leave", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
@@ -783,7 +783,7 @@ function UseProjectWithAgentDialog({
 		queryKey: ["agent-project-bindings", selectedAgentId],
 		queryFn: async (): Promise<AgentProjectBinding[]> =>
 			unwrap(
-				await api.GET("/api/agents/{agent_id}/project-bindings", {
+				await api.GET("/v1/agents/{agent_id}/project-bindings", {
 					params: { path: { agent_id: selectedAgentId } },
 				}),
 			),
@@ -803,7 +803,7 @@ function UseProjectWithAgentDialog({
 		mutationFn: async () => {
 			if (!selectedAgentId) throw new Error("Choose an agent first");
 			return unwrap(
-				await api.POST("/api/agents/{agent_id}/project-bindings/context", {
+				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
 					params: { path: { agent_id: selectedAgentId } },
 					body: { project_id: project.id },
 				}),
@@ -995,7 +995,7 @@ function InstallSkillInProjectForm({
 	const install = useMutation({
 		mutationFn: async ({ repo, path }: { repo: string; path?: string }) =>
 			unwrap(
-				await api.POST("/api/projects/{project_id}/skills/install", {
+				await api.POST("/v1/projects/{project_id}/skills/install", {
 					params: { path: { project_id: projectId } },
 					body: { repo, path },
 				}),
@@ -1079,7 +1079,7 @@ function CreateVaultInProjectForm({
 	const create = useMutation({
 		mutationFn: async (nextSlug: string) =>
 			unwrap(
-				await api.POST("/api/vault", {
+				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId, create_only: true } },
 					body: { slug: nextSlug, name: nextSlug },
 				}),

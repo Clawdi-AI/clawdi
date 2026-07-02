@@ -59,7 +59,7 @@ describe("readCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						reference: "clawdi://prod/stripe/secret_key",
@@ -99,7 +99,7 @@ describe("readCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						reference: "clawdi://default/OPENAI_API_KEY",
@@ -135,7 +135,7 @@ describe("readCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						reference: exact,
@@ -164,7 +164,7 @@ describe("readCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -188,7 +188,7 @@ describe("readCommand", () => {
 			restore();
 		}
 
-		expect(captured.some((request) => request.path.startsWith("/api/vault/resolve"))).toBe(false);
+		expect(captured.some((request) => request.path.startsWith("/v1/vault/resolve"))).toBe(false);
 		expect(err).toContain("Reference points to Project 00000000-0000-0000-0000-000000000123");
 		expect(err).toContain("but --project resolved to 00000000-0000-0000-0000-000000000999");
 		expect(process.exitCode).toBe(1);
@@ -200,7 +200,7 @@ describe("readCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						reference: exact,
@@ -247,7 +247,7 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -309,7 +309,7 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -343,12 +343,12 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () => jsonResponse({ detail: "Not Found" }, 404),
 			},
 			{
 				method: "POST",
-				path: "/api/vault/resolve",
+				path: "/v1/vault/resolve",
 				response: () =>
 					jsonResponse({
 						reference: "clawdi://prod/stripe/secret_key",
@@ -368,8 +368,8 @@ describe("injectCommand", () => {
 		}
 
 		expect(captured.map((request) => request.path.split("?")[0])).toEqual([
-			"/api/vault/resolve/bulk",
-			"/api/vault/resolve",
+			"/v1/vault/resolve/bulk",
+			"/v1/vault/resolve",
 		]);
 		expect(readFileSync(output, "utf8")).toBe("token=sk-legacy\n");
 	});
@@ -404,7 +404,7 @@ describe("injectCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {
@@ -452,7 +452,7 @@ describe("injectCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/resolve/bulk",
+				path: "/v1/vault/resolve/bulk",
 				response: () =>
 					jsonResponse({
 						results: {

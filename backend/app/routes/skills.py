@@ -58,7 +58,7 @@ from app.services.tar_utils import (
     validate_tar,
 )
 
-router = APIRouter(prefix="/api/skills", tags=["skills"])
+router = APIRouter(prefix="/skills", tags=["skills"])
 
 # Phase-2 router: project-explicit skill routes. Same handlers as the
 # legacy router; the only difference is where `project_id` comes from
@@ -66,13 +66,13 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 # Mounted in `app/main.py` alongside the legacy router. After all
 # callers migrate, the legacy write paths return 410 (see step 3
 # of phase 2).
-project_router = APIRouter(prefix="/api/projects/{project_id}/skills", tags=["skills"])
+project_router = APIRouter(prefix="/projects/{project_id}/skills", tags=["skills"])
 
 # Back-compat for binaries built during the Scope -> Project migration.
 # The table row id was preserved, so old `/api/scopes/{id}/skills/...`
 # read URLs can be served by the project-explicit handlers.
 scope_router = APIRouter(
-    prefix="/api/scopes/{scope_id}/skills",
+    prefix="/scopes/{scope_id}/skills",
     tags=["skills"],
     include_in_schema=False,
 )
@@ -558,7 +558,7 @@ async def _selected_project_visibility_and_revision_fingerprint(
 ) -> tuple[list[UUID], str]:
     """Validate one selected project and fetch its owner revision in one query.
 
-    The daemon always calls `/api/skills?project_id=<env-project>`. For unbound
+    The daemon always calls `/v1/skills?project_id=<env-project>`. For unbound
     CLI keys and dashboard JWTs, the old path loaded the caller's full visible
     project set and then ran a second owner-revision query even though the
     representation is scoped to one project. This keeps the same read policy
@@ -781,7 +781,7 @@ async def upload_skill_legacy(
     most-recently-active Agent Project; zero Agents → Personal),
     then runs the same upload pipeline as the project-explicit
     route. New CLIs and the dashboard call
-    `POST /api/projects/{project_id}/skills/upload` directly.
+    `POST /v1/projects/{project_id}/skills/upload` directly.
 
     Asymmetric with `delete_skill_legacy` (which 410s) by design:
     a wrong-project upload creates a stray row visible in the
@@ -791,7 +791,7 @@ async def upload_skill_legacy(
     project_id = await resolve_default_write_project(db, auth)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
-    response.headers["Link"] = '</api/projects/{project_id}/skills/upload>; rel="successor-version"'
+    response.headers["Link"] = '</v1/projects/{project_id}/skills/upload>; rel="successor-version"'
     await db.commit()
 
     # Same chunked-read body bound as the project-explicit route —
@@ -960,7 +960,7 @@ async def _do_upload_skill(
     content_hash: str | None,
     expected_content_hash: str | None = None,
 ) -> SkillUploadResponse:
-    """Core upload logic for `POST /api/projects/{project_id}/skills/upload`.
+    """Core upload logic for `POST /v1/projects/{project_id}/skills/upload`.
 
     One Agent writes to one Agent Project, so daemon writes always land
     in the expected Project. Single writer means no cross-machine race; no If-Match,
@@ -1101,7 +1101,7 @@ async def _do_upload_skill(
         # Mirror the guard in `_upsert_skill` (line ~547). Without
         # `is_active`, a daemon re-uploading byte-identical bytes
         # into a soft-deleted row would short-circuit here, return
-        # 200, and the row would stay invisible to /api/skills
+        # 200, and the row would stay invisible to /v1/skills
         # forever — silent reactivation failure. The full upsert
         # path below correctly flips is_active back on, but only
         # if we let it run.
@@ -1157,7 +1157,7 @@ async def download_skill_legacy(
 ):
     """Phase-1 compat download — multi-project disambiguation by
     most-recently-updated. Replaced by
-    `/api/projects/{project_id}/skills/{skill_key}/download`."""
+    `/v1/projects/{project_id}/skills/{skill_key}/download`."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
     return await _build_skill_download(skill, skill_key, db)
@@ -1219,7 +1219,7 @@ async def get_skill_legacy(
 ) -> SkillDetailResponse:
     """Phase-1 compat detail — multi-project disambiguation by
     most-recently-updated. Replaced by
-    `/api/projects/{project_id}/skills/{skill_key}` in phase 2 for
+    `/v1/projects/{project_id}/skills/{skill_key}` in phase 2 for
     callers that know which project they want."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
@@ -1362,7 +1362,7 @@ async def delete_skill_legacy(
     listing now exposes), or 404 with no useful hint when
     their default project doesn't have that key. The CLI and
     dashboard both migrated to
-    `DELETE /api/projects/{project_id}/skills/{skill_key}` and
+    `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
     pass the row's own project_id; force any stale client onto
     that path with 410 instead of guessing.
 
@@ -1377,8 +1377,8 @@ async def delete_skill_legacy(
         detail={
             "code": "project_explicit_route_required",
             "message": (
-                "Use DELETE /api/projects/{project_id}/skills/{skill_key} — "
-                "call GET /api/skills to find the project_id of the row "
+                "Use DELETE /v1/projects/{project_id}/skills/{skill_key} — "
+                "call GET /v1/skills to find the project_id of the row "
                 "you want to delete."
             ),
         },
@@ -1471,9 +1471,7 @@ async def install_skill_legacy(
     project_id = await resolve_default_write_project(db, auth)
     response.headers["Deprecation"] = "true"
     response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
-    response.headers["Link"] = (
-        '</api/projects/{project_id}/skills/install>; rel="successor-version"'
-    )
+    response.headers["Link"] = '</v1/projects/{project_id}/skills/install>; rel="successor-version"'
     return await _do_install_skill(db=db, auth=auth, project_id=project_id, body=body)
 
 

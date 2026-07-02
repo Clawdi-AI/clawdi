@@ -44,7 +44,7 @@ from app.services.managed_ai_provider import (
 )
 from app.services.vault_crypto import decrypt, encrypt
 
-router = APIRouter(prefix="/api/ai-providers", tags=["ai-providers"])
+router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
 
 ALLOWED_API_MODES: dict[str, set[str]] = {
     "openai": {"openai_chat", "openai_responses"},

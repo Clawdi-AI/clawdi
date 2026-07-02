@@ -15,7 +15,7 @@ from app.services.channel_debug_events import (
     list_channel_debug_events,
 )
 
-router = APIRouter(prefix="/api/channels/debug", tags=["channels"])
+router = APIRouter(prefix="/channels/debug", tags=["channels"])
 
 
 @router.get("/events")

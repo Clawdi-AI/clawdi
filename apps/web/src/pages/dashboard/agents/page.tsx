@@ -31,7 +31,7 @@ export default function AgentsIndexPage() {
 	const v2Access = useV2Access();
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 		// Match the Overview/agent-detail 10s cadence so the live status badges
 		// stay live on this list too.
 		refetchInterval: 10_000,

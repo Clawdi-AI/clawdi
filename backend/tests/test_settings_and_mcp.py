@@ -32,13 +32,13 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
     monkeypatch.setattr(st, "mem0_available", lambda: True)
 
     r = await client.patch(
-        "/api/settings",
+        "/v1/settings",
         json={"settings": {"memory_provider": "mem0", "mem0_api_key": "mem0_live_supersecret"}},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "updated"}
 
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert body["memory_provider"] == "mem0"
     # Secret fields must be masked — the actual key value must never be returned.
     masked = body["mem0_api_key"]
@@ -49,9 +49,9 @@ async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncCl
 
 @pytest.mark.asyncio
 async def test_settings_patch_merges_rather_than_replaces(client: httpx.AsyncClient):
-    await client.patch("/api/settings", json={"settings": {"a": 1, "b": 2}})
-    await client.patch("/api/settings", json={"settings": {"b": 99}})
-    body = (await client.get("/api/settings")).json()
+    await client.patch("/v1/settings", json={"settings": {"a": 1, "b": 2}})
+    await client.patch("/v1/settings", json={"settings": {"b": 99}})
+    body = (await client.get("/v1/settings")).json()
     # "a" must survive the second patch — PATCH semantics are merge, not replace.
     assert body["a"] == 1
     assert body["b"] == 99
@@ -68,19 +68,19 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
     can't accidentally drop arbitrary-key support and silently
     revive the banner forever."""
     # Initial state: key absent → banner should show client-side.
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert "project_migration_banner_dismissed_at" not in body
 
     # Dashboard dismisses the banner.
     dismissed_at = "2026-04-29T08:30:00Z"
     r = await client.patch(
-        "/api/settings",
+        "/v1/settings",
         json={"settings": {"project_migration_banner_dismissed_at": dismissed_at}},
     )
     assert r.status_code == 200, r.text
 
     # Subsequent reads (any device) see the dismissed timestamp.
-    body = (await client.get("/api/settings")).json()
+    body = (await client.get("/v1/settings")).json()
     assert body["project_migration_banner_dismissed_at"] == dismissed_at
 
 
@@ -106,13 +106,13 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get("/api/connectors/mcp-config")
+            r = await ac.get("/v1/connectors/mcp-config")
     finally:
         app.dependency_overrides.clear()
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["mcp_url"] == "https://api.example.test/api/mcp/composio"
+    assert body["mcp_url"] == "https://api.example.test/v1/mcp/composio"
     assert verify_mcp_bridge_token(body["mcp_token"]) == "clerk_user_123"
 
 
@@ -120,11 +120,11 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
 async def test_mcp_bridge_rejects_missing_and_invalid_tokens():
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r_missing = await ac.post("/api/mcp/composio", json={"method": "tools/list"})
+        r_missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
         assert r_missing.status_code == 401, r_missing.text
 
         r_bad = await ac.post(
-            "/api/mcp/composio",
+            "/v1/mcp/composio",
             json={"method": "tools/list"},
             headers={"Authorization": "Bearer not.a.valid.jwt"},
         )
@@ -175,7 +175,7 @@ async def test_mcp_composio_bridge_forwards_json_rpc_with_user_scoped_session(mo
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post(
-            "/api/mcp/composio",
+            "/v1/mcp/composio",
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -186,6 +186,246 @@ async def test_mcp_composio_bridge_forwards_json_rpc_with_user_scoped_session(mo
     assert body["result"]["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string"
     assert seen["user_id"] == "clerk_user_123"
     assert seen["body"] == payload
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.user import User
+    from app.routes import mcp_bridge
+
+    async def fake_auth() -> AuthContext:
+        return AuthContext(
+            user=User(
+                email="mcp-clawdi-test@clawdi.local",
+                name="MCP Clawdi Test",
+                clerk_id="clerk_mcp_clawdi",
+            )
+        )
+
+    async def fake_session():
+        yield None
+
+    async def no_connector_session(user_id: str):
+        raise RuntimeError("connectors disabled for test")
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
+    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_session] = fake_session
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            canonical_init = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {},
+                    },
+                },
+            )
+            legacy_listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert canonical_init.status_code == 200, canonical_init.text
+    assert canonical_init.json()["result"]["capabilities"]["tools"]["listChanged"] is False
+
+    assert legacy_listed.status_code == 200, legacy_listed.text
+    names = {tool["name"] for tool in legacy_listed.json()["result"]["tools"]}
+    assert {"memory_search", "memory_add", "memory_extract", "session_search", "session_read"} <= (
+        names
+    )
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.models.memory import Memory
+    from app.models.session import Session
+    from app.routes import mcp_bridge
+    from tests.conftest import create_env_with_project
+
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-env-a",
+        machine_name="MCP Env A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-env-b",
+        machine_name="MCP Env B",
+        agent_type="hermes",
+    )
+    now = datetime.now(UTC)
+    session_a = Session(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        local_session_id="mcp-a",
+        project_path="/repo/a",
+        started_at=now,
+        summary="Alpha runtime work",
+    )
+    session_b = Session(
+        user_id=seed_user.id,
+        environment_id=env_b.id,
+        local_session_id="mcp-b",
+        project_path="/repo/b",
+        started_at=now,
+        summary="Beta runtime work",
+    )
+    db_session.add_all([session_a, session_b])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            Memory(
+                user_id=seed_user.id,
+                content="OpenClaw alpha runtime uses backend direct MCP.",
+                category="decision",
+                source="session",
+                source_session_id=session_a.id,
+            ),
+            Memory(
+                user_id=seed_user.id,
+                content="Hermes beta runtime uses a different MCP setup.",
+                category="decision",
+                source="session",
+                source_session_id=session_b.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
+        )
+
+    async def no_connector_session(user_id: str):
+        raise RuntimeError("connectors disabled for test")
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "memory_search",
+                        "arguments": {"query": "runtime MCP", "limit": 10},
+                    },
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    text = response.json()["result"]["content"][0]["text"]
+    assert "OpenClaw alpha runtime" in text
+    assert "Hermes beta runtime" not in text
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_session_search_escapes_like_wildcards(
+    db_session,
+    seed_user,
+):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.models.session import Session
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-search-wildcards",
+        machine_name="MCP Search Wildcards",
+        agent_type="openclaw",
+    )
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            Session(
+                user_id=seed_user.id,
+                environment_id=env.id,
+                local_session_id="mcp-percent",
+                project_path="/repo/percent",
+                started_at=now,
+                summary="Literal 100% rollout note",
+            ),
+            Session(
+                user_id=seed_user.id,
+                environment_id=env.id,
+                local_session_id="mcp-plain",
+                project_path="/repo/plain",
+                started_at=now,
+                summary="Plain runtime work",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, environment_id=env.id, scopes=None),
+        )
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_search",
+                        "arguments": {"query": "%", "limit": 10},
+                    },
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    text = response.json()["result"]["content"][0]["text"]
+    assert "Literal 100% rollout note" in text
+    assert "Plain runtime work" not in text
 
 
 @pytest.mark.asyncio
@@ -296,3 +536,183 @@ async def test_create_tool_router_mcp_session_uses_composio_v31_api(monkeypatch)
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
     assert session.headers == {"x-session": "trs_test"}
     assert session.expires_at == now + timedelta(minutes=30)
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    """Scoped api keys are deliberate capability narrowing; the old
+    connector config route rejected them via `require_user_auth`, and the
+    MCP entrypoint must not reopen that surface: connector tools are
+    neither listed nor callable."""
+    from datetime import timedelta
+
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, scopes=["sessions:read"]),
+        )
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_forward(session, payload):
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]
+            },
+        }
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    assert listed.status_code == 200, listed.text
+    tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
+    assert "COMPOSIO_DANGEROUS" not in tool_names
+    assert "memory_search" in tool_names
+
+    assert called.status_code == 200, called.text
+    result = called.json()["result"]
+    assert result["isError"] is True
+    assert "scoped api keys" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    """An env-bound agent key must not use a share URL to owner-bypass
+    into same-user sessions from other environments. Own-env sessions and
+    actively link-shared sessions stay readable."""
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.api_key import ApiKey
+    from app.models.session import Session
+    from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
+    from app.routes import mcp_bridge
+    from tests.conftest import create_env_with_project
+
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-share-a",
+        machine_name="Share Env A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-share-b",
+        machine_name="Share Env B",
+        agent_type="hermes",
+    )
+    now = datetime.now(UTC)
+    session_a = Session(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        local_session_id="share-a",
+        started_at=now,
+        summary="Env A session",
+        file_key="sessions/share-a.json",
+    )
+    session_b = Session(
+        user_id=seed_user.id,
+        environment_id=env_b.id,
+        local_session_id="share-b",
+        started_at=now,
+        summary="Env B session",
+        file_key="sessions/share-b.json",
+    )
+    db_session.add_all([session_a, session_b])
+    await db_session.commit()
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
+        )
+
+    async def fake_messages(session, store):
+        return [{"role": "user", "content": "hello"}]
+
+    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+
+    async def read_share(ac, session_id):
+        response = await ac.post(
+            "/v1/mcp/clawdi",
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "session_read",
+                    "arguments": {"reference": f"https://cloud.clawdi.ai/s/{session_id}"},
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["result"]
+
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            own_env = await read_share(ac, session_a.id)
+            cross_env = await read_share(ac, session_b.id)
+
+            db_session.add(SessionPermission(session_id=session_b.id, kind=PERMISSION_KIND_LINK))
+            await db_session.commit()
+            linked = await read_share(ac, session_b.id)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    assert not own_env.get("isError"), own_env
+    assert cross_env["isError"] is True, cross_env
+    assert not linked.get("isError"), linked

@@ -96,7 +96,7 @@ async def test_me_invitations_lists_only_addressed_to_me(client, db_session, see
     await db_session.commit()
 
     try:
-        response = await client.get("/api/me/invitations")
+        response = await client.get("/v1/me/invitations")
         assert response.status_code == 200, response.text
         items = response.json()
         ids = {item["id"] for item in items}
@@ -149,7 +149,7 @@ async def test_me_invitations_lists_only_addressed_to_me(client, db_session, see
 async def test_accept_invitation_creates_membership(client, db_session, seed_user):
     owner, project, invitation_id = await _seed_owner_and_invite(db_session, seed_user)
     try:
-        response = await client.post(f"/api/me/invitations/{invitation_id}/accept")
+        response = await client.post(f"/v1/me/invitations/{invitation_id}/accept")
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["project_id"] == str(project.id)
@@ -171,7 +171,7 @@ async def test_accept_invitation_creates_membership(client, db_session, seed_use
         )
         assert len(memberships) == 1
 
-        inbox = await client.get("/api/me/invitations")
+        inbox = await client.get("/v1/me/invitations")
         assert inbox.status_code == 200
         assert all(item["id"] != str(invitation_id) for item in inbox.json())
     finally:
@@ -220,7 +220,7 @@ async def test_accept_invitation_rejects_owner_self_invite(client, db_session, s
     await db_session.commit()
 
     try:
-        response = await client.post(f"/api/me/invitations/{invitation.id}/accept")
+        response = await client.post(f"/v1/me/invitations/{invitation.id}/accept")
         assert response.status_code == 409, response.text
         assert response.json()["detail"]["error"] == "already_owner"
         membership = (
@@ -298,13 +298,13 @@ async def test_managed_project_invitations_are_not_acceptible(client, db_session
         await db_session.refresh(invitation)
 
     try:
-        inbox = await client.get("/api/me/invitations")
+        inbox = await client.get("/v1/me/invitations")
         assert inbox.status_code == 200, inbox.text
         listed_ids = {item["id"] for item in inbox.json()}
         assert listed_ids.isdisjoint({str(invitation.id) for invitation in invitations})
 
         for invitation in invitations:
-            response = await client.post(f"/api/me/invitations/{invitation.id}/accept")
+            response = await client.post(f"/v1/me/invitations/{invitation.id}/accept")
             assert response.status_code == 410, response.text
 
         memberships = (
@@ -345,7 +345,7 @@ async def test_accept_invitation_uses_frozen_owner_handle(client, db_session, se
     await db_session.commit()
 
     try:
-        response = await client.post(f"/api/me/invitations/{invitation_id}/accept")
+        response = await client.post(f"/v1/me/invitations/{invitation_id}/accept")
         assert response.status_code == 200, response.text
         assert response.json()["resolved_owner_handle"] == frozen_handle
     finally:
@@ -372,11 +372,11 @@ async def test_accept_invitation_uses_frozen_owner_handle(client, db_session, se
 async def test_decline_invitation_deletes_without_membership(client, db_session, seed_user):
     owner, project, invitation_id = await _seed_owner_and_invite(db_session, seed_user)
     try:
-        response = await client.post(f"/api/me/invitations/{invitation_id}/decline")
+        response = await client.post(f"/v1/me/invitations/{invitation_id}/decline")
         assert response.status_code == 200
         assert response.json()["status"] == "declined"
 
-        inbox = await client.get("/api/me/invitations")
+        inbox = await client.get("/v1/me/invitations")
         assert inbox.status_code == 200
         assert all(item["id"] != str(invitation_id) for item in inbox.json())
     finally:
@@ -416,10 +416,10 @@ async def test_agent_environment_key_cannot_list_or_decline_invitations(db_sessi
         async with httpx.AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as test_client:
-            listed = await test_client.get("/api/me/invitations")
+            listed = await test_client.get("/v1/me/invitations")
             assert listed.status_code == 403, listed.text
 
-            declined = await test_client.post(f"/api/me/invitations/{invitation_id}/decline")
+            declined = await test_client.post(f"/v1/me/invitations/{invitation_id}/decline")
             assert declined.status_code == 403, declined.text
     finally:
         app.dependency_overrides.clear()
@@ -450,7 +450,7 @@ async def test_accept_invitation_addressed_to_other_user_410(client, db_session,
 
     owner, project, invitation_id = await _seed_owner_and_invite(db_session, other)
     try:
-        response = await client.post(f"/api/me/invitations/{invitation_id}/accept")
+        response = await client.post(f"/v1/me/invitations/{invitation_id}/accept")
         assert response.status_code == 410, response.text
     finally:
         rows = (

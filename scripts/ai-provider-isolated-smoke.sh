@@ -91,7 +91,8 @@ cat >package.json <<'JSON'
     "packages/shared"
   ],
   "catalog": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "zod": "^4.4.3"
   },
   "packageManager": "bun@1.3.14"
 }
@@ -217,7 +218,7 @@ const server = http.createServer((req, res) => {
       writeSse(res);
       return;
     }
-    if (req.method === "POST" && req.url === "/api/ai-providers/openai-codex/auth/resolve") {
+    if (req.method === "POST" && req.url === "/v1/ai-providers/openai-codex/auth/resolve") {
       writeJson(res, 200, {
         provider_id: "openai-codex",
         auth_type: "agent_profile",
@@ -546,7 +547,7 @@ if (openClawProfile?.access !== oauthAccessToken) throw new Error("OpenClaw OAut
 if (oauthOpenClawAuth.order?.openai?.[0] !== "openai:default") throw new Error("OpenClaw auth order mismatch");
 const oauthDefaultValue = oauthDefault.value ?? oauthDefault;
 if (oauthDefaultValue !== "openai/gpt-5.2") throw new Error("OpenClaw OAuth default model mismatch");
-const authResolveCalls = requestLog.filter((entry) => entry.method === "POST" && entry.url === "/api/ai-providers/openai-codex/auth/resolve");
+const authResolveCalls = requestLog.filter((entry) => entry.method === "POST" && entry.url === "/v1/ai-providers/openai-codex/auth/resolve");
 if (authResolveCalls.length !== 3) throw new Error("expected one Codex auth resolve call per target");
 console.log(JSON.stringify({
   ok: true,

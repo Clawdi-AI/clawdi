@@ -1,23 +1,25 @@
 import { describe, expect, it } from "bun:test";
-import { createConnectorToolDefinition, type McpTool, normalizeMcpUrl } from "./server";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createClawdiMcpServer, createConnectorToolDefinition, type McpTool } from "./server";
 
 describe("MCP connector helpers", () => {
-	it("normalizes localhost MCP URLs without changing the backend-selected path", () => {
-		expect(
-			normalizeMcpUrl(
-				"http://localhost:8000/api/mcp/composio?session=abc#tools",
-				"https://cloud-api.clawdi.ai",
-			),
-		).toBe("https://cloud-api.clawdi.ai/api/mcp/composio?session=abc#tools");
-	});
-
-	it("leaves non-local MCP URLs unchanged", () => {
-		expect(
-			normalizeMcpUrl(
-				"https://app.composio.dev/tool_router/v3/trs_123/mcp",
-				"https://cloud-api.clawdi.ai",
-			),
-		).toBe("https://app.composio.dev/tool_router/v3/trs_123/mcp");
+	it("throws instead of exiting when there is no CLI auth", async () => {
+		const previousClawdiHome = process.env.CLAWDI_HOME;
+		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const clawdiHome = mkdtempSync(join(tmpdir(), "clawdi-mcp-auth-"));
+		process.env.CLAWDI_HOME = clawdiHome;
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			await expect(createClawdiMcpServer()).rejects.toThrow("Not logged in");
+		} finally {
+			if (previousClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = previousClawdiHome;
+			if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
+			rmSync(clawdiHome, { recursive: true, force: true });
+		}
 	});
 
 	it("preserves upstream tool names and builds typed fields from inputSchema", async () => {

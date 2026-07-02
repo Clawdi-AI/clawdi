@@ -63,7 +63,7 @@ async def test_dev_auth_bypass_authenticates_web_route_and_creates_personal_proj
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             response = await ac.get(
-                "/api/auth/me",
+                "/v1/auth/me",
                 headers={"Authorization": "Bearer dev-bypass"},
             )
 

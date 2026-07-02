@@ -1,8 +1,8 @@
 """Markdown + JSON serializers for shared sessions.
 
 Same output regardless of whether the caller is the OWNER fetching
-their own session via `GET /api/sessions/{id}/export.md` or a PUBLIC
-visitor hitting `GET /api/public/sessions/{token}/export.md`.
+their own session via `GET /v1/sessions/{id}/export.md` or a PUBLIC
+visitor hitting `GET /v1/public/sessions/{token}/export.md`.
 Sharing the serializer keeps the agent-facing `.md` body byte-for-byte
 identical across both paths, which is what `session_read` MCP tool
 relies on to give the same agent context regardless of access mode.

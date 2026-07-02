@@ -142,7 +142,7 @@ export const jsonResponse = (data: unknown, status = 200) =>
 	});
 
 /**
- * `clawdi push` now probes /api/environments/{id} before doing any work, to
+ * `clawdi push` now probes /v1/environments/{id} before doing any work, to
  * fail fast on a stale local env_id. Tests that exercise the happy path need
  * the probe to return 200 — drop this handler near the top of the handler
  * list and all push tests "just work".
@@ -150,7 +150,7 @@ export const jsonResponse = (data: unknown, status = 200) =>
  * `default_project_id` is part of the env shape because the skill upload path
  * reads it via `fetchProjectIdForEnv` to pin uploads to the agent's own project.
  * Without it, multi-agent users on an unbound CLI key would see skills land
- * under whichever env was touched last (the `/api/projects/default` heuristic
+ * under whichever env was touched last (the `/v1/projects/default` heuristic
  * we replaced).
  */
 export const okEnvironmentProbe = (
@@ -158,7 +158,7 @@ export const okEnvironmentProbe = (
 	defaultProjectId = "00000000-0000-0000-0000-000000000099",
 ) => ({
 	method: "GET",
-	path: `/api/environments/${envId}`,
+	path: `/v1/environments/${envId}`,
 	response: () =>
 		jsonResponse({
 			id: envId,

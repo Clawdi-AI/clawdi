@@ -349,13 +349,13 @@ async function buildPlan(api: ApiClient, manifest: RuntimeManifest, manifestDir:
 		let existingAccount: ChannelAccount | null;
 		if (existingAccountId !== null) {
 			existingAccount = unwrap(
-				await api.GET("/api/channels/{account_id}", {
+				await api.GET("/v1/channels/{account_id}", {
 					params: { path: { account_id: existingAccountId } },
 				}),
 			);
 		} else {
 			if (channels === null) {
-				channels = unwrap(await api.GET("/api/channels"));
+				channels = unwrap(await api.GET("/v1/channels"));
 			}
 			existingAccount = findManifestAccount(channels, channel) ?? null;
 		}
@@ -380,7 +380,7 @@ async function buildPlan(api: ApiClient, manifest: RuntimeManifest, manifestDir:
 			continue;
 		}
 		const links = unwrap(
-			await api.GET("/api/channels/{account_id}/agent-links", {
+			await api.GET("/v1/channels/{account_id}/agent-links", {
 				params: { path: { account_id: existingAccount.id } },
 			}),
 		);
@@ -421,7 +421,7 @@ async function applyChannel(ctx: ApplyContext, channel: RuntimeChannel): Promise
 	}
 	if (channel.commands?.sync) {
 		const sync = unwrap(
-			await ctx.api.POST("/api/channels/{account_id}/commands/sync", {
+			await ctx.api.POST("/v1/channels/{account_id}/commands/sync", {
 				params: { path: { account_id: account.id } },
 				body: {
 					commands: channel.commands.spec ? (channel.commands.spec as ChannelCommandSpec[]) : null,
@@ -445,7 +445,7 @@ async function ensureAccount(
 	if (isExistingAccountSpec(channel.account)) {
 		const accountSpec = channel.account;
 		const account = unwrap(
-			await ctx.api.GET("/api/channels/{account_id}", {
+			await ctx.api.GET("/v1/channels/{account_id}", {
 				params: { path: { account_id: accountSpec.id } },
 			}),
 		);
@@ -470,7 +470,7 @@ async function ensureAccount(
 		return existing;
 	}
 	const created = unwrap(
-		await ctx.api.POST("/api/channels", {
+		await ctx.api.POST("/v1/channels", {
 			body: {
 				provider: channel.provider,
 				name: createSpec.name,
@@ -503,7 +503,7 @@ async function applyLink(
 	let created = false;
 	if (!link) {
 		link = unwrap(
-			await ctx.api.POST("/api/channels/{account_id}/agent-links", {
+			await ctx.api.POST("/v1/channels/{account_id}/agent-links", {
 				params: { path: { account_id: account.id } },
 				body: { agent_id: linkManifest.agent_id },
 			}),
@@ -536,7 +536,7 @@ async function applyLink(
 			!hasDotenvValue(ctx.manifestDir, ctx.manifest.outputs.dotenv, linkManifest.runtime.token_env))
 	) {
 		const rotatedLink = unwrap(
-			await ctx.api.POST("/api/channels/{account_id}/agent-links/{link_id}/token", {
+			await ctx.api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
 				params: { path: { account_id: account.id, link_id: link.id } },
 			}),
 		);
@@ -578,7 +578,7 @@ async function applyLink(
 
 	if (linkManifest.pair_code) {
 		const pairCode = unwrap(
-			await ctx.api.POST("/api/channels/{account_id}/pair-codes", {
+			await ctx.api.POST("/v1/channels/{account_id}/pair-codes", {
 				params: { path: { account_id: account.id } },
 				body: {
 					agent_id: null,
@@ -627,7 +627,7 @@ async function writeWhatsAppCredentials(
 	const options = linkManifest.whatsapp;
 	if (!options?.baileys_credentials_dir) return;
 	const credential = unwrap(
-		await ctx.api.POST("/api/channels/whatsapp/{account_id}/tenant-creds", {
+		await ctx.api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
 			params: { path: { account_id: accountId } },
 			body: {
 				agent_id: null,
@@ -690,31 +690,31 @@ function addRuntimeEnv(
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
-			`${baseUrl}/api/channels/telegram`,
+			`${baseUrl}/v1/channels/telegram`,
 		);
 	}
 	if (provider === "discord") {
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
-			`${baseUrl}/api/channels/discord`,
+			`${baseUrl}/v1/channels/discord`,
 		);
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
-			`${toWebSocketUrl(baseUrl)}/api/channels/discord/gateway`,
+			`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
 		);
 	}
 	if (provider === "whatsapp") {
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-			`${baseUrl}/api/channels/whatsapp/graph`,
+			`${baseUrl}/v1/channels/whatsapp/graph`,
 		);
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-			`${toWebSocketUrl(baseUrl)}/api/channels/whatsapp/${accountId}/baileys`,
+			`${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
 		);
 	}
 	if (provider === "imessage") {
@@ -722,12 +722,12 @@ function addRuntimeEnv(
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-			`${baseUrl}/api/channels/imessage/bluebubbles/v1`,
+			`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
 		);
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-			`${baseUrl}/api/channels/imessage/bluebubbles`,
+			`${baseUrl}/v1/channels/imessage/bluebubbles`,
 		);
 	}
 }
@@ -798,26 +798,26 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 			if (channel.provider === "telegram") {
 				claim(
 					runtimeEnvName(link, "api_base_url", "TELEGRAM_BOT_API_BASE_URL"),
-					`${baseUrl}/api/channels/telegram`,
+					`${baseUrl}/v1/channels/telegram`,
 					link.ref,
 				);
 			}
 			if (channel.provider === "discord") {
 				claim(
 					runtimeEnvName(link, "api_base_url", "DISCORD_BOT_API_BASE_URL"),
-					`${baseUrl}/api/channels/discord`,
+					`${baseUrl}/v1/channels/discord`,
 					link.ref,
 				);
 				claim(
 					runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
-					`${toWebSocketUrl(baseUrl)}/api/channels/discord/gateway`,
+					`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
 					link.ref,
 				);
 			}
 			if (channel.provider === "whatsapp") {
 				claim(
 					runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-					`${baseUrl}/api/channels/whatsapp/graph`,
+					`${baseUrl}/v1/channels/whatsapp/graph`,
 					link.ref,
 				);
 				claim(
@@ -828,7 +828,7 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 				if (link.whatsapp?.baileys_credentials_dir) {
 					claim(
 						runtimeEnvName(link, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
-						`${baseUrl}/api/channels/whatsapp/media`,
+						`${baseUrl}/v1/channels/whatsapp/media`,
 						link.ref,
 					);
 					claim(
@@ -846,12 +846,12 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 				);
 				claim(
 					runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-					`${baseUrl}/api/channels/imessage/bluebubbles/v1`,
+					`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
 					link.ref,
 				);
 				claim(
 					runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-					`${baseUrl}/api/channels/imessage/bluebubbles`,
+					`${baseUrl}/v1/channels/imessage/bluebubbles`,
 					link.ref,
 				);
 			}
@@ -1023,7 +1023,7 @@ function printResult(value: unknown, json = false): void {
 
 async function listChannels(ctx: ApplyContext): Promise<ChannelAccount[]> {
 	if (!ctx.channelsCache) {
-		ctx.channelsCache = unwrap(await ctx.api.GET("/api/channels"));
+		ctx.channelsCache = unwrap(await ctx.api.GET("/v1/channels"));
 	}
 	return ctx.channelsCache;
 }
@@ -1032,7 +1032,7 @@ async function listLinks(ctx: ApplyContext, accountId: string): Promise<ChannelA
 	const cached = ctx.linksCache.get(accountId);
 	if (cached) return cached;
 	const links = unwrap(
-		await ctx.api.GET("/api/channels/{account_id}/agent-links", {
+		await ctx.api.GET("/v1/channels/{account_id}/agent-links", {
 			params: { path: { account_id: accountId } },
 		}),
 	);

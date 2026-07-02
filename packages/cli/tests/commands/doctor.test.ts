@@ -64,12 +64,12 @@ describe("doctor --json", () => {
 		const { captured: fetchCalls, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/auth/me",
+				path: "/v1/auth/me",
 				response: () => jsonResponse({ id: "u1", email: "e" }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "default", name: "Default" }],
@@ -78,7 +78,7 @@ describe("doctor --json", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/connectors/mcp-config",
+				path: "/v1/connectors/mcp-config",
 				response: () => jsonResponse({ ok: true }),
 			},
 		]);
@@ -97,14 +97,14 @@ describe("doctor --json", () => {
 		expect(checks.find((c) => c.name === "Vault metadata")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Vault metadata")?.detail).toContain("2 vaults reachable");
 		expect(checks.find((c) => c.name === "MCP connectors")?.ok).toBe(true);
-		expect(fetchCalls.some((request) => request.path.startsWith("/api/vault/resolve"))).toBe(false);
+		expect(fetchCalls.some((request) => request.path.startsWith("/v1/vault/resolve"))).toBe(false);
 
 		// Hermes fixture present → that agent shows ✓, others show ✗ (not installed)
 		const hermesCheck = checks.find((c) => c.name === "Agent: Hermes");
 		expect(hermesCheck?.ok).toBe(true);
 	});
 
-	it("reports API unreachable when /api/auth/me fails", async () => {
+	it("reports API unreachable when /v1/auth/me fails", async () => {
 		seedAuthAndEnv(tmpHome, "hermes");
 
 		const orig = console.log;
@@ -116,17 +116,17 @@ describe("doctor --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/auth/me",
+				path: "/v1/auth/me",
 				response: () => new Response("nope", { status: 503 }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => new Response("", { status: 503 }),
 			},
 			{
 				method: "GET",
-				path: "/api/connectors/mcp-config",
+				path: "/v1/connectors/mcp-config",
 				response: () => new Response("", { status: 503 }),
 			},
 		]);

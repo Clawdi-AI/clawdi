@@ -145,7 +145,7 @@ async function registerEnv(
 ): Promise<boolean> {
 	try {
 		const env = unwrap(
-			await api.POST("/api/environments", {
+			await api.POST("/v1/environments", {
 				body: {
 					machine_id: machineId,
 					machine_name: machineName,

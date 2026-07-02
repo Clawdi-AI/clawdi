@@ -347,14 +347,18 @@ async def test_record_inbound_message_dedupes_provider_replays_per_chat_and_link
     )
 
     rows = (
-        await db_session.execute(
-            select(ChannelMessage).where(
-                ChannelMessage.provider_message_id.in_(
-                    ["provider-duplicate", "provider-unbound-duplicate"]
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.provider_message_id.in_(
+                        ["provider-duplicate", "provider-unbound-duplicate"]
+                    )
                 )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     assert replay.id == first.id
     assert replay.text == "first copy"
@@ -469,10 +473,14 @@ async def test_prune_channel_messages_deletes_only_expired_delivered_or_unbound_
     )
 
     remaining = (
-        await db_session.execute(
-            select(ChannelMessage.text).where(ChannelMessage.account_id == account.id)
+        (
+            await db_session.execute(
+                select(ChannelMessage.text).where(ChannelMessage.account_id == account.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert set(remaining) == {"recent delivered", "pending bound"}
     assert deleted == 2
     assert await db_session.get(ChannelMessage, old_delivered.id) is None

@@ -185,7 +185,7 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 	const api = new ApiClient();
 	try {
 		const result = unwrap(
-			await api.POST("/api/sessions/{local_session_id}/extract", {
+			await api.POST("/v1/sessions/{local_session_id}/extract", {
 				params: { path: { local_session_id: sessionId } },
 			}),
 		);

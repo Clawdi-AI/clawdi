@@ -15,7 +15,7 @@ describe("fetchDefaultProjectId", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects/default",
+				path: "/v1/projects/default",
 				response: () => jsonResponse({ detail: "boom" }, 500),
 			},
 		]);
@@ -30,7 +30,7 @@ describe("fetchDefaultProjectId", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects/default",
+				path: "/v1/projects/default",
 				response: () => jsonResponse({ project_id: "project-legacy" }, 400),
 			},
 		]);

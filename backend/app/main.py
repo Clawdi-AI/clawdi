@@ -183,7 +183,7 @@ app.add_middleware(
         "X-Clawdi-Environment-Id",
         "X-Clawdi-Token",
         # `If-None-Match` carries the daemon's last seen
-        # `skills_revision` for the conditional GET /api/skills.
+        # `skills_revision` for the conditional GET /v1/skills.
         # The CLI daemon hits this without going through CORS, so
         # this is forward-compat for any browser-side caller.
         "If-None-Match",
@@ -191,7 +191,7 @@ app.add_middleware(
     expose_headers=[
         "X-Request-ID",
         # `ETag` carries the user's `skills_revision` counter on
-        # /api/skills responses. Without exposing it, browser JS
+        # /v1/skills responses. Without exposing it, browser JS
         # gets `null` from `response.headers.get("ETag")` and the
         # dashboard can't conditional-GET. CLI daemon is unaffected
         # but the dashboard relies on this once it stops fetching
@@ -215,7 +215,7 @@ async def request_validation_exception_handler(
     exc: RequestValidationError,
 ) -> JSONResponse:
     path = request.url.path
-    if path.endswith("/skills/upload") or path == "/api/sessions/batch":
+    if path.endswith("/skills/upload") or path.endswith("/sessions/batch"):
         log.warning(
             (
                 "request_validation_failed method=%s path=%s user_agent=%r "
@@ -234,36 +234,48 @@ async def request_validation_exception_handler(
     )
 
 
-app.include_router(auth_router)
-app.include_router(admin_router)
-app.include_router(ai_providers_router)
-app.include_router(audit_router)
-app.include_router(channels_router)
-app.include_router(cli_auth_router)
-app.include_router(sessions_router)
-# Public share routes — mounted under /api/public/sessions/{id}/...,
-# auth is optional (signed-in owners + active link permissions get
-# served; anon hits 401, signed-in non-grantees hit 403). See
-# routes/public_sessions.py for the access-check helper.
-app.include_router(public_sessions_router)
-app.include_router(dashboard_router)
-app.include_router(projects_router)
-app.include_router(runtime_router)
-app.include_router(skills_router)
-app.include_router(skills_project_router)
-app.include_router(skills_scope_router)
-app.include_router(sync_router)
-app.include_router(memories_router)
-app.include_router(settings_router)
-app.include_router(capabilities_router)
-app.include_router(vault_router)
-app.include_router(connectors_router)
-app.include_router(mcp_bridge_router)
-app.include_router(search_router)
-app.include_router(share_redeem_router)
-app.include_router(sharing_router)
-app.include_router(me_router)
-app.include_router(agent_project_bindings_router)
+# Every API router is mounted twice: canonically under /v1 (the only
+# form in the OpenAPI schema — we serve on a dedicated API domain, so
+# versioning sits at the root) and under the legacy /api alias kept
+# for clients built before the /v1 migration.
+#
+# Note for public_sessions_router: share routes live at
+# /v1/public/sessions/{id}/..., auth is optional (signed-in owners +
+# active link permissions get served; anon hits 401, signed-in
+# non-grantees hit 403). See routes/public_sessions.py.
+_VERSIONED_ROUTERS = (
+    auth_router,
+    admin_router,
+    ai_providers_router,
+    audit_router,
+    channels_router,
+    cli_auth_router,
+    sessions_router,
+    public_sessions_router,
+    dashboard_router,
+    projects_router,
+    runtime_router,
+    skills_router,
+    skills_project_router,
+    sync_router,
+    memories_router,
+    settings_router,
+    capabilities_router,
+    vault_router,
+    connectors_router,
+    mcp_bridge_router,
+    search_router,
+    share_redeem_router,
+    sharing_router,
+    me_router,
+    agent_project_bindings_router,
+)
+for _router in _VERSIONED_ROUTERS:
+    app.include_router(_router, prefix="/v1")
+    app.include_router(_router, prefix="/api", include_in_schema=False)
+# Scope skill reads predate the Scope -> Project migration and only
+# exist for old binaries; legacy /api alias only.
+app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)
 app.include_router(metrics_router)
 
 
@@ -295,7 +307,9 @@ async def clawdi_request_validation_exception_handler(
 
 
 def _is_bluebubbles_request(request: Request) -> bool:
-    return request.url.path.startswith("/api/channels/imessage/bluebubbles/")
+    return request.url.path.startswith(
+        ("/api/channels/imessage/bluebubbles/", "/v1/channels/imessage/bluebubbles/")
+    )
 
 
 def _bluebubbles_error_response(

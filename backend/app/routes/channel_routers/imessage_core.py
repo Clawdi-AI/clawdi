@@ -29,7 +29,7 @@ from app.routes.channel_routers.shared import (
 )
 from app.services.channel_webhooks import bluebubbles_webhook_update
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 
 
 @router.get(

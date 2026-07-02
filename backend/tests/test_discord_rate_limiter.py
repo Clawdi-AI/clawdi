@@ -15,10 +15,13 @@ def _headers(entries: dict[str, str | None]) -> _Headers:
 def test_discord_route_key_collapses_snowflakes_and_keeps_major_parameter():
     limiter = DiscordRateLimiter()
 
-    assert limiter.route_key(
-        "PATCH",
-        "/api/v10/channels/1494815997981491361/messages/1494831575131492536",
-    ) == "PATCH /channels/:major/messages/:id|1494815997981491361"
+    assert (
+        limiter.route_key(
+            "PATCH",
+            "/api/v10/channels/1494815997981491361/messages/1494831575131492536",
+        )
+        == "PATCH /channels/:major/messages/:id|1494815997981491361"
+    )
 
 
 def test_discord_route_key_templates_webhook_tokens():
@@ -50,7 +53,7 @@ def test_discord_route_key_strips_api_prefixes():
     assert limiter.route_key("POST", "/channels/111111111111111111/messages") == (
         limiter.route_key(
             "POST",
-            "/api/channels/discord/v10/channels/111111111111111111/messages",
+            "/v1/channels/discord/v10/channels/111111111111111111/messages",
         )
     )
 

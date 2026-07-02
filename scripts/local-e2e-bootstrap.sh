@@ -2,11 +2,11 @@
 # Local end-to-end smoke test for the Phase 4a SaaS deploy flow.
 #
 # What it exercises:
-#   1. Admin endpoint (`POST /api/admin/environments`) creates an env on
+#   1. Admin endpoint (`POST /v1/admin/environments`) creates an env on
 #      behalf of a brand-new clerk_id — verifies lazy user+Personal-project
 #      creation against the same code path that fires when a user clicks
 #      Deploy on clawdi.ai before ever visiting cloud.clawdi.ai.
-#   2. Admin endpoint (`POST /api/admin/auth/keys`) mints a deploy key
+#   2. Admin endpoint (`POST /v1/admin/auth/keys`) mints a deploy key
 #      bound to that env. Default API permission scopes (`scopes=null`)
 #      mean full account access
 #      (read + write across sessions / skills / memories / vault), same
@@ -56,7 +56,7 @@ echo "$HEALTH"
 echo
 
 echo "=== Step 2: register environment (lazy-creates user) ==="
-ENV_RES=$(curl -fsSX POST "$API/api/admin/environments" \
+ENV_RES=$(curl -fsSX POST "$API/v1/admin/environments" \
   -H "X-Admin-Key: $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d "{
@@ -71,7 +71,7 @@ echo "  clerk_id=$NOVEL_CLERK_ID  (newly lazy-created — check cloud-api logs f
 echo
 
 echo "=== Step 3: mint deploy key bound to that env ==="
-KEY_RES=$(curl -fsSX POST "$API/api/admin/auth/keys" \
+KEY_RES=$(curl -fsSX POST "$API/v1/admin/auth/keys" \
   -H "X-Admin-Key: $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d "{
@@ -110,14 +110,14 @@ echo "After \`daemon run\` is running:"
 echo "  - Backfill is automatic; daemon scans ~/.claude/projects/ on startup"
 echo "  - Open or continue any Claude Code conversation → new session JSONL appears"
 echo "  - Daemon picks it up via fs watcher, pushes to cloud-api"
-echo "  - Watch cloud-api logs for: POST /api/sessions/... 200"
+echo "  - Watch cloud-api logs for: POST /v1/sessions/... 200"
 echo
 echo "Check pushed sessions via cloud-api API:"
 echo "  curl -H \"Authorization: Bearer $RAW_KEY\" \\"
-echo "       \"$API/api/sessions?environment_id=$ENV_ID\" | jq '.[] | {id, file_path}'"
+echo "       \"$API/v1/sessions?environment_id=$ENV_ID\" | jq '.[] | {id, file_path}'"
 echo
 echo "Cleanup when done (revoke key + drop test user row):"
-echo "  curl -X DELETE -H \"X-Admin-Key: $ADMIN_KEY\" \"$API/api/admin/auth/keys/$KEY_ID\""
+echo "  curl -X DELETE -H \"X-Admin-Key: $ADMIN_KEY\" \"$API/v1/admin/auth/keys/$KEY_ID\""
 echo "  PGPASSWORD=clawdi_dev psql -h localhost -p 5433 -U clawdi -d clawdi_cloud \\"
 echo "    -c \"DELETE FROM users WHERE clerk_id='$NOVEL_CLERK_ID';\""
 

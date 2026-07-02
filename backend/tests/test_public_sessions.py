@@ -26,7 +26,7 @@ import pytest
 
 async def _register_env(client: httpx.AsyncClient) -> str:
     r = await client.post(
-        "/api/environments",
+        "/v1/environments",
         json={
             "machine_id": "test-public-machine",
             "machine_name": "Public Mac",
@@ -70,7 +70,7 @@ async def _seed_session_with_content(
     h = hashlib.sha256(body_bytes).hexdigest()
 
     r = await client.post(
-        "/api/sessions/batch",
+        "/v1/sessions/batch",
         json={
             "sessions": [
                 {
@@ -89,22 +89,22 @@ async def _seed_session_with_content(
     assert r.status_code == 200, r.text
 
     await client.post(
-        f"/api/sessions/{local_session_id}/upload",
+        f"/v1/sessions/{local_session_id}/upload",
         files={"file": (f"{local_session_id}.json", body_bytes, "application/json")},
     )
 
-    listing = (await client.get(f"/api/sessions?q={local_session_id}")).json()
+    listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     sid = next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
     return sid, messages
 
 
 async def _enable_link(client: httpx.AsyncClient, sid: str) -> None:
-    r = await client.post(f"/api/sessions/{sid}/permissions", json={"kind": "link"})
+    r = await client.post(f"/v1/sessions/{sid}/permissions", json={"kind": "link"})
     assert r.status_code == 200, r.text
 
 
 async def _disable_link(client: httpx.AsyncClient, sid: str) -> None:
-    r = await client.delete(f"/api/sessions/{sid}/permissions", params={"kind": "link"})
+    r = await client.delete(f"/v1/sessions/{sid}/permissions", params={"kind": "link"})
     assert r.status_code == 204, r.text
 
 
@@ -160,7 +160,7 @@ async def test_public_detail_returns_stripped_payload(
     sid, _ = await _seed_session_with_content(client)
     await _enable_link(client, sid)
 
-    r = await anon_client.get(f"/api/public/sessions/{sid}")
+    r = await anon_client.get(f"/v1/public/sessions/{sid}")
     assert r.status_code == 200, r.text
     body = r.json()
 
@@ -187,14 +187,12 @@ async def test_public_messages_paginate(client: httpx.AsyncClient, anon_client: 
     )
     await _enable_link(client, sid)
 
-    page1 = (await anon_client.get(f"/api/public/sessions/{sid}/messages?offset=0&limit=10")).json()
+    page1 = (await anon_client.get(f"/v1/public/sessions/{sid}/messages?offset=0&limit=10")).json()
     assert page1["total"] == 50
     assert len(page1["items"]) == 10
     assert page1["items"][0]["content"] == "m0"
 
-    page2 = (
-        await anon_client.get(f"/api/public/sessions/{sid}/messages?offset=10&limit=10")
-    ).json()
+    page2 = (await anon_client.get(f"/v1/public/sessions/{sid}/messages?offset=10&limit=10")).json()
     assert page2["items"][0]["content"] == "m10"
 
 
@@ -208,7 +206,7 @@ async def test_public_export_md_has_front_matter_and_body(
     sid, _ = await _seed_session_with_content(client, local_session_id="sess-md-export")
     await _enable_link(client, sid)
 
-    r = await anon_client.get(f"/api/public/sessions/{sid}/export.md")
+    r = await anon_client.get(f"/v1/public/sessions/{sid}/export.md")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/markdown")
     body = r.text
@@ -232,7 +230,7 @@ async def test_public_export_json_strips_owner_fields(
     sid, messages = await _seed_session_with_content(client, local_session_id="sess-json-export")
     await _enable_link(client, sid)
 
-    r = await anon_client.get(f"/api/public/sessions/{sid}/export.json")
+    r = await anon_client.get(f"/v1/public/sessions/{sid}/export.json")
     assert r.status_code == 200
     body = r.json()
 
@@ -263,7 +261,7 @@ async def test_invalid_uuid_404s_without_db_hit(client: httpx.AsyncClient):
         "x" * 23,
         "../etc/passwd",
     ]:
-        r = await client.get(f"/api/public/sessions/{bogus}")
+        r = await client.get(f"/v1/public/sessions/{bogus}")
         assert r.status_code in (404, 422), f"bogus {bogus!r} → {r.status_code}"
 
 
@@ -280,12 +278,12 @@ async def test_link_revoke_returns_401_to_anon(
     sid, _ = await _seed_session_with_content(client, local_session_id="sess-revoke")
     await _enable_link(client, sid)
 
-    assert (await anon_client.get(f"/api/public/sessions/{sid}")).status_code == 200
+    assert (await anon_client.get(f"/v1/public/sessions/{sid}")).status_code == 200
 
     await _disable_link(client, sid)
 
     for path_suffix in ["", "/messages", "/export.md", "/export.json"]:
-        r = await anon_client.get(f"/api/public/sessions/{sid}{path_suffix}")
+        r = await anon_client.get(f"/v1/public/sessions/{sid}{path_suffix}")
         assert r.status_code == 401, f"{path_suffix} → {r.status_code}"
 
 
@@ -301,7 +299,7 @@ async def test_owner_can_view_own_private_session(
     sid, _ = await _seed_session_with_content(client, local_session_id="sess-owner-view")
     # NO link grant — session is private.
 
-    r = await client.get(f"/api/public/sessions/{sid}")
+    r = await client.get(f"/v1/public/sessions/{sid}")
     assert r.status_code == 200
 
 
@@ -317,7 +315,7 @@ async def test_anon_to_private_session_401s(
     """
     sid, _ = await _seed_session_with_content(client, local_session_id="sess-anon-private")
 
-    r = await anon_client.get(f"/api/public/sessions/{sid}")
+    r = await anon_client.get(f"/v1/public/sessions/{sid}")
     assert r.status_code == 401
 
 
@@ -331,7 +329,7 @@ async def test_owner_export_md_matches_public_format(client: httpx.AsyncClient):
     """
     sid, _ = await _seed_session_with_content(client, local_session_id="sess-owner-md")
 
-    r = await client.get(f"/api/sessions/{sid}/export.md")
+    r = await client.get(f"/v1/sessions/{sid}/export.md")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/markdown")
     body = r.text
@@ -351,5 +349,5 @@ async def test_owner_export_md_404s_on_someone_elses_session(
     "this UUID exists but isn't yours" via 403.
     """
     bogus = "00000000-0000-0000-0000-000000000000"
-    r = await client.get(f"/api/sessions/{bogus}/export.md")
+    r = await client.get(f"/v1/sessions/{bogus}/export.md")
     assert r.status_code == 404

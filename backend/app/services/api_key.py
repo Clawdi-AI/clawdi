@@ -1,7 +1,7 @@
 """ApiKey minting service.
 
 Single source of truth for ApiKey creation. The dashboard route
-`POST /api/auth/keys` walks through `mint_api_key()`. Deploy-key
+`POST /v1/auth/keys` walks through `mint_api_key()`. Deploy-key
 flow (where the dashboard mints a key for an externally-hosted
 agent pod and hands it to clawdi.ai's control plane) uses the
 SAME route, with `environment_id` set on the request body —

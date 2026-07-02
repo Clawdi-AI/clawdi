@@ -19,7 +19,7 @@ async def test_create_share_link_returns_raw_token_once(client, seed_user, works
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/projects/{workspace_project.id}/share-links",
+        f"/v1/projects/{workspace_project.id}/share-links",
         json={"label": "team link"},
     )
     assert r.status_code == 200, r.text
@@ -43,14 +43,14 @@ async def test_create_share_link_persists_hash_not_raw(client, seed_user, worksp
     seed_user.name = "Alice Example"
 
     r = await client.post(
-        f"/api/projects/{workspace_project.id}/share-links",
+        f"/v1/projects/{workspace_project.id}/share-links",
         json={},
     )
     assert r.status_code == 200
     raw = r.json()["raw_token"]
     # /preview is anonymous (no auth header needed); httpx client
     # carries an Authorization header but the dep ignores it.
-    preview = await client.get(f"/api/share/{raw}/preview")
+    preview = await client.get(f"/v1/share/{raw}/preview")
     assert preview.status_code == 200, preview.text
     body = preview.json()
     assert body["project_id"] == str(workspace_project.id)
@@ -70,7 +70,7 @@ async def test_create_share_link_rejects_managed_projects(
 
     for project in (seed_project, environment_project):
         r = await client.post(
-            f"/api/projects/{project.id}/share-links",
+            f"/v1/projects/{project.id}/share-links",
             json={},
         )
         assert r.status_code == 400, r.text
@@ -106,7 +106,7 @@ async def test_create_share_link_cross_tenant_404(client, db_session, seed_user)
 
     try:
         r = await client.post(
-            f"/api/projects/{other_project.id}/share-links",
+            f"/v1/projects/{other_project.id}/share-links",
             json={},
         )
         assert r.status_code == 404
@@ -124,7 +124,7 @@ async def test_create_share_link_requires_display_name(client, seed_user, worksp
     seed_user.name = None
 
     r = await client.post(
-        f"/api/projects/{workspace_project.id}/share-links",
+        f"/v1/projects/{workspace_project.id}/share-links",
         json={},
     )
     assert r.status_code == 409, r.text

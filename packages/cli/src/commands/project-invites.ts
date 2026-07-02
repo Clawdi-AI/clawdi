@@ -43,7 +43,7 @@ export async function projectInvitesCommand(
 		await authedJson<{ status: string }>(
 			apiUrl,
 			apiKey,
-			`/api/projects/${projectId}/invitations/${opts.cancel}`,
+			`/v1/projects/${projectId}/invitations/${opts.cancel}`,
 			{ method: "DELETE" },
 		);
 		console.log(`${chalk.green("✓")} Invitation cancelled.`);
@@ -54,7 +54,7 @@ export async function projectInvitesCommand(
 	const items = await authedJson<InvitationItem[]>(
 		apiUrl,
 		apiKey,
-		`/api/projects/${projectId}/invitations`,
+		`/v1/projects/${projectId}/invitations`,
 	);
 	if (items.length === 0) {
 		console.log("No pending invites on this project.");

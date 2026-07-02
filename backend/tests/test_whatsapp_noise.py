@@ -1000,7 +1000,7 @@ async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-runtime-error"},
         )
     ).json()
@@ -1032,7 +1032,7 @@ async def test_whatsapp_shared_runtime_queues_cloud_sendable_proto_and_records_n
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-shared-runtime"},
         )
     ).json()
@@ -1185,7 +1185,7 @@ async def test_whatsapp_shared_runtime_reuploads_encrypted_image_media(
     )
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-shared-runtime-media-reupload",
@@ -1313,7 +1313,7 @@ async def test_whatsapp_shared_runtime_relays_native_required_proto_when_transpo
 
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-shared-runtime-native"},
         )
     ).json()
@@ -1389,7 +1389,7 @@ async def test_whatsapp_shared_runtime_preserves_baileys_relay_attrs_via_native_
 
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-shared-runtime-native-attrs"},
         )
     ).json()
@@ -1514,7 +1514,7 @@ async def test_whatsapp_shared_runtime_relays_raw_nodes_and_forwards_iq(
 
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-shared-runtime-raw"},
         )
     ).json()
@@ -1623,7 +1623,7 @@ async def test_whatsapp_shared_runtime_relays_read_receipt_via_cloud_api_without
     monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-cloud-read-relay",
@@ -1728,7 +1728,7 @@ async def test_whatsapp_shared_runtime_relays_typing_indicator_via_cloud_api(
     monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={
                 "provider": "whatsapp",
                 "name": "wa-cloud-typing-relay",
@@ -1851,13 +1851,13 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
 ):
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-runtime-debug"},
         )
     ).json()
     minted = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={
                 "self_identity": {
                     "id": "16693773518:2@s.whatsapp.net",
@@ -2049,13 +2049,13 @@ async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_r
 
     created = (
         await client.post(
-            "/api/channels",
+            "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-route-native-registry"},
         )
     ).json()
     minted = (
         await client.post(
-            f"/api/channels/whatsapp/{created['id']}/tenant-creds",
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
             json={
                 "self_identity": {
                     "id": "16693773518:2@s.whatsapp.net",

@@ -14,7 +14,7 @@ import {
 	snapshotAndClearAgentHomeOverrides,
 } from "./helpers";
 
-/** Narrow the JSON-parsed request body of `/api/sessions/batch`. */
+/** Narrow the JSON-parsed request body of `/v1/sessions/batch`. */
 interface BatchSession {
 	environment_id: string;
 	local_session_id: string;
@@ -71,7 +71,7 @@ describe("push — Hermes fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () =>
 					jsonResponse({
 						created: 0,
@@ -80,7 +80,7 @@ describe("push — Hermes fixture", () => {
 						needs_content: [],
 					}),
 			},
-			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+			{ method: "POST", path: "/v1/sessions/", response: () => jsonResponse({}) },
 		]);
 
 		try {
@@ -89,7 +89,7 @@ describe("push — Hermes fixture", () => {
 			restore();
 		}
 
-		const batchCalls = captured.filter((c) => c.path === "/api/sessions/batch");
+		const batchCalls = captured.filter((c) => c.path === "/v1/sessions/batch");
 		expect(batchCalls.length).toBeGreaterThan(0);
 		for (const call of batchCalls) expect(call.method).toBe("POST");
 		const chunkSizes = batchCalls.map((call) => batchSessions(call).length);
@@ -100,7 +100,7 @@ describe("push — Hermes fixture", () => {
 		);
 
 		// `needs_content` is empty in this test's mock responses.
-		const uploads = captured.filter((c) => c.path.match(/^\/api\/sessions\/[^/]+\/upload$/));
+		const uploads = captured.filter((c) => c.path.match(/^\/v1\/sessions\/[^/]+\/upload$/));
 		expect(uploads).toHaveLength(0);
 
 		// state.json updated. Round 1 (commit d8122d6) switched the cursor
@@ -129,12 +129,12 @@ describe("push — Hermes fixture", () => {
 			// "00000000-...-099"` by default; the upload mock below
 			// pins the URL to that same project. Push now reads the
 			// project from the agent's env, not from
-			// `/api/projects/default`, so multi-agent users land
+			// `/v1/projects/default`, so multi-agent users land
 			// under their own env's project.
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/projects/${projectId}/skills/upload`,
+				path: `/v1/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -143,7 +143,7 @@ describe("push — Hermes fixture", () => {
 		} finally {
 			restore();
 		}
-		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		const uploads = captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`);
 		expect(uploads.length).toBeGreaterThan(0);
 		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
 	});
@@ -162,7 +162,7 @@ describe("push — Hermes fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/projects/${projectId}/skills/upload`,
+				path: `/v1/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -172,7 +172,7 @@ describe("push — Hermes fixture", () => {
 			restore();
 		}
 
-		const uploads = captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`);
+		const uploads = captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`);
 		expect(uploads).toHaveLength(1);
 	});
 
@@ -183,12 +183,12 @@ describe("push — Hermes fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: `/api/projects/${projectId}/skills/upload`,
+				path: `/v1/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "core/demo", version: 1, file_count: 1 }),
 			},
 		]);
 		const uploadCount = () =>
-			captured.filter((c) => c.path === `/api/projects/${projectId}/skills/upload`).length;
+			captured.filter((c) => c.path === `/v1/projects/${projectId}/skills/upload`).length;
 		try {
 			// First push computes the skill's folder hash, uploads it, and
 			// records the hash in the skills-lock.
@@ -211,7 +211,7 @@ describe("push — Hermes fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () =>
 					jsonResponse({
 						created: 2,
@@ -220,7 +220,7 @@ describe("push — Hermes fixture", () => {
 						needs_content: ["s-json", "s-plain"],
 					}),
 			},
-			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+			{ method: "POST", path: "/v1/sessions/", response: () => jsonResponse({}) },
 		]);
 		try {
 			await push({ agent: "hermes", modules: "sessions", all: true });
@@ -239,10 +239,10 @@ describe("push — Claude Code fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
-			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+			{ method: "POST", path: "/v1/sessions/", response: () => jsonResponse({}) },
 		]);
 		try {
 			await push({ agent: "claude_code", modules: "sessions", all: true });
@@ -250,7 +250,7 @@ describe("push — Claude Code fixture", () => {
 			restore();
 		}
 
-		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		const batch = captured.find((c) => c.path === "/v1/sessions/batch");
 		expect(batch).toBeDefined();
 		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
@@ -268,10 +268,10 @@ describe("push — Codex fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
-			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+			{ method: "POST", path: "/v1/sessions/", response: () => jsonResponse({}) },
 		]);
 		try {
 			await push({ agent: "codex", modules: "sessions", all: true });
@@ -279,7 +279,7 @@ describe("push — Codex fixture", () => {
 			restore();
 		}
 
-		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		const batch = captured.find((c) => c.path === "/v1/sessions/batch");
 		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.input_tokens).toBe(15);
@@ -296,10 +296,10 @@ describe("push — OpenClaw fixture", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
-			{ method: "POST", path: "/api/sessions/", response: () => jsonResponse({}) },
+			{ method: "POST", path: "/v1/sessions/", response: () => jsonResponse({}) },
 		]);
 		try {
 			await push({ agent: "openclaw", modules: "sessions", all: true });
@@ -307,7 +307,7 @@ describe("push — OpenClaw fixture", () => {
 			restore();
 		}
 
-		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		const batch = captured.find((c) => c.path === "/v1/sessions/batch");
 		const sessions = batchSessions(batch);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.local_session_id).toBe("oc-session-001");
@@ -322,7 +322,7 @@ describe("push — env_id probe (Codex plan A)", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/environments/env-test",
+				path: "/v1/environments/env-test",
 				response: () => new Response("", { status: 404 }),
 			},
 		]);
@@ -333,7 +333,7 @@ describe("push — env_id probe (Codex plan A)", () => {
 		}
 		expect(process.exitCode).toBe(1);
 		// No batch upload — we bailed before doing any work.
-		expect(captured.find((c) => c.path === "/api/sessions/batch")).toBeUndefined();
+		expect(captured.find((c) => c.path === "/v1/sessions/batch")).toBeUndefined();
 	});
 
 	it("aborts on 400 unknown_environment from batch endpoint (race after probe)", async () => {
@@ -344,7 +344,7 @@ describe("push — env_id probe (Codex plan A)", () => {
 				// …but a parallel teardown could delete the env between probe and
 				// batch. The CLI must catch the structured 400 the same way.
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () =>
 					jsonResponse(
 						{
@@ -412,7 +412,7 @@ describe("push — --all flag fan-out", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
 		]);
@@ -423,7 +423,7 @@ describe("push — --all flag fan-out", () => {
 		}
 		// One batch call with the claude_code session — codex was NOT
 		// pulled in despite --all, because --agent narrowed.
-		const batches = captured.filter((c) => c.path === "/api/sessions/batch");
+		const batches = captured.filter((c) => c.path === "/v1/sessions/batch");
 		expect(batches).toHaveLength(1);
 		const sessions = batchSessions(batches[0]);
 		expect(sessions).toHaveLength(1);
@@ -448,7 +448,7 @@ describe("push — --all flag fan-out", () => {
 		} finally {
 			restore();
 		}
-		expect(captured.find((c) => c.path === "/api/sessions/batch")).toBeUndefined();
+		expect(captured.find((c) => c.path === "/v1/sessions/batch")).toBeUndefined();
 	});
 
 	it("--all alone reaches all axes for a single registered agent", async () => {
@@ -458,12 +458,12 @@ describe("push — --all flag fan-out", () => {
 			okEnvironmentProbe(),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
 			{
 				method: "POST",
-				path: `/api/projects/${projectId}/skills/upload`,
+				path: `/v1/projects/${projectId}/skills/upload`,
 				response: () => jsonResponse({ skill_key: "demo", version: 1, file_count: 1 }),
 			},
 		]);
@@ -475,13 +475,13 @@ describe("push — --all flag fan-out", () => {
 		} finally {
 			restore();
 		}
-		const batch = captured.find((c) => c.path === "/api/sessions/batch");
+		const batch = captured.find((c) => c.path === "/v1/sessions/batch");
 		expect(batch).toBeDefined();
 		expect(batchSessions(batch)).toHaveLength(1);
 		// Skill axis was also exercised — proves --all defaults modules
 		// to the full set when --modules isn't passed.
 		const skillUploads = captured.filter(
-			(c) => c.path === `/api/projects/${projectId}/skills/upload`,
+			(c) => c.path === `/v1/projects/${projectId}/skills/upload`,
 		);
 		expect(skillUploads.length).toBeGreaterThan(0);
 	});
@@ -502,7 +502,7 @@ describe("push — --all flag fan-out", () => {
 			okEnvironmentProbe("env-codex"),
 			{
 				method: "POST",
-				path: "/api/sessions/batch",
+				path: "/v1/sessions/batch",
 				response: () => jsonResponse({ created: 1, updated: 0, unchanged: 0, needs_content: [] }),
 			},
 		]);
@@ -513,11 +513,11 @@ describe("push — --all flag fan-out", () => {
 		}
 		// Both env probes happened — proof the scan phase visited both
 		// agents before any upload.
-		expect(captured.some((c) => c.path === "/api/environments/env-test")).toBe(true);
-		expect(captured.some((c) => c.path === "/api/environments/env-codex")).toBe(true);
+		expect(captured.some((c) => c.path === "/v1/environments/env-test")).toBe(true);
+		expect(captured.some((c) => c.path === "/v1/environments/env-codex")).toBe(true);
 		// claude_code's session uploaded; codex contributed nothing but
 		// didn't abort the run.
-		const batches = captured.filter((c) => c.path === "/api/sessions/batch");
+		const batches = captured.filter((c) => c.path === "/v1/sessions/batch");
 		expect(batches).toHaveLength(1);
 		expect(batchSessions(batches[0])).toHaveLength(1);
 	});

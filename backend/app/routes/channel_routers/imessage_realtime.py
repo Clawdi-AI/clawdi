@@ -46,7 +46,7 @@ from app.services.channels import (
     verify_webhook_secret,
 )
 
-router = APIRouter(prefix="/api/channels/imessage", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage", tags=["channels"])
 
 
 @router.websocket("/bluebubbles/socket.io/")

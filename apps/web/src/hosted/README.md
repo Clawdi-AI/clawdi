@@ -64,4 +64,4 @@ OSS users running their own Clawdi instance see none of this UI.
   gate (`VITE_CLAWDI_HOSTED === "true"`) plus dynamic import).
 
 Connector UI does not live here. Hosted and connected sessions both
-read connectors from the shared `/api/connectors` route.
+read connectors from the shared `/v1/connectors` route.

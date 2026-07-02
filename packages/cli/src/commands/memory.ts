@@ -47,7 +47,7 @@ function printRows(memories: Memory[], short: boolean) {
 export async function memoryList(opts: ListOpts = {}) {
 	requireAuth();
 	const api = new ApiClient();
-	const page = unwrap(await api.GET("/api/memories", { params: { query: buildQuery(opts) } }));
+	const page = unwrap(await api.GET("/v1/memories", { params: { query: buildQuery(opts) } }));
 	const memories = page.items;
 
 	if (opts.json || !process.stdout.isTTY) {
@@ -68,7 +68,7 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 	requireAuth();
 	const api = new ApiClient();
 	const page = unwrap(
-		await api.GET("/api/memories", { params: { query: buildQuery({ ...opts, q: query }) } }),
+		await api.GET("/v1/memories", { params: { query: buildQuery({ ...opts, q: query }) } }),
 	);
 	const memories = page.items;
 
@@ -113,7 +113,7 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 
 	const api = new ApiClient();
 	const result = unwrap(
-		await api.POST("/api/memories", {
+		await api.POST("/v1/memories", {
 			body: { content, category, source: "manual" },
 		}),
 	);
@@ -123,6 +123,6 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 export async function memoryRm(id: string) {
 	requireAuth();
 	const api = new ApiClient();
-	unwrap(await api.DELETE("/api/memories/{memory_id}", { params: { path: { memory_id: id } } }));
+	unwrap(await api.DELETE("/v1/memories/{memory_id}", { params: { path: { memory_id: id } } }));
 	console.log(chalk.green("✓ Deleted memory"));
 }

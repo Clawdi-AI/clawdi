@@ -14,7 +14,7 @@ from app.schemas.settings import (
 from app.services.memory_provider import mem0_available
 from app.services.vault_crypto import encrypt_field, is_encrypted_field
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/settings", tags=["settings"])
 
 # Mask shown to clients in place of actual secret values.
 _SECRET_MASK = "••••••••"
@@ -86,7 +86,7 @@ async def update_settings(
     # Validate memory_provider — refuse `mem0` if the deployment
     # doesn't have the optional `[mem0]` extra installed. Pre-fix
     # the dashboard would happily save the value, then GET
-    # /api/memories would 500 with `ModuleNotFoundError: 'mem0'`
+    # /v1/memories would 500 with `ModuleNotFoundError: 'mem0'`
     # for that user every time. The factory has an ImportError
     # fallback as defense-in-depth, but failing closed at write
     # time gives the user an actionable error ("not available on

@@ -109,7 +109,7 @@ from app.services.whatsapp_shared_runtime import (
     get_whatsapp_shared_bot_transport,
 )
 
-router = APIRouter(prefix="/api/channels/whatsapp", tags=["channels"])
+router = APIRouter(prefix="/channels/whatsapp", tags=["channels"])
 
 
 @router.post(

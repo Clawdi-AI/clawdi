@@ -24,12 +24,12 @@ export function ApiKeysPanel() {
 
 	const { data: keys, isLoading } = useQuery({
 		queryKey: ["api-keys"],
-		queryFn: async () => unwrap(await api.GET("/api/auth/keys")),
+		queryFn: async () => unwrap(await api.GET("/v1/auth/keys")),
 	});
 
 	const createKey = useMutation({
 		mutationFn: async (label: string) =>
-			unwrap(await api.POST("/api/auth/keys", { body: { label } })),
+			unwrap(await api.POST("/v1/auth/keys", { body: { label } })),
 		onSuccess: (data) => {
 			setCreatedKey(data.raw_key);
 			setNewLabel("");
@@ -41,7 +41,7 @@ export function ApiKeysPanel() {
 	const revokeKey = useMutation({
 		mutationFn: async (keyId: string) =>
 			unwrap(
-				await api.DELETE("/api/auth/keys/{key_id}", {
+				await api.DELETE("/v1/auth/keys/{key_id}", {
 					params: { path: { key_id: keyId } },
 				}),
 			),

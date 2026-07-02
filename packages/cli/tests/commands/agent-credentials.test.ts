@@ -68,7 +68,7 @@ describe("agent credential profiles", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles",
+				path: "/v1/vault/credential-profiles",
 				response: () =>
 					jsonResponse({
 						id: "profile-1",
@@ -199,7 +199,7 @@ describe("agent credential profiles", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles/resolve",
+				path: "/v1/vault/credential-profiles/resolve",
 				response: () =>
 					jsonResponse({
 						id: "profile-1",
@@ -241,7 +241,7 @@ describe("agent credential profiles", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles",
+				path: "/v1/vault/credential-profiles",
 				response: () =>
 					jsonResponse({
 						id: "profile-2",
@@ -300,7 +300,7 @@ describe("agent credential profiles", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles/resolve",
+				path: "/v1/vault/credential-profiles/resolve",
 				response: () =>
 					jsonResponse({
 						id: "profile-3",
@@ -350,7 +350,7 @@ describe("agent credential profiles", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/vault/credential-profiles/resolve",
+				path: "/v1/vault/credential-profiles/resolve",
 				response: () =>
 					jsonResponse({
 						id: "profile-1",

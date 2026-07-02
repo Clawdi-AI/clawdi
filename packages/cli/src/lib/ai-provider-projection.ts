@@ -456,6 +456,7 @@ function codexModelProviderId(provider: ProjectionProvider): string {
 }
 
 function shouldWriteCodexModel(provider: ProjectionProvider): boolean {
+	if (usesBuiltInCodexOpenAiProvider(provider)) return false;
 	return Boolean(provider.default_model);
 }
 

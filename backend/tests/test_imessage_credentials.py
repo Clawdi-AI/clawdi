@@ -28,7 +28,7 @@ async def test_imessage_agent_token_is_one_time_hashed_and_resolves(
     db_session: AsyncSession,
 ):
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-creds",
@@ -44,8 +44,8 @@ async def test_imessage_agent_token_is_one_time_hashed_and_resolves(
     assert len(agent_token) >= 40
     assert created["webhook_secret"]
 
-    listed = await client.get("/api/channels")
-    fetched = await client.get(f"/api/channels/{created['id']}")
+    listed = await client.get("/v1/channels")
+    fetched = await client.get(f"/v1/channels/{created['id']}")
     assert listed.status_code == 200
     assert fetched.status_code == 200
     assert "agent_token" not in listed.json()[0]
@@ -64,11 +64,11 @@ async def test_imessage_agent_token_is_one_time_hashed_and_resolves(
     assert link.agent_token_hash != agent_token
 
     valid_ping = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         params={"password": agent_token},
     )
     invalid_ping = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         params={"password": "im_nope"},
     )
     assert valid_ping.status_code == 200
@@ -84,7 +84,7 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     seed_user: User,
 ):
     created_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-remint",
@@ -97,13 +97,13 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     old_token = created["agent_token"]
 
     pair_response = await client.post(
-        f"/api/channels/{created['id']}/pair-codes",
+        f"/v1/channels/{created['id']}/pair-codes",
         json={"ttl_seconds": 900},
     )
     assert pair_response.status_code == 201
     pair = pair_response.json()
     webhook_response = await client.post(
-        f"/api/channels/imessage/{created['id']}/webhook",
+        f"/v1/channels/imessage/{created['id']}/webhook",
         params={"secret": created["webhook_secret"]},
         json={
             "data": {
@@ -115,14 +115,14 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     )
     assert webhook_response.status_code == 200
     pending_pair_response = await client.post(
-        f"/api/channels/{created['id']}/pair-codes",
+        f"/v1/channels/{created['id']}/pair-codes",
         json={"ttl_seconds": 900},
     )
     assert pending_pair_response.status_code == 201
     pending_pair = pending_pair_response.json()
 
     duplicate = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-remint",
@@ -133,7 +133,7 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     assert duplicate.status_code == 409
     await db_session.refresh(seed_user)
 
-    deleted = await client.delete(f"/api/channels/{created['id']}")
+    deleted = await client.delete(f"/v1/channels/{created['id']}")
     assert deleted.status_code == 204
 
     archived = (
@@ -166,10 +166,10 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     assert binding.status == BINDING_STATUS_ARCHIVED
     assert pair_code.status == PAIR_CODE_STATUS_REVOKED
 
-    listed = await client.get("/api/channels")
-    fetched = await client.get(f"/api/channels/{created['id']}")
+    listed = await client.get("/v1/channels")
+    fetched = await client.get(f"/v1/channels/{created['id']}")
     old_ping = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         params={"password": old_token},
     )
     assert listed.status_code == 200
@@ -179,7 +179,7 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     assert old_ping.json() == {"status": 401, "message": "invalid bot token", "data": None}
 
     reminted_response = await client.post(
-        "/api/channels",
+        "/v1/channels",
         json={
             "provider": "imessage",
             "name": "imessage-remint",
@@ -193,7 +193,7 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
     assert reminted["agent_token"] != old_token
 
     new_ping = await client.get(
-        "/api/channels/imessage/bluebubbles/v1/ping",
+        "/v1/channels/imessage/bluebubbles/v1/ping",
         params={"password": reminted["agent_token"]},
     )
     assert new_ping.status_code == 200

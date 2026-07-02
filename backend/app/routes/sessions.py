@@ -154,7 +154,7 @@ def _clamp_last_activity(
     return candidate
 
 
-@router.post("/api/environments")
+@router.post("/environments")
 async def register_environment(
     body: EnvironmentCreate,
     # Daemons register themselves on `clawdi setup`; they hold a
@@ -321,7 +321,7 @@ async def register_environment(
 
 
 @router.get(
-    "/api/environments",
+    "/environments",
     response_model=list[EnvironmentResponse],
     responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
 )
@@ -388,7 +388,7 @@ async def list_environments(
     return payload
 
 
-@router.get("/api/environments/runtime-observed")
+@router.get("/environments/runtime-observed")
 async def list_environment_runtime_observed(
     limit: int = Query(default=100, ge=1, le=500),
     auth: AuthContext = Depends(get_auth),
@@ -451,7 +451,7 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
-@router.patch("/api/environments/order", response_model=list[EnvironmentResponse])
+@router.patch("/environments/order", response_model=list[EnvironmentResponse])
 async def reorder_environments(
     body: EnvironmentReorderRequest,
     auth: AuthContext = Depends(require_web_auth),
@@ -513,7 +513,7 @@ async def reorder_environments(
 
 
 @router.get(
-    "/api/environments/{environment_id}",
+    "/environments/{environment_id}",
     response_model=EnvironmentResponse,
     responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
 )
@@ -559,7 +559,7 @@ async def get_environment(
     return payload
 
 
-@router.patch("/api/environments/{environment_id}", response_model=EnvironmentResponse)
+@router.patch("/environments/{environment_id}", response_model=EnvironmentResponse)
 async def update_environment(
     environment_id: UUID,
     body: EnvironmentUpdate,
@@ -591,7 +591,7 @@ async def update_environment(
     return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
 
-@router.delete("/api/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+@router.delete("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
 async def clear_environment_avatar(
     environment_id: UUID,
     auth: AuthContext = Depends(require_web_auth),
@@ -623,7 +623,7 @@ async def clear_environment_avatar(
     return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
 
-@router.post("/api/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+@router.post("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
 async def upload_environment_avatar(
     environment_id: UUID,
     file: UploadFile = File(...),
@@ -673,7 +673,7 @@ async def upload_environment_avatar(
     return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
 
 
-@router.get("/api/environments/{environment_id}/runtime-observed")
+@router.get("/environments/{environment_id}/runtime-observed")
 async def get_environment_runtime_observed(
     environment_id: UUID,
     auth: AuthContext = Depends(get_auth),
@@ -711,7 +711,7 @@ async def get_environment_runtime_observed(
     )
 
 
-@router.get("/api/assets/{asset_key:path}", include_in_schema=False)
+@router.get("/assets/{asset_key:path}", include_in_schema=False)
 async def get_public_asset(asset_key: str) -> Response:
     if not _AGENT_AVATAR_KEY_RE.match(asset_key):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found")
@@ -773,7 +773,7 @@ def _detect_avatar_image(data: bytes) -> tuple[str, str] | None:
 
 
 def _asset_url(key: str) -> str:
-    return f"{settings.public_api_url.rstrip('/')}/api/assets/{key}"
+    return f"{settings.public_api_url.rstrip('/')}/v1/assets/{key}"
 
 
 async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
@@ -1020,13 +1020,13 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-@router.delete("/api/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_environment(
     environment_id: UUID,
     # Dashboard-only: a leaked deploy-key would otherwise be able
     # to delete its own env (de-registering the machine on the
     # owner's dashboard) or sibling envs under the same user.
-    # Mirrors the lockdown applied to /api/auth/keys in round 6.
+    # Mirrors the lockdown applied to /v1/auth/keys in round 6.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
@@ -1090,7 +1090,7 @@ def _runtime_observed_comparison_value(
     return {key: item for key, item in value.items() if key != "reportedAt"}
 
 
-@router.post("/api/agents/{environment_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/agents/{environment_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
 async def sync_heartbeat(
     environment_id: UUID,
     body: SyncHeartbeatRequest,
@@ -1203,7 +1203,7 @@ async def sync_heartbeat(
     await db.commit()
 
 
-@router.post("/api/sessions/batch")
+@router.post("/sessions/batch")
 async def batch_create_sessions(
     body: SessionBatchRequest,
     auth: AuthContext = Depends(require_scope("sessions:write")),
@@ -1350,7 +1350,7 @@ async def batch_create_sessions(
     # turns the conflict into a no-op (correctly), but the response
     # is still computed from the pre-upsert snapshot — the caller
     # gets `created`/`needs_content` and then POSTs upload content
-    # to `/api/sessions/{local_session_id}/upload`, which resolves
+    # to `/v1/sessions/{local_session_id}/upload`, which resolves
     # the row by `local_session_id` alone and stamps the new bytes
     # onto the OTHER env's row. Cross-env data corruption.
     incoming_env_by_id = {s.local_session_id: s.environment_id for s in body.sessions}
@@ -1492,7 +1492,7 @@ async def batch_create_sessions(
             Session.environment_id.is_not_distinct_from(insert_stmt.excluded.environment_id),
         ),
     )
-    # Concurrent `DELETE /api/environments/{id}` between the pre-flight
+    # Concurrent `DELETE /v1/environments/{id}` between the pre-flight
     # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
     # FK violation specifically; anything else (we no longer hit unique
     # collisions because of the upsert) bubbles as a plain 500.
@@ -1504,7 +1504,7 @@ async def batch_create_sessions(
     # response below. Without this, the loser of a two-bound-keys
     # race on a never-before-seen `local_session_id` gets told its
     # row was `created` and that it should upload content; the
-    # follow-up POST `/api/sessions/{local_session_id}/upload` then
+    # follow-up POST `/v1/sessions/{local_session_id}/upload` then
     # 404s because the row that DID land belongs to the winner's
     # env (not visible to the loser). Worse, an unbound caller in
     # the same race window would bypass the pre-check and stamp
@@ -1610,7 +1610,7 @@ _SESSION_SORT_COLUMNS = {
 _TRGM_THRESHOLD = 0.15
 
 
-@router.get("/api/sessions")
+@router.get("/sessions")
 async def list_sessions(
     # Deploy keys carry `sessions:write` (they upload sessions from
     # hosted pods) but explicitly NOT `sessions:read` — pods are
@@ -1827,7 +1827,7 @@ async def list_sessions(
     )
 
 
-@router.get("/api/sessions/{session_id}")
+@router.get("/sessions/{session_id}")
 async def get_session_detail(
     session_id: UUID,
     auth: AuthContext = Depends(require_scope("sessions:read")),
@@ -1866,7 +1866,7 @@ async def get_session_detail(
     )
 
 
-@router.post("/api/sessions/{local_session_id}/upload")
+@router.post("/sessions/{local_session_id}/upload")
 async def upload_session_content(
     # Constrained to safe filename chars so it cannot escape the
     # `sessions/{user_id}/` prefix in the file-store key below.
@@ -1953,7 +1953,7 @@ async def upload_session_content(
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 
 
-@router.get("/api/sessions/{session_id}/content")
+@router.get("/sessions/{session_id}/content")
 async def get_session_content(
     session_id: UUID,
     # Same write-only-deploy-key rationale as list_sessions: pods
@@ -2009,7 +2009,7 @@ async def get_session_content(
     return [SessionMessageResponse.model_validate(m) for m in raw]
 
 
-@router.get("/api/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: UUID,
     offset: int = Query(default=0, ge=0),
@@ -2019,7 +2019,7 @@ async def get_session_messages(
 ) -> SessionMessagesPage:
     """Paginated read of a session's messages, for the dashboard.
     The CLI's `clawdi pull` mirror still uses
-    `GET /api/sessions/{id}/content` to grab the full JSON blob;
+    `GET /v1/sessions/{id}/content` to grab the full JSON blob;
     this endpoint slices the same blob server-side so the
     dashboard doesn't ship 10+ MB of messages on a long session.
 
@@ -2028,7 +2028,7 @@ async def get_session_messages(
     the entire JSON array), so `array[offset:offset+limit]` is
     stable for a given `content_hash`. Clients pin to a snapshot
     by reading `content_hash` from the parent
-    `/api/sessions/{id}` response and refusing to mix pages
+    `/v1/sessions/{id}` response and refusing to mix pages
     from different hashes — a daemon append in between would
     show up as a hash change and trigger a refetch.
     """
@@ -2071,7 +2071,7 @@ async def get_session_messages(
     )
 
 
-@router.post("/api/sessions/{local_session_id}/extract")
+@router.post("/sessions/{local_session_id}/extract")
 async def extract_session_memories(
     local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
     auth: AuthContext = Depends(require_scope("memories:write")),
@@ -2179,7 +2179,7 @@ async def extract_session_memories(
 # arbitrary sessions, so the gate stays on Clerk JWT.
 
 
-@router.get("/api/sessions/{session_id}/export.md")
+@router.get("/sessions/{session_id}/export.md")
 async def export_owned_session_markdown(
     session_id: UUID,
     auth: AuthContext = Depends(require_scope("sessions:read")),
@@ -2237,7 +2237,7 @@ async def export_owned_session_markdown(
     )
 
 
-@router.get("/api/sessions/{session_id}/permissions")
+@router.get("/sessions/{session_id}/permissions")
 async def list_session_permissions(
     session_id: UUID,
     auth: AuthContext = Depends(require_web_auth),
@@ -2268,7 +2268,7 @@ async def list_session_permissions(
     return SessionPermissionsResponse(permissions=[_permission_to_response(p) for p in rows])
 
 
-@router.post("/api/sessions/{session_id}/permissions")
+@router.post("/sessions/{session_id}/permissions")
 async def create_session_permission(
     session_id: UUID,
     body: SessionPermissionCreate,
@@ -2325,7 +2325,7 @@ async def create_session_permission(
 
 
 @router.delete(
-    "/api/sessions/{session_id}/permissions",
+    "/sessions/{session_id}/permissions",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke_session_permission(

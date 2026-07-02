@@ -171,8 +171,8 @@ export class ApiClient {
 
 	/**
 	 * @param opts.requireAuth — Default true. Set false for the device-flow
-	 *   login bootstrap, which has to call `/api/cli/auth/device` and
-	 *   `/api/cli/auth/poll` before any credentials exist. Unauthenticated
+	 *   login bootstrap, which has to call `/v1/cli/auth/device` and
+	 *   `/v1/cli/auth/poll` before any credentials exist. Unauthenticated
 	 *   instances skip the Authorization header entirely.
 	 * @param opts.abortSignal — Optional engine-wide abort. When the
 	 *   daemon's main `AbortController` fires (SSE auth failure,
@@ -257,21 +257,21 @@ export class ApiClient {
 		const fields: Record<string, string> = { skill_key: skillKey };
 		if (contentHash) fields.content_hash = contentHash;
 		return this.multipartPost<SkillUploadResponse>(
-			`/api/projects/${encodeURIComponent(projectId)}/skills/upload`,
+			`/v1/projects/${encodeURIComponent(projectId)}/skills/upload`,
 			fields,
 			file,
 			filename,
 		);
 	}
 
-	/** Upload per-session content JSON to `/api/sessions/{id}/upload`. */
+	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
 	async uploadSessionContent(
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
-			`/api/sessions/${encodeURIComponent(localSessionId)}/upload`,
+			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
 			{},
 			file,
 			filename,
@@ -280,7 +280,7 @@ export class ApiClient {
 
 	/** Download session content (an array of messages) from the cloud. */
 	async getSessionContent(sessionId: string): Promise<Buffer> {
-		return this.getBytes(`/api/sessions/${encodeURIComponent(sessionId)}/content`);
+		return this.getBytes(`/v1/sessions/${encodeURIComponent(sessionId)}/content`);
 	}
 
 	/** Shared multipart POST; never retried (non-idempotent). */

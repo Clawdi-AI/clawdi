@@ -1,6 +1,6 @@
 """SSE event channel for `clawdi daemon` processes.
 
-Daemon opens a long-lived `GET /api/sync/events` connection authed
+Daemon opens a long-lived `GET /v1/sync/events` connection authed
 with the same Bearer token it uses for any other API call; server
 pushes
 `{"type":"skill_changed"|"skill_deleted","skill_key":"…","project_id":"…","skills_revision":N}`
@@ -47,7 +47,7 @@ from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
 from app.services import sync_events
 
-router = APIRouter(prefix="/api/sync", tags=["sync"])
+router = APIRouter(prefix="/sync", tags=["sync"])
 log = logging.getLogger(__name__)
 
 

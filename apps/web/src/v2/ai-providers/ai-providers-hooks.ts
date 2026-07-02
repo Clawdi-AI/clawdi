@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { AiProviderUpsert } from "@/v2/ai-providers/types";
 
-/** Typed data hooks for the AI Providers surface (cloud-api `/api/ai-providers`). */
+/** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
 const KEY = ["ai-providers"] as const;
 
@@ -13,7 +13,7 @@ export function useAiProviders() {
 	const api = useApi();
 	return useQuery({
 		queryKey: KEY,
-		queryFn: async () => unwrap(await api.GET("/api/ai-providers")),
+		queryFn: async () => unwrap(await api.GET("/v1/ai-providers")),
 	});
 }
 
@@ -22,7 +22,7 @@ export function useUpsertProvider() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async (body: AiProviderUpsert) =>
-			unwrap(await api.POST("/api/ai-providers", { body, params: { query: { replace: true } } })),
+			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: true } } })),
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 		onError: toastApiError("Couldn't save provider"),
 	});
@@ -34,7 +34,7 @@ export function useDeleteProvider() {
 	return useMutation({
 		mutationFn: async (providerId: string) =>
 			unwrap(
-				await api.DELETE("/api/ai-providers/{provider_id}", {
+				await api.DELETE("/v1/ai-providers/{provider_id}", {
 					params: { path: { provider_id: providerId } },
 				}),
 			),
@@ -57,7 +57,7 @@ export function useUpsertProviderQuiet() {
 	const api = useApi();
 	return useMutation({
 		mutationFn: async (body: AiProviderUpsert) =>
-			unwrap(await api.POST("/api/ai-providers", { body, params: { query: { replace: true } } })),
+			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: true } } })),
 		onError: toastApiError("Couldn't start sign-in"),
 	});
 }
@@ -69,7 +69,7 @@ export function useDeleteProviderQuiet() {
 	return useMutation({
 		mutationFn: async (providerId: string) =>
 			unwrap(
-				await api.DELETE("/api/ai-providers/{provider_id}", {
+				await api.DELETE("/v1/ai-providers/{provider_id}", {
 					params: { path: { provider_id: providerId } },
 				}),
 			),
@@ -101,20 +101,20 @@ export function useSaveApiKeyToVault() {
 	const api = useApi();
 	return useMutation({
 		mutationFn: async (vars: { providerId: string; apiKey: string }): Promise<string> => {
-			const proj = unwrap(await api.GET("/api/projects/default"));
+			const proj = unwrap(await api.GET("/v1/projects/default"));
 			const projectId = proj.project_id;
 			const slug = "ai-providers";
 			const section = "onboarding";
 			const field = safeVaultField(vars.providerId);
 			// Create-or-attach the vault (no create_only → attaches if it exists).
 			unwrap(
-				await api.POST("/api/vault", {
+				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId } },
 					body: { slug, name: "AI Providers" },
 				}),
 			);
 			unwrap(
-				await api.PUT("/api/vault/{slug}/items", {
+				await api.PUT("/v1/vault/{slug}/items", {
 					params: { path: { slug }, query: { project_id: projectId } },
 					body: { section, fields: { [field]: vars.apiKey } },
 				}),
@@ -131,7 +131,7 @@ export function useSetApiKey() {
 	return useMutation({
 		mutationFn: async (vars: { providerId: string; value: string; runtime_env_name?: string }) =>
 			unwrap(
-				await api.POST("/api/ai-providers/{provider_id}/auth/api-key", {
+				await api.POST("/v1/ai-providers/{provider_id}/auth/api-key", {
 					params: { path: { provider_id: vars.providerId } },
 					body: { value: vars.value, runtime_env_name: vars.runtime_env_name },
 				}),
@@ -146,7 +146,7 @@ export function useValidateProvider() {
 	return useMutation({
 		mutationFn: async (providerId: string) =>
 			unwrap(
-				await api.POST("/api/ai-providers/{provider_id}/validate", {
+				await api.POST("/v1/ai-providers/{provider_id}/validate", {
 					params: { path: { provider_id: providerId } },
 				}),
 			),
@@ -159,7 +159,7 @@ export function useOAuthStart() {
 	return useMutation({
 		mutationFn: async (vars: { providerId: string; provider: string; redirect_uri?: string }) =>
 			unwrap(
-				await api.POST("/api/ai-providers/{provider_id}/auth/oauth/start", {
+				await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/start", {
 					params: { path: { provider_id: vars.providerId } },
 					body: { provider: vars.provider, redirect_uri: vars.redirect_uri },
 				}),
@@ -179,7 +179,7 @@ export function useOAuthComplete() {
 			redirect_uri?: string;
 		}) =>
 			unwrap(
-				await api.POST("/api/ai-providers/{provider_id}/auth/oauth/complete", {
+				await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/complete", {
 					params: { path: { provider_id: vars.providerId } },
 					body: { state: vars.state, code: vars.code, redirect_uri: vars.redirect_uri },
 				}),

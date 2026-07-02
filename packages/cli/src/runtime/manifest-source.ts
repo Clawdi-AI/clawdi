@@ -306,13 +306,16 @@ async function fetchRuntimeManifestPayload(
 
 function runtimeChannelsUrl(source: RuntimeSource): string {
 	const url = new URL(source.url);
-	const manifestSuffix = "/api/runtime/manifest";
 	const path = url.pathname.replace(/\/+$/, "");
-	if (path.endsWith(manifestSuffix)) {
+	// Manifest URLs persisted before the /v1 migration still use /api.
+	const manifestSuffix = ["/v1/runtime/manifest", "/api/runtime/manifest"].find((suffix) =>
+		path.endsWith(suffix),
+	);
+	if (manifestSuffix) {
 		const prefix = path.slice(0, -manifestSuffix.length);
-		url.pathname = `${prefix}/api/channels`;
+		url.pathname = `${prefix}/v1/channels`;
 	} else {
-		url.pathname = new URL("api/channels", url).pathname;
+		url.pathname = new URL("v1/channels", url).pathname;
 	}
 	url.search = "";
 	url.hash = "";

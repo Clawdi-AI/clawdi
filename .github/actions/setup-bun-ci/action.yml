@@ -11,7 +11,7 @@ inputs:
   bun-version:
     description: Bun version to install (defaults to package.json engines or repo BUN_VERSION env)
     required: false
-    default: "1.3.13"
+    default: "1.3.14"
 
 runs:
   using: composite

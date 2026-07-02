@@ -85,7 +85,7 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
 
     event.listen(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
     try:
-        response = await client.get("/api/dashboard/stats")
+        response = await client.get("/v1/dashboard/stats")
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
 
@@ -126,8 +126,8 @@ async def test_dashboard_stats_caches_connector_count(
 
     monkeypatch.setattr(composio, "get_connected_accounts", fake_get_connected_accounts)
 
-    first = await client.get("/api/dashboard/stats")
-    second = await client.get("/api/dashboard/stats")
+    first = await client.get("/v1/dashboard/stats")
+    second = await client.get("/v1/dashboard/stats")
 
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
@@ -184,7 +184,7 @@ async def test_projects_list_uses_single_query_for_dashboard_user(
 
     event.listen(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
     try:
-        response = await client.get("/api/projects")
+        response = await client.get("/v1/projects")
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
         await db_session.delete(owner)
@@ -220,7 +220,7 @@ async def test_sessions_count_query_does_not_compute_share_state(
     event.listen(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
     try:
         response = await client.get(
-            "/api/sessions",
+            "/v1/sessions",
             params={"page_size": 6, "automated": False},
         )
     finally:

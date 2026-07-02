@@ -46,7 +46,7 @@ from app.schemas.cli_auth import (
     DeviceTerminalResponse,
 )
 
-router = APIRouter(prefix="/api/cli/auth", tags=["cli-auth"])
+router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
 
 # Crockford-ish alphabet, no 0/O/1/I/L — read aloud over Zoom without "is that
 # an oh or a zero" detours. 32 chars → log2(32) = 5 bits/char × 8 chars = 40

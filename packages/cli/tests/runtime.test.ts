@@ -1496,14 +1496,14 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/prefix/api/runtime/manifest?ignored=1",
+				url: "https://runtime.test/prefix/v1/runtime/manifest?ignored=1",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/prefix/api/channels",
+				path: "/prefix/v1/channels",
 				response: () =>
 					new Response(
 						JSON.stringify([
@@ -1545,7 +1545,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(loaded.etag).toBe('"channels-etag-1"');
 			expect(loaded.channels[0]?.runtime_links[0]?.agent_token).toBe("agent-token-runtime");
 			expect(captured).toHaveLength(1);
-			expect(captured[0].path).toBe("/prefix/api/channels");
+			expect(captured[0].path).toBe("/prefix/v1/channels");
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers["if-none-match"]).toBe('"channels-etag-0"');
 		} finally {
@@ -1576,7 +1576,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		const channels: RuntimeChannelsLoad = {
 			channels: [],
 			source: "remote-datasource",
-			sourcePath: "https://runtime.test/api/channels",
+			sourcePath: "https://runtime.test/v1/channels",
 			etag: '"empty-channels"',
 		};
 
@@ -1673,7 +1673,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		const channels: RuntimeChannelsLoad = {
 			channels: [],
 			source: "remote-datasource",
-			sourcePath: "https://runtime.test/api/channels",
+			sourcePath: "https://runtime.test/v1/channels",
 			etag: '"empty-channels"',
 		};
 
@@ -1741,7 +1741,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				},
 			],
 			source: "remote-datasource",
-			sourcePath: "https://runtime.test/api/channels",
+			sourcePath: "https://runtime.test/v1/channels",
 			etag: '"channels"',
 		};
 
@@ -1860,7 +1860,7 @@ fi
 			},
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					new Response(JSON.stringify([]), {
 						status: 200,
@@ -2065,7 +2065,7 @@ exit 64
 		const paths = getRuntimePaths();
 		const initial = mockFetch([
 			{ method: "GET", path: "/manifest", response: manifestResponse },
-			{ method: "GET", path: "/api/channels", response: channelsResponse },
+			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 		try {
 			const manifestLoad = await loadRemoteRuntimeManifest(paths);
@@ -2109,7 +2109,7 @@ exit 64
 							})
 						: manifestResponse(),
 			},
-			{ method: "GET", path: "/api/channels", response: channelsResponse },
+			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 
 		try {
@@ -2120,7 +2120,7 @@ exit 64
 			}
 			expect(watchFetch.captured.map((request) => request.path)).toEqual([
 				"/manifest",
-				"/api/channels",
+				"/v1/channels",
 				"/manifest",
 			]);
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
@@ -2199,7 +2199,7 @@ fi
 			logs.length = 0;
 			const { restore } = mockFetch([
 				{ method: "GET", path: "/manifest", response: manifestResponse },
-				{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+				{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
 			]);
 			try {
 				await runtimeWatch({ once: true, json: true });
@@ -2289,7 +2289,7 @@ fi
 				path: "/manifest",
 				response: () => new Response("revoked", { status: 401 }),
 			},
-			{ method: "GET", path: "/api/channels", response: () => jsonResponse([]) },
+			{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
 		]);
 
 		try {
@@ -2746,7 +2746,7 @@ fi
 			},
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					new Response(JSON.stringify([]), {
 						status: 200,
@@ -3003,7 +3003,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			},
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					jsonResponse([
 						{
@@ -3128,7 +3128,7 @@ fi
 			},
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					new Response(JSON.stringify([]), {
 						status: 200,
@@ -3530,7 +3530,7 @@ exit 64
 			},
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					new Response(
 						JSON.stringify([
@@ -3583,7 +3583,7 @@ exit 64
 
 			expect(process.exitCode).toBe(0);
 			expect(captured).toHaveLength(2);
-			expect(captured.map((request) => request.path)).toEqual(["/manifest", "/api/channels"]);
+			expect(captured.map((request) => request.path)).toEqual(["/manifest", "/v1/channels"]);
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
 				'"manifest-etag-init-7"\n',
 			);
@@ -3605,7 +3605,7 @@ exit 64
 			expect(secretsText).toContain("discord-agent-token-init");
 			const profileBundle = readFileSync(join(state, "config", "mitm", "profiles.json"), "utf-8");
 			expect(profileBundle).toContain("clawdi-native-channels");
-			expect(profileBundle).toContain("/api/channels/telegram");
+			expect(profileBundle).toContain("/v1/channels/telegram");
 			const status = JSON.parse(logs[0] ?? "{}");
 			expect(status.status).toBe("ok");
 			expect(status.activeGeneration).toBe(7);
@@ -5307,7 +5307,7 @@ exit 64
 								headers: {},
 							},
 							rewrite: {
-								upstreamBaseUrl: "http://127.0.0.1:18890/api/channels/telegram",
+								upstreamBaseUrl: "http://127.0.0.1:18890/v1/channels/telegram",
 								preservePath: true,
 								setHeaders: {},
 							},

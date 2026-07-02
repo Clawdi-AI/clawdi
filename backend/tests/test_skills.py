@@ -25,7 +25,7 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
 
     files = {"file": ("hello.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -38,13 +38,13 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
     # See test_skill_upload_changed_content_bumps_version below for the
     # bump-on-real-change case.
     r2 = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "hello"}, files=files
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["version"] == 1, "identical re-upload must not bump version"
 
     # Detail endpoint returns the SKILL.md content extracted on the server.
-    detail = (await client.get("/api/skills/hello")).json()
+    detail = (await client.get("/v1/skills/hello")).json()
     assert "# Hello" in (detail["content"] or "")
 
 
@@ -67,7 +67,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     seed_content = "---\nname: editme\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("editme", seed_content)
     seed = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "editme"},
         files={"file": ("editme.tar.gz", tar_bytes, "application/gzip")},
     )
@@ -78,7 +78,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     # Stale `content_hash` (anything not the current row hash) -> 412.
     stale = "0" * 64
     r = await client.put(
-        f"/api/projects/{project_id}/skills/editme/content",
+        f"/v1/projects/{project_id}/skills/editme/content",
         json={
             "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
             "content_hash": stale,
@@ -90,20 +90,20 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     assert detail["current_content_hash"] == current_hash
 
     # And the row was NOT updated.
-    detail_get = await client.get(f"/api/projects/{project_id}/skills/editme")
+    detail_get = await client.get(f"/v1/projects/{project_id}/skills/editme")
     assert "# Original" in detail_get.json().get("content", "")
 
     # Sending the CURRENT hash succeeds. Schema requires 64-char
     # lowercase hex; the seeded hash satisfies that.
     ok = await client.put(
-        f"/api/projects/{project_id}/skills/editme/content",
+        f"/v1/projects/{project_id}/skills/editme/content",
         json={
             "content": "---\nname: editme\ndescription: edited\n---\n# Edited\n",
             "content_hash": current_hash,
         },
     )
     assert ok.status_code == 200, ok.text
-    after = await client.get(f"/api/projects/{project_id}/skills/editme")
+    after = await client.get(f"/v1/projects/{project_id}/skills/editme")
     assert "# Edited" in after.json().get("content", "")
 
 
@@ -117,19 +117,19 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
     seed_content = "---\nname: lww\ndescription: original\n---\n# Original\n"
     tar_bytes, _ = tar_from_content("lww", seed_content)
     await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "lww"},
         files={"file": ("lww.tar.gz", tar_bytes, "application/gzip")},
     )
 
     r = await client.put(
-        f"/api/projects/{project_id}/skills/lww/content",
+        f"/v1/projects/{project_id}/skills/lww/content",
         json={
             "content": "---\nname: lww\ndescription: edited\n---\n# Edited\n",
         },
     )
     assert r.status_code == 200, r.text
-    after = await client.get(f"/api/projects/{project_id}/skills/lww")
+    after = await client.get(f"/v1/projects/{project_id}/skills/lww")
     assert "# Edited" in after.json().get("content", "")
 
 
@@ -148,14 +148,14 @@ async def test_skill_upload_unchanged_does_not_bump_version(
     files = {"file": ("stable.tar.gz", tar_bytes, "application/gzip")}
 
     first = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
     )
     assert first.json()["version"] == 1
-    first_updated_at = (await client.get("/api/skills/stable")).json().get("updated_at")
+    first_updated_at = (await client.get("/v1/skills/stable")).json().get("updated_at")
     # Detail endpoint may or may not surface updated_at; if not, fall back
     # to listing.
     if first_updated_at is None:
-        listing = (await client.get("/api/skills")).json()
+        listing = (await client.get("/v1/skills")).json()
         first_updated_at = next(s for s in listing["items"] if s["skill_key"] == "stable")[
             "updated_at"
         ]
@@ -163,12 +163,12 @@ async def test_skill_upload_unchanged_does_not_bump_version(
     await asyncio.sleep(0.05)
 
     second = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "stable"}, files=files
     )
     assert second.status_code == 200
     assert second.json()["version"] == 1, "version must not bump on identical re-upload"
 
-    listing = (await client.get("/api/skills")).json()
+    listing = (await client.get("/v1/skills")).json()
     after_updated_at = next(s for s in listing["items"] if s["skill_key"] == "stable")["updated_at"]
     assert after_updated_at == first_updated_at, (
         "updated_at must not advance on identical re-upload"
@@ -186,7 +186,7 @@ async def test_skill_upload_changed_content_bumps_version(
     files_v1 = {"file": ("mut.tar.gz", v1_tar, "application/gzip")}
 
     first = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v1
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v1
     )
     assert first.json()["version"] == 1
 
@@ -195,7 +195,7 @@ async def test_skill_upload_changed_content_bumps_version(
     files_v2 = {"file": ("mut.tar.gz", v2_tar, "application/gzip")}
 
     second = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v2
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "mut"}, files=files_v2
     )
     assert second.status_code == 200
     assert second.json()["version"] == 2, "real content change must bump version"
@@ -223,11 +223,11 @@ async def test_skill_upload_accepts_client_supplied_hash(
     fake_hash = hashlib.sha256(b"client-says-this").hexdigest()
     data = {"skill_key": "hashed", "content_hash": fake_hash}
 
-    first = await client.post(f"/api/projects/{project_id}/skills/upload", data=data, files=files)
+    first = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
     assert first.status_code == 200, first.text
     assert first.json()["version"] == 1
 
-    second = await client.post(f"/api/projects/{project_id}/skills/upload", data=data, files=files)
+    second = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
     assert second.status_code == 200, second.text
     assert second.json()["version"] == 1, (
         "second push with same client-supplied hash must skip the bump"
@@ -251,7 +251,7 @@ async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, pr
 
     files = {"file": ("evil.tar.gz", buf.getvalue(), "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "evil"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "evil"}, files=files
     )
     assert r.status_code == 400, r.text
     # Positive contract: server returns the fixed validation
@@ -287,7 +287,7 @@ async def test_skill_upload_rejects_archive_rooted_at_wrong_path(
     flat_tar, _ = tar_from_content("foo", content)
     files = {"file": ("flat.tar.gz", flat_tar, "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "category/foo"},
         files=files,
     )
@@ -312,7 +312,7 @@ async def test_skill_upload_rejects_reserved_routing_suffix(
         tar_bytes, _ = tar_from_content(evil_key, content)
         files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
         r = await client.post(
-            f"/api/projects/{project_id}/skills/upload",
+            f"/v1/projects/{project_id}/skills/upload",
             data={"skill_key": evil_key},
             files=files,
         )
@@ -326,7 +326,7 @@ async def test_skill_upload_rejects_reserved_routing_suffix(
     tar_bytes, _ = tar_from_content("download", content)
     files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "download"},
         files=files,
     )
@@ -356,7 +356,7 @@ async def test_skill_upload_rejects_overlength_nested_key(
     assert len(long_key) > 200
 
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": long_key},
         files=files,
     )
@@ -383,7 +383,7 @@ async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient,
     tar_bytes, _ = tar_from_content("category/foo", content)
     files = {"file": ("nested.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "category/foo"},
         files=files,
     )
@@ -398,7 +398,7 @@ async def test_skill_upload_accepts_hermes_nested_key(client: httpx.AsyncClient,
     flat_files = {"file": ("evil.tar.gz", flat_tar, "application/gzip")}
     for evil_key in ("../escape", "category/../escape", "/abs", ".hidden"):
         r_evil = await client.post(
-            f"/api/projects/{project_id}/skills/upload",
+            f"/v1/projects/{project_id}/skills/upload",
             data={"skill_key": evil_key},
             files=flat_files,
         )
@@ -480,14 +480,14 @@ async def test_nested_skill_round_trips_through_project_routes(
 
     # Upload via the project form-data route.
     r_upload = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": nested_key},
         files=files,
     )
     assert r_upload.status_code == 200, r_upload.text
 
     # GET detail with nested key (literal `/` in URL path).
-    r_get = await client.get(f"/api/projects/{project_id}/skills/{nested_key}")
+    r_get = await client.get(f"/v1/projects/{project_id}/skills/{nested_key}")
     assert r_get.status_code == 200, r_get.text
     assert r_get.json()["skill_key"] == nested_key
 
@@ -495,7 +495,7 @@ async def test_nested_skill_round_trips_through_project_routes(
     # whole point of this test: the bare GET must NOT have eaten
     # the URL `/api/projects/{sid}/skills/category/foo/download` as
     # `skill_key="category/foo/download"`.
-    r_download = await client.get(f"/api/projects/{project_id}/skills/{nested_key}/download")
+    r_download = await client.get(f"/v1/projects/{project_id}/skills/{nested_key}/download")
     assert r_download.status_code == 200, r_download.text
     assert r_download.headers["content-type"].startswith("application/gzip")
 
@@ -503,7 +503,7 @@ async def test_nested_skill_round_trips_through_project_routes(
     # the same way it does for download.
     new_md = "---\nname: nested\ndescription: edited via project PUT\n---\n# Nested v2\n"
     r_put = await client.put(
-        f"/api/projects/{project_id}/skills/{nested_key}/content",
+        f"/v1/projects/{project_id}/skills/{nested_key}/content",
         json={"content": new_md},
     )
     assert r_put.status_code == 200, r_put.text
@@ -511,9 +511,9 @@ async def test_nested_skill_round_trips_through_project_routes(
     # DELETE last — verifies the deletion route also accepts nested
     # keys so an uninstall via the project DELETE actually removes
     # the row.
-    r_delete = await client.delete(f"/api/projects/{project_id}/skills/{nested_key}")
+    r_delete = await client.delete(f"/v1/projects/{project_id}/skills/{nested_key}")
     assert r_delete.status_code == 200, r_delete.text
-    r_get_after = await client.get(f"/api/projects/{project_id}/skills/{nested_key}")
+    r_get_after = await client.get(f"/v1/projects/{project_id}/skills/{nested_key}")
     assert r_get_after.status_code == 404, r_get_after.text
 
 
@@ -530,7 +530,7 @@ async def test_scope_skill_read_routes_remain_compat_aliases(
     skill_key = "compat/nested"
     tar_bytes, _ = tar_from_content(skill_key, content)
     upload = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": skill_key},
         files={"file": ("compat-nested.tar.gz", tar_bytes, "application/gzip")},
     )
@@ -555,7 +555,7 @@ async def test_malformed_skill_upload_logs_validation_reason(
     caplog.set_level(logging.WARNING, logger="app.main")
 
     response = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "missing-file"},
         headers={"User-Agent": "clawdi-cli/test"},
     )
@@ -584,7 +584,7 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, project
 
     files = {"file": ("nomanifest.tar.gz", buf.getvalue(), "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "no-manifest"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "no-manifest"}, files=files
     )
     assert r.status_code == 400, r.text
     assert "SKILL.md" in r.text
@@ -609,12 +609,12 @@ async def test_list_skills_etag_binds_revision_and_project(
     tar_bytes, _ = tar_from_content("alpha", content)
     files = {"file": ("alpha.tar.gz", tar_bytes, "application/gzip")}
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload", data={"skill_key": "alpha"}, files=files
+        f"/v1/projects/{project_id}/skills/upload", data={"skill_key": "alpha"}, files=files
     )
     assert r.status_code == 200, r.text
 
     # Capture project A's listing ETag.
-    list_a = await client.get(f"/api/skills?project_id={project_id}")
+    list_a = await client.get(f"/v1/skills?project_id={project_id}")
     assert list_a.status_code == 200, list_a.text
     etag_a = list_a.headers.get("ETag")
     assert etag_a is not None
@@ -626,7 +626,7 @@ async def test_list_skills_etag_binds_revision_and_project(
 
     # Replaying the same ETag against the same project returns 304.
     r304 = await client.get(
-        f"/api/skills?project_id={project_id}",
+        f"/v1/skills?project_id={project_id}",
         headers={"If-None-Match": etag_a},
     )
     assert r304.status_code == 304, r304.text
@@ -649,7 +649,7 @@ async def test_list_skills_etag_binds_revision_and_project(
     tar_bytes_b, _ = tar_from_content("beta", content_b)
     files_b = {"file": ("beta.tar.gz", tar_bytes_b, "application/gzip")}
     r_b = await client.post(
-        f"/api/projects/{project_b}/skills/upload", data={"skill_key": "beta"}, files=files_b
+        f"/v1/projects/{project_b}/skills/upload", data={"skill_key": "beta"}, files=files_b
     )
     assert r_b.status_code == 200, r_b.text
 
@@ -659,7 +659,7 @@ async def test_list_skills_etag_binds_revision_and_project(
     # forge an If-None-Match with project A's tag rewritten to
     # the new revision (still wrong project) and confirm we get 200.
     list_b = await client.get(
-        f"/api/skills?project_id={project_b}",
+        f"/v1/skills?project_id={project_b}",
         headers={"If-None-Match": etag_a},
     )
     assert list_b.status_code == 200, list_b.text
@@ -672,7 +672,7 @@ async def test_list_skills_etag_binds_revision_and_project(
     new_revision = new_etag.strip('"').split(":")[0]
     forged = f'"{new_revision}:{project_id}"'
     r_forged = await client.get(
-        f"/api/skills?project_id={project_b}", headers={"If-None-Match": forged}
+        f"/v1/skills?project_id={project_b}", headers={"If-None-Match": forged}
     )
     assert r_forged.status_code == 200, r_forged.text
 
@@ -708,7 +708,7 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
 
     app.dependency_overrides[get_auth_short_session] = _override_get_auth
 
-    first = await client.get(f"/api/skills?project_id={project_id}")
+    first = await client.get(f"/v1/skills?project_id={project_id}")
     assert first.status_code == 200, first.text
     etag = first.headers.get("ETag")
     assert etag
@@ -719,7 +719,7 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     monkeypatch.setattr(skills_route, "async_session_factory", _fail_session_factory)
 
     cached = await client.get(
-        f"/api/skills?project_id={project_id}",
+        f"/v1/skills?project_id={project_id}",
         headers={"If-None-Match": etag},
     )
     assert cached.status_code == 304, cached.text
@@ -746,7 +746,7 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
     tar_bytes, _ = tar_from_content("inline", content)
     files = {"file": ("inline.tar.gz", tar_bytes, "application/gzip")}
     upload = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "inline"},
         files=files,
     )
@@ -760,7 +760,7 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
 
     monkeypatch.setattr(skills_route, "file_store", AssertingFileStore())
 
-    listing = await client.get(f"/api/skills?project_id={project_id}&include_content=true")
+    listing = await client.get(f"/v1/skills?project_id={project_id}&include_content=true")
     assert listing.status_code == 200, listing.text
     item = next(item for item in listing.json()["items"] if item["skill_key"] == "inline")
     assert item["content"] == content
@@ -790,21 +790,21 @@ async def test_project_explicit_upload_targets_named_project(
 
     # Upload to env_a's project explicitly via phase-2 route.
     r = await client.post(
-        f"/api/projects/{env_a.default_project_id}/skills/upload",
+        f"/v1/projects/{env_a.default_project_id}/skills/upload",
         data={"skill_key": "projected"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
     # Phase-2 read on env_a's project: skill is there.
-    detail_a = await client.get(f"/api/projects/{env_a.default_project_id}/skills/projected")
+    detail_a = await client.get(f"/v1/projects/{env_a.default_project_id}/skills/projected")
     assert detail_a.status_code == 200, detail_a.text
     assert detail_a.json()["skill_key"] == "projected"
 
     # Phase-2 read on env_b's project: NOT there. This is the
     # isolation invariant — same skill_key in different projects
     # don't see each other.
-    detail_b = await client.get(f"/api/projects/{env_b.default_project_id}/skills/projected")
+    detail_b = await client.get(f"/v1/projects/{env_b.default_project_id}/skills/projected")
     assert detail_b.status_code == 404, detail_b.text
 
 
@@ -831,7 +831,7 @@ async def test_project_explicit_upload_rejects_other_users_project(
         tar_bytes, _ = tar_from_content("x", content)
         files = {"file": ("x.tar.gz", tar_bytes, "application/gzip")}
         r = await client.post(
-            f"/api/projects/{other_project.id}/skills/upload",
+            f"/v1/projects/{other_project.id}/skills/upload",
             data={"skill_key": "x"},
             files=files,
         )
@@ -861,18 +861,18 @@ async def test_skill_reupload_after_delete_reactivates_row(
 
     # 1) initial upload — row created active.
     r = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "revive"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
     # 2) soft-delete via the project-explicit route.
-    r_del = await client.delete(f"/api/projects/{project_id}/skills/revive")
+    r_del = await client.delete(f"/v1/projects/{project_id}/skills/revive")
     assert r_del.status_code == 200, r_del.text
 
     # Listing must now hide it.
-    listing = (await client.get("/api/skills")).json()["items"]
+    listing = (await client.get("/v1/skills")).json()["items"]
     assert not any(s["skill_key"] == "revive" for s in listing), (
         "soft-deleted skill must not appear in /api/skills"
     )
@@ -882,13 +882,13 @@ async def test_skill_reupload_after_delete_reactivates_row(
     # content_hash` MUST also require `existing.is_active` —
     # otherwise the response 200s without reactivating.
     r_re = await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "revive"},
         files=files,
     )
     assert r_re.status_code == 200, r_re.text
 
-    listing2 = (await client.get("/api/skills")).json()["items"]
+    listing2 = (await client.get("/v1/skills")).json()["items"]
     revived = [s for s in listing2 if s["skill_key"] == "revive"]
     assert len(revived) == 1, (
         f"re-uploading identical bytes after delete must reactivate the row, got listing={listing2}"
@@ -919,7 +919,7 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
     files = {"file": ("legacy-up.tgz", tar_bytes, "application/gzip")}
 
     r = await client.post(
-        "/api/skills/upload",
+        "/v1/skills/upload",
         data={"skill_key": "legacy-up"},
         files=files,
     )
@@ -937,7 +937,7 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
     # Confirm the row landed in the test fixture's project (the
     # only env-project present, so resolve_default_write_project
     # picks it deterministically).
-    detail = await client.get("/api/skills/legacy-up")
+    detail = await client.get("/v1/skills/legacy-up")
     assert detail.status_code == 200
     assert detail.json()["project_id"] == project_id
 
@@ -958,16 +958,16 @@ async def test_legacy_delete_still_410s(client: httpx.AsyncClient, project_id: s
     content = "---\nname: legacy-del\ndescription: bc shim test\n---\n# x\n"
     tar_bytes, _ = tar_from_content("legacy-del", content)
     await client.post(
-        f"/api/projects/{project_id}/skills/upload",
+        f"/v1/projects/{project_id}/skills/upload",
         data={"skill_key": "legacy-del"},
         files={"file": ("legacy-del.tgz", tar_bytes, "application/gzip")},
     )
 
-    r = await client.delete("/api/skills/legacy-del")
+    r = await client.delete("/v1/skills/legacy-del")
     assert r.status_code == 410, r.text
     assert r.json()["detail"]["code"] == "project_explicit_route_required"
 
     # Row is still there — 410 must not have triggered any
     # write side-effect.
-    listing = (await client.get("/api/skills")).json()["items"]
+    listing = (await client.get("/v1/skills")).json()["items"]
     assert any(s["skill_key"] == "legacy-del" for s in listing)

@@ -51,7 +51,7 @@ Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads 
 Two auth paths hit the same backend:
 
 - **Clerk JWT** — from the web dashboard. Gets most endpoints. Cannot resolve vault secret values.
-- **Bearer API key** (`clawdi_...`) — from the CLI and the MCP server it spawns. Required for `/api/vault/resolve` and for any agent-local operation that needs to read secrets.
+- **Bearer API key** (`clawdi_...`) — from the CLI and the MCP server it spawns. Required for `/v1/vault/resolve` and for any agent-local operation that needs to read secrets.
 
 ---
 
@@ -73,8 +73,8 @@ All keyed off Clerk `user_id`:
 | `skills` | Per-skill metadata + tar.gz body in file store | CLI `skill add / install`, dashboard upload |
 | `vaults` + `vault_project_attachments` + `vault_items` | Three-level secrets: vault → section → field. Vaults own their keys; Projects only attach to a vault to make those keys available. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts readable Project values for CLI/API-key callers | `clawdi vault set` |
 | `memories` | Long-term recall. `content` (text), `category`, `tags`, plus three search columns (`content_tsv` generated tsvector, `embedding vector(768)`) | CLI and MCP `memory_add` |
-| `user_settings` | Opaque JSONB per-user prefs: `memory_provider` (`builtin` / `mem0`), `mem0_api_key` | `PATCH /api/settings` |
-| `channel_accounts` + `channel_bot_agent_links` + `channel_secrets` + `channel_bindings` + `channel_binding_aliases` + `channel_pair_codes` + `channel_messages` + `channel_deliveries` + `channel_agent_credentials` + `channel_whatsapp_auth_certs` | Native Channels control plane and agent-facing emulation state. Accounts own external bot/provider identity, visibility, webhook secrets, and provider credentials; public preconfigured accounts can be linked by many users while private accounts stay owner-only; bot-agent links own hashed agent SDK tokens and agent routing; extra provider secrets are AES-GCM encrypted; bindings and aliases map each external chat session to one active bot-agent link and actor-scoped pair control; pair codes authorize chat binding or re-binding; messages record routed traffic and inbox cursors; deliveries provide the DB outbox; WhatsApp agent credentials and auth certs persist Baileys-facing identity material. See `docs/designs/native-channels-product-model.md` for the product model. | `/api/channels`, `/api/channels/telegram/*`, `/api/channels/discord/*`, `/api/channels/whatsapp/*`, `/api/channels/imessage/*`, `pdm run channels-worker` |
+| `user_settings` | Opaque JSONB per-user prefs: `memory_provider` (`builtin` / `mem0`), `mem0_api_key` | `PATCH /v1/settings` |
+| `channel_accounts` + `channel_bot_agent_links` + `channel_secrets` + `channel_bindings` + `channel_binding_aliases` + `channel_pair_codes` + `channel_messages` + `channel_deliveries` + `channel_agent_credentials` + `channel_whatsapp_auth_certs` | Native Channels control plane and agent-facing emulation state. Accounts own external bot/provider identity, visibility, webhook secrets, and provider credentials; public preconfigured accounts can be linked by many users while private accounts stay owner-only; bot-agent links own hashed agent SDK tokens and agent routing; extra provider secrets are AES-GCM encrypted; bindings and aliases map each external chat session to one active bot-agent link and actor-scoped pair control; pair codes authorize chat binding or re-binding; messages record routed traffic and inbox cursors; deliveries provide the DB outbox; WhatsApp agent credentials and auth certs persist Baileys-facing identity material. See `docs/designs/native-channels-product-model.md` for the product model. | `/v1/channels`, `/v1/channels/telegram/*`, `/v1/channels/discord/*`, `/v1/channels/whatsapp/*`, `/v1/channels/imessage/*`, `pdm run channels-worker` |
 
 Hosted deployment persistence is owned by the hosted agent service, not by the OSS backend tables above. This repository consumes that service through generated API contracts, the dashboard UI, the mock deploy API used for local development, and the CLI managed-runtime contract.
 
@@ -384,8 +384,8 @@ Project access and key mutation are separate operations. `clawdi vault attach` a
 
 Values encrypted with AES-256-GCM (`vault_encryption_key` env var is the master key). The backend has two vault surfaces:
 
-- `/api/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**
-- `/api/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. User-level CLI/API keys can resolve plaintext from Projects the caller can read, including shared viewer Projects; env-bound Agent keys can read attached shared Projects only through the matching Agent boundary.
+- `/v1/vault/*` — CRUD, accessible from the web dashboard, but **never returns plain values**
+- `/v1/vault/resolve` — returns `{ KEY: plain_value, ... }` or one resolved key, **only accepts CLI API keys**, rejects Clerk JWTs at the auth layer. User-level CLI/API keys can resolve plaintext from Projects the caller can read, including shared viewer Projects; env-bound Agent keys can read attached shared Projects only through the matching Agent boundary.
 
 `clawdi run -- <cmd>` hits `/vault/resolve`, merges the returned env into the child process's environment, and `exec`s. `clawdi run --project <project> -- <cmd>` resolves from that explicit cloud Project. Without `--project`, a local `clawdi project folder link --project <project>` can select the Project for the current folder or a parent folder. Folder links are local CLI selection hints only: they do not grant Project access, attach Projects to Agents, or compose Projects.
 
@@ -395,12 +395,9 @@ Agent runtime resolution is separate from folder links. `clawdi vault resolve KE
 
 ## MCP server
 
-`clawdi mcp` runs a stdio MCP server. Registered by `clawdi setup` with each agent, so the agent spawns it on startup. Two native tools:
+The single source of truth for Clawdi's MCP tools is the backend endpoint `POST /v1/mcp/clawdi` — a stateless JSON-RPC surface authenticated with a Clawdi API key. It serves the native tools (`memory_search`, `memory_add`, `memory_extract`, `session_search`, `session_read`) plus the user's **dynamically-listed connector tools**, which it forwards to the Composio Tool Router bridge (`/v1/mcp/composio`, with `/api/mcp/composio` kept as a legacy alias). The bridge mediates auth so the connector's real OAuth token and the Composio project API key never leave the backend. Connector tool listings are cached per-user for 60 seconds.
 
-- `memory_search(query, limit?)` — proxies to `GET /api/memories?q=...`
-- `memory_add(content, category?)` — proxies to `POST /api/memories`
-
-Plus **dynamically-registered connector tools** — at MCP init, the server fetches `/api/connectors/mcp-config` and `tools/list` from the user's Composio Tool Router bridge (`/api/mcp/composio`), then registers each remote tool locally with a zod schema built from the MCP `inputSchema` or older `parameters` metadata. When the agent calls one, the local MCP server forwards the original upstream tool name and structured arguments through the backend bridge. The bridge mediates auth so the connector's real OAuth token and the Composio project API key never leave the backend.
+Agents that speak streamable HTTP connect to `/v1/mcp/clawdi` directly with a bearer API key. For agents that can only spawn local stdio MCP servers, `clawdi mcp` (registered by `clawdi setup`) runs a thin stdio adapter: at init it calls `tools/list` on the backend, registers each tool locally with a zod schema built from the MCP `inputSchema` (or older `parameters`) metadata, and forwards every `tools/call` back to the backend.
 
 Tool descriptions on `memory_search` / `memory_add` are intentionally verbose and list concrete trigger patterns — the failure mode for a new agent is "didn't call memory when it obviously should have", and short descriptions leave too much to the agent's judgment. The `clawdi` skill installed to `~/.claude/skills/clawdi/` (and the equivalent paths on other agents) reinforces the same triggers in long-form.
 

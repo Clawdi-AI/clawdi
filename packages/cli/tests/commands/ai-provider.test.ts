@@ -143,7 +143,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/import",
+				path: "/v1/ai-providers/openai-codex/auth/import",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -156,7 +156,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers",
+				path: "/v1/ai-providers",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -263,7 +263,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/start",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -277,7 +277,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers",
+				path: "/v1/ai-providers",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -332,7 +332,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/start",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -346,7 +346,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/complete",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -359,7 +359,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers",
+				path: "/v1/ai-providers",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -410,7 +410,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/start",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -424,7 +424,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/complete",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -437,7 +437,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers",
+				path: "/v1/ai-providers",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -472,7 +472,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/complete",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/complete",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -511,7 +511,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/oauth/start",
+				path: "/v1/ai-providers/openai-codex/auth/oauth/start",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -525,7 +525,7 @@ describe("ai-provider commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/ai-providers",
+				path: "/v1/ai-providers",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -563,7 +563,7 @@ describe("ai-provider commands", () => {
 
 		expect(
 			captured.some(
-				(request) => request.path === "/api/ai-providers/openai-codex/auth/oauth/complete",
+				(request) => request.path === "/v1/ai-providers/openai-codex/auth/oauth/complete",
 			),
 		).toBe(false);
 		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
@@ -638,7 +638,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: /^\/api\/vault\/resolve/,
+				path: /^\/v1\/vault\/resolve/,
 				response: () =>
 					jsonResponse({
 						reference: "clawdi://default/openai/api_key",
@@ -669,7 +669,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(captured.map((request) => request.path)).toContain(
-			"/api/vault/resolve?vault_slug=default&section=openai&field=api_key",
+			"/v1/vault/resolve?vault_slug=default&section=openai&field=api_key",
 		);
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-vault-secret");
@@ -702,7 +702,7 @@ describe("ai-provider commands", () => {
 		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-main/auth/resolve",
+				path: "/v1/ai-providers/openai-main/auth/resolve",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-main",
@@ -778,7 +778,7 @@ describe("ai-provider commands", () => {
 
 		expect(
 			captured.some(
-				(request) => request.path === "/api/ai-providers/clawdi-managed-v2/auth/resolve",
+				(request) => request.path === "/v1/ai-providers/clawdi-managed-v2/auth/resolve",
 			),
 		).toBe(false);
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
@@ -832,7 +832,7 @@ describe("ai-provider commands", () => {
 		const { restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/ai-providers/openai-codex/auth/resolve",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
 				response: () =>
 					jsonResponse({
 						provider_id: "openai-codex",
@@ -986,10 +986,11 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain(FAKE_CODEX_REFRESH_TOKEN);
 		expect(output()).not.toContain("anthropic-main");
 		expect(
-			captured.filter((request) => request.path === "/api/ai-providers/openai-codex/auth/resolve"),
+			captured.filter((request) => request.path === "/v1/ai-providers/openai-codex/auth/resolve"),
 		).toHaveLength(3);
 		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(codexProfile).toContain('model_provider = "openai"');
+		expect(codexProfile).not.toContain('model = "');
 		const codexAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(codexAuth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		const hermesConfig = parseYaml(readFileSync(join(hermesDir, "config.yaml"), "utf-8"));
@@ -1208,7 +1209,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('model_provider = \\"openai\\"');
-		expect(output()).toContain('model = \\"gpt-5.2\\"');
+		expect(output()).not.toContain('model = \\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
@@ -1233,6 +1234,7 @@ describe("ai-provider commands", () => {
 
 		const profile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(profile).toContain('model_provider = "openai"');
+		expect(profile).not.toContain('model = "');
 		const auth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(auth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		expect(auth.tokens.refresh_token).toBe(FAKE_CODEX_REFRESH_TOKEN);
@@ -1283,8 +1285,8 @@ describe("ai-provider commands", () => {
 
 		expect(output()).toContain("Provider anthropic-main skipped for codex");
 		expect(output()).toContain("Default provider anthropic-main cannot be applied to codex");
-		expect(output()).toContain('model = \\"gpt-5.2\\"');
 		expect(output()).toContain('model_provider = \\"openai\\"');
+		expect(output()).not.toContain('model = \\"');
 	});
 
 	it("dry-runs Hermes apply without mutating config.yaml or printing existing inline secrets", async () => {
@@ -2284,7 +2286,7 @@ const FAKE_CODEX_ID_TOKEN = "codex-id-secret";
 function codexAuthResolveHandler() {
 	return {
 		method: "POST",
-		path: "/api/ai-providers/openai-codex/auth/resolve",
+		path: "/v1/ai-providers/openai-codex/auth/resolve",
 		response: () =>
 			jsonResponse({
 				provider_id: "openai-codex",
@@ -2335,7 +2337,7 @@ async function waitForStartRedirectUri(
 	const deadline = Date.now() + 3000;
 	while (Date.now() < deadline) {
 		const request = captured.find(
-			(item) => item.path === "/api/ai-providers/openai-codex/auth/oauth/start",
+			(item) => item.path === "/v1/ai-providers/openai-codex/auth/oauth/start",
 		);
 		const body = request?.body;
 		if (isRecord(body) && typeof body.redirect_uri === "string") return body.redirect_uri;

@@ -1,4 +1,4 @@
-"""Schemas for admin endpoints (`/api/admin/*`).
+"""Schemas for admin endpoints (`/v1/admin/*`).
 
 These run behind the `X-Admin-Key` header gate (require_admin_api_key)
 and are used by SaaS batch tooling + ops-side scripts. Kept in a
@@ -28,7 +28,7 @@ _BRIDGE_SURFACE_KEYS = {
 
 
 class AdminEnvironmentCreate(BaseModel):
-    """Body for `POST /api/admin/environments`. Mirrors the
+    """Body for `POST /v1/admin/environments`. Mirrors the
     user-facing EnvironmentCreate but takes target_clerk_id
     instead of relying on auth context to resolve the user.
 
@@ -46,7 +46,7 @@ class AdminEnvironmentCreate(BaseModel):
 
 
 class AdminApiKeyCreate(BaseModel):
-    """Body for `POST /api/admin/auth/keys` — mint an api_key on
+    """Body for `POST /v1/admin/auth/keys` — mint an api_key on
     behalf of a user identified by Clerk id. The route resolves
     `target_clerk_id` to the internal `User.id` and then calls the
     existing `mint_api_key` service, preserving the env-ownership
@@ -72,7 +72,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     """Hosted runtime desired state written by the SaaS deploy orchestrator.
 
     This is deployment-level state only. Native channel credentials and channel
-    links are owned by `/api/channels/*` and must not be embedded here.
+    links are owned by `/v1/channels/*` and must not be embedded here.
     """
 
     model_config = ConfigDict(extra="forbid")

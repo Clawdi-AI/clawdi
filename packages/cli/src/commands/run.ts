@@ -167,7 +167,7 @@ export async function run(
 				);
 			}
 			const resolved = await api.postJson<unknown>(
-				"/api/vault/resolve",
+				"/v1/vault/resolve",
 				opts.agent
 					? { agent_id: resolveAgentId(opts.agent), allow_conflicts: conflictQuery(opts) }
 					: selectedProject

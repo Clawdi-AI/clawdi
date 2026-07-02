@@ -79,7 +79,7 @@ describe("authLogin pending share upgrade", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: `/api/share/${rawToken}/upgrade`,
+				path: `/v1/share/${rawToken}/upgrade`,
 				response: () =>
 					jsonResponse({
 						project_id: "project-shared",
@@ -89,7 +89,7 @@ describe("authLogin pending share upgrade", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () =>
 					jsonResponse({
 						items: [{ project_id: "project-shared", skill_key: "deploy-helper", is_active: true }],
@@ -97,7 +97,7 @@ describe("authLogin pending share upgrade", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/projects/project-shared/skills/deploy-helper/download",
+				path: "/v1/projects/project-shared/skills/deploy-helper/download",
 				response: () => new Response(new Uint8Array([1, 2, 3])),
 			},
 		]);
@@ -109,9 +109,9 @@ describe("authLogin pending share upgrade", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			`POST /api/share/${rawToken}/upgrade`,
-			"GET /api/skills?project_id=project-shared&page=1&page_size=200",
-			"GET /api/projects/project-shared/skills/deploy-helper/download",
+			`POST /v1/share/${rawToken}/upgrade`,
+			"GET /v1/skills?project_id=project-shared&page=1&page_size=200",
+			"GET /v1/projects/project-shared/skills/deploy-helper/download",
 		]);
 		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
 
@@ -133,7 +133,7 @@ describe("authLogin pending share upgrade", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: `/api/share/${rawToken}/upgrade`,
+				path: `/v1/share/${rawToken}/upgrade`,
 				response: () =>
 					jsonResponse({
 						project_id: "project-shared",
@@ -143,7 +143,7 @@ describe("authLogin pending share upgrade", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills",
+				path: "/v1/skills",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -154,7 +154,7 @@ describe("authLogin pending share upgrade", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/projects/project-shared/skills/deploy-helper/download",
+				path: "/v1/projects/project-shared/skills/deploy-helper/download",
 				response: () => new Response(new Uint8Array([1, 2, 3])),
 			},
 		]);
@@ -166,9 +166,9 @@ describe("authLogin pending share upgrade", () => {
 		}
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			`POST /api/share/${rawToken}/upgrade`,
-			"GET /api/skills?project_id=project-shared&page=1&page_size=200",
-			"GET /api/projects/project-shared/skills/deploy-helper/download",
+			`POST /v1/share/${rawToken}/upgrade`,
+			"GET /v1/skills?project_id=project-shared&page=1&page_size=200",
+			"GET /v1/projects/project-shared/skills/deploy-helper/download",
 		]);
 		const [token] = listTokens();
 		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);

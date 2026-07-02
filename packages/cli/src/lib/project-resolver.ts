@@ -35,13 +35,13 @@ export async function resolveProjectId(
 	input: string | undefined,
 ): Promise<string> {
 	if (!input || input === "default") {
-		const r = await fetch(`${apiUrl}/api/projects/default`, {
+		const r = await fetch(`${apiUrl}/v1/projects/default`, {
 			headers: { Authorization: `Bearer ${bearer}` },
 		});
 		if (!r.ok) {
 			throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 		}
-		const def = await readJson<{ project_id: string }>(r, "/api/projects/default");
+		const def = await readJson<{ project_id: string }>(r, "/v1/projects/default");
 		return def.project_id;
 	}
 	if (UUID_RE.test(input)) return input;
@@ -83,7 +83,7 @@ function parseOwnerQualifiedProject(
 }
 
 export async function listProjects(apiUrl: string, bearer: string): Promise<ProjectBrief[]> {
-	const projectResponse = await fetch(`${apiUrl}/api/projects`, {
+	const projectResponse = await fetch(`${apiUrl}/v1/projects`, {
 		headers: { Authorization: `Bearer ${bearer}` },
 	});
 	if (!projectResponse.ok) {
@@ -93,5 +93,5 @@ export async function listProjects(apiUrl: string, bearer: string): Promise<Proj
 			hint: "",
 		});
 	}
-	return await readJson<ProjectBrief[]>(projectResponse, "/api/projects");
+	return await readJson<ProjectBrief[]>(projectResponse, "/v1/projects");
 }

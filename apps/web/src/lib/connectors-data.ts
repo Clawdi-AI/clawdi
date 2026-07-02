@@ -30,7 +30,7 @@ export function useConnections() {
 	const api = useApi();
 	return useQuery({
 		queryKey: ["connections"],
-		queryFn: async () => unwrap(await api.GET("/api/connectors")),
+		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
 	});
 }
 
@@ -40,7 +40,7 @@ export function useAvailableApp(appName: string) {
 		queryKey: ["available-app", appName],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/connectors/available/{app_name}", {
+				await api.GET("/v1/connectors/available/{app_name}", {
 					params: { path: { app_name: appName } },
 				}),
 			),
@@ -61,7 +61,7 @@ export function useAvailableApps({
 		queryKey: ["available-apps", { page, pageSize, search }] as const,
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/connectors/available", {
+				await api.GET("/v1/connectors/available", {
 					params: {
 						query: { page, page_size: pageSize, ...(search ? { search } : {}) },
 					},
@@ -77,7 +77,7 @@ export function useConnectorTools(appName: string) {
 		queryKey: ["connector-tools", appName],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/connectors/{app_name}/tools", {
+				await api.GET("/v1/connectors/{app_name}/tools", {
 					params: { path: { app_name: appName } },
 				}),
 			),
@@ -90,7 +90,7 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 		queryKey: ["auth-fields", appName],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/api/connectors/{app_name}/auth-fields", {
+				await api.GET("/v1/connectors/{app_name}/auth-fields", {
 					params: { path: { app_name: appName } },
 				}),
 			),
@@ -107,7 +107,7 @@ export function useConnect() {
 	return useMutation({
 		mutationFn: async ({ appName, redirectUrl }: { appName: string; redirectUrl?: string }) =>
 			unwrap(
-				await api.POST("/api/connectors/{app_name}/connect", {
+				await api.POST("/v1/connectors/{app_name}/connect", {
 					params: { path: { app_name: appName } },
 					body: redirectUrl ? { redirect_url: redirectUrl } : {},
 				}),
@@ -128,7 +128,7 @@ export function useConnectCredentials() {
 			credentials: Record<string, string>;
 		}) =>
 			unwrap(
-				await api.POST("/api/connectors/{app_name}/connect-credentials", {
+				await api.POST("/v1/connectors/{app_name}/connect-credentials", {
 					params: { path: { app_name: appName } },
 					body: { credentials },
 				}),
@@ -143,7 +143,7 @@ export function useDisconnect() {
 	return useMutation({
 		mutationFn: async ({ connectionId }: { connectionId: string }): Promise<void> => {
 			unwrap(
-				await api.DELETE("/api/connectors/{connection_id}", {
+				await api.DELETE("/v1/connectors/{connection_id}", {
 					params: { path: { connection_id: connectionId } },
 				}),
 			);
@@ -195,7 +195,7 @@ export function useConnectedAppCards() {
 			queryKey: ["available-app", name] as const,
 			queryFn: async () =>
 				unwrap(
-					await api.GET("/api/connectors/available/{app_name}", {
+					await api.GET("/v1/connectors/available/{app_name}", {
 						params: { path: { app_name: name } },
 					}),
 				),

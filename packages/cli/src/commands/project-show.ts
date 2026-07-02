@@ -27,7 +27,7 @@ async function fetchAllSkills(apiUrl: string, bearer: string): Promise<SkillRow[
 		const body = await authedJson<{ items: SkillRow[]; total?: number }>(
 			apiUrl,
 			bearer,
-			`/api/skills?page=${page}&page_size=${pageSize}`,
+			`/v1/skills?page=${page}&page_size=${pageSize}`,
 		);
 		items.push(...body.items);
 		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;
@@ -46,7 +46,7 @@ async function fetchAllVaults(apiUrl: string, bearer: string): Promise<VaultRow[
 		const body = await authedJson<{ items: VaultRow[]; total?: number }>(
 			apiUrl,
 			bearer,
-			`/api/vault?${pageParam}page_size=${pageSize}`,
+			`/v1/vault?${pageParam}page_size=${pageSize}`,
 		);
 		items.push(...body.items);
 		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;

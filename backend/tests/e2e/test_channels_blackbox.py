@@ -118,9 +118,7 @@ async def _wait_for_health(backend: RunningBackend) -> None:
     async with httpx.AsyncClient(base_url=backend.base_url, timeout=2.0) as client:
         while asyncio.get_running_loop().time() < deadline:
             if backend.process.poll() is not None:
-                raise AssertionError(
-                    "backend exited during startup\n" + _backend_logs(backend)
-                )
+                raise AssertionError("backend exited during startup\n" + _backend_logs(backend))
             try:
                 response = await client.get("/health")
                 if response.status_code == 200 and response.json().get("status") == "ok":
@@ -213,13 +211,13 @@ async def _create_channel(
     created = await _request_json(
         client,
         "POST",
-        "/api/channels",
+        "/v1/channels",
         expected=201,
         headers=headers,
         json=body,
     )
     assert created["provider"] == provider
-    assert created["webhook_url"].startswith(f"{str(client.base_url).rstrip('/')}/api/channels/")
+    assert created["webhook_url"].startswith(f"{str(client.base_url).rstrip('/')}/v1/channels/")
     assert created["webhook_secret"]
     assert created["agent_token"]
     return created
@@ -236,7 +234,7 @@ async def _pair_telegram(
     pair = await _request_json(
         client,
         "POST",
-        f"/api/channels/{account['id']}/pair-codes",
+        f"/v1/channels/{account['id']}/pair-codes",
         expected=201,
         headers=headers,
         json={"ttl_seconds": 900},
@@ -244,7 +242,7 @@ async def _pair_telegram(
     paired = await _request_json(
         client,
         "POST",
-        f"/api/channels/telegram/{account['id']}/webhook",
+        f"/v1/channels/telegram/{account['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": account["webhook_secret"]},
         json={
             "update_id": 10,
@@ -259,7 +257,7 @@ async def _pair_telegram(
     inbound = await _request_json(
         client,
         "POST",
-        f"/api/channels/telegram/{account['id']}/webhook",
+        f"/v1/channels/telegram/{account['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": account["webhook_secret"]},
         json={
             "update_id": 11,
@@ -285,7 +283,7 @@ async def _pair_discord(
     pair = await _request_json(
         client,
         "POST",
-        f"/api/channels/{account['id']}/pair-codes",
+        f"/v1/channels/{account['id']}/pair-codes",
         expected=201,
         headers=headers,
         json={"ttl_seconds": 900},
@@ -293,7 +291,7 @@ async def _pair_discord(
     paired = await _request_json(
         client,
         "POST",
-        f"/api/channels/discord/{account['id']}/webhook",
+        f"/v1/channels/discord/{account['id']}/webhook",
         headers={"x-clawdi-channel-secret": account["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -310,7 +308,7 @@ async def _pair_discord(
     inbound = await _request_json(
         client,
         "POST",
-        f"/api/channels/discord/{account['id']}/webhook",
+        f"/v1/channels/discord/{account['id']}/webhook",
         headers={"x-clawdi-channel-secret": account["webhook_secret"]},
         json={
             "t": "MESSAGE_CREATE",
@@ -336,7 +334,7 @@ async def _pair_imessage(
     pair = await _request_json(
         client,
         "POST",
-        f"/api/channels/{account['id']}/pair-codes",
+        f"/v1/channels/{account['id']}/pair-codes",
         expected=201,
         headers=headers,
         json={"ttl_seconds": 900},
@@ -344,7 +342,7 @@ async def _pair_imessage(
     paired = await _request_json(
         client,
         "POST",
-        f"/api/channels/imessage/{account['id']}/webhook",
+        f"/v1/channels/imessage/{account['id']}/webhook",
         params={"secret": account["webhook_secret"]},
         json={
             "data": {
@@ -368,7 +366,7 @@ async def _pair_whatsapp(
     pair = await _request_json(
         client,
         "POST",
-        f"/api/channels/{account['id']}/pair-codes",
+        f"/v1/channels/{account['id']}/pair-codes",
         expected=201,
         headers=headers,
         json={"ttl_seconds": 900},
@@ -376,7 +374,7 @@ async def _pair_whatsapp(
     paired = await _request_json(
         client,
         "POST",
-        f"/api/channels/whatsapp/{account['id']}/webhook",
+        f"/v1/channels/whatsapp/{account['id']}/webhook",
         headers={"x-clawdi-channel-secret": account["webhook_secret"]},
         json={
             "entry": [
@@ -448,7 +446,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
         async with httpx.AsyncClient(base_url=backend.base_url, timeout=10.0) as client:
             assert (await client.get("/health")).json() == {"status": "ok"}
 
-            initial = await client.get("/api/channels", headers=backend.auth_headers)
+            initial = await client.get("/v1/channels", headers=backend.auth_headers)
             assert initial.status_code == 200, initial.text
             assert initial.json() == []
             await _ensure_blackbox_agent(backend)
@@ -533,7 +531,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             )
 
             bindings = await client.get(
-                f"/api/channels/{telegram['id']}/bindings",
+                f"/v1/channels/{telegram['id']}/bindings",
                 headers=backend.auth_headers,
             )
             assert bindings.status_code == 200, bindings.text
@@ -542,7 +540,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             tg_me = await _request_json(
                 client,
                 "GET",
-                f"/api/channels/telegram/bot/{telegram['agent_token']}/getMe",
+                f"/v1/channels/telegram/bot/{telegram['agent_token']}/getMe",
             )
             assert tg_me["ok"] is True
             assert tg_me["result"]["username"] == f"e2e_bot_{run_id}"
@@ -550,7 +548,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             tg_updates = await _request_json(
                 client,
                 "GET",
-                f"/api/channels/telegram/bot/{telegram['agent_token']}/getUpdates",
+                f"/v1/channels/telegram/bot/{telegram['agent_token']}/getUpdates",
                 params={"offset": 11, "timeout": 0},
             )
             assert tg_updates["ok"] is True
@@ -568,7 +566,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             outbox = await _request_json(
                 client,
                 "POST",
-                f"/api/channels/{telegram['id']}/messages",
+                f"/v1/channels/{telegram['id']}/messages",
                 expected=201,
                 headers=backend.auth_headers,
                 json={"external_chat_id": str(telegram_chat_id), "text": f"outbox {run_id}"},
@@ -580,14 +578,17 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             gateway = await _request_json(
                 client,
                 "GET",
-                "/api/channels/discord/v10/gateway/bot",
+                "/v1/channels/discord/v10/gateway/bot",
                 headers=discord_headers,
             )
-            assert gateway["url"] == f"ws://127.0.0.1:{client.base_url.port}/api/channels/discord/gateway"
+            assert (
+                gateway["url"]
+                == f"ws://127.0.0.1:{client.base_url.port}/v1/channels/discord/gateway"
+            )
             discord_me = await _request_json(
                 client,
                 "GET",
-                "/api/channels/discord/v10/users/@me",
+                "/v1/channels/discord/v10/users/@me",
                 headers=discord_headers,
             )
             assert discord_me["bot"] is True
@@ -602,7 +603,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             bluebubbles = await _request_json(
                 client,
                 "GET",
-                "/api/channels/imessage/bluebubbles/v1/server/info",
+                "/v1/channels/imessage/bluebubbles/v1/server/info",
                 headers={"X-API-Key": imessage["agent_token"]},
             )
             assert bluebubbles["data"]["private_api"] is True
@@ -611,7 +612,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             wa_creds = await _request_json(
                 client,
                 "POST",
-                f"/api/channels/whatsapp/{whatsapp['id']}/tenant-creds",
+                f"/v1/channels/whatsapp/{whatsapp['id']}/tenant-creds",
                 expected=201,
                 headers=backend.auth_headers,
                 json={"phone_user": whatsapp_phone, "name": f"wa-{run_id}"},
@@ -621,7 +622,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             wa_cert = await _request_json(
                 client,
                 "GET",
-                f"/api/channels/whatsapp/{whatsapp['id']}/auth-cert",
+                f"/v1/channels/whatsapp/{whatsapp['id']}/auth-cert",
                 headers=backend.auth_headers,
             )
             assert wa_cert == wa_creds["auth_cert"]
@@ -629,7 +630,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             debug_health = await _request_json(
                 client,
                 "GET",
-                "/api/channels/debug/health",
+                "/v1/channels/debug/health",
                 headers=backend.auth_headers,
             )
             providers = {entry["provider"] for entry in debug_health["channels"]}
@@ -641,7 +642,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 async with httpx.AsyncClient(base_url=backend.base_url, timeout=10.0) as client:
                     for account_id in account_ids:
                         await client.delete(
-                            f"/api/channels/{account_id}",
+                            f"/v1/channels/{account_id}",
                             headers=backend.auth_headers,
                         )
             cleanup_ok = True

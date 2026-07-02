@@ -42,7 +42,7 @@ from app.services.bluebubbles_compat import (
     update_scheduled_message,
 )
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 
 
 @router.post("/message/query", include_in_schema=False)

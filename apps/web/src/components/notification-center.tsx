@@ -49,7 +49,7 @@ export function NotificationCenter() {
 	const invitations = useQuery({
 		queryKey: NOTIFICATION_CENTER_QUERY_KEY,
 		queryFn: async (): Promise<ProjectInvitationNotification[]> =>
-			unwrap(await api.GET("/api/me/invitations")),
+			unwrap(await api.GET("/v1/me/invitations")),
 		refetchOnWindowFocus: true,
 	});
 
@@ -61,7 +61,7 @@ export function NotificationCenter() {
 			projectName: string;
 		}): Promise<AcceptInvitationResponse> =>
 			unwrap(
-				await api.POST("/api/me/invitations/{invitation_id}/accept", {
+				await api.POST("/v1/me/invitations/{invitation_id}/accept", {
 					params: { path: { invitation_id: id } },
 					body: { use_as: "attached" },
 				}),
@@ -91,7 +91,7 @@ export function NotificationCenter() {
 	const decline = useMutation({
 		mutationFn: async (id: string) => {
 			await unwrap(
-				await api.POST("/api/me/invitations/{invitation_id}/decline", {
+				await api.POST("/v1/me/invitations/{invitation_id}/decline", {
 					params: { path: { invitation_id: id } },
 				}),
 			);

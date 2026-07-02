@@ -69,12 +69,12 @@ export function SendSkillDialog({
 
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
 	const { data: envs } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/api/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/environments")),
 		enabled: open,
 	});
 
@@ -129,7 +129,7 @@ export function SendSkillDialog({
 				try {
 					const blob = ensureBlob(
 						unwrap(
-							await api.GET("/api/projects/{project_id}/skills/{skill_key}/download", {
+							await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
 								params: {
 									path: { project_id: skill.project_id, skill_key: skill.skill_key },
 								},
@@ -142,7 +142,7 @@ export function SendSkillDialog({
 					if (removeFromSource) {
 						try {
 							unwrap(
-								await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+								await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 									params: { path: { project_id: skill.project_id, skill_key: skill.skill_key } },
 								}),
 							);

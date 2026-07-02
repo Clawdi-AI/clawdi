@@ -89,7 +89,7 @@ async def _attach_source_machines(
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/memories", tags=["memories"])
+router = APIRouter(prefix="/memories", tags=["memories"])
 
 
 async def _project_filter_memories(

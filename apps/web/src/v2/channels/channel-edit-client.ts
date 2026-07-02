@@ -22,14 +22,14 @@ export function useChannelEditApi() {
 			/** GET /api/channels/agent-links?agent_id={id} — links for one agent. */
 			listAgentLinks: async (agentId: string) =>
 				unwrap(
-					await api.GET("/api/channels/agent-links", {
+					await api.GET("/v1/channels/agent-links", {
 						params: { query: { agent_id: agentId } },
 					}),
 				),
 			/** DELETE /api/channels/{accountId}/agent-links/{linkId} — unlink. */
 			unlinkAgent: async (accountId: string, linkId: string) =>
 				unwrap(
-					await api.DELETE("/api/channels/{account_id}/agent-links/{link_id}", {
+					await api.DELETE("/v1/channels/{account_id}/agent-links/{link_id}", {
 						params: { path: { account_id: accountId, link_id: linkId } },
 					}),
 				),

@@ -82,17 +82,17 @@ describe("vaultList", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/vault/default/items",
+				path: "/v1/vault/default/items",
 				response: () => jsonResponse({ "(default)": ["OPENAI_API_KEY"] }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({}),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -151,17 +151,17 @@ describe("vaultList", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/vault/default/items",
+				path: "/v1/vault/default/items",
 				response: () => jsonResponse({ "(default)": ["OPENAI_API_KEY"] }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ stripe: ["SECRET_KEY"] }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -199,12 +199,12 @@ describe("vaultList", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/vault/shared/items",
+				path: "/v1/vault/shared/items",
 				response: () => jsonResponse({ "(default)": ["TOKEN"] }),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -244,12 +244,12 @@ describe("vaultList", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({}),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
@@ -297,12 +297,12 @@ describe("vaultImport", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID }],
@@ -311,7 +311,7 @@ describe("vaultImport", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/default/items",
+				path: "/v1/vault/default/items",
 				response: () => jsonResponse({ status: "ok", fields: 3 }),
 			},
 		]);
@@ -417,12 +417,12 @@ describe("vaultImport", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
@@ -431,7 +431,7 @@ describe("vaultImport", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "ok", fields: 1 }),
 			},
 		]);
@@ -451,7 +451,7 @@ describe("vaultImport", () => {
 		const create = captured.find((request) => request.method === "POST");
 		expect(create?.body).toEqual({ slug: "prod", name: "prod" });
 		const put = captured.find((request) => request.method === "PUT");
-		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.path).toContain("/v1/vault/prod/items");
 		expect(put?.body).toEqual({
 			section: "stripe",
 			fields: { STRIPE_SECRET_KEY: "stripe-secret-placeholder" },
@@ -488,7 +488,7 @@ describe("vault attach/detach", () => {
 			...mockProjectList(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -499,7 +499,7 @@ describe("vault attach/detach", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ id: "vault-1", slug: "providers" }),
 			},
 		]);
@@ -517,7 +517,7 @@ describe("vault attach/detach", () => {
 		}
 
 		const post = captured.find((request) => request.method === "POST");
-		expect(post?.path).toContain(`/api/vault?project_id=${OTHER_PROJECT_ID}`);
+		expect(post?.path).toContain(`/v1/vault?project_id=${OTHER_PROJECT_ID}`);
 		expect(post?.body).toEqual({ slug: "providers", name: "providers" });
 		expect(captured.some((request) => request.method === "PUT")).toBe(false);
 		expect(out).toContain("Attached vault");
@@ -529,7 +529,7 @@ describe("vault attach/detach", () => {
 			...mockProjectList(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -545,7 +545,7 @@ describe("vault attach/detach", () => {
 			},
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ id: "vault-1", slug: "providers" }),
 			},
 		]);
@@ -563,7 +563,7 @@ describe("vault attach/detach", () => {
 		}
 
 		const post = captured.find((request) => request.method === "POST");
-		expect(post?.path).toContain(`/api/vault?project_id=${OTHER_PROJECT_ID}`);
+		expect(post?.path).toContain(`/v1/vault?project_id=${OTHER_PROJECT_ID}`);
 		expect(out).toContain("Attached vault");
 		expect(out).toContain("1 Project");
 		expect(out).not.toContain("1 Projects");
@@ -574,7 +574,7 @@ describe("vault attach/detach", () => {
 			...mockProjectList(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -590,7 +590,7 @@ describe("vault attach/detach", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/vault/providers",
+				path: "/v1/vault/providers",
 				response: () => jsonResponse({ status: "deleted" }),
 			},
 		]);
@@ -608,7 +608,7 @@ describe("vault attach/detach", () => {
 		}
 
 		const del = captured.find((request) => request.method === "DELETE");
-		expect(del?.path).toContain(`/api/vault/providers?project_id=${OTHER_PROJECT_ID}`);
+		expect(del?.path).toContain(`/v1/vault/providers?project_id=${OTHER_PROJECT_ID}`);
 		expect(captured.some((request) => request.path.includes("/items"))).toBe(false);
 		expect(out).toContain("Detached vault");
 		expect(out).toContain("No keys were deleted");
@@ -619,7 +619,7 @@ describe("vault attach/detach", () => {
 			...mockProjectList(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ items: [], total: 0 }),
 			},
 		]);
@@ -642,12 +642,12 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
@@ -656,7 +656,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "ok", fields: 1 }),
 			},
 		]);
@@ -671,7 +671,7 @@ describe("vaultSet", () => {
 		}
 
 		const put = captured.find((request) => request.method === "PUT");
-		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.path).toContain("/v1/vault/prod/items");
 		expect(put?.body).toEqual({
 			section: "stripe",
 			fields: { SECRET_KEY: "test-secret-value" },
@@ -683,12 +683,12 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
@@ -697,7 +697,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "ok", fields: 1 }),
 			},
 		]);
@@ -721,7 +721,7 @@ describe("vaultSet", () => {
 		}
 
 		const put = captured.find((request) => request.method === "PUT");
-		expect(put?.path).toContain("/api/vault/prod/items");
+		expect(put?.path).toContain("/v1/vault/prod/items");
 		expect(put?.body).toEqual({
 			section: "stripe",
 			fields: { SECRET_KEY: "test-secret-value" },
@@ -755,12 +755,12 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID }],
@@ -769,7 +769,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/default/items",
+				path: "/v1/vault/default/items",
 				response: () => jsonResponse({ status: "ok", fields: 1 }),
 			},
 		]);
@@ -843,7 +843,7 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_ids: [PROJECT_ID] }],
@@ -852,7 +852,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "deleted" }),
 			},
 		]);
@@ -870,7 +870,7 @@ describe("vaultSet", () => {
 		}
 
 		const del = captured.find((request) => request.method === "DELETE");
-		expect(del?.path).toContain(`/api/vault/prod/items?project_id=${PROJECT_ID}`);
+		expect(del?.path).toContain(`/v1/vault/prod/items?project_id=${PROJECT_ID}`);
 		expect(del?.path).toContain("global_delete=false");
 		expect(del?.body).toEqual({
 			section: "stripe",
@@ -886,7 +886,7 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -918,7 +918,7 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -934,7 +934,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "deleted" }),
 			},
 		]);
@@ -1015,12 +1015,12 @@ describe("vaultSet", () => {
 			...mockDefaultProjectResolution(),
 			{
 				method: "POST",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () => jsonResponse({ detail: "already exists" }, 409),
 			},
 			{
 				method: "GET",
-				path: "/api/vault",
+				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
 						items: [{ id: "vault-1", slug: "prod", name: "prod", project_id: PROJECT_ID }],
@@ -1029,7 +1029,7 @@ describe("vaultSet", () => {
 			},
 			{
 				method: "PUT",
-				path: "/api/vault/prod/items",
+				path: "/v1/vault/prod/items",
 				response: () => jsonResponse({ status: "ok", fields: 1 }),
 			},
 		]);
@@ -1057,7 +1057,7 @@ function mockVaultListFetch() {
 	return mockFetch([
 		{
 			method: "GET",
-			path: "/api/vault/default/items",
+			path: "/v1/vault/default/items",
 			response: () =>
 				jsonResponse({
 					"(default)": ["OPENAI_API_KEY"],
@@ -1066,7 +1066,7 @@ function mockVaultListFetch() {
 		},
 		{
 			method: "GET",
-			path: "/api/vault",
+			path: "/v1/vault",
 			response: () =>
 				jsonResponse({
 					items: [{ id: "vault-1", slug: "default", name: "Default", project_id: PROJECT_ID }],
@@ -1075,7 +1075,7 @@ function mockVaultListFetch() {
 		},
 		{
 			method: "GET",
-			path: "/api/projects",
+			path: "/v1/projects",
 			response: () =>
 				jsonResponse([
 					{
@@ -1094,12 +1094,12 @@ function mockDefaultProjectResolution() {
 	return [
 		{
 			method: "GET",
-			path: "/api/projects/default",
+			path: "/v1/projects/default",
 			response: () => jsonResponse({ project_id: PROJECT_ID }),
 		},
 		{
 			method: "GET",
-			path: "/api/projects",
+			path: "/v1/projects",
 			response: () => jsonResponse(mockProjects()),
 		},
 	];
@@ -1109,7 +1109,7 @@ function mockProjectList() {
 	return [
 		{
 			method: "GET",
-			path: "/api/projects",
+			path: "/v1/projects",
 			response: () => jsonResponse(mockProjects()),
 		},
 	];

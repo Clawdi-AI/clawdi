@@ -46,7 +46,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					jsonResponse([
 						{
@@ -56,7 +56,7 @@ describe("channel commands", () => {
 							status: "active",
 							visibility: "private",
 							has_provider_token: true,
-							webhook_url: "https://api.test/api/channels/telegram/channel-private/webhook",
+							webhook_url: "https://api.test/v1/channels/telegram/channel-private/webhook",
 							created_at: new Date().toISOString(),
 						},
 					]),
@@ -65,7 +65,7 @@ describe("channel commands", () => {
 		const out = await captureStdout(() => channelListCommand({ json: true }));
 		restore();
 
-		expect(captured[0]).toMatchObject({ method: "GET", path: "/api/channels" });
+		expect(captured[0]).toMatchObject({ method: "GET", path: "/v1/channels" });
 		expect(JSON.parse(out)).toMatchObject({
 			channels: [{ id: "channel-private", visibility: "private" }],
 		});
@@ -75,7 +75,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/channels/bot-pool",
+				path: "/v1/channels/bot-pool",
 				response: () =>
 					jsonResponse({
 						providers: {
@@ -87,7 +87,7 @@ describe("channel commands", () => {
 									status: "active",
 									visibility: "public",
 									has_provider_token: true,
-									webhook_url: "https://api.test/api/channels/telegram/channel-public/webhook",
+									webhook_url: "https://api.test/v1/channels/telegram/channel-public/webhook",
 									created_at: new Date().toISOString(),
 									access: "public",
 									capabilities: {
@@ -106,7 +106,7 @@ describe("channel commands", () => {
 		const out = await captureStdout(() => channelAvailableCommand({ json: true }));
 		restore();
 
-		expect(captured[0]).toMatchObject({ method: "GET", path: "/api/channels/bot-pool" });
+		expect(captured[0]).toMatchObject({ method: "GET", path: "/v1/channels/bot-pool" });
 		expect(JSON.parse(out)).toMatchObject({
 			bot_pool: {
 				providers: {
@@ -120,7 +120,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					jsonResponse(
 						{
@@ -130,7 +130,7 @@ describe("channel commands", () => {
 							status: "active",
 							visibility: "private",
 							has_provider_token: true,
-							webhook_url: "https://api.test/api/channels/telegram/channel-1/webhook",
+							webhook_url: "https://api.test/v1/channels/telegram/channel-1/webhook",
 							created_at: new Date().toISOString(),
 							webhook_secret: "secret",
 							agent_link_id: "link-1",
@@ -154,7 +154,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels",
+			path: "/v1/channels",
 			body: {
 				provider: "telegram",
 				name: "ops-bot",
@@ -175,7 +175,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels",
+				path: "/v1/channels",
 				response: () =>
 					jsonResponse(
 						{
@@ -185,7 +185,7 @@ describe("channel commands", () => {
 							status: "active",
 							visibility: "private",
 							has_provider_token: true,
-							webhook_url: "https://api.test/api/channels/telegram/channel-1/webhook",
+							webhook_url: "https://api.test/v1/channels/telegram/channel-1/webhook",
 							created_at: new Date().toISOString(),
 							webhook_secret: "secret",
 						},
@@ -210,7 +210,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels",
+			path: "/v1/channels",
 			body: {
 				provider_token: "provider-token-from-env",
 				secrets: { app_secret: "secret-from-env" },
@@ -222,7 +222,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/channels/channel-1",
+				path: "/v1/channels/channel-1",
 				response: () =>
 					jsonResponse({
 						id: "channel-1",
@@ -231,7 +231,7 @@ describe("channel commands", () => {
 						status: "active",
 						visibility: "private",
 						has_provider_token: true,
-						webhook_url: "https://api.test/api/channels/telegram/channel-1/webhook",
+						webhook_url: "https://api.test/v1/channels/telegram/channel-1/webhook",
 						created_at: new Date().toISOString(),
 					}),
 			},
@@ -239,7 +239,7 @@ describe("channel commands", () => {
 		const out = await captureStdout(() => channelGetCommand("channel-1", { json: true }));
 		restore();
 
-		expect(captured[0]).toMatchObject({ method: "GET", path: "/api/channels/channel-1" });
+		expect(captured[0]).toMatchObject({ method: "GET", path: "/v1/channels/channel-1" });
 		expect(JSON.parse(out)).toMatchObject({
 			channel: { id: "channel-1", provider: "telegram", visibility: "private" },
 		});
@@ -249,7 +249,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels/channel-1/agent-links",
+				path: "/v1/channels/channel-1/agent-links",
 				response: () =>
 					jsonResponse(
 						{
@@ -271,7 +271,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels/channel-1/agent-links",
+			path: "/v1/channels/channel-1/agent-links",
 			body: { agent_id: "agent-1" },
 		});
 		expect(JSON.parse(out)).toMatchObject({
@@ -283,7 +283,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels/channel-1/agent-links/link-1/token",
+				path: "/v1/channels/channel-1/agent-links/link-1/token",
 				response: () =>
 					jsonResponse({
 						id: "link-1",
@@ -302,7 +302,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels/channel-1/agent-links/link-1/token",
+			path: "/v1/channels/channel-1/agent-links/link-1/token",
 		});
 		expect(JSON.parse(out)).toMatchObject({
 			link: { id: "link-1", agent_token: "rotated-token" },
@@ -313,7 +313,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels/channel-1/pair-codes",
+				path: "/v1/channels/channel-1/pair-codes",
 				response: () =>
 					jsonResponse(
 						{
@@ -335,7 +335,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels/channel-1/pair-codes",
+			path: "/v1/channels/channel-1/pair-codes",
 			body: { agent_id: null, agent_link_id: "link-1", ttl_seconds: 600 },
 		});
 		expect(JSON.parse(out)).toMatchObject({
@@ -366,7 +366,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels/channel-1/messages",
+				path: "/v1/channels/channel-1/messages",
 				response: () =>
 					jsonResponse(
 						{
@@ -394,7 +394,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels/channel-1/messages",
+			path: "/v1/channels/channel-1/messages",
 			body: { binding_id: "binding-1", external_chat_id: null, text: "deploy done" },
 		});
 		expect(JSON.parse(out)).toMatchObject({
@@ -426,7 +426,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/channels/channel-1/commands/sync",
+				path: "/v1/channels/channel-1/commands/sync",
 				response: () =>
 					jsonResponse({
 						provider: "discord",
@@ -445,7 +445,7 @@ describe("channel commands", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/channels/channel-1/commands/sync",
+			path: "/v1/channels/channel-1/commands/sync",
 			body: {
 				guild_id: "guild-1",
 				commands: [{ name: "bot_pair", description: "Pair" }],
@@ -458,7 +458,7 @@ describe("channel commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "DELETE",
-				path: "/api/channels/channel-1",
+				path: "/v1/channels/channel-1",
 				response: () => new Response(null, { status: 204 }),
 			},
 		]);
@@ -467,7 +467,7 @@ describe("channel commands", () => {
 		);
 		restore();
 
-		expect(captured[0]).toMatchObject({ method: "DELETE", path: "/api/channels/channel-1" });
+		expect(captured[0]).toMatchObject({ method: "DELETE", path: "/v1/channels/channel-1" });
 		expect(JSON.parse(out)).toEqual({ account_id: "channel-1", deleted: true });
 	});
 });

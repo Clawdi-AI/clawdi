@@ -11,6 +11,6 @@ export type SkillSummary = Schemas["SkillSummaryResponse"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 
 // ── Write responses ───────────────────────────────────────────────────────
-// `/api/vault/resolve` has richer single-reference/debug shapes in OpenAPI.
+// `/v1/vault/resolve` has richer single-reference/debug shapes in OpenAPI.
 // The legacy all-env CLI path still validates and narrows it to string env vars.
 export type VaultResolved = Record<string, string>;

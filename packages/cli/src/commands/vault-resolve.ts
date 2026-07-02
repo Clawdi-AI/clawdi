@@ -73,13 +73,13 @@ export async function vaultResolveCommand(
 	if (opts.debug) params.set("debug", "true");
 	if (opts.dryRun) params.set("preview", "true");
 
-	const r = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {
+	const r = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
 	let body: VaultResolveHit | { detail?: unknown };
 	try {
-		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/api/vault/resolve");
+		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/v1/vault/resolve");
 	} catch (e) {
 		if (r.ok) throw e;
 		body = {};

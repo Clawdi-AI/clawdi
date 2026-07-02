@@ -40,7 +40,7 @@ import {
  * banner / chrome — owners who want full controls go to the dashboard
  * `/sessions/{id}` instead).
  *
- * URL: `/s/{session_id}` (UUID). Backend `/api/public/sessions/{id}` is
+ * URL: `/s/{session_id}` (UUID). Backend `/v1/public/sessions/{id}` is
  * the canonical route.
  *
  * Status responses from the backend get a dedicated view:
@@ -70,7 +70,7 @@ type FetchResult =
  */
 const fetchShare = cache(async (sessionId: string, token: string | null): Promise<FetchResult> => {
 	const api = createPublicApi(token);
-	const result = await api.GET("/api/public/sessions/{session_id}", {
+	const result = await api.GET("/v1/public/sessions/{session_id}", {
 		params: { path: { session_id: sessionId } },
 		cache: "no-store",
 	});
@@ -99,7 +99,7 @@ async function fetchFirstMessages(
 	token: string | null,
 ): Promise<PublicMessagesPage> {
 	const api = createPublicApi(token);
-	const result = await api.GET("/api/public/sessions/{session_id}/messages", {
+	const result = await api.GET("/v1/public/sessions/{session_id}/messages", {
 		params: { path: { session_id: sessionId }, query: { offset: 0, limit: PAGE_SIZE } },
 		cache: "no-store",
 	});

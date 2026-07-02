@@ -68,7 +68,7 @@ def test_related_refs_returns_empty_dict_when_nothing_found():
 
 async def _register_env(client: httpx.AsyncClient) -> str:
     r = await client.post(
-        "/api/environments",
+        "/v1/environments",
         json={
             "machine_id": "refs-machine",
             "machine_name": "Refs Mac",
@@ -97,15 +97,15 @@ async def _push_and_upload(
         "content_hash": hashlib.sha256(body_bytes).hexdigest(),
     }
 
-    r = await client.post("/api/sessions/batch", json={"sessions": [payload_session]})
+    r = await client.post("/v1/sessions/batch", json={"sessions": [payload_session]})
     assert r.status_code == 200, r.text
 
     await client.post(
-        f"/api/sessions/{local_session_id}/upload",
+        f"/v1/sessions/{local_session_id}/upload",
         files={"file": (f"{local_session_id}.json", body_bytes, "application/json")},
     )
 
-    listing = (await client.get(f"/api/sessions?q={local_session_id}")).json()
+    listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
 
 
@@ -121,7 +121,7 @@ async def test_upload_populates_related_refs(client: httpx.AsyncClient):
     ]
     sid = await _push_and_upload(client, local_session_id="sess-refs-real", messages=messages)
 
-    detail = (await client.get(f"/api/sessions/{sid}")).json()
+    detail = (await client.get(f"/v1/sessions/{sid}")).json()
     assert detail["related_refs"]["prs"] == ["foo/bar#7"]
     assert detail["related_refs"]["branches"] == ["review/pr-7"]
 
@@ -136,5 +136,5 @@ async def test_upload_with_no_refs_leaves_related_refs_null(client: httpx.AsyncC
         {"role": "assistant", "content": "sunny"},
     ]
     sid = await _push_and_upload(client, local_session_id="sess-no-refs", messages=messages)
-    detail = (await client.get(f"/api/sessions/{sid}")).json()
+    detail = (await client.get(f"/v1/sessions/{sid}")).json()
     assert detail["related_refs"] is None

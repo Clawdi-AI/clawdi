@@ -181,7 +181,7 @@ function CommandPalette({
 	const { data, isFetching } = useQuery({
 		queryKey: ["command-search", debounced],
 		queryFn: async () =>
-			unwrap(await api.GET("/api/search", { params: { query: { q: debounced } } })),
+			unwrap(await api.GET("/v1/search", { params: { query: { q: debounced } } })),
 		enabled: open && debounced.trim().length > 0,
 		staleTime: 30_000,
 		// Keep the last page of results visible while a new debounced query

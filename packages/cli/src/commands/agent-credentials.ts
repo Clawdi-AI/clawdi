@@ -577,7 +577,7 @@ export async function agentCredentialsImportCommand(
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
 	const response = await api.postJsonBody<CredentialProfileResponse>(
-		"/api/vault/credential-profiles",
+		"/v1/vault/credential-profiles",
 		{ tool: collected.tool, profile: collected.profile, payload: collected.payload },
 		projectId ? { project_id: projectId } : undefined,
 	);
@@ -601,7 +601,7 @@ export async function agentCredentialsMaterializeCommand(
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
 	const resolved = await api.postJsonBody<CredentialProfileResolveResponse>(
-		"/api/vault/credential-profiles/resolve",
+		"/v1/vault/credential-profiles/resolve",
 		{
 			tool,
 			profile,

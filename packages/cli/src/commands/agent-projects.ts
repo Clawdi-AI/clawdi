@@ -34,7 +34,7 @@ export async function agentProjectsListCommand(
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,
-		`/api/agents/${encodeURIComponent(agentId)}/project-bindings`,
+		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings`,
 	);
 	const projectsById = new Map<string, ProjectBrief>();
 	for (const project of await listProjects(apiUrl, apiKey).catch(() => [])) {
@@ -105,7 +105,7 @@ export async function agentProjectsAddContextCommand(
 	await authedJson<BindingRow>(
 		apiUrl,
 		apiKey,
-		`/api/agents/${encodeURIComponent(agentId)}/project-bindings/context`,
+		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/context`,
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -125,7 +125,7 @@ export async function agentProjectsRemoveContextCommand(
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,
-		`/api/agents/${encodeURIComponent(agentId)}/project-bindings`,
+		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings`,
 	);
 	const matches = rows.filter(
 		(row) => row.binding_type === "context" && row.project_id === projectId,
@@ -143,7 +143,7 @@ export async function agentProjectsRemoveContextCommand(
 	await authedJson<{ status: string }>(
 		apiUrl,
 		apiKey,
-		`/api/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
+		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
 	console.log(`${chalk.green("✓")} Detached from ${agentId}.`);
@@ -171,7 +171,7 @@ export async function agentProjectsReorderCommand(
 	await authedJson<{ status: string }>(
 		apiUrl,
 		apiKey,
-		`/api/agents/${encodeURIComponent(agentId)}/project-bindings/context/reorder`,
+		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/context/reorder`,
 		{
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },

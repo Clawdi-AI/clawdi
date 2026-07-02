@@ -35,7 +35,7 @@ describe("projectCreateCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse(
 						{
@@ -63,7 +63,7 @@ describe("projectCreateCommand", () => {
 
 		expect(captured[0]).toMatchObject({
 			method: "POST",
-			path: "/api/projects",
+			path: "/v1/projects",
 			body: { name: "Client Alpha", slug: "client-alpha" },
 		});
 		expect(JSON.parse(out)).toMatchObject({
@@ -76,7 +76,7 @@ describe("projectCreateCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					new Response("slug already exists", {
 						status: 409,

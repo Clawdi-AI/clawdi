@@ -12,7 +12,7 @@ describe("runtime MITM profile schema", () => {
 			id: "discord-rest",
 			enabled: true,
 			kind: "http",
-			match: { scheme: "https", host: "discord.com", pathPrefix: "/api/" },
+			match: { scheme: "https", host: "discord.com", pathPrefix: "/v1/" },
 			rewrite: { upstreamBaseUrl: "https://router.test/discord" },
 		};
 
@@ -60,7 +60,7 @@ describe("runtime MITM profile schema", () => {
 			id: "bad-upstream",
 			enabled: true,
 			kind: "http",
-			match: { scheme: "https", host: "discord.com", pathPrefix: "/api/" },
+			match: { scheme: "https", host: "discord.com", pathPrefix: "/v1/" },
 		};
 
 		for (const upstreamBaseUrl of [

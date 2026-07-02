@@ -34,7 +34,7 @@ beforeAll(() => {
 		async fetch(req) {
 			const url = new URL(req.url);
 			const requestBody =
-				req.method === "POST" && url.pathname === "/api/vault/resolve/bulk"
+				req.method === "POST" && url.pathname === "/v1/vault/resolve/bulk"
 					? await readJsonBody(req)
 					: undefined;
 			apiCalls.push({
@@ -48,7 +48,7 @@ beforeAll(() => {
 				return json({ detail: "not found" }, 404);
 			}
 
-			if (url.pathname === "/api/vault/resolve/bulk") {
+			if (url.pathname === "/v1/vault/resolve/bulk") {
 				if (!isExpectedBulkRequest(requestBody)) {
 					return json({ detail: "unexpected reference" }, 404);
 				}
@@ -60,7 +60,7 @@ beforeAll(() => {
 				return json({ results: { [REFERENCE]: result } });
 			}
 
-			if (url.pathname !== "/api/vault/resolve") {
+			if (url.pathname !== "/v1/vault/resolve") {
 				return json({ detail: "not found" }, 404);
 			}
 

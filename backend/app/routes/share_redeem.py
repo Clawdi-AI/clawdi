@@ -30,7 +30,7 @@ from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/share", tags=["share-redeem"])
+router = APIRouter(prefix="/share", tags=["share-redeem"])
 
 _REDEEM_RATE_WINDOW = timedelta(minutes=1)
 _REDEEM_RATE_LIMIT = 30

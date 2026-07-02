@@ -44,7 +44,7 @@ from app.services.sharing import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/projects", tags=["sharing"])
+router = APIRouter(prefix="/projects", tags=["sharing"])
 
 
 async def _assert_project_owner(

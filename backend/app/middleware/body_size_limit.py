@@ -50,7 +50,7 @@ class BodySizeLimitMiddleware:
 
         method = scope.get("method", "GET").upper()
         # DELETE included alongside POST/PUT/PATCH because the
-        # vault items endpoint (`DELETE /api/vault/{slug}/items`)
+        # vault items endpoint (`DELETE /v1/vault/{slug}/items`)
         # accepts a JSON body of field names. Without DELETE in
         # the set, a client could ship an unbounded body to that
         # route and FastAPI would parse it before any limit

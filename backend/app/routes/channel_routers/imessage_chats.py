@@ -40,7 +40,7 @@ from app.services.bluebubbles_compat import (
 )
 from app.services.channels import find_binding
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 
 
 async def _require_agent_bound_chat(

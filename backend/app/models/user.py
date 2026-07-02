@@ -22,7 +22,7 @@ class User(Base, TimestampMixin):
     avatar_url: Mapped[str | None] = mapped_column(String(512))
     # Monotonic counter incremented on any skill insert / update /
     # soft-delete (`is_active=False`). Exposed as a collection-level
-    # ETag on `GET /api/skills` and embedded in SSE `skill_changed`
+    # ETag on `GET /v1/skills` and embedded in SSE `skill_changed`
     # event payloads so the daemon can detect missed events when
     # the stream drops mid-flight.
     skills_revision: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)

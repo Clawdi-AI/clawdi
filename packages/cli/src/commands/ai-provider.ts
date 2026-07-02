@@ -461,7 +461,7 @@ export async function aiProviderMaterializeAuthCommand(
 	assertSupportedAgentProfileTool(provider.auth.tool);
 	const profile = provider.auth.profile;
 	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
-		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
+		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
 		{ profile },
 	);
 	if (!resolved.payload) {
@@ -535,12 +535,12 @@ export async function aiProviderConnectCommand(
 	try {
 		const api = new ApiClient();
 		await api.postJsonBody<AiProviderBackendResponse>(
-			"/api/ai-providers",
+			"/v1/ai-providers",
 			providerToBackendUpsert(provider),
 			{ replace: "true" },
 		);
 		const started = await api.postJsonBody<AiProviderOAuthStartBackendResponse>(
-			`/api/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/start`,
+			`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/start`,
 			{
 				provider: oauthProvider,
 				redirect_uri: request.redirect_uri,
@@ -640,7 +640,7 @@ async function completeProviderOAuth(
 ): Promise<AiProvider> {
 	const api = new ApiClient();
 	const response = await api.postJsonBody<AiProviderBackendResponse>(
-		`/api/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/complete`,
+		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/complete`,
 		{
 			code: completion.code,
 			state: completion.state,
@@ -904,12 +904,12 @@ async function storeAgentProfileForProvider(
 ): Promise<AiProvider> {
 	const api = new ApiClient();
 	await api.postJsonBody<AiProviderBackendResponse>(
-		"/api/ai-providers",
+		"/v1/ai-providers",
 		providerToBackendUpsert(provider),
 		{ replace: "true" },
 	);
 	const response = await api.postJsonBody<AiProviderBackendResponse>(
-		`/api/ai-providers/${encodeURIComponent(provider.id)}/auth/import`,
+		`/v1/ai-providers/${encodeURIComponent(provider.id)}/auth/import`,
 		{
 			type: "agent_profile",
 			tool: collected.tool,

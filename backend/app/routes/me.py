@@ -1,4 +1,4 @@
-"""Recipient-facing `/api/me/...` routes."""
+"""Recipient-facing `/v1/me/...` routes."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from app.services.sharing import ensure_viewer_membership, safe_owner_display
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/me", tags=["me"])
+router = APIRouter(prefix="/me", tags=["me"])
 
 
 @router.get("/invitations", response_model=list[InvitationResponse])

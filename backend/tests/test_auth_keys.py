@@ -21,7 +21,7 @@ from app.main import app
 async def test_api_key_create_returns_raw_once_and_stores_hash(
     client: httpx.AsyncClient, db_session
 ):
-    r = await client.post("/api/auth/keys", json={"label": "laptop"})
+    r = await client.post("/v1/auth/keys", json={"label": "laptop"})
     assert r.status_code == 200, r.text
     body = r.json()
     raw = body["raw_key"]
@@ -29,7 +29,7 @@ async def test_api_key_create_returns_raw_once_and_stores_hash(
     assert body["key_prefix"] == raw[:16]
 
     # The listing endpoint must NEVER return the raw secret (only prefix/label).
-    listing = (await client.get("/api/auth/keys")).json()
+    listing = (await client.get("/v1/auth/keys")).json()
     assert listing and all("raw_key" not in k for k in listing)
 
     # The on-disk representation is a sha256 hash, not the raw token.
@@ -75,7 +75,7 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get("/api/memories", headers={"Authorization": f"Bearer {raw}"})
+            r = await ac.get("/v1/memories", headers={"Authorization": f"Bearer {raw}"})
     finally:
         app.dependency_overrides.clear()
     assert r.status_code == 401, r.text
@@ -84,25 +84,25 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
 
 @pytest.mark.asyncio
 async def test_me_reflects_clerk_auth(client: httpx.AsyncClient):
-    body = (await client.get("/api/auth/me")).json()
+    body = (await client.get("/v1/auth/me")).json()
     assert body["auth_type"] == "clerk"
 
 
 @pytest.mark.asyncio
 async def test_me_reflects_cli_auth(cli_client: httpx.AsyncClient):
-    body = (await cli_client.get("/api/auth/me")).json()
+    body = (await cli_client.get("/v1/auth/me")).json()
     assert body["auth_type"] == "api_key"
 
 
 @pytest.mark.asyncio
 async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
-    created = (await client.post("/api/auth/keys", json={"label": "to-revoke"})).json()
-    r = await client.delete(f"/api/auth/keys/{created['id']}")
+    created = (await client.post("/v1/auth/keys", json={"label": "to-revoke"})).json()
+    r = await client.delete(f"/v1/auth/keys/{created['id']}")
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "revoked"}
 
     # After revoke, the key still shows in the list but with ``revoked_at`` set.
-    listing = (await client.get("/api/auth/keys")).json()
+    listing = (await client.get("/v1/auth/keys")).json()
     match = next(k for k in listing if k["id"] == created["id"])
     assert match["revoked_at"] is not None
 
@@ -128,7 +128,7 @@ async def test_deploy_key_minted_with_full_access_by_default(
     )
 
     r = await client.post(
-        "/api/auth/keys",
+        "/v1/auth/keys",
         json={"label": "hosted-pod", "environment_id": str(env.id)},
     )
     assert r.status_code == 200, r.text
@@ -169,7 +169,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
     )
 
     r = await client.post(
-        "/api/auth/keys",
+        "/v1/auth/keys",
         json={
             "label": "narrow-pod",
             "environment_id": str(env.id),
@@ -215,7 +215,7 @@ async def test_deploy_key_rejects_cross_tenant_environment_id(
 
     try:
         r = await client.post(
-            "/api/auth/keys",
+            "/v1/auth/keys",
             json={"label": "steal", "environment_id": str(other_env.id)},
         )
         assert r.status_code == 403, r.text
@@ -229,7 +229,7 @@ async def test_deploy_key_rejects_malformed_environment_id(client: httpx.AsyncCl
     """A malformed UUID should be 400, not 500 — sanity check on the
     parse path."""
     r = await client.post(
-        "/api/auth/keys",
+        "/v1/auth/keys",
         json={"label": "bad", "environment_id": "not-a-uuid"},
     )
     assert r.status_code == 400, r.text
@@ -262,7 +262,7 @@ async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_sessi
 
     try:
         # ``client`` authenticates as seed_user (attacker); should not touch victim's key.
-        r = await client.delete(f"/api/auth/keys/{key.id}")
+        r = await client.delete(f"/v1/auth/keys/{key.id}")
         assert r.status_code == 404, r.text
     finally:
         await db_session.delete(key)

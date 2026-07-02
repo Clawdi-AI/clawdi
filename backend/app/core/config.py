@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     vault_encryption_key: str = ""
     encryption_key: str = ""  # For JWT signing (MCP bridge tokens)
 
-    # Admin endpoints (POST/DELETE /api/admin/auth/keys) auth.
+    # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in
     # production to a strong secret (e.g. `openssl rand -hex 32`)
     # to enable batch operations: SaaS migration tooling for live

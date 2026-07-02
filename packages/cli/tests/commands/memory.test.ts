@@ -46,7 +46,7 @@ describe("memoryAdd", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/api/memories",
+				path: "/v1/memories",
 				response: () => jsonResponse({ id: "00000000-0000-0000-0000-000000000abc" }),
 			},
 		]);

@@ -19,7 +19,7 @@ async function fetchMembers(
 	apiKey: string,
 	projectId: string,
 ): Promise<MemberRow[]> {
-	return authedJson<MemberRow[]>(apiUrl, apiKey, `/api/projects/${projectId}/members`);
+	return authedJson<MemberRow[]>(apiUrl, apiKey, `/v1/projects/${projectId}/members`);
 }
 
 export async function projectMembersCommand(
@@ -52,7 +52,7 @@ export async function projectMembersCommand(
 		const removed = await authedJson<{ status: string }>(
 			ctx.apiUrl,
 			ctx.apiKey,
-			`/api/projects/${projectId}/members/${matches[0].user_id}`,
+			`/v1/projects/${projectId}/members/${matches[0].user_id}`,
 			{ method: "DELETE" },
 		);
 		if (opts.json) {
@@ -115,7 +115,7 @@ export async function projectLeaveCommand(
 	const result = await authedJson<{ status: string }>(
 		ctx.apiUrl,
 		ctx.apiKey,
-		`/api/projects/${projectId}/leave`,
+		`/v1/projects/${projectId}/leave`,
 		{ method: "POST" },
 	);
 	if (opts.json) {
@@ -140,7 +140,7 @@ export async function projectUnshareCommand(
 		links_revoked: number;
 		members_removed: number;
 		invitations_cancelled: number;
-	}>(ctx.apiUrl, ctx.apiKey, `/api/projects/${projectId}/unshare`, { method: "POST" });
+	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${projectId}/unshare`, { method: "POST" });
 	if (opts.json) {
 		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
 		return;

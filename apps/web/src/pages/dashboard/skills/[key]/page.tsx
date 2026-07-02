@@ -100,13 +100,13 @@ export function SkillDetailContent({
 		queryFn: async () => {
 			if (selectedProjectId) {
 				return unwrap(
-					await api.GET("/api/projects/{project_id}/skills/{skill_key}", {
+					await api.GET("/v1/projects/{project_id}/skills/{skill_key}", {
 						params: { path: { project_id: selectedProjectId, skill_key: skillKey } },
 					}),
 				);
 			}
 			return unwrap(
-				await api.GET("/api/skills/{skill_key}", { params: { path: { skill_key: skillKey } } }),
+				await api.GET("/v1/skills/{skill_key}", { params: { path: { skill_key: skillKey } } }),
 			);
 		},
 	});
@@ -118,7 +118,7 @@ export function SkillDetailContent({
 
 	const { data: defaultProject, error: projectError } = useQuery({
 		queryKey: ["projects", "default"],
-		queryFn: async () => unwrap(await api.GET("/api/projects/default")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects/default")),
 	});
 	// Edits land in the skill's own project when the detail response
 	// carries one (multi-machine accounts), falling back to the
@@ -134,7 +134,7 @@ export function SkillDetailContent({
 	// same is_owner cross-reference pattern as /vault and /skills.
 	const { data: ownedProjects } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 	});
 	const ownedProjectIds = useMemo(
 		() =>
@@ -198,7 +198,7 @@ export function SkillDetailContent({
 			// so passing the loaded hash here doesn't make the
 			// upload short-circuit as "unchanged".
 			return unwrap(
-				await api.PUT("/api/projects/{project_id}/skills/{skill_key}/content", {
+				await api.PUT("/v1/projects/{project_id}/skills/{skill_key}/content", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 					body: { content: draft, content_hash: editingHash ?? undefined },
 				}),
@@ -239,7 +239,7 @@ export function SkillDetailContent({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
 			return unwrap(
-				await api.DELETE("/api/projects/{project_id}/skills/{skill_key}", {
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 				}),
 			);

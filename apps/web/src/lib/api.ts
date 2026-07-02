@@ -136,7 +136,7 @@ export function useSkillArchiveUploader() {
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await fetchWithTimeout(
-				new Request(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/skills/upload`), {
+				new Request(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/skills/upload`), {
 					method: "POST",
 					headers,
 					body: form,
@@ -163,7 +163,7 @@ export function useAgentAvatarUploader() {
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await fetchWithTimeout(
-				new Request(apiUrl(`/api/environments/${encodeURIComponent(environmentId)}/avatar`), {
+				new Request(apiUrl(`/v1/environments/${encodeURIComponent(environmentId)}/avatar`), {
 					method: "POST",
 					headers,
 					body: form,

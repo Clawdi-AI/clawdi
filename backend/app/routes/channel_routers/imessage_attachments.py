@@ -37,7 +37,7 @@ from app.services.bluebubbles_compat import (
 )
 from app.services.file_store import get_file_store
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 file_store = get_file_store()
 
 

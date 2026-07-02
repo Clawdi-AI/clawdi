@@ -102,9 +102,7 @@ async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> No
                         },
                     },
                     "messageContextInfo": {
-                        "messageSecret": (
-                            "vKvmc0ZE06OymNK0bXCMwEiS8jo/wWvZsjvfIkPbN5w="
-                        ),
+                        "messageSecret": ("vKvmc0ZE06OymNK0bXCMwEiS8jo/wWvZsjvfIkPbN5w="),
                     },
                 },
                 "pushName": "Pretend User",
@@ -132,9 +130,7 @@ async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> No
                         "mediaKeyTimestamp": "1776548383",
                     },
                     "messageContextInfo": {
-                        "messageSecret": (
-                            "z48qzbAvo2C1mkyj8C5YlQcKC28Zk8XoygQ+1ikI5Xc="
-                        ),
+                        "messageSecret": ("z48qzbAvo2C1mkyj8C5YlQcKC28Zk8XoygQ+1ikI5Xc="),
                     },
                 },
                 "pushName": "Pretend User",
@@ -169,9 +165,7 @@ async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> No
                         "text": "scenario 08 group from alice [1/2]",
                     },
                     "messageContextInfo": {
-                        "messageSecret": (
-                            "GatUnpb8euwrXMEgWQfXdPod+T6z3F0YtfyDcOLU/jw="
-                        ),
+                        "messageSecret": ("GatUnpb8euwrXMEgWQfXdPod+T6z3F0YtfyDcOLU/jw="),
                     },
                 },
                 "pushName": "Pretend User",
@@ -253,9 +247,7 @@ async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> N
 @contextlib.asynccontextmanager
 async def _running_smoke_backend(seeded: dict[str, Any]):
     port = _free_port()
-    seeded["ws_url"] = (
-        f"ws://127.0.0.1:{port}/api/channels/whatsapp/{seeded['account_id']}/baileys"
-    )
+    seeded["ws_url"] = f"ws://127.0.0.1:{port}/v1/channels/whatsapp/{seeded['account_id']}/baileys"
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -407,8 +399,7 @@ async def _seed_whatsapp_smoke_account(
                     remote_jid = key.get("remoteJid")
                     payload_remote_jid = remote_jid if isinstance(remote_jid, str) else None
             provider_jid = (
-                payload_remote_jid
-                or f"1555{uuid.uuid4().int % 10_000_000:07d}@s.whatsapp.net"
+                payload_remote_jid or f"1555{uuid.uuid4().int % 10_000_000:07d}@s.whatsapp.net"
             )
             payload = inbox_payload or {
                 "key": {"remoteJid": provider_jid, "id": provider_message_id},

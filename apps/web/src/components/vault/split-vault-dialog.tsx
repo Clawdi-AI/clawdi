@@ -82,7 +82,7 @@ export function SplitVaultDialog({
 
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/api/projects")),
+		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
 
@@ -99,7 +99,7 @@ export function SplitVaultDialog({
 				setProgress(`${group.slug} (${done + 1}/${selected.length})…`);
 				try {
 					await unwrap(
-						await api.POST("/api/vault", {
+						await api.POST("/v1/vault", {
 							params: { query: { project_id: personal.id, create_only: true } },
 							body: { slug: group.slug, name: group.prefix.slice(0, -1) },
 						}),
@@ -117,7 +117,7 @@ export function SplitVaultDialog({
 						for (let i = 0; i < names.length; i += CHUNK) {
 							const fields = names.slice(i, i + CHUNK);
 							const result = unwrap(
-								await api.POST("/api/vault/{slug}/items/copy", {
+								await api.POST("/v1/vault/{slug}/items/copy", {
 									params: {
 										path: { slug: vault.slug },
 										query: { project_id: anyProjectId ?? undefined },
@@ -134,7 +134,7 @@ export function SplitVaultDialog({
 							if (removeOriginals) {
 								if (result.copied > 0) {
 									await unwrap(
-										await api.DELETE("/api/vault/{slug}/items", {
+										await api.DELETE("/v1/vault/{slug}/items", {
 											params: {
 												path: { slug: vault.slug },
 												query: { project_id: anyProjectId ?? undefined, global_delete: true },

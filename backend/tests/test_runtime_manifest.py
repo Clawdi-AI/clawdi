@@ -73,7 +73,7 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
     }
     body.update(overrides)
     response = await admin_client.put(
-        f"/api/admin/environments/{environment_id}/runtime-state",
+        f"/v1/admin/environments/{environment_id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -98,7 +98,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -121,7 +121,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         not_modified = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             headers={"If-None-Match": etag},
         )
     app.dependency_overrides.clear()
@@ -160,7 +160,7 @@ async def test_runtime_manifest_includes_declared_bridge_surfaces(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -185,12 +185,12 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
         assert response.status_code == 200, response.text
         etag = response.headers["etag"]
 
         heartbeat = await client.post(
-            f"/api/agents/{env.id}/sync-heartbeat",
+            f"/v1/agents/{env.id}/sync-heartbeat",
             json={
                 "last_revision_seen": 1,
                 "queue_depth": 0,
@@ -205,7 +205,7 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
         assert heartbeat.status_code == 204, heartbeat.text
 
         not_modified = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             headers={"If-None-Match": etag},
         )
     app.dependency_overrides.clear()
@@ -234,7 +234,7 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
 
     async with await _runtime_client(db_session, seed_user, None) as client:
         response = await client.get(
-            "/api/audit/events",
+            "/v1/audit/events",
             params={
                 "resource_type": "hosted_runtime_state",
                 "environment_id": str(env.id),
@@ -275,12 +275,12 @@ async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     assert response.status_code == 200, response.text
     etag = response.headers["etag"]
 
     deleted = await admin_client.delete(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
     )
 
@@ -290,11 +290,11 @@ async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         missing = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             headers={"If-None-Match": etag},
         )
         audit = await client.get(
-            "/api/audit/events",
+            "/v1/audit/events",
             params={
                 "resource_type": "hosted_runtime_state",
                 "environment_id": str(env.id),
@@ -334,7 +334,7 @@ async def test_admin_delete_runtime_state_missing_row_is_idempotent(
     )
 
     deleted = await admin_client.delete(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
     )
 
@@ -344,7 +344,7 @@ async def test_admin_delete_runtime_state_missing_row_is_idempotent(
 
     async with await _runtime_client(db_session, seed_user, None) as client:
         audit = await client.get(
-            "/api/audit/events",
+            "/v1/audit/events",
             params={
                 "resource_type": "hosted_runtime_state",
                 "environment_id": str(env.id),
@@ -375,7 +375,7 @@ async def test_admin_delete_runtime_state_requires_admin_key(
     )
     await _write_runtime_state(admin_client, str(env.id))
 
-    rejected = await admin_client.delete(f"/api/admin/environments/{env.id}/runtime-state")
+    rejected = await admin_client.delete(f"/v1/admin/environments/{env.id}/runtime-state")
 
     assert rejected.status_code == 401, rejected.text
     assert await db_session.get(HostedRuntimeState, env.id) is not None
@@ -398,7 +398,7 @@ async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generati
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
 
     assert response.status_code == 200, response.text
     etag = response.headers["etag"]
@@ -411,9 +411,9 @@ async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generati
     assert state.generation == 6
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        reset = await client.get("/api/runtime/manifest")
+        reset = await client.get("/v1/runtime/manifest")
         not_modified = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             headers={"If-None-Match": etag},
         )
     app.dependency_overrides.clear()
@@ -508,7 +508,7 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -602,7 +602,7 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -656,7 +656,7 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -735,7 +735,7 @@ async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -776,7 +776,7 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -810,7 +810,7 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -844,7 +844,7 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -892,7 +892,7 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 409, response.text
@@ -927,7 +927,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
     }
 
     response = await admin_client.put(
-        f"/api/admin/environments/{env.id}/runtime-state",
+        f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
         json=body,
     )
@@ -937,7 +937,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
 
 @pytest.mark.asyncio
 async def test_runtime_manifest_requires_environment_bound_cli_key(client):
-    clerk_response = await client.get("/api/runtime/manifest")
+    clerk_response = await client.get("/v1/runtime/manifest")
     assert clerk_response.status_code == 403
 
 
@@ -945,7 +945,7 @@ async def test_runtime_manifest_requires_environment_bound_cli_key(client):
 async def test_runtime_manifest_rejects_unbound_cli_key(db_session, seed_user):
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
     assert response.status_code == 403
 
@@ -968,7 +968,7 @@ async def test_runtime_manifest_allows_unbound_cli_key_with_explicit_environment
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             params={"environment_id": str(env.id)},
         )
     app.dependency_overrides.clear()
@@ -1002,7 +1002,7 @@ async def test_runtime_manifest_rejects_unbound_cli_key_for_other_user_environme
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             params={"environment_id": str(other_env.id)},
         )
     app.dependency_overrides.clear()
@@ -1037,7 +1037,7 @@ async def test_runtime_manifest_rejects_bound_cli_key_environment_id_mismatch(
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get(
-            "/api/runtime/manifest",
+            "/v1/runtime/manifest",
             params={"environment_id": str(other_env.id)},
         )
     app.dependency_overrides.clear()
@@ -1090,7 +1090,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -1127,7 +1127,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
     await db_session.commit()
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        rotated = await client.get("/api/runtime/manifest", headers={"If-None-Match": etag})
+        rotated = await client.get("/v1/runtime/manifest", headers={"If-None-Match": etag})
     app.dependency_overrides.clear()
 
     assert rotated.status_code == 200, rotated.text
@@ -1179,7 +1179,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -1251,7 +1251,7 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -1310,7 +1310,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/api/runtime/manifest")
+        response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text

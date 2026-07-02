@@ -28,7 +28,7 @@ from app.services.bluebubbles_compat import (
 )
 from app.services.channels import find_imessage_binding_for_send, send_channel_outbound_message
 
-router = APIRouter(prefix="/api/channels/imessage/bluebubbles/v1", tags=["channels"])
+router = APIRouter(prefix="/channels/imessage/bluebubbles/v1", tags=["channels"])
 
 
 @router.api_route(

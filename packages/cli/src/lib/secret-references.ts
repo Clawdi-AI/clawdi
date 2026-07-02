@@ -250,11 +250,11 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	if (opts.debug) params.set("debug", "true");
 	if (preview) params.set("preview", "true");
 
-	const response = await fetch(`${apiUrl}/api/vault/resolve?${params.toString()}`, {
+	const response = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${auth.apiKey}` },
 	});
-	const body = await readJson<T | { detail?: unknown }>(response, "/api/vault/resolve");
+	const body = await readJson<T | { detail?: unknown }>(response, "/v1/vault/resolve");
 	if (!response.ok) {
 		throw new VaultReferenceResolveError(response.status, body);
 	}
@@ -394,7 +394,7 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 	const results: Record<string, T> = {};
 	for (const chunk of chunkArray(references, MAX_BULK_REFERENCES)) {
 		const chunkProjectId = chunk.some((ref) => !ref.project_id) ? explicitProjectId : undefined;
-		const response = await fetch(`${apiUrl}/api/vault/resolve/bulk`, {
+		const response = await fetch(`${apiUrl}/v1/vault/resolve/bulk`, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${auth.apiKey}`,
@@ -411,7 +411,7 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 		});
 		const body = await readJson<VaultBulkResolveResponse<T> | { detail?: unknown }>(
 			response,
-			"/api/vault/resolve/bulk",
+			"/v1/vault/resolve/bulk",
 		);
 		if (!response.ok) {
 			if (response.status === 404 && shouldFallbackToSingleResolve(body)) {

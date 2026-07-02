@@ -547,7 +547,7 @@ async def get_auth_short_session(
 def require_scope_short_session(*needed: str):
     """Same scope-check semantics as `require_scope`, paired with
     `get_auth_short_session` so the route doesn't pin a DB connection
-    for its entire lifetime. Used by `/api/sync/events` and high-frequency
+    for its entire lifetime. Used by `/v1/sync/events` and high-frequency
     daemon routes."""
 
     async def _check(auth: AuthContext = Depends(get_auth_short_session)) -> AuthContext:
@@ -635,7 +635,7 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     CLI, the dashboard).
 
     Agent environment deploy keys with `scopes=None` (the default for
-    keys minted via `POST /api/auth/keys` with `environment_id`
+    keys minted via `POST /v1/auth/keys` with `environment_id`
     set) PASS this gate by explicit policy: a hosted agent pod
     behaves like a self-installed clawdi — same vault, connectors,
     settings access the user's own laptop has. The blast-radius
@@ -702,7 +702,7 @@ async def optional_web_auth(
     accessible to them), and direct `kind='user'` grants need a
     visitor identity to match against. CLI api-keys are deliberately
     ignored here — share URLs are for human browsers, not agent fetches
-    (those go through the owner-auth `/api/sessions/{id}` routes).
+    (those go through the owner-auth `/v1/sessions/{id}` routes).
     """
     if credentials is None:
         return None
@@ -738,7 +738,7 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
 async def require_admin_api_key(
     x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
 ) -> None:
-    """Gate admin-only endpoints (`POST/DELETE /api/admin/auth/keys`) with
+    """Gate admin-only endpoints (`POST/DELETE /v1/admin/auth/keys`) with
     a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
     + ops-side scripts that don't have a per-user Clerk JWT in context.
 

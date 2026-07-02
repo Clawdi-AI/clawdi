@@ -33,7 +33,7 @@ describe("projectShowCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -49,7 +49,7 @@ describe("projectShowCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills?page=1&page_size=200",
+				path: "/v1/skills?page=1&page_size=200",
 				response: () =>
 					jsonResponse({
 						items: [{ project_id: "project-shared", skill_key: "deploy-helper" }],
@@ -58,7 +58,7 @@ describe("projectShowCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/vault?page_size=200",
+				path: "/v1/vault?page_size=200",
 				response: () =>
 					jsonResponse({
 						items: [{ project_ids: ["project-shared"], slug: "prod", name: "Production" }],
@@ -94,7 +94,7 @@ describe("projectShowCommand", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/api/projects",
+				path: "/v1/projects",
 				response: () =>
 					jsonResponse([
 						{
@@ -108,7 +108,7 @@ describe("projectShowCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/skills?page=1&page_size=200",
+				path: "/v1/skills?page=1&page_size=200",
 				response: () =>
 					jsonResponse({
 						items: [
@@ -120,7 +120,7 @@ describe("projectShowCommand", () => {
 			},
 			{
 				method: "GET",
-				path: "/api/vault?page_size=200",
+				path: "/v1/vault?page_size=200",
 				response: () =>
 					jsonResponse({
 						items: [
