@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
@@ -711,7 +712,6 @@ export interface McpHttpServerOptions {
 	host?: string;
 	port?: number;
 	path?: string;
-	authToken?: string;
 	authTokenFile?: string;
 }
 
@@ -770,19 +770,9 @@ export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Pr
 		}
 	});
 
-	await new Promise<void>((resolve, reject) => {
-		const onError = (error: Error) => {
-			httpServer.off("listening", onListening);
-			reject(error);
-		};
-		const onListening = () => {
-			httpServer.off("error", onError);
-			resolve();
-		};
-		httpServer.once("error", onError);
-		httpServer.once("listening", onListening);
-		httpServer.listen(port, host);
-	});
+	httpServer.listen(port, host);
+	// events.once rejects if the server emits "error" before "listening".
+	await once(httpServer, "listening");
 
 	const address = httpServer.address();
 	const listenPort = typeof address === "object" && address ? address.port : port;
@@ -811,8 +801,6 @@ export function mcpHttpRequestAuthorized(
 }
 
 function resolveMcpHttpAuthToken(options: McpHttpServerOptions): string {
-	const explicit = options.authToken?.trim();
-	if (explicit) return explicit;
 	const file = options.authTokenFile?.trim();
 	if (file) return readFileSync(file, "utf-8").trim();
 	return process.env[MCP_HTTP_AUTH_TOKEN_ENV]?.trim() ?? "";

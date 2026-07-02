@@ -364,24 +364,33 @@ async def _tool_memory_add(
     return _tool_text(f"Memory stored ({str(result['id'])[:8]})")
 
 
+def _user_sessions_stmt(auth: AuthContext):
+    """Sessions visible to this caller: owned, and — for env-bound API
+    keys — restricted to the key's environment."""
+    stmt = (
+        select(Session, AgentEnvironment.agent_type)
+        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+        .where(Session.user_id == auth.user_id)
+    )
+    bound_env = (
+        auth.api_key.environment_id if _is_env_bound_api_key(auth) and auth.api_key else None
+    )
+    if bound_env is not None:
+        stmt = stmt.where(Session.environment_id == bound_env)
+    return stmt
+
+
 async def _tool_session_search(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
     _require_scope(auth, "sessions:read")
     query = _string_arg(arguments, "query")
     limit = _int_arg(arguments, "limit", 10, 20)
-    bound_env = (
-        auth.api_key.environment_id if _is_env_bound_api_key(auth) and auth.api_key else None
-    )
     stmt = (
-        select(Session, AgentEnvironment.agent_type)
-        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-        .where(Session.user_id == auth.user_id)
+        _user_sessions_stmt(auth)
         .order_by(Session.last_activity_at.desc(), Session.id.asc())
         .limit(limit)
     )
-    if bound_env is not None:
-        stmt = stmt.where(Session.environment_id == bound_env)
     pattern = like_needle(query)
     stmt = stmt.where(
         or_(
@@ -425,16 +434,7 @@ async def _tool_session_read(
     if match:
         session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, auth)
     else:
-        bound_env = (
-            auth.api_key.environment_id if _is_env_bound_api_key(auth) and auth.api_key else None
-        )
-        stmt = (
-            select(Session, AgentEnvironment.agent_type)
-            .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-            .where(Session.user_id == auth.user_id, Session.id == parsed_id)
-        )
-        if bound_env is not None:
-            stmt = stmt.where(Session.environment_id == bound_env)
+        stmt = _user_sessions_stmt(auth).where(Session.id == parsed_id)
         row = (await db.execute(stmt)).first()
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
