@@ -446,7 +446,7 @@ async def get_mcp_config(
     base = settings.public_api_url.rstrip("/")
 
     return ConnectorMcpConfigResponse(
-        mcp_url=f"{base}/mcp/composio",
+        mcp_url=f"{base}/v1/mcp/composio",
         mcp_token=token,
     )
 

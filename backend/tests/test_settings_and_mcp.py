@@ -112,7 +112,7 @@ async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["mcp_url"] == "https://api.example.test/mcp/composio"
+    assert body["mcp_url"] == "https://api.example.test/v1/mcp/composio"
     assert verify_mcp_bridge_token(body["mcp_token"]) == "clerk_user_123"
 
 
@@ -217,7 +217,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             canonical_init = await ac.post(
-                "/mcp/clawdi",
+                "/v1/mcp/clawdi",
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
