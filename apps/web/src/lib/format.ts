@@ -107,3 +107,16 @@ export function formatDuration(seconds: number | null | undefined): string {
 	if (mins < 60) return `${mins}m`;
 	return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
+
+/** Short absolute calendar date for UI copy and compact meta labels. */
+export function formatShortDate(
+	value: string | null | undefined,
+	{ includeYear = true }: { includeYear?: boolean } = {},
+): string {
+	if (!value) return "—";
+	const d = new Date(value);
+	if (Number.isNaN(d.getTime())) return "—";
+	const options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+	if (includeYear) options.year = "numeric";
+	return d.toLocaleDateString(undefined, options);
+}

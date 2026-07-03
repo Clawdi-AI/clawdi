@@ -8,6 +8,7 @@ import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
+import { DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -264,7 +265,7 @@ function ConnectorDetail({ name }: { name: string }) {
 				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2">
-						<h1 className="text-lg font-semibold tracking-tight">{displayName}</h1>
+						<DetailTitle>{displayName}</DetailTitle>
 						{isReady && (
 							<Badge variant="secondary">
 								<Check />
@@ -348,7 +349,7 @@ function ConnectorDetail({ name }: { name: string }) {
 							/>
 						)
 					) : (
-						<div className="divide-y overflow-hidden rounded-lg border bg-background/60">
+						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{activeConnections.map((c) => (
 								<div key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
 									<div className="min-w-0">

@@ -8,6 +8,7 @@ import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { MessageList } from "@/components/sessions/message-list";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { ShareHeaderUser } from "@/components/share/header-user";
@@ -144,7 +145,7 @@ export default async function PublicSharePage({ id }: { id: string }) {
 			    scroll on narrow screens. `w-full` (`width: 100%`) restores
 			    the "fill body, capped at max-w-4xl, then centered"
 			    behavior that the visual design already assumed. */}
-			<div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 lg:px-6">
+			<div className={`${CENTERED_PAGE_WIDTH_CLASS.detail} space-y-5 px-4 py-6 lg:px-6`}>
 				{/* Below `sm` (640px), controls drop under the title block —
 				    a long summary then claims the full row instead of fighting
 				    two icon buttons for ~80px on a 320px screen. Reverts to

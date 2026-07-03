@@ -22,7 +22,7 @@ import {
 	agentDisplayName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
-import { DetailPanel } from "@/components/detail/layout";
+import { DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -73,6 +73,7 @@ import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
+import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
 import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
@@ -241,9 +242,21 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	if (projects.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
-				<Skeleton className="h-10 w-52" />
-				<Skeleton className="h-28 w-full" />
-				<Skeleton className="h-48 w-full" />
+				<Skeleton className="h-8 w-24" />
+				<div className="flex items-start gap-3">
+					<Skeleton className="size-11 rounded-xl" />
+					<div className="min-w-0 flex-1 space-y-2">
+						<Skeleton className="h-6 w-56 max-w-full" />
+						<Skeleton className="h-4 w-96 max-w-full" />
+						<Skeleton className="h-3 w-40" />
+					</div>
+				</div>
+				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					{Array.from({ length: 4 }).map((_, i) => (
+						<Skeleton key={i} className="h-24 w-full rounded-xl" />
+					))}
+				</div>
+				<Skeleton className="h-40 w-full rounded-lg" />
 			</div>
 		);
 	}
@@ -274,12 +287,10 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						Projects
 					</Link>
 				</Button>
-				<Alert>
-					<AlertTitle>Project not found</AlertTitle>
-					<AlertDescription>
-						This Project may have been removed, or your account no longer has access.
-					</AlertDescription>
-				</Alert>
+				<DetailNotFound
+					title="Project not found"
+					message="This Project may have been removed, or your account no longer has access."
+				/>
 			</div>
 		);
 	}
@@ -323,9 +334,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					</span>
 					<div className="min-w-0">
 						<div className="flex min-w-0 flex-wrap items-center gap-2">
-							<h1 className="truncate text-xl font-semibold tracking-tight">
-								{displayProjectName(project)}
-							</h1>
+							<DetailTitle className="truncate">{displayProjectName(project)}</DetailTitle>
 							<ProjectKindBadge kind={project.kind} />
 						</div>
 						<p className="mt-1 text-sm text-muted-foreground">
@@ -898,7 +907,7 @@ function UseProjectWithAgentDialog({
 												titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 												meta={[
 													env.last_sync_at
-														? `synced ${formatShortDate(env.last_sync_at)}`
+														? `synced ${formatShortDate(env.last_sync_at, { includeYear: false })}`
 														: "not synced yet",
 												]}
 											/>
@@ -1167,12 +1176,6 @@ function displayAgentName(env: Env) {
 	return agentDisplayName(env);
 }
 
-function formatShortDate(value: string) {
-	return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
-		new Date(value),
-	);
-}
-
 function EmptyLine({ message }: { message: string }) {
 	return (
 		<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
@@ -1183,8 +1186,8 @@ function EmptyLine({ message }: { message: string }) {
 
 function ErrorLine({ message }: { message: string }) {
 	return (
-		<div className="rounded-lg border border-dashed border-destructive/40 px-4 py-4 text-sm text-destructive">
-			{message}
+		<div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+			<span className="font-medium">Section unavailable.</span> {message}
 		</div>
 	);
 }

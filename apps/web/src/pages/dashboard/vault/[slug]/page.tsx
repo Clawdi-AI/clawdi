@@ -17,6 +17,8 @@ import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
+import { DetailNotFound, DetailTitle } from "@/components/detail/layout";
+import { EmptyState } from "@/components/empty-state";
 import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -246,8 +248,17 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	if (vaults.isLoading) {
 		return (
 			<div className="space-y-5 px-4 lg:px-6">
-				<Skeleton className="h-10 w-52" />
-				<Skeleton className="h-40 w-full rounded-xl" />
+				<Skeleton className="h-8 w-20" />
+				<div className="flex items-start gap-3">
+					<Skeleton className="size-11 rounded-xl" />
+					<div className="min-w-0 flex-1 space-y-2">
+						<Skeleton className="h-6 w-48 max-w-full" />
+						<Skeleton className="h-4 w-96 max-w-full" />
+						<Skeleton className="h-3 w-40" />
+					</div>
+				</div>
+				<Skeleton className="h-36 w-full rounded-lg" />
+				<Skeleton className="h-24 w-full rounded-lg" />
 			</div>
 		);
 	}
@@ -261,12 +272,10 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 						Vaults
 					</Link>
 				</Button>
-				<Alert>
-					<AlertTitle>Vault not found</AlertTitle>
-					<AlertDescription>
-						This vault may have been removed, or your account no longer has access.
-					</AlertDescription>
-				</Alert>
+				<DetailNotFound
+					title="Vault not found"
+					message="This vault may have been removed, or your account no longer has access."
+				/>
 			</div>
 		);
 	}
@@ -295,7 +304,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 						{identityFor(vault.name).emoji}
 					</span>
 					<div className="min-w-0">
-						<h1 className="truncate text-xl font-semibold tracking-tight">{vault.name}</h1>
+						<DetailTitle className="truncate">{vault.name}</DetailTitle>
 						<p className="mt-1 text-sm text-muted-foreground">
 							{isOwner
 								? "Keys live here once and work in every Project this vault is added to."
@@ -426,13 +435,19 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 				{keys.isLoading ? (
 					<Skeleton className="h-32 w-full rounded-lg" />
 				) : keyNames.length === 0 ? (
-					<div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-						No keys yet. Add one above or paste several at once with Import.
-					</div>
+					<EmptyState
+						bordered
+						fillHeight={false}
+						title="No keys yet"
+						description="Add one above or paste several at once with Import."
+					/>
 				) : filteredKeyNames.length === 0 ? (
-					<div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-						No keys match that search.
-					</div>
+					<EmptyState
+						bordered
+						fillHeight={false}
+						title="No keys match that search"
+						description="Try another key name or section."
+					/>
 				) : (
 					/* Keys as compact cards: a 200-key vault scans far better in a
 				   multi-column grid than a one-column ledger. */
@@ -567,9 +582,12 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					) : null}
 				</div>
 				{attachedProjects.length === 0 ? (
-					<div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-						Not added to any Project yet — agents can&apos;t use these keys until it is.
-					</div>
+					<EmptyState
+						bordered
+						fillHeight={false}
+						title="Not added to any Project yet"
+						description="Agents can't use these keys until this vault is added to a Project."
+					/>
 				) : (
 					<div className="divide-y overflow-hidden rounded-lg border bg-card">
 						{attachedProjects.map((project) => (

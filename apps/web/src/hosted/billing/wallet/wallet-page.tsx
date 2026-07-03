@@ -3,6 +3,7 @@
 import { CreditCard } from "lucide-react";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { BillingError, WalletSkeleton } from "@/hosted/billing/components/state-views";
@@ -13,8 +14,10 @@ import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
+import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Your AI Credits balance, top-ups, and auto-reload.";
+const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
 	document.getElementById("auto-reload")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -28,7 +31,7 @@ export function WalletPage() {
 
 	if (wallet.isLoading) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 				<PageHeader title="Wallet" description={DESCRIPTION} />
 				<WalletSkeleton />
 			</div>
@@ -37,7 +40,7 @@ export function WalletPage() {
 
 	if (wallet.error || !wallet.data) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 				<PageHeader title="Wallet" description={DESCRIPTION} />
 				<BillingError error={wallet.error} onRetry={() => wallet.refetch()} />
 			</div>
@@ -47,7 +50,7 @@ export function WalletPage() {
 	const w = wallet.data;
 
 	return (
-		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 			<PageHeader
 				title="Wallet"
 				description={DESCRIPTION}

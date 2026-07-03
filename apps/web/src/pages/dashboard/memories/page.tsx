@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -233,13 +234,24 @@ function MemoryNotesGrid({
 	onDelete: (id: string) => void;
 }) {
 	if (isLoading) {
+		const cardLineCounts = [4, 7, 3, 5, 6, 4, 8, 3, 5];
 		return (
 			<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
-				{Array.from({ length: 9 }).map((_, index) => (
+				{cardLineCounts.map((lineCount, index) => (
 					<div key={index} className="rounded-xl border bg-card p-4">
-						<Skeleton className="h-4 w-5/6" />
-						<Skeleton className="mt-2 h-4 w-2/3" />
-						<Skeleton className="mt-4 h-5 w-24" />
+						<div className="space-y-2">
+							{Array.from({ length: lineCount }).map((_, lineIndex) => (
+								<Skeleton
+									key={lineIndex}
+									className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")}
+								/>
+							))}
+						</div>
+						<div className="mt-4 flex items-center gap-2">
+							<Skeleton className="h-5 w-24 rounded-full" />
+							<Skeleton className="h-3 w-14" />
+							<Skeleton className="ml-auto h-3 w-20" />
+						</div>
 					</div>
 				))}
 			</div>
@@ -247,11 +259,7 @@ function MemoryNotesGrid({
 	}
 
 	if (!memories.length) {
-		return (
-			<div className="rounded-xl border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
-				{emptyMessage}
-			</div>
-		);
+		return <EmptyState bordered fillHeight={false} description={emptyMessage} />;
 	}
 
 	return (
