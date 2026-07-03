@@ -1,6 +1,6 @@
 # Architecture
 
-High-level map of what's actually in Clawdi Cloud today — updated as the code changes. For end-user docs, see the top-level [`README.md`](../README.md) and [`using-clawdi-with-claude-code.md`](using-clawdi-with-claude-code.md).
+High-level map of what's actually in Clawdi Cloud today — updated as the code changes. For end-user docs, see the top-level [`README.md`](../README.md) and [`using-clawdi-with-claude-code.md`](using-clawdi-with-claude-code.md). For contributor workflow docs, start in [`AGENTS.md`](../AGENTS.md).
 
 ---
 
@@ -35,10 +35,10 @@ Clawdi Cloud is a cross-agent sync + recall layer. A local CLI (`clawdi`) reads 
 └──────────────────────┘                          └────────────────┘
 
 ┌──────────────────────┐  Runtime manifest / state ┌──────────────────────┐
-│ Hosted control plane │──────────────────────────▶│ Managed runtime CLI  │
-│ (external service)   │                           │  - runtime init/watch│
-└──────────────────────┘                           │  - run configs       │
-        ▲                                          │  - sidecar modules        │
+│ First-party hosted   │──────────────────────────▶│ Managed runtime CLI  │
+│ control planes       │                           │  - runtime init/watch│
+│ (external services)  │                           │  - run configs       │
+└──────────────────────┘                           │  - sidecar modules   │
         │ Control UI + Terminal contracts          └──────────┬───────────┘
         └─────────────────────────────────────────────────────▼
                                                    ┌──────────────────────┐
@@ -71,8 +71,12 @@ the stable agent id.
 
 Admin has both `/v1/admin/agents` and `/v1/admin/environments`. The agent route
 accepts `agent_id` for new first-party admin callers. The environment route is
-still fully supported because the hosted control plane migration is a separate
-cross-service change.
+still fully supported because first-party hosted control planes migrate on a
+separate service timeline.
+
+Contributor policy: [`api-compatibility.md`](api-compatibility.md) is the
+source of truth for additive-only compatibility, generated clients, and `/api`
+alias handling.
 
 ---
 
@@ -84,7 +88,7 @@ All keyed off Clerk `user_id`:
 |---|---|---|
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
-| `agent_environments` | Agent identity rows. The domain object is Agent; `AgentEnvironment` and `environment_id` are legacy persistence/wire names kept for compatibility. `id` is the stable agent id; self-managed agents use `registration_key` only for setup idempotency; hosted control planes may supply caller-owned stable agent ids. See [ADR-0001](adr/0001-agent-identity-is-the-stable-domain-object.md). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `POST /v1/agents`, admin hosted agent registration |
+| `agent_environments` | Agent identity rows. The domain object is Agent; `AgentEnvironment` and `environment_id` are legacy persistence/wire names kept for compatibility. `id` is the stable agent id; self-managed agents use `registration_key` only for setup idempotency; first-party hosted control planes may supply caller-owned stable agent ids. See [ADR-0001](adr/0001-agent-identity-is-the-stable-domain-object.md). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `POST /v1/agents`, admin hosted agent registration |
 | `projects` | Resource availability boundaries for skills, vault attachments, and future memory/session grouping. Kinds are `personal`, `environment`, and `workspace`; `environment` is the internal Agent Project kind | Provisioning, `clawdi setup`, `clawdi project create` |
 | `project_memberships` | Viewer-only shared Project access granted by invite or share link | Share accept / invite accept |
 | `project_share_links` | Hashed bearer links for read-only Project access. Raw tokens are only returned once | `clawdi project share` |
@@ -97,7 +101,7 @@ All keyed off Clerk `user_id`:
 | `user_settings` | Opaque JSONB per-user prefs: `memory_provider` (`builtin` / `mem0`), `mem0_api_key` | `PATCH /v1/settings` |
 | `channel_accounts` + `channel_bot_agent_links` + `channel_secrets` + `channel_bindings` + `channel_binding_aliases` + `channel_pair_codes` + `channel_messages` + `channel_deliveries` + `channel_agent_credentials` + `channel_whatsapp_auth_certs` | Native Channels control plane and agent-facing emulation state. Accounts own external bot/provider identity, visibility, webhook secrets, and provider credentials; public preconfigured accounts can be linked by many users while private accounts stay owner-only; bot-agent links own hashed agent SDK tokens and agent routing; extra provider secrets are AES-GCM encrypted; bindings and aliases map each external chat session to one active bot-agent link and actor-scoped pair control; pair codes authorize chat binding or re-binding; messages record routed traffic and inbox cursors; deliveries provide the DB outbox; WhatsApp agent credentials and auth certs persist Baileys-facing identity material. See `docs/designs/native-channels-product-model.md` for the product model. | `/v1/channels`, `/v1/channels/telegram/*`, `/v1/channels/discord/*`, `/v1/channels/whatsapp/*`, `/v1/channels/imessage/*`, `pdm run channels-worker` |
 
-Hosted deployment persistence is owned by the hosted agent service, not by the OSS backend tables above. This repository consumes that service through generated API contracts, the dashboard UI, the mock deploy API used for local development, and the CLI managed-runtime contract.
+Hosted deployment persistence is owned by first-party hosted control planes, not by the OSS backend tables above. This repository consumes those services through generated API contracts, the dashboard UI, the mock deploy API used for local development, and the CLI managed-runtime contract.
 
 There is no `cron_job` / `celery` / `background_task` table — those were in the original plan but never built. See [What's not implemented](#whats-not-implemented) below.
 
@@ -228,7 +232,7 @@ Public contract: [`managed-runtime.md`](managed-runtime.md).
 
 ```mermaid
 flowchart TB
-    CP[Hosted control plane] -->|hosted manifest response| Source[manifest-source]
+    CP[First-party hosted control planes] -->|hosted manifest response| Source[manifest-source]
     Source -->|normalized desired state| Init[clawdi runtime init]
 
     subgraph Durable["Durable non-secret state"]
@@ -380,9 +384,9 @@ runtime web application.
 
 ### Ownership Boundaries
 
-- The control plane owns identity, desired-state generation, secret resolution,
-  deployment selection, rollout, billing policy, and terminal session
-  authorization.
+- First-party hosted control planes own identity, desired-state generation,
+  secret resolution, deployment selection, rollout, billing policy, and terminal
+  session authorization.
 - The CLI owns manifest validation, local convergence, runtime install
   orchestration where the CLI is the local convergence tool, non-secret
   projections, run config, support process state, short-lived secret projection,
@@ -459,7 +463,6 @@ Several items were considered but not built. Named for discoverability if someon
 - **CronJobs** — no `cron_job` table, no scheduler. `scripts/embed_memories.py` exists as a manual operator-level tool.
 - **Channels provider coverage** — the Clawdi-native control plane plus Python-native Telegram Bot API, Discord REST/Gateway/rate-limit handling, WhatsApp Cloud API/Graph plus Baileys credential/Noise/IQ/relay/media boundary handling, and iMessage/BlueBubbles HTTP/query/webhook/attachment/Socket.IO slices exist. Outbound delivery, agent webhook redelivery, and Discord Gateway inbound dispatch run through the DB-backed `pdm run channels-worker` stack; WhatsApp Baileys outbound relay reaches that outbox through a transparent channel runtime adapter that converts sendable WAProto into validated Cloud API `providerPayload` for text/reply/public-link image/audio, relays Cloud-native raw status nodes for read receipts and typing indicators, and routes remaining Baileys-only media, voice-note/audio, group proto, and relay-attr messages to a registered native transport instead of route-local persistence. The FastAPI websocket reaches real Baileys `connection: open` plus DB-inbox `messages.upsert` delivery in the opt-in smoke, including quoted reply, image envelope, and group participant/sender-key fixture shapes. Discord Gateway capture uses per-account Postgres advisory locks inside that worker stack. WhatsApp debug health reports whether the native transport is unavailable, disconnected, `in_process`, or `sidecar` and which native relay capabilities it exposes. A minimal Clawdi-owned Baileys sidecar runtime package and FastAPI registration path exist for the remaining WhatsApp Web live protocol adapter; the legacy TypeScript router remains excluded. Opt-in smoke starts the sidecar against the FastAPI Baileys runtime; remaining work is deployment-level sidecar supervision and real linked-account upstream smoke.
 - **Cognee memory provider** — only `Builtin` and `Mem0`.
-- **Browser-based `clawdi auth login`** — the implemented flow is "paste your API key", same UX but no OAuth dance.
 - **`bun build --compile` single-binary distribution** — currently `bun link` over the workspace.
 
 If you pick any of these up, add an ADR or module plan under `docs/plans/` before implementing — this top-level doc is descriptive of what exists, not speculative.

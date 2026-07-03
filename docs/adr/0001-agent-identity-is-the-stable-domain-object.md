@@ -81,9 +81,10 @@ codes, and error bodies remain unchanged. New optional response fields such as
 `name`, `default_name`, and `explicit_identity` are additive safe fields for old
 clients.
 
-Hosted control planes register through the admin API. `/v1/admin/agents` accepts
-`agent_id` for agent-first callers. `/v1/admin/environments` remains intact for
-the hosted control plane until that separate service migrates.
+First-party hosted control planes register through the admin API.
+`/v1/admin/agents` accepts `agent_id` for agent-first callers.
+`/v1/admin/environments` remains intact for those control planes until that
+separate service migration is complete.
 
 They may supply an explicit caller-owned stable id. The supplied id is the
 agent identity. Re-registration with the same user and same id refreshes
@@ -110,6 +111,8 @@ conflict. Explicit-identity rows use `registration_key = NULL`.
 - User-facing deletion and disconnect behavior must preserve caller-owned
   explicit identities.
 - The legacy database and wire names remain supported for compatibility.
+- Contributor-facing API compatibility rules live in
+  [`docs/api-compatibility.md`](../api-compatibility.md).
 
 ## Migration Direction
 
