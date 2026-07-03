@@ -77,6 +77,47 @@ and commit the generated file with the schema change.
 Because `/api/*` aliases and admin routes are hidden from public OpenAPI, the
 generated client should use `/v1/*` paths only.
 
+## API change playbook
+
+When adding an optional response field:
+
+1. Update the Pydantic response schema in `backend/app/schemas/`. Route
+   handlers should return the new field only through that schema, not by
+   constructing ad hoc response dictionaries.
+2. Keep the field optional or give it a backwards-compatible default. Do not
+   rename, remove, or change the semantics of existing fields.
+3. Add or update a focused backend test for the canonical `/v1/*` path.
+4. Add or update compatibility coverage for old paths that serve the same
+   behavior, especially deprecated `/v1/environments*` aliases and hidden
+   `/api/*` aliases when the changed route is mounted there.
+5. Regenerate the generated TypeScript client:
+
+   ```bash
+   bun run generate-api
+   ```
+
+6. Check that the committed generated client matches the backend schema:
+
+   ```bash
+   cd backend
+   uv run python scripts/check_generated_api.py
+   ```
+
+7. Manually review `packages/shared/src/api/schemas.ts` when frontend code uses
+   an ergonomic alias for the changed schema, or when adding a new response
+   shape that should get one.
+8. Manually review `packages/cli/src/lib/api-schemas.ts` when CLI code imports
+   or narrows the changed schema, or when a CLI command should start using the
+   new optional field.
+9. Run focused compatibility tests, then the backend verification flow in
+   [`backend-development.md`](backend-development.md#verification):
+
+   ```bash
+   cd backend
+   uv run pytest tests/test_api_version_alias.py -q
+   uv run pytest tests/test_agent_endpoints.py -q
+   ```
+
 ## Do not bulk-rewrite every `/api` string
 
 Some `/api` strings are external protocol shapes, persisted compatibility data,

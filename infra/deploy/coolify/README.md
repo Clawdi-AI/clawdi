@@ -1,5 +1,7 @@
 # Clawdi Coolify Backend
 
+> OSS-safe deployment template only — not a live production runbook; do not add production addresses or environment-specific operations here.
+
 This directory contains the non-secret, OSS-safe Coolify contract for running
 the Clawdi backend. The dashboard can be deployed separately; this stack covers
 only backend runtime processes.

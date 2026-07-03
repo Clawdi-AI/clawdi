@@ -32,6 +32,9 @@ docs/              Documentation, plans, scenarios
 
 ## Local End-to-End
 
+This is the canonical local-stack runbook. Other docs should link here instead
+of duplicating backend + web + CLI bring-up steps.
+
 Install dependencies once:
 
 ```bash
@@ -48,9 +51,17 @@ uv sync
 ```
 
 In `backend/.env`, set `DEV_AUTH_BYPASS=true`, keep
-`DEV_AUTH_TOKEN=dev-bypass`, and set different local-only
-`VAULT_ENCRYPTION_KEY` and `ENCRYPTION_KEY` values. Set `ADMIN_API_KEY` to your
-own local random value if you want to mint CLI keys through the local admin API.
+`DEV_AUTH_TOKEN=dev-bypass`, and set different local-only values for
+`VAULT_ENCRYPTION_KEY`, `ENCRYPTION_KEY`, and `ADMIN_API_KEY`. Generate them
+with:
+
+```bash
+python3 - <<'PY'
+import secrets
+for name in ("VAULT_ENCRYPTION_KEY", "ENCRYPTION_KEY", "ADMIN_API_KEY"):
+    print(f"{name}={secrets.token_hex(32)}")
+PY
+```
 
 In that same `backend/` shell, run migrations and the backend:
 
@@ -59,19 +70,46 @@ pdm migrate
 pdm dev
 ```
 
+In another terminal, confirm the backend and database are reachable:
+
+```bash
+curl -sS http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
 Start the dashboard in terminal 2, from the repository root, with matching
 bypass values:
 
 ```bash
 cd apps/web
 cp .env.example .env.local
-# Set VITE_DEV_AUTH_BYPASS=true and VITE_DEV_AUTH_TOKEN=dev-bypass in .env.local.
+# Set these in .env.local:
+# VITE_CLAWDI_API_URL=http://localhost:8000
+# VITE_DEV_AUTH_BYPASS=true
+# VITE_DEV_AUTH_TOKEN=dev-bypass
 bun run dev
 ```
 
-Open `http://localhost:3000`. Create an API key in the local dashboard, or use
-`docs/backend-development.md#local-admin-api` with the `ADMIN_API_KEY` value
-from your own `backend/.env`.
+Open `http://localhost:3000`. Create an API key in the local dashboard, or mint
+one through the local admin API using the `ADMIN_API_KEY` value from
+`backend/.env`:
+
+```bash
+export ADMIN_API_KEY="<value-from-backend-env>"
+curl -sS -X POST http://localhost:8000/v1/admin/auth/keys \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"target_clerk_id":"dev_browser","label":"local-cli"}' \
+  | jq -r .raw_key
+```
+
+The command prints a `clawdi_...` API key. Paste that key into
+`auth login --manual` below.
 
 Then point the dev CLI at the local backend in terminal 3, from the repository
 root:
@@ -83,6 +121,44 @@ bun run packages/cli/src/index.ts setup
 bun run packages/cli/src/index.ts doctor
 ```
 
+On a machine where every supported agent is installed or detectable, expected
+`clawdi doctor` output has the same shape as:
+
+```text
+clawdi doctor
+
+  ✓ Auth — <user-id-or-email>
+  ✓ API reachability — http://localhost:8000
+  ✓ Agent: Claude Code — <version-or-detected>
+  ✓ Agent: Hermes — <version-or-detected>
+  ✓ Agent: OpenClaw — <version-or-detected>
+  ✓ Agent: Codex — <version-or-detected>
+  ✓ Environments — <registered-agent-types>
+  ✓ Vault metadata — 0 vaults reachable
+  ✓ MCP connectors — config reachable
+
+All checks passed.
+```
+
+Agent rows reflect what is installed on the machine. If a supported agent is
+not installed, `doctor` reports `not installed`; the local stack is still wired
+when `Auth`, `API reachability`, `Environments`, `Vault metadata`, and
+`MCP connectors` are green for the agents you registered.
+
+Cleanup:
+
+```bash
+# Stop foreground backend/web/daemon processes with Ctrl-C.
+docker compose down
+```
+
+Use a volume reset only when you intentionally want to wipe the local dev
+database, for example after Alembic reports a revision from another branch:
+
+```bash
+docker compose down -v
+```
+
 ## Test Suites
 
 ```bash
@@ -92,15 +168,15 @@ bun run check                      # Biome CI check
 ```
 
 ```bash
-bun run --cwd apps/web typecheck
-bun run --cwd apps/web test
-bun run --cwd apps/web build:oss
 bun run --cwd packages/cli typecheck
 bun run --cwd packages/cli test
 bun test packages/shared/src
 bun run --cwd packages/whatsapp-baileys-sidecar typecheck
 bun run --cwd packages/whatsapp-baileys-sidecar test
 ```
+
+The canonical web verification set lives in
+`docs/frontend-development.md#verification`.
 
 Backend tests require a Postgres database migrated to this branch's Alembic
 head. Use the throwaway-Postgres pattern in
@@ -122,6 +198,7 @@ uv run pytest -q
   boundary, frontend tests.
 - `docs/api-compatibility.md` — `/v1/agents`, deprecated environment aliases,
   hidden `/api` aliases, additive-only compatibility.
+- `docs/clawdi-daemon-test-guide.md` — daemon e2e and manual verification.
 - `docs/architecture.md` — current system map and module ownership.
 - `docs/adr/0001-agent-identity-is-the-stable-domain-object.md` — Agent
   identity terminology and compatibility invariants.
