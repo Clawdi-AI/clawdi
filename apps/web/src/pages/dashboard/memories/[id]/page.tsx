@@ -6,7 +6,6 @@ import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -14,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref } from "@/lib/project-resource-model";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, formatAbsoluteTooltip, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const router = useRouter();
@@ -90,7 +89,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 								{memory.created_at ? (
 									<>
 										<span>·</span>
-										<span title={new Date(memory.created_at).toLocaleString()}>
+										<span title={formatAbsoluteTooltip(memory.created_at)}>
 											Saved {relativeTime(memory.created_at)}
 										</span>
 									</>
@@ -177,11 +176,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 					</DetailPanel>
 				</>
 			) : (
-				<Alert>
-					<Brain />
-					<AlertTitle>Nothing to show</AlertTitle>
-					<AlertDescription>This memory doesn't exist.</AlertDescription>
-				</Alert>
+				<DetailNotFound title="Memory not found" message="This memory doesn't exist." />
 			)}
 		</div>
 	);

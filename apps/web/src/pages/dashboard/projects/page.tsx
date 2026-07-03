@@ -173,7 +173,7 @@ export default function ProjectsPage() {
 				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
 				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
 					{Array.from({ length: 6 }).map((_, i) => (
-						<Skeleton key={i} className="h-40 w-full rounded-xl" />
+						<ProjectCardSkeleton key={i} />
 					))}
 				</div>
 			</div>
@@ -402,6 +402,22 @@ function ProjectCard({
 			>
 				<span className="sr-only">Open {projectName}</span>
 			</Link>
+		</div>
+	);
+}
+
+function ProjectCardSkeleton() {
+	return (
+		<div className="flex min-h-36 flex-col gap-3 rounded-xl border bg-card p-5">
+			<Skeleton className="size-10 rounded-lg" />
+			<div className="min-w-0 space-y-2">
+				<Skeleton className="h-5 w-44 max-w-full" />
+				<Skeleton className="h-3 w-32" />
+			</div>
+			<div className="mt-auto flex items-center gap-3">
+				<Skeleton className="h-3 w-16" />
+				<Skeleton className="h-3 w-16" />
+			</div>
 		</div>
 	);
 }

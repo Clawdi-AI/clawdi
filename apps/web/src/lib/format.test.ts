@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { formatDuration, formatModelLabel } from "./format";
+import { formatDuration, formatModelLabel, formatShortDate } from "./format";
 
 describe("formatModelLabel", () => {
 	it.each([
@@ -68,5 +68,23 @@ describe("formatDuration", () => {
 		[7200, "2h 0m"],
 	])("%s → %s", (input, expected) => {
 		expect(formatDuration(input)).toBe(expected);
+	});
+});
+
+describe("formatShortDate", () => {
+	it("formats a short absolute date with year by default", () => {
+		const result = formatShortDate("2026-04-05T14:30:00Z");
+		expect(result).toMatch(/2026/);
+		expect(result).not.toBe("—");
+	});
+
+	it("can omit the year for compact meta labels", () => {
+		expect(formatShortDate("2026-04-05T14:30:00Z", { includeYear: false })).not.toMatch(/2026/);
+	});
+
+	it("returns em-dash for nullish or invalid values", () => {
+		expect(formatShortDate(null)).toBe("—");
+		expect(formatShortDate(undefined)).toBe("—");
+		expect(formatShortDate("garbage")).toBe("—");
 	});
 });

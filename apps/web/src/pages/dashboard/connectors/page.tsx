@@ -208,9 +208,7 @@ function ConnectedRail({
 }) {
 	return (
 		<section>
-			<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-				Connected
-			</h2>
+			<h2 className="mb-3 text-sm font-semibold">Connected</h2>
 			{error ? (
 				// Without this, a connections-fetch failure makes the rail
 				// silently disappear and the user only sees "X active" in
@@ -297,11 +295,7 @@ function CatalogSection({
 	}
 	return (
 		<section>
-			{labelled ? (
-				<h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					All Connectors
-				</h2>
-			) : null}
+			{labelled ? <h2 className="mb-3 text-sm font-semibold">All Connectors</h2> : null}
 			<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>
 				{items.map((app) => (
 					<ConnectorCard key={app.name} app={app} isConnected={connectedNames.has(app.name)} />

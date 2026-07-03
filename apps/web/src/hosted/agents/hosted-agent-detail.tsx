@@ -77,11 +77,7 @@ import {
 	usePortal,
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
-import {
-	planOffers,
-	selectOfferForTerm,
-	shortDate,
-} from "@/hosted/billing/subscription/subscription-utils";
+import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	HOSTED_RUNTIMES,
@@ -118,7 +114,7 @@ import {
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatModelLabel } from "@/lib/format";
+import { formatModelLabel, formatShortDate } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
@@ -1278,7 +1274,7 @@ function ComputeSettingsSections({
 	);
 	const subscriptionEndsAt =
 		currentSubscription?.cancel_at ?? currentSubscription?.current_period_end ?? null;
-	const subscriptionPeriodLabel = shortDate(subscriptionEndsAt);
+	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const canChangeBillingTerm =
 		isPerformance &&
@@ -1360,7 +1356,7 @@ function ComputeSettingsSections({
 			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription cancellation scheduled", {
 				description: res.current_period_end
-					? `Performance stays active until ${shortDate(res.current_period_end)}.`
+					? `Performance stays active until ${formatShortDate(res.current_period_end)}.`
 					: (res.message ?? undefined),
 			});
 		} catch (error) {

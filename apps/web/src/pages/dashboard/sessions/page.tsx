@@ -385,7 +385,7 @@ function SessionsListInner() {
 							/>
 						</div>
 					) : null}
-					<div className={cn("max-w-4xl", params.view === "table" && "md:hidden")}>
+					<div className={cn(params.view === "table" && "md:hidden")}>
 						<SessionFeed
 							sessions={data?.items ?? []}
 							isLoading={isLoading}

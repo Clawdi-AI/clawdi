@@ -2,31 +2,32 @@
 
 import { Activity } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { BillingEmpty, BillingError } from "@/hosted/billing/components/state-views";
+import { BillingEmpty, BillingError, UsageSkeleton } from "@/hosted/billing/components/state-views";
 import { formatCredits } from "@/hosted/billing/format";
 import { useUsage } from "@/hosted/billing/hooks";
-import { shortDate } from "@/hosted/billing/subscription/subscription-utils";
+import { formatShortDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "AI Credit consumption across your agents. Wallet credits do not reset.";
+const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "space-y-6 px-4 lg:px-6");
 
 export function UsagePage() {
 	const usage = useUsage();
 
 	if (usage.isLoading) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
-				<Skeleton className="h-28 w-full rounded-lg" />
-				<Skeleton className="h-48 w-full rounded-lg" />
+				<UsageSkeleton />
 			</div>
 		);
 	}
 
 	if (usage.error || !usage.data) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
 				<BillingError error={usage.error} onRetry={() => usage.refetch()} />
 			</div>
@@ -39,7 +40,7 @@ export function UsagePage() {
 
 	if (u.total_credits === 0 && u.by_model.length === 0) {
 		return (
-			<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
 				<BillingEmpty
 					icon={<Activity />}
@@ -51,10 +52,10 @@ export function UsagePage() {
 	}
 
 	return (
-		<div data-hosted="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 			<PageHeader
 				title="Usage"
-				description={`${shortDate(u.period_start)} – ${shortDate(u.period_end)} reporting window. Wallet credits do not reset.`}
+				description={`${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)} reporting window. Wallet credits do not reset.`}
 			/>
 
 			{/* Totals */}

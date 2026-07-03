@@ -85,6 +85,39 @@ export function WalletSkeleton() {
 	);
 }
 
+/** Usage: total cards + daily chart + by-model rows. */
+export function UsageSkeleton() {
+	return (
+		<div data-hosted="true" className="space-y-6">
+			<div className="grid gap-3 sm:grid-cols-2">
+				<CardSkeleton lines={1} />
+				<CardSkeleton lines={1} />
+			</div>
+			<Card data-hosted="true">
+				<CardHeader>
+					<Skeleton className="h-5 w-36" />
+				</CardHeader>
+				<CardContent>
+					<div className="flex h-28 items-end gap-1">
+						{Array.from({ length: 14 }, (_, i) => `day-${i}`).map((key, index) => (
+							<Skeleton
+								key={key}
+								className="flex-1 rounded-t"
+								style={{ height: `${Math.max(16, ((index % 7) + 2) * 10)}%` }}
+							/>
+						))}
+					</div>
+					<div className="mt-2 flex justify-between">
+						<Skeleton className="h-3 w-10" />
+						<Skeleton className="h-3 w-10" />
+					</div>
+				</CardContent>
+			</Card>
+			<CardSkeleton lines={5} />
+		</div>
+	);
+}
+
 /**
  * Normalized error panel with an optional retry. When the failure is a
  * session-expiry 401 we lead with a "Sign in again" action (a fresh retry
