@@ -3733,6 +3733,11 @@ export interface components {
             hosted_managed: boolean;
             /** Hosted Deployment Id */
             hosted_deployment_id?: string | null;
+            /**
+             * Explicit Identity
+             * @default false
+             */
+            explicit_identity: boolean;
             /** Default Project Id */
             default_project_id: string;
         };

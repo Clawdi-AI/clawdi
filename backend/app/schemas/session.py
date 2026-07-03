@@ -209,6 +209,10 @@ class EnvironmentResponse(BaseModel):
     # runtime desired state for this env or a sibling env in the same
     # hosted compute.
     hosted_deployment_id: str | None = None
+    # True when the row was registered with a caller-owned stable identity.
+    # These rows have no local registration key and cannot be disconnected
+    # through the user-facing dashboard route.
+    explicit_identity: bool = False
     # Schema-enforced NOT NULL on agent_environments — every env
     # has a default project after register_environment runs (which
     # heals legacy rows that lost their value). Daemons rely on this

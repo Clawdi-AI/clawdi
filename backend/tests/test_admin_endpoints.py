@@ -703,7 +703,7 @@ async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_creates_with_project(admin_client, db_session, seed_user):
+async def test_admin_register_env_creates_with_project(admin_client, client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
     default project, matching the user-facing register_environment
     contract. Migration tooling depends on default_project_id being
@@ -733,9 +733,17 @@ async def test_admin_register_env_creates_with_project(admin_client, db_session,
     assert env.registration_key == "machine:migrate-machine-1:agent:openclaw"
     assert env.default_project_id is not None  # heal logic ran
 
+    detail = await client.get(f"/v1/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is False
+    assert "registration_key" not in body
+
 
 @pytest.mark.asyncio
-async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_session, seed_user):
+async def test_admin_register_env_accepts_explicit_agent_id(
+    admin_client, client, db_session, seed_user
+):
     """Hosted registration owns the stable agent id. Machine fields are metadata."""
     import uuid
 
@@ -764,6 +772,12 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
     assert env.user_id == seed_user.id
     assert env.machine_id == "hosted-machine-explicit"
     assert env.registration_key is None
+
+    detail = await client.get(f"/v1/environments/{agent_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is True
+    assert "registration_key" not in body
 
 
 @pytest.mark.asyncio

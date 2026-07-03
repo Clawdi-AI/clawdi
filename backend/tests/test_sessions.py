@@ -36,6 +36,53 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_environment_register_uses_machine_key_identity(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    machine_id = f"machine-key-{uuid.uuid4().hex}"
+    env_id = await _register_env(client, machine_id=machine_id)
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one()
+    assert env.registration_key == f"machine:{machine_id}:agent:claude-code"
+
+    detail = await client.get(f"/v1/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is False
+    assert "registration_key" not in body
+
+
+@pytest.mark.asyncio
+async def test_register_agent_environment_requires_identity_or_registration_key(
+    db_session: AsyncSession, seed_user
+):
+    from app.services.agent_environments import register_agent_environment
+
+    with pytest.raises(
+        ValueError,
+        match="requires environment_id or registration_key",
+    ):
+        await register_agent_environment(
+            db_session,
+            user_id=seed_user.id,
+            machine_id="missing-idempotency",
+            machine_name="Missing Idempotency",
+            agent_type="codex",
+            agent_version=None,
+            os_name="linux",
+            sort_order=0,
+            environment_id=None,
+            registration_key=None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_environments_support_conditional_get(client: httpx.AsyncClient):
     env_id = await _register_env(client, machine_id=f"etag-{uuid.uuid4().hex}")
 
