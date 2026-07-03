@@ -198,7 +198,6 @@ async def test_agent_delete_rejects_explicit_agent_identity(
         environment_id=uuid.uuid4(),
         machine_id="explicit-agent-machine",
         machine_name="Explicit Agent",
-        default_name="Explicit Agent",
         agent_type="codex",
         agent_version="1.0.0",
         os_name="linux",

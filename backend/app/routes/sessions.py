@@ -204,7 +204,6 @@ async def _register_agent_identity(
             user_id=auth.user_id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
-            default_name=body.default_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
             os_name=body.os,

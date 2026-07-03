@@ -773,7 +773,6 @@ async def test_admin_register_env_accepts_explicit_agent_id(
             "environment_id": str(agent_id),
             "machine_id": "hosted-machine-explicit",
             "machine_name": "hosted-pod",
-            "default_name": "Hosted Codex",
             "agent_type": "codex",
         },
     )
@@ -786,7 +785,7 @@ async def test_admin_register_env_accepts_explicit_agent_id(
     assert env.user_id == seed_user.id
     assert env.machine_id == "hosted-machine-explicit"
     assert env.machine_name == "hosted-pod"
-    assert env.default_name == "Hosted Codex"
+    assert env.default_name == "Codex"
     assert env.registration_key is None
 
     detail = await client.get(f"/v1/environments/{agent_id}")
@@ -809,6 +808,105 @@ async def test_admin_register_env_accepts_explicit_agent_id(
 
 
 @pytest.mark.asyncio
+async def test_admin_register_env_auto_assigns_explicit_default_names(
+    admin_client, db_session, seed_user
+):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    self_managed = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "self-managed-before-explicit",
+            "machine_name": "self-managed-before-explicit",
+            "agent_type": "openclaw",
+        },
+    )
+    assert self_managed.status_code == 200, self_managed.text
+
+    async def register_explicit(agent_type: str) -> uuid.UUID:
+        agent_id = uuid.uuid4()
+        created = await admin_client.post(
+            "/v1/admin/environments",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "environment_id": str(agent_id),
+                "machine_id": f"hosted-{agent_type}-{agent_id.hex[:8]}",
+                "machine_name": f"hosted-{agent_type}",
+                "agent_type": agent_type,
+            },
+        )
+        assert created.status_code == 200, created.text
+        return agent_id
+
+    first_openclaw = await register_explicit("openclaw")
+    second_openclaw = await register_explicit("openclaw")
+    hermes = await register_explicit("hermes")
+    codex = await register_explicit("codex")
+    claude_code = await register_explicit("claude_code")
+
+    deleted = await admin_client.delete(f"/v1/admin/environments/{first_openclaw}", headers=_AUTH)
+    assert deleted.status_code == 204, deleted.text
+
+    third_openclaw = await register_explicit("openclaw")
+
+    rows = (
+        await db_session.execute(
+            select(
+                AgentEnvironment.id,
+                AgentEnvironment.default_name,
+                AgentEnvironment.registration_key,
+            ).where(
+                AgentEnvironment.id.in_(
+                    [
+                        uuid.UUID(self_managed.json()["id"]),
+                        second_openclaw,
+                        third_openclaw,
+                        hermes,
+                        codex,
+                        claude_code,
+                    ]
+                )
+            )
+        )
+    ).all()
+    by_id = {row.id: row for row in rows}
+    assert by_id[uuid.UUID(self_managed.json()["id"])].default_name is None
+    assert by_id[uuid.UUID(self_managed.json()["id"])].registration_key is not None
+    assert by_id[second_openclaw].default_name == "OpenClaw 2"
+    assert by_id[third_openclaw].default_name == "OpenClaw 3"
+    assert by_id[hermes].default_name == "Hermes"
+    assert by_id[codex].default_name == "Codex"
+    assert by_id[claude_code].default_name == "Claude Code"
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_rejects_default_name_request_field(admin_client, seed_user):
+    import uuid
+
+    response = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "environment_id": str(uuid.uuid4()),
+            "machine_id": "hosted-default-name-rejected",
+            "machine_name": "hosted-default-name-rejected",
+            "default_name": "Caller Provided",
+            "agent_type": "codex",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     admin_client, db_session, seed_user
 ):
@@ -828,7 +926,6 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "agent_id": str(agent_id),
             "machine_id": "admin-agent-alias",
             "machine_name": "admin-agent-pod",
-            "default_name": "Admin Agent Alias",
             "agent_type": "codex",
             "agent_version": "1.0.0",
             "os_name": "linux",
@@ -841,7 +938,7 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     ).scalar_one()
     assert env.user_id == seed_user.id
-    assert env.default_name == "Admin Agent Alias"
+    assert env.default_name == "Codex"
     assert env.registration_key is None
 
     runtime = await admin_client.put(
@@ -905,7 +1002,6 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
         "environment_id": str(agent_id),
         "machine_id": "hosted-agent-initial",
         "machine_name": "hosted-pod-initial",
-        "default_name": "Initial Hosted Codex",
         "agent_type": "codex",
         "agent_version": "1.0.0",
         "os_name": "linux",
@@ -918,7 +1014,6 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
             **body,
             "machine_id": "hosted-agent-moved",
             "machine_name": "hosted-pod-moved",
-            "default_name": "Moved Hosted Codex",
             "agent_version": "1.1.0",
             "os_name": "darwin",
         },
@@ -938,7 +1033,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
     env = envs[0]
     assert env.machine_id == "hosted-agent-moved"
     assert env.machine_name == "hosted-pod-moved"
-    assert env.default_name == "Moved Hosted Codex"
+    assert env.default_name == "Codex"
     assert env.agent_version == "1.1.0"
     assert env.os == "darwin"
     assert env.registration_key is None
