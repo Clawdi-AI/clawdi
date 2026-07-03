@@ -1,9 +1,13 @@
+import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { cn } from "@/lib/utils";
 
 /**
  * One icon for every entity — channels, AI providers, and agent frameworks —
  * so they share identical geometry (rounded tile + subtle shadow) across
  * cards, pickers, lists, and the sidebar.
+ *
+ * EntityIcon is for real brand/app/framework imagery. Use `IconChip` for
+ * abstract Lucide glyphs, resource-color tiles, or object emoji marks.
  *
  * Sources, in resolution order:
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
@@ -28,15 +32,6 @@ const CHANNEL_PNG: Record<string, string> = {
 	imessage: `${ICON_BASE}/imessage.png`,
 	bluebubbles: `${ICON_BASE}/bluebubbles.png`,
 	slack: `${ICON_BASE}/slack.png`,
-};
-
-/** Agent frameworks: local app-icon PNGs in /public/agents. */
-const FRAMEWORK_PNG: Record<string, string> = {
-	openclaw: "/agents/openclaw.png",
-	hermes: "/agents/hermes.png",
-	"claude-code": "/agents/claude-code.png",
-	claude_code: "/agents/claude-code.png",
-	codex: "/agents/codex.png",
 };
 
 /**
@@ -85,9 +80,22 @@ export function EntityIcon({
 	const key = id?.toLowerCase?.() ?? "";
 	const alt = label ?? id ?? "";
 
-	// Full-color PNG app icon (channels, frameworks) — fills the rounded tile.
-	const png =
-		kind === "channel" ? CHANNEL_PNG[key] : kind === "framework" ? FRAMEWORK_PNG[key] : undefined;
+	if (kind === "framework") {
+		return (
+			<AgentFrameworkIcon
+				agent={id}
+				label={alt}
+				alt={alt}
+				pixelSize={s.px}
+				boxClassName={cn(s.box, SHADOW)}
+				fallback="monogram"
+				className={cn(s.mono, className)}
+			/>
+		);
+	}
+
+	// Full-color PNG app icon (channels) — fills the rounded tile.
+	const png = kind === "channel" ? CHANNEL_PNG[key] : undefined;
 	if (png) {
 		return (
 			<img

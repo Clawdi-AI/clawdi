@@ -1,10 +1,11 @@
 "use client";
 
 import { Link2 } from "lucide-react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CopyButton } from "@/hosted/billing/components/copy-button";
-import { BillingError } from "@/hosted/billing/components/state-views";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
 
 /**
@@ -30,7 +31,8 @@ export function X402Card() {
 				{me.isLoading ? (
 					<Skeleton className="h-9 w-full rounded-md" />
 				) : me.error ? (
-					<BillingError
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
 						error={me.error}
 						onRetry={() => me.refetch()}
 						title="Couldn’t load deposit address"

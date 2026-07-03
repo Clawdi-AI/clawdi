@@ -3,9 +3,11 @@
 import { Link } from "@tanstack/react-router";
 import { MessagesSquare, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
+	ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	ENTITY_GRID_CLASS,
 	ENTITY_STRETCHED_LINK_CLASS,
 	EntityHeader,
@@ -23,7 +25,7 @@ import {
 	providerMeta,
 } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
-import { ChannelError, HealthBadge } from "@/hosted/v2/channels/channel-ui";
+import { HealthBadge } from "@/hosted/v2/channels/channel-ui";
 import { useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { SharedBotsPool } from "@/hosted/v2/channels/shared-bots-pool";
@@ -84,7 +86,7 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 
 	if (channels.error) {
 		return (
-			<ChannelError
+			<ApiErrorPanel
 				error={channels.error}
 				onRetry={() => channels.refetch()}
 				title="Couldn't load channels"
@@ -124,7 +126,7 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 	return (
 		<div className="flex flex-col gap-4">
 			{health.error ? (
-				<ChannelError
+				<ApiErrorPanel
 					error={health.error}
 					onRetry={() => health.refetch()}
 					title="Couldn't load channel health"
@@ -182,6 +184,7 @@ function FilterChip({
 			aria-pressed={active}
 			className={cn(
 				"rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+				ENTITY_CARD_BUTTON_FOCUS_CLASS,
 				active
 					? "border-primary bg-primary/10 text-primary"
 					: "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
@@ -200,7 +203,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 			<div
 				className={cn(
 					ENTITY_CARD_BASE,
-					"flex h-full items-start gap-3 bg-card transition-colors group-hover:bg-muted/50",
+					"flex h-full items-start gap-3 transition-colors group-hover:bg-muted/50",
 				)}
 			>
 				<EntityHeader
@@ -226,7 +229,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 
 function ChannelCardSkeleton() {
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+		<div className={ENTITY_CARD_BASE}>
 			<div className="flex items-start gap-3">
 				<Skeleton className="size-10 shrink-0 rounded-lg" />
 				<div className="min-w-0 flex-1">

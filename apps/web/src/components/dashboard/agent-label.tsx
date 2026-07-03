@@ -1,6 +1,7 @@
 import { Cloud, History, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -171,10 +172,11 @@ export function AgentSourceBadge({
 	const title = agentSourceDescription(source);
 	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
 	return (
-		<span
+		<StatusBadge
+			status="neutral"
 			title={title}
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap border font-medium leading-none shadow-sm",
+				"shrink-0 whitespace-nowrap border font-medium leading-none shadow-sm",
 				iconOnly
 					? "size-4 justify-center rounded-full p-0"
 					: compact
@@ -188,7 +190,7 @@ export function AgentSourceBadge({
 		>
 			<Icon className={cn(iconOnly ? "size-2.5" : "size-3.5", iconClass)} />
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
-		</span>
+		</StatusBadge>
 	);
 }
 
@@ -200,10 +202,11 @@ export function LegacyAgentBadge({
 	className?: string;
 }) {
 	return (
-		<span
+		<StatusBadge
+			status="neutral"
 			title="Managed in the legacy hosted dashboard"
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
+				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
 				compact
 					? "h-5 gap-1 rounded-full px-1.5 text-2xs"
 					: "h-5 gap-1.5 rounded-full px-2 text-2xs",
@@ -212,7 +215,7 @@ export function LegacyAgentBadge({
 		>
 			<History className="size-3.5 text-warning-muted-foreground" />
 			Legacy
-		</span>
+		</StatusBadge>
 	);
 }
 

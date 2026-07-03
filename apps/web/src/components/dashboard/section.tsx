@@ -32,14 +32,14 @@ export function DashboardSectionHeader({
 	title,
 	count,
 	description,
-	toolbar,
+	actions,
 	priority = "secondary",
 }: {
 	icon: LucideIcon;
 	title: string;
 	count?: ReactNode;
 	description: ReactNode;
-	toolbar?: ReactNode;
+	actions?: ReactNode;
 	priority?: DashboardSectionPriority;
 }) {
 	return (
@@ -62,9 +62,9 @@ export function DashboardSectionHeader({
 				</div>
 				<p className="max-w-3xl text-xs text-muted-foreground">{description}</p>
 			</div>
-			{toolbar ? (
+			{actions ? (
 				<div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-0 sm:flex-row sm:items-center">
-					{toolbar}
+					{actions}
 				</div>
 			) : null}
 		</div>

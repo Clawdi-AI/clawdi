@@ -2,6 +2,7 @@
 
 import { Receipt } from "lucide-react";
 import { useId, useMemo, useState } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import {
 	Select,
@@ -21,7 +22,6 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
-import { BillingEmpty } from "@/hosted/billing/components/state-views";
 import type { WalletLedgerEntry, WalletLedgerStatus } from "@/hosted/billing/contracts";
 import { creditsToUsd, formatCredits } from "@/hosted/billing/format";
 import { cn, relativeTime } from "@/lib/utils";
@@ -145,8 +145,11 @@ export function LedgerTable({
 					))}
 				</div>
 			) : filtered.length === 0 ? (
-				<BillingEmpty
-					icon={<Receipt />}
+				<EmptyState
+					bordered
+					fillHeight={false}
+					icon={Receipt}
+					iconVariant="icon"
 					title={entries.length === 0 ? "No activity yet" : "No matching activity"}
 					description={
 						entries.length === 0

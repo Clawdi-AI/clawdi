@@ -3,6 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, Link2, Users } from "lucide-react";
 import { useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
-import { AccessBadge, ChannelError } from "@/hosted/v2/channels/channel-ui";
+import { AccessBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ export function SharedBotsPool() {
 	if (pool.error) {
 		return (
 			<div data-hosted="true" data-v2="true">
-				<ChannelError
+				<ApiErrorPanel
 					error={pool.error}
 					onRetry={() => pool.refetch()}
 					title="Couldn't load shared bots"
@@ -110,7 +111,7 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 	const linkable = item.available && item.capabilities.link_agent;
 
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3 bg-card")}>
+		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
 			<EntityHeader
 				align="start"
 				icon={<EntityIcon kind="channel" id={item.provider} label={meta.label} />}

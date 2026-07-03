@@ -3,10 +3,11 @@
 import { ShieldCheck, Sparkles } from "lucide-react";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
+import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
-import { cn } from "@/lib/utils";
 
 /** Real brand-logo icon for a provider type (delegates to the unified EntityIcon). */
 export function ProviderTypeChip({
@@ -41,7 +42,7 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 			data-hosted="true"
 			data-v2="true"
 			variant="secondary"
-			className="rounded-full px-2 py-0.5 text-2xs text-muted-foreground"
+			className="px-2 py-0.5 text-2xs text-muted-foreground"
 		>
 			{label}
 		</Badge>
@@ -51,20 +52,20 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 /** The always-on managed default, no setup. */
 export function ManagedProviderCard() {
 	return (
-		<div data-hosted="true" data-v2="true" className={cn(ENTITY_CARD_BASE, "bg-card")}>
+		<div data-hosted="true" data-v2="true" className={ENTITY_CARD_BASE}>
 			<EntityHeader
 				align="start"
 				icon={
-					<span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+					<IconChip tint="bg-primary/10 text-primary">
 						<Sparkles className="size-5" />
-					</span>
+					</IconChip>
 				}
 				title="Managed by Clawdi"
 				titleAdornment={
-					<span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success-muted-foreground">
+					<StatusBadge status="success">
 						<ShieldCheck className="size-3" />
 						Default
-					</span>
+					</StatusBadge>
 				}
 				meta={["No setup required", "Wallet billed"]}
 			/>

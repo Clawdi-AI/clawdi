@@ -2,11 +2,13 @@
 
 import { CreditCard } from "lucide-react";
 import { useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
-import { BillingError, WalletSkeleton } from "@/hosted/billing/components/state-views";
+import { WalletSkeleton } from "@/hosted/billing/components/state-views";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
@@ -42,7 +44,11 @@ export function WalletPage() {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 				<PageHeader title="Wallet" description={DESCRIPTION} />
-				<BillingError error={wallet.error} onRetry={() => wallet.refetch()} />
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
+					error={wallet.error}
+					onRetry={() => wallet.refetch()}
+				/>
 			</div>
 		);
 	}
@@ -75,7 +81,8 @@ export function WalletPage() {
 			</div>
 
 			{ledger.error && !ledger.data ? (
-				<BillingError
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
 					error={ledger.error}
 					title="Couldn’t load activity"
 					onRetry={() => ledger.refetch()}

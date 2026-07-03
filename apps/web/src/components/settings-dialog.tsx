@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
+import { IconChip } from "@/components/icon-chip";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { GeneralPanel } from "@/components/settings/general-panel";
 import { ProfilePanel } from "@/components/settings/profile-panel";
@@ -174,16 +175,16 @@ export function SettingsDialog({
 											"data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs",
 										)}
 									>
-										<span
-											className={cn(
-												"flex size-8 shrink-0 items-center justify-center rounded-md",
+										<IconChip
+											size="sm"
+											tint={
 												active
 													? "bg-primary text-primary-foreground"
-													: "bg-background text-foreground",
-											)}
+													: "bg-background text-foreground"
+											}
 										>
 											<Icon />
-										</span>
+										</IconChip>
 										<span className="grid min-w-0 flex-1 leading-tight">
 											<span className="truncate font-medium">{item.label}</span>
 											<span className="truncate text-xs text-muted-foreground">

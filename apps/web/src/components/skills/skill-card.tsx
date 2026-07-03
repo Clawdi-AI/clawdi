@@ -2,6 +2,8 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
+import { HERO_CARD_BASE } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,21 +60,17 @@ export function SkillCard({
 	return (
 		<div
 			className={cn(
-				"group relative z-0 flex min-h-28 flex-col gap-2 rounded-xl border bg-card p-4 transition-all duration-150",
+				HERO_CARD_BASE,
+				"group relative z-0 flex min-h-28 flex-col gap-2 transition-all duration-150",
 				selectMode && selected
 					? "border-foreground/40 bg-accent/50"
 					: "hover:-translate-y-px hover:border-foreground/20",
 			)}
 		>
 			<div className="flex items-start justify-between gap-2">
-				<span
-					className={cn(
-						"flex size-8 shrink-0 select-none items-center justify-center rounded-lg text-base leading-none",
-						id.colorClasses,
-					)}
-				>
+				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
-				</span>
+				</IconChip>
 				{selectMode ? (
 					<Checkbox
 						checked={selected}

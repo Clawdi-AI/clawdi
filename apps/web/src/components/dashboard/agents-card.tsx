@@ -253,7 +253,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		<div
 			className={cn(
 				ENTITY_CARD_BASE,
-				"flex h-full items-center gap-3 bg-card transition-colors group-hover:bg-muted/50",
+				"flex h-full items-center gap-3 transition-colors group-hover:bg-muted/50",
 			)}
 		>
 			<AgentLabel

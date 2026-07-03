@@ -7,6 +7,7 @@ import {
 	KeyRound,
 	Link2,
 	Link2Off,
+	type LucideIcon,
 	MessageSquareDashed,
 	QrCode,
 	RefreshCw,
@@ -16,6 +17,7 @@ import {
 	TriangleAlert,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
@@ -25,7 +27,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
-import { InfoCard } from "@/components/info-card";
+import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -49,7 +51,6 @@ import type {
 	ChannelBinding,
 } from "@/hosted/v2/channels/channel-types";
 import {
-	ChannelError,
 	CopyInline,
 	DeliveryBadge,
 	HealthBadge,
@@ -126,11 +127,27 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 	);
 }
 
-function DetailIcon({ children }: { children: ReactNode }) {
+function InfoCard({
+	icon: Icon,
+	title,
+	children,
+}: {
+	icon: LucideIcon;
+	title: ReactNode;
+	children: ReactNode;
+}) {
 	return (
-		<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground [&_svg]:size-4">
-			{children}
-		</span>
+		<div className="rounded-lg border bg-card p-4">
+			<div className="flex items-start gap-3">
+				<IconChip size="sm" tint="bg-primary/10 text-primary" className="size-9 [&>svg]:size-5">
+					<Icon />
+				</IconChip>
+				<div className="min-w-0 flex-1 space-y-1">
+					<div className="text-sm font-medium">{title}</div>
+					<p className="text-sm text-muted-foreground">{children}</p>
+				</div>
+			</div>
+		</div>
 	);
 }
 
@@ -186,7 +203,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (channel.error) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<ChannelError
+				<ApiErrorPanel
 					error={channel.error}
 					onRetry={() => channel.refetch()}
 					title="Couldn't load channel"
@@ -220,7 +237,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			<PageHeader
 				title={ch.name}
 				description={`${meta.label} · ${ch.visibility === "public" ? "Shared bot" : "Private bot"}`}
-				adornment={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
+				icon={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
 				status={
 					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
 						<span className="capitalize">{ch.status}</span>
@@ -303,7 +320,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (links.error) {
 		return (
-			<ChannelError
+			<ApiErrorPanel
 				error={links.error}
 				onRetry={() => links.refetch()}
 				title="Couldn't load linked agents"
@@ -315,7 +332,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 	return (
 		<div className="flex flex-col gap-3">
 			{envs.error ? (
-				<ChannelError
+				<ApiErrorPanel
 					error={envs.error}
 					onRetry={() => envs.refetch()}
 					title="Couldn't load agent names"
@@ -342,7 +359,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 			) : (
 				<div className="flex flex-col gap-2">
 					{items.map((link: ChannelAgentLink) => (
-						<div key={link.id} className={cn(ENTITY_CARD_BASE, "bg-card")}>
+						<div key={link.id} className={ENTITY_CARD_BASE}>
 							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 								<div className="min-w-0">
 									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
@@ -447,7 +464,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 			{links.isLoading ? (
 				<Skeleton className="h-16 w-full rounded-lg" />
 			) : links.error ? (
-				<ChannelError
+				<ApiErrorPanel
 					error={links.error}
 					onRetry={() => links.refetch()}
 					title="Couldn't load linked agents"
@@ -462,7 +479,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 			) : (
 				<div className="flex flex-col gap-2">
 					{envs.error ? (
-						<ChannelError
+						<ApiErrorPanel
 							error={envs.error}
 							onRetry={() => envs.refetch()}
 							title="Couldn't load agent names"
@@ -507,7 +524,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 				{creds.isLoading ? (
 					<Skeleton className="h-16 w-full rounded-lg" />
 				) : creds.error ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={creds.error}
 						onRetry={() => creds.refetch()}
 						title="Couldn't load linked devices"
@@ -520,14 +537,14 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 					devices.map((d) => (
 						<div
 							key={d.credential_id}
-							className={cn(ENTITY_CARD_BASE, "flex items-center justify-between gap-3 bg-card")}
+							className={cn(ENTITY_CARD_BASE, "flex items-center justify-between gap-3")}
 						>
 							<EntityHeader
 								className="min-w-0 flex-1"
 								icon={
-									<DetailIcon>
+									<IconChip size="sm">
 										<Smartphone />
-									</DetailIcon>
+									</IconChip>
 								}
 								title={
 									d.jid ? <span className="font-mono text-xs">{d.jid}</span> : "Pending pairing"
@@ -637,7 +654,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 			</div>
 
 			{envs.error ? (
-				<ChannelError
+				<ApiErrorPanel
 					error={envs.error}
 					onRetry={() => envs.refetch()}
 					title="Couldn't load agents"
@@ -670,7 +687,7 @@ function BindingsTab({ accountId }: { accountId: string }) {
 	if (bindings.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (bindings.error) {
 		return (
-			<ChannelError
+			<ApiErrorPanel
 				error={bindings.error}
 				onRetry={() => bindings.refetch()}
 				title="Couldn't load paired chats"
@@ -692,13 +709,13 @@ function BindingsTab({ accountId }: { accountId: string }) {
 	return (
 		<div className="flex flex-col gap-2">
 			{items.map((b: ChannelBinding) => (
-				<div key={b.id} className={cn(ENTITY_CARD_BASE, "flex items-center gap-3 bg-card")}>
+				<div key={b.id} className={cn(ENTITY_CARD_BASE, "flex items-center gap-3")}>
 					<EntityHeader
 						className="min-w-0 flex-1"
 						icon={
-							<DetailIcon>
+							<IconChip size="sm">
 								<MessageSquareDashed />
-							</DetailIcon>
+							</IconChip>
 						}
 						title={b.external_chat_name ?? "Chat"}
 						meta={[
@@ -722,7 +739,7 @@ function ActivityTab({ accountId }: { accountId: string }) {
 	if (activity.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
 	if (activity.error) {
 		return (
-			<ChannelError
+			<ApiErrorPanel
 				error={activity.error}
 				onRetry={() => activity.refetch()}
 				title="Couldn't load activity"
@@ -756,10 +773,10 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 	const error = item.delivery_last_error ?? item.error;
 
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "flex items-start gap-3 bg-card")}>
-			<DetailIcon>
+		<div className={cn(ENTITY_CARD_BASE, "flex items-start gap-3")}>
+			<IconChip size="sm">
 				{isEvent ? <TerminalSquare /> : inbound ? <ArrowDownLeft /> : <ArrowUpRight />}
-			</DetailIcon>
+			</IconChip>
 			<div className="min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-2">
 					<span className="text-xs font-medium capitalize">
@@ -794,7 +811,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 	if (health.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
 	if (health.error) {
 		return (
-			<ChannelError
+			<ApiErrorPanel
 				error={health.error}
 				onRetry={() => health.refetch()}
 				title="Couldn't load health"
@@ -827,7 +844,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 
 			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
 				{stats.map((s) => (
-					<div key={s.label} className={cn(ENTITY_CARD_BASE, "bg-card")}>
+					<div key={s.label} className={ENTITY_CARD_BASE}>
 						<div className="text-2xl font-semibold tabular-nums">{s.value}</div>
 						<div className="text-xs text-muted-foreground">{s.label}</div>
 					</div>
@@ -854,7 +871,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 			) : null}
 
 			{h.native_transport ? (
-				<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+				<div className={ENTITY_CARD_BASE}>
 					<SectionLabel className="mb-2 px-0">Native transport</SectionLabel>
 					<pre className="overflow-x-auto text-xs text-muted-foreground">
 						{JSON.stringify(h.native_transport, null, 2)}
@@ -888,7 +905,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 						{sync.isPending ? "Syncing…" : "Sync commands"}
 					</Button>
 					{commands.length > 0 ? (
-						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2 bg-card")}>
+						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
 							<div className="text-xs font-medium text-success-muted-foreground">
 								Synced {commands.length} command{commands.length === 1 ? "" : "s"}
 							</div>

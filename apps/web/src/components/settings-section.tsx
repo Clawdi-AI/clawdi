@@ -7,19 +7,21 @@ export function SettingsSection({
 	description,
 	children,
 	className,
-	tone = "default",
+	variant = "default",
 }: {
 	title: React.ReactNode;
 	description?: React.ReactNode;
 	children: React.ReactNode;
 	className?: string;
-	tone?: "default" | "danger";
+	variant?: "default" | "destructive";
 }) {
 	return (
 		<section className={cn("flex flex-col gap-4", className)}>
 			<Separator />
 			<div className="flex max-w-2xl flex-col gap-1.5">
-				<div className={cn("text-sm font-semibold", tone === "danger" && "text-destructive")}>
+				<div
+					className={cn("text-sm font-semibold", variant === "destructive" && "text-destructive")}
+				>
 					{title}
 				</div>
 				{description ? (

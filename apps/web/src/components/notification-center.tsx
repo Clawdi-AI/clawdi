@@ -5,6 +5,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -211,9 +212,9 @@ function NotificationCenterContent({
 		const empty = getNotificationCenterEmptyCopy();
 		return (
 			<div className="flex items-start gap-3 px-4 py-5">
-				<div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
+				<IconChip size="sm" tint="bg-muted text-muted-foreground">
 					<MailOpen className="size-4 text-muted-foreground" />
-				</div>
+				</IconChip>
 				<div className="space-y-1">
 					<div className="text-sm font-medium">{empty.title}</div>
 					<p className="text-xs text-muted-foreground">{empty.description}</p>

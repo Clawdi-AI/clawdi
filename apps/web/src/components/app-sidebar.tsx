@@ -60,6 +60,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
+import { IconChip } from "@/components/icon-chip";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -123,37 +124,6 @@ function useAgentChromeKind(agent: SidebarEnvironment | null): AgentChromeKind {
 	const ownership = useAgentOwnership();
 	if (!IS_HOSTED || !agent) return "connected";
 	return agentOwnershipKindFromId(agent.id, ownership);
-}
-
-/** Tinted chip around a nav icon — the identity-palette hue carries the
- * "vivid, colourful" art direction into the app chrome itself, and each
- * resource keeps the same hue here, in the overview Resources rail, and
- * on its own pages. The chip (not the glyph) is colored so icons stay
- * one visual weight. */
-function NavIconChip({ tint, children }: { tint: string; children: React.ReactNode }) {
-	return (
-		<span
-			className={cn(
-				"flex size-5 shrink-0 items-center justify-center rounded-md [&>svg]:size-3.5",
-				tint,
-			)}
-		>
-			{children}
-		</span>
-	);
-}
-
-function RailIconChip({ tint, children }: { tint: string; children: React.ReactNode }) {
-	return (
-		<span
-			className={cn(
-				"flex size-8 shrink-0 items-center justify-center rounded-md [&>svg]:size-4",
-				tint,
-			)}
-		>
-			{children}
-		</span>
-	);
 }
 
 const CONNECTED_AGENT_SECTIONS: {
@@ -326,17 +296,17 @@ function SidebarNavSection({
 											rel="noopener noreferrer"
 											onClick={onNavigate}
 										>
-											<NavIconChip tint={item.tint}>
+											<IconChip size="xs" tint={item.tint}>
 												<Icon />
-											</NavIconChip>
+											</IconChip>
 											<span>{item.label}</span>
 											<ExternalLink className="ml-auto size-3 text-muted-foreground" />
 										</a>
 									) : (
 										<Link to={item.href} onClick={onNavigate}>
-											<NavIconChip tint={item.tint}>
+											<IconChip size="xs" tint={item.tint}>
 												<Icon />
-											</NavIconChip>
+											</IconChip>
 											<span>{item.label}</span>
 										</Link>
 									)}
@@ -1058,9 +1028,9 @@ function FocusRailContent({
 							onNavigate={onNavigate}
 							showTooltip={showTooltips}
 						>
-							<RailIconChip tint={RESOURCE_TINT_CLASSES.overview}>
+							<IconChip size="sm" tint={RESOURCE_TINT_CLASSES.overview}>
 								<LayoutDashboard />
-							</RailIconChip>
+							</IconChip>
 						</RailFocusButton>
 					</SidebarMenuItem>
 				</SidebarMenu>

@@ -1,70 +1,14 @@
 "use client";
 
-import {
-	Check,
-	CircleAlert,
-	CircleCheck,
-	Copy,
-	LogIn,
-	RefreshCw,
-	TriangleAlert,
-} from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
-
-/** Send the user back through Clerk, returning to wherever they are now. */
-function reauthenticate() {
-	if (typeof window === "undefined") return;
-	const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-	window.location.href = `/sign-in?redirect_url=${redirect}`;
-}
-
-/**
- * Cloud-api error panel for the v2 channel / provider surfaces. Normalizes
- * the failure to internal-free copy and, on a session-expiry 401, leads with a
- * "Sign in again" action (a retry can't fix a dead token) while keeping Retry
- * as a secondary affordance for the race where Clerk already refreshed it.
- */
-export function ChannelError({
-	error,
-	onRetry,
-	title = "Couldn't load this",
-}: {
-	error: unknown;
-	onRetry?: () => void;
-	title?: string;
-}) {
-	const expired = isApiAuthError(error);
-	return (
-		<Alert data-hosted="true" data-v2="true" variant="destructive">
-			<CircleAlert />
-			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
-			<AlertDescription className="flex flex-col items-start gap-3">
-				<span>{normalizeApiError(error)}</span>
-				<div className="flex flex-wrap gap-2">
-					{expired ? (
-						<Button size="sm" onClick={reauthenticate}>
-							<LogIn /> Sign in again
-						</Button>
-					) : null}
-					{onRetry ? (
-						<Button size="sm" variant="outline" onClick={onRetry}>
-							<RefreshCw /> Retry
-						</Button>
-					) : null}
-				</div>
-			</AlertDescription>
-		</Alert>
-	);
-}
 
 /** Real app-icon for a channel provider (delegates to the unified EntityIcon). */
 export function ProviderChip({

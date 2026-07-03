@@ -4,13 +4,14 @@ import { useRouter } from "@tanstack/react-router";
 import { CreditCard, Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { BillingError, SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
-import { normalizeBillingError } from "@/hosted/billing/errors";
+import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
+import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
@@ -59,7 +60,8 @@ export function SubscriptionPage() {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
 				<PageHeader title="Compute" description={DESCRIPTION} />
-				<BillingError
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
 					error={plans.error}
 					onRetry={() => plans.refetch()}
 					title="Couldn’t load plans"

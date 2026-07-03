@@ -3,6 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { CircleCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
@@ -27,7 +28,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChannelError, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import { TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useEnvironments, useLinkAgent } from "@/hosted/v2/channels/channels-hooks";
 import {
 	type AgentOwnershipKind,
@@ -106,7 +107,7 @@ export function LinkAgentDialog({
 				) : envs.isLoading ? (
 					<Skeleton className="h-10 w-full rounded-md" />
 				) : envs.error ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={envs.error}
 						onRetry={() => envs.refetch()}
 						title="Couldn't load agents"

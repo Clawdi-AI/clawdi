@@ -347,7 +347,7 @@ export function AgentSettingsPanel({
 				<SettingsSection
 					title="Disconnect"
 					description="Remove this connected agent from your dashboard."
-					tone="danger"
+					variant="destructive"
 				>
 					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 						<p className="max-w-md text-sm text-muted-foreground">
