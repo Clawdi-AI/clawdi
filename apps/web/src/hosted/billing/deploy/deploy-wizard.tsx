@@ -80,6 +80,9 @@ type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
+/** Sentinel for the managed-AI choice. Underscores keep it outside the
+ * provider-id charset so no user provider_id can ever collide with it. */
+const MANAGED_AI_CHOICE = "__managed__";
 
 /** Personality presets accepted by hosted deployment onboarding. */
 const PERSONALITY_PRESETS = [
@@ -346,7 +349,7 @@ export function DeployWizard() {
 		openclaw: true,
 		hermes: false,
 	});
-	const [aiChoice, setAiChoice] = useState<string>("managed"); // "managed" | provider_id
+	const [aiChoice, setAiChoice] = useState<string>(MANAGED_AI_CHOICE); // sentinel | provider_id
 	const [compute, setCompute] = useState<Compute>("free");
 	const [agentName, setAgentName] = useState("");
 	const [personality, setPersonality] = useState("");
@@ -399,11 +402,11 @@ export function DeployWizard() {
 	// reset to managed so the UI and the deploy request agree.
 	useEffect(() => {
 		if (
-			aiChoice !== "managed" &&
+			aiChoice !== MANAGED_AI_CHOICE &&
 			aiProviders.isSuccess &&
 			!providerList.some((p) => p.provider_id === aiChoice)
 		) {
-			setAiChoice("managed");
+			setAiChoice(MANAGED_AI_CHOICE);
 		}
 	}, [aiChoice, aiProviders.isSuccess, providerList]);
 
@@ -440,7 +443,7 @@ export function DeployWizard() {
 	}
 
 	function aiDeployFields(): Partial<DeployRequest> | null {
-		if (aiChoice === "managed") return { ai_provider_auth_kind: "managed" };
+		if (aiChoice === MANAGED_AI_CHOICE) return { ai_provider_auth_kind: "managed" };
 		const provider = providerList.find((p) => p.provider_id === aiChoice);
 		if (!provider) {
 			providerUnavailable();
@@ -522,7 +525,7 @@ export function DeployWizard() {
 
 	const deployLabel = compute === "performance" ? "Continue to checkout" : "Deploy agent";
 	const aiSummary =
-		aiChoice === "managed"
+		aiChoice === MANAGED_AI_CHOICE
 			? "Managed AI"
 			: (providerList.find((p) => p.provider_id === aiChoice)?.label ?? "Your provider");
 	const runtimeSummary = [
@@ -616,8 +619,8 @@ export function DeployWizard() {
 			>
 				<div className={TWO_TILE_GRID_CLASS}>
 					<EntityChoiceCard
-						selected={aiChoice === "managed"}
-						onClick={() => setAiChoice("managed")}
+						selected={aiChoice === MANAGED_AI_CHOICE}
+						onClick={() => setAiChoice(MANAGED_AI_CHOICE)}
 						icon={
 							<IconChip tint="bg-primary/10 text-primary">
 								<Sparkles />
