@@ -63,10 +63,12 @@ reads runtime-observed state, and posts sync heartbeats through `/v1/agents`
 using `agent_id` path parameters.
 
 `/v1/environments` and legacy `/api/*` routes are compatibility aliases. They
-keep their old request and response field names, including `environment_id`,
-so released CLIs and session ingestion clients remain byte-compatible. Session
-payloads and filters still use `environment_id`; that field is the legacy wire
-name for the stable agent id.
+keep all pre-existing request fields, response fields, request/response shapes,
+status codes, and error bodies unchanged, including `environment_id` naming.
+New optional response fields such as `name`, `default_name`, and
+`explicit_identity` are additive safe fields for old clients. Session payloads
+and filters still use `environment_id`; that field is the legacy wire name for
+the stable agent id.
 
 Admin has both `/v1/admin/agents` and `/v1/admin/environments`. The agent route
 accepts `agent_id` for new first-party admin callers. The environment route is

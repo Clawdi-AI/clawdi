@@ -117,7 +117,7 @@ export function SkillDetailContent({
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
 	const { data: skillAgent } = useQuery({
-		queryKey: ["agent", agentEnvironmentId],
+		queryKey: ["agents", agentEnvironmentId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}", {

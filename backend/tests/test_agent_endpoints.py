@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hosted_runtime import HostedRuntimeState
 
+_DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
+
 
 def _agent_body(machine_id: str) -> dict[str, str]:
     return {
@@ -35,8 +37,94 @@ def _assert_same_response(left: httpx.Response, right: httpx.Response) -> None:
         assert left.headers.get("ETag") == right.headers.get("ETag")
 
 
+def _assert_agent_response_matches_environment(
+    agent_response: httpx.Response,
+    environment_response: httpx.Response,
+) -> None:
+    assert agent_response.status_code == environment_response.status_code
+    if agent_response.status_code != 200:
+        assert agent_response.content == environment_response.content
+        return
+    agent_body = agent_response.json()
+    environment_body = environment_response.json()
+    assert not _DEPRECATED_HOSTED_FIELDS.intersection(agent_body)
+    assert agent_body == {
+        key: value
+        for key, value in environment_body.items()
+        if key not in _DEPRECATED_HOSTED_FIELDS
+    }
+
+
+def _assert_agent_list_response_matches_environment(
+    agent_response: httpx.Response,
+    environment_response: httpx.Response,
+) -> None:
+    assert agent_response.status_code == environment_response.status_code
+    if agent_response.status_code != 200:
+        assert agent_response.content == environment_response.content
+        return
+    assert [
+        {key: value for key, value in item.items() if key not in _DEPRECATED_HOSTED_FIELDS}
+        for item in environment_response.json()
+    ] == agent_response.json()
+    assert all(not _DEPRECATED_HOSTED_FIELDS.intersection(item) for item in agent_response.json())
+
+
+def _assert_agent_runtime_response_matches_environment(
+    agent_response: httpx.Response,
+    environment_response: httpx.Response,
+) -> None:
+    assert agent_response.status_code == environment_response.status_code
+    if agent_response.status_code != 200:
+        assert agent_response.content == environment_response.content
+        return
+    agent_body = agent_response.json()
+    environment_body = environment_response.json()
+    agent_environment = agent_body["environment"]
+    environment_environment = environment_body["environment"]
+    assert not _DEPRECATED_HOSTED_FIELDS.intersection(agent_environment)
+    assert agent_environment == {
+        key: value
+        for key, value in environment_environment.items()
+        if key not in _DEPRECATED_HOSTED_FIELDS
+    }
+    assert {key: value for key, value in agent_body.items() if key != "environment"} == {
+        key: value for key, value in environment_body.items() if key != "environment"
+    }
+
+
+def _assert_agent_runtime_summary_matches_environment(
+    agent_response: httpx.Response,
+    environment_response: httpx.Response,
+) -> None:
+    assert agent_response.status_code == environment_response.status_code
+    if agent_response.status_code != 200:
+        assert agent_response.content == environment_response.content
+        return
+    agent_body = agent_response.json()
+    environment_body = environment_response.json()
+    assert agent_body["counts"] == environment_body["counts"]
+    assert len(agent_body["items"]) == len(environment_body["items"])
+    for agent_item, environment_item in zip(
+        agent_body["items"],
+        environment_body["items"],
+        strict=True,
+    ):
+        agent_environment = agent_item["environment"]
+        environment_environment = environment_item["environment"]
+        assert not _DEPRECATED_HOSTED_FIELDS.intersection(agent_environment)
+        assert agent_environment == {
+            key: value
+            for key, value in environment_environment.items()
+            if key not in _DEPRECATED_HOSTED_FIELDS
+        }
+        assert {key: value for key, value in agent_item.items() if key != "environment"} == {
+            key: value for key, value in environment_item.items() if key != "environment"
+        }
+
+
 @pytest.mark.asyncio
-async def test_agent_and_environment_routes_return_identical_payloads(
+async def test_agent_and_environment_routes_share_non_deprecated_payloads(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ):
@@ -72,13 +160,16 @@ async def test_agent_and_environment_routes_return_identical_payloads(
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    _assert_same_response(await client.get("/v1/agents"), await client.get("/v1/environments"))
+    _assert_agent_list_response_matches_environment(
+        await client.get("/v1/agents"),
+        await client.get("/v1/environments"),
+    )
     _assert_same_response(
         await client.get("/v1/environments"),
         await client.get("/api/environments"),
     )
     _assert_same_response(await client.get("/v1/agents"), await client.get("/api/agents"))
-    _assert_same_response(
+    _assert_agent_response_matches_environment(
         await client.get(f"/v1/agents/{agent_id}"),
         await client.get(f"/v1/environments/{agent_id}"),
     )
@@ -86,7 +177,7 @@ async def test_agent_and_environment_routes_return_identical_payloads(
         await client.get(f"/v1/environments/{agent_id}"),
         await client.get(f"/api/environments/{agent_id}"),
     )
-    _assert_same_response(
+    _assert_agent_response_matches_environment(
         await client.get(f"/v1/agents/{agent_id}"),
         await client.get(f"/api/agents/{agent_id}"),
     )
@@ -99,20 +190,20 @@ async def test_agent_and_environment_routes_return_identical_payloads(
         f"/v1/environments/{agent_id}",
         json={"display_name": "Agent Alias"},
     )
-    _assert_same_response(patched_agent, patched_environment)
+    _assert_agent_response_matches_environment(patched_agent, patched_environment)
 
-    _assert_same_response(
+    _assert_agent_runtime_summary_matches_environment(
         await client.get("/v1/agents/runtime-observed"),
         await client.get("/v1/environments/runtime-observed"),
     )
-    _assert_same_response(
+    _assert_agent_runtime_response_matches_environment(
         await client.get(f"/v1/agents/{agent_id}/runtime-observed"),
         await client.get(f"/v1/environments/{agent_id}/runtime-observed"),
     )
 
     cleared_agent = await client.delete(f"/v1/agents/{agent_id}/avatar")
     cleared_environment = await client.delete(f"/v1/environments/{agent_id}/avatar")
-    _assert_same_response(cleared_agent, cleared_environment)
+    _assert_agent_response_matches_environment(cleared_agent, cleared_environment)
 
     second_id = await _register_agent(client)
     reordered_agents = await client.patch(
@@ -123,7 +214,7 @@ async def test_agent_and_environment_routes_return_identical_payloads(
         "/v1/environments/order",
         json={"environment_ids": [second_id, agent_id]},
     )
-    _assert_same_response(reordered_agents, reordered_environments)
+    _assert_agent_list_response_matches_environment(reordered_agents, reordered_environments)
 
 
 @pytest.mark.asyncio

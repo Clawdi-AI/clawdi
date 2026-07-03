@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import { selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 function env(overrides: Partial<Env> = {}): Env {
 	return {

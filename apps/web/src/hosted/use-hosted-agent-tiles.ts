@@ -13,7 +13,7 @@ import { billingKeys } from "@/hosted/billing/hooks";
 import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 /**
  * Env ids claimed by Cloud deploy-API deployments (lower-cased —

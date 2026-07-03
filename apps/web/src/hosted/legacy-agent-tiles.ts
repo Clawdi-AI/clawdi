@@ -6,7 +6,7 @@ import { agentSectionHref } from "@/lib/agent-routes";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { relativeTime } from "@/lib/utils";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 /**
  * Fallback projection for legacy v1 environments that are already present in

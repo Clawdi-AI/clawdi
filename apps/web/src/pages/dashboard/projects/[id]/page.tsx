@@ -84,7 +84,7 @@ import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -133,7 +133,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	};
 
 	const environments = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: !!project,
 	});

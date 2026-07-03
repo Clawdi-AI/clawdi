@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 const originalWindow = (globalThis as unknown as Record<string, unknown>).window;
 
 function setBrowserHostname(hostname: string) {

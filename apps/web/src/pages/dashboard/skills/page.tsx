@@ -113,7 +113,7 @@ function SkillsPageInner() {
 	);
 
 	const { data: envs } = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 	});
 

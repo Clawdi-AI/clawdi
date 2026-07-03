@@ -106,7 +106,7 @@ export function ConnectedAgentDetail({
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["agent", id],
+		queryKey: ["agents", id],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}", {

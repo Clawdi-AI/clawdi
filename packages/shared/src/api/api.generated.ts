@@ -635,10 +635,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Environments */
+        /**
+         * List Environments
+         * @deprecated
+         */
         get: operations["list_environments_v1_environments_get"];
         put?: never;
-        /** Register Environment */
+        /**
+         * Register Environment
+         * @deprecated
+         */
         post: operations["register_environment_v1_environments_post"];
         delete?: never;
         options?: never;
@@ -670,7 +676,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Environment Runtime Observed */
+        /**
+         * List Environment Runtime Observed
+         * @deprecated
+         */
         get: operations["list_environment_runtime_observed_v1_environments_runtime_observed_get"];
         put?: never;
         post?: never;
@@ -710,7 +719,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Reorder Environments */
+        /**
+         * Reorder Environments
+         * @deprecated
+         */
         patch: operations["reorder_environments_v1_environments_order_patch"];
         trace?: never;
     };
@@ -740,15 +752,24 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Environment */
+        /**
+         * Get Environment
+         * @deprecated
+         */
         get: operations["get_environment_v1_environments__environment_id__get"];
         put?: never;
         post?: never;
-        /** Delete Environment */
+        /**
+         * Delete Environment
+         * @deprecated
+         */
         delete: operations["delete_environment_v1_environments__environment_id__delete"];
         options?: never;
         head?: never;
-        /** Update Environment */
+        /**
+         * Update Environment
+         * @deprecated
+         */
         patch: operations["update_environment_v1_environments__environment_id__patch"];
         trace?: never;
     };
@@ -779,9 +800,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upload Environment Avatar */
+        /**
+         * Upload Environment Avatar
+         * @deprecated
+         */
         post: operations["upload_environment_avatar_v1_environments__environment_id__avatar_post"];
-        /** Clear Environment Avatar */
+        /**
+         * Clear Environment Avatar
+         * @deprecated
+         */
         delete: operations["clear_environment_avatar_v1_environments__environment_id__avatar_delete"];
         options?: never;
         head?: never;
@@ -812,7 +839,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Environment Runtime Observed */
+        /**
+         * Get Environment Runtime Observed
+         * @deprecated
+         */
         get: operations["get_environment_runtime_observed_v1_environments__environment_id__runtime_observed_get"];
         put?: never;
         post?: never;
@@ -2502,6 +2532,94 @@ export interface components {
             /** Agent Ids */
             agent_ids: string[];
         };
+        /** AgentResponse */
+        AgentResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Default Name */
+            default_name?: string | null;
+            /** Machine Name */
+            machine_name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Avatar Url */
+            avatar_url?: string | null;
+            /**
+             * Sort Order
+             * @default 0
+             */
+            sort_order: number;
+            /** Agent Type */
+            agent_type: string;
+            /** Agent Version */
+            agent_version: string | null;
+            /** Os */
+            os: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Last Sync At */
+            last_sync_at?: string | null;
+            /** Last Sync Error */
+            last_sync_error?: string | null;
+            /** Last Revision Seen */
+            last_revision_seen?: number | null;
+            /**
+             * Queue Depth High Water
+             * @default 0
+             */
+            queue_depth_high_water: number;
+            /**
+             * Dropped Count
+             * @default 0
+             */
+            dropped_count: number;
+            /**
+             * Sync Enabled
+             * @default false
+             */
+            sync_enabled: boolean;
+            /**
+             * Explicit Identity
+             * @default false
+             */
+            explicit_identity: boolean;
+            /** Default Project Id */
+            default_project_id: string;
+        };
+        /** AgentRuntimeObservedResponse */
+        AgentRuntimeObservedResponse: {
+            environment: components["schemas"]["AgentResponse"];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            /** Observed */
+            observed?: {
+                [key: string]: unknown;
+            } | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** AgentRuntimeObservedSummaryItemResponse */
+        AgentRuntimeObservedSummaryItemResponse: {
+            environment: components["schemas"]["AgentResponse"];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
+        /** AgentRuntimeObservedSummaryResponse */
+        AgentRuntimeObservedSummaryResponse: {
+            counts: components["schemas"]["RuntimeObservedSummaryCountsResponse"];
+            /** Items */
+            items: components["schemas"]["AgentRuntimeObservedSummaryItemResponse"][];
+        };
         /** AiProviderAuth */
         AiProviderAuth: {
             /**
@@ -3844,6 +3962,13 @@ export interface components {
              */
             sync_enabled: boolean;
             /**
+             * Explicit Identity
+             * @default false
+             */
+            explicit_identity: boolean;
+            /** Default Project Id */
+            default_project_id: string;
+            /**
              * Hosted Managed
              * @description Deprecated. True only when this environment has direct hosted runtime desired state in Cloud API. This no longer infers hosted ownership from machine_id, machine_name, or sibling runtime metadata; dashboard consumers should use control-plane ownership sets instead.
              * @default false
@@ -3854,13 +3979,6 @@ export interface components {
              * @description Deprecated. Deployment id from direct hosted runtime desired state only. This no longer falls back to sibling runtime inference.
              */
             hosted_deployment_id?: string | null;
-            /**
-             * Explicit Identity
-             * @default false
-             */
-            explicit_identity: boolean;
-            /** Default Project Id */
-            default_project_id: string;
         };
         /** EnvironmentUpdate */
         EnvironmentUpdate: {
@@ -6780,7 +6898,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"][];
+                    "application/json": components["schemas"]["AgentResponse"][];
                 };
             };
             /** @description Not Modified */
@@ -6902,7 +7020,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RuntimeObservedSummaryResponse"];
+                    "application/json": components["schemas"]["AgentRuntimeObservedSummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6966,7 +7084,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"][];
+                    "application/json": components["schemas"]["AgentResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -7030,7 +7148,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"];
+                    "application/json": components["schemas"]["AgentResponse"];
                 };
             };
             /** @description Not Modified */
@@ -7101,7 +7219,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"];
+                    "application/json": components["schemas"]["AgentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7238,7 +7356,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"];
+                    "application/json": components["schemas"]["AgentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7269,7 +7387,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnvironmentResponse"];
+                    "application/json": components["schemas"]["AgentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7366,7 +7484,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RuntimeObservedResponse"];
+                    "application/json": components["schemas"]["AgentRuntimeObservedResponse"];
                 };
             };
             /** @description Validation Error */

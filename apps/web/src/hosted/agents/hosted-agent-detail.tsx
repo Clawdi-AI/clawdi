@@ -254,7 +254,7 @@ export function HostedAgentDetail({
 	const router = useRouter();
 	const ci = deployment.config_info;
 	const { data: agent } = useQuery({
-		queryKey: ["agent", environmentId],
+		queryKey: ["agents", environmentId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}", {

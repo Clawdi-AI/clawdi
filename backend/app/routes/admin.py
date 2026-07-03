@@ -589,7 +589,11 @@ async def admin_register_agent(
     )
 
 
-@router.post("/environments", response_model=EnvironmentCreatedResponse)
+@router.post(
+    "/environments",
+    response_model=EnvironmentCreatedResponse,
+    deprecated=True,
+)
 async def admin_register_environment(
     body: AdminEnvironmentCreate,
     _: None = Depends(require_admin_api_key),
@@ -635,7 +639,11 @@ async def admin_delete_agent(
     await _admin_delete_environment(agent_id, db)
 
 
-@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/environments/{environment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    deprecated=True,
+)
 async def admin_delete_environment(
     environment_id: UUID,
     _: None = Depends(require_admin_api_key),
@@ -758,6 +766,7 @@ async def admin_upsert_agent_runtime_state(
 @router.put(
     "/environments/{environment_id}/runtime-state",
     response_model=AdminRuntimeStateResponse,
+    deprecated=True,
 )
 async def admin_upsert_runtime_state(
     environment_id: UUID,
@@ -835,6 +844,7 @@ async def admin_delete_agent_runtime_state(
 @router.delete(
     "/environments/{environment_id}/runtime-state",
     status_code=status.HTTP_204_NO_CONTENT,
+    deprecated=True,
 )
 async def admin_delete_runtime_state(
     environment_id: UUID,

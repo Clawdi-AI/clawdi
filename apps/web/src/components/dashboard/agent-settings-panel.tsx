@@ -29,15 +29,15 @@ import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
 
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
 
 const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
-	queryClient.setQueryData(["agent", environment.id], environment);
-	queryClient.setQueryData<Environment[]>(["environments"], (current) =>
+	queryClient.setQueryData(["agents", environment.id], environment);
+	queryClient.setQueryData<Environment[]>(["agents"], (current) =>
 		current?.map((item) => (item.id === environment.id ? environment : item)),
 	);
 }
@@ -63,7 +63,7 @@ export function AgentSettingsPanel({
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["agent", environmentId],
+		queryKey: ["agents", environmentId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}", {
@@ -129,7 +129,7 @@ export function AgentSettingsPanel({
 			queryClient.invalidateQueries({
 				predicate: (q) => {
 					const key = q.queryKey[0];
-					return key === "environments" || key === "sessions" || key === "agent";
+					return key === "agents" || key === "sessions";
 				},
 			});
 			void router.navigate({ href: "/" });

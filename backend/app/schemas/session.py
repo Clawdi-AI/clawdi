@@ -185,7 +185,7 @@ class AgentReorderRequest(BaseModel):
     agent_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
 
 
-class EnvironmentResponse(BaseModel):
+class AgentResponse(BaseModel):
     id: str
     name: str
     default_name: str | None = None
@@ -209,6 +209,20 @@ class EnvironmentResponse(BaseModel):
     queue_depth_high_water: int = 0
     dropped_count: int = 0
     sync_enabled: bool = False
+    # True when the row was registered with a caller-owned stable identity.
+    # These rows have no local registration key and cannot be disconnected
+    # through the user-facing dashboard route.
+    explicit_identity: bool = False
+    # Schema-enforced NOT NULL on agent_environments — every env
+    # has a default project after register_environment runs (which
+    # heals legacy rows that lost their value). Daemons rely on this
+    # being present to know which SSE events belong to them.
+    # Stringified for JSON (UUIDs serialise as strings via
+    # FastAPI default).
+    default_project_id: str
+
+
+class EnvironmentResponse(AgentResponse):
     hosted_managed: bool = Field(
         default=False,
         description=(
@@ -225,20 +239,6 @@ class EnvironmentResponse(BaseModel):
             "This no longer falls back to sibling runtime inference."
         ),
     )
-    # True when the row was registered with a caller-owned stable identity.
-    # These rows have no local registration key and cannot be disconnected
-    # through the user-facing dashboard route.
-    explicit_identity: bool = False
-    # Schema-enforced NOT NULL on agent_environments — every env
-    # has a default project after register_environment runs (which
-    # heals legacy rows that lost their value). Daemons rely on this
-    # being present to know which SSE events belong to them.
-    # Stringified for JSON (UUIDs serialise as strings via
-    # FastAPI default).
-    default_project_id: str
-
-
-AgentResponse = EnvironmentResponse
 
 
 class RuntimeObservedDesiredResponse(BaseModel):
@@ -274,6 +274,14 @@ class RuntimeObservedResponse(BaseModel):
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 
 
+class AgentRuntimeObservedResponse(BaseModel):
+    environment: AgentResponse
+    desired: RuntimeObservedDesiredResponse | None = None
+    observed: dict[str, Any] | None = None
+    health: RuntimeObservedHealthResponse
+    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
 class RuntimeObservedSummaryCountsResponse(BaseModel):
     ok: int = 0
     error: int = 0
@@ -289,9 +297,21 @@ class RuntimeObservedSummaryItemResponse(BaseModel):
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 
 
+class AgentRuntimeObservedSummaryItemResponse(BaseModel):
+    environment: AgentResponse
+    desired: RuntimeObservedDesiredResponse | None = None
+    health: RuntimeObservedHealthResponse
+    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
 class RuntimeObservedSummaryResponse(BaseModel):
     counts: RuntimeObservedSummaryCountsResponse
     items: list[RuntimeObservedSummaryItemResponse]
+
+
+class AgentRuntimeObservedSummaryResponse(BaseModel):
+    counts: RuntimeObservedSummaryCountsResponse
+    items: list[AgentRuntimeObservedSummaryItemResponse]
 
 
 class SessionBatchResponse(BaseModel):

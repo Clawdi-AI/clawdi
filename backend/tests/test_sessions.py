@@ -176,8 +176,8 @@ async def test_agents_support_conditional_get(client: httpx.AsyncClient):
     assert item["name"] == "Test Mac"
     assert item["default_name"] == "Test Mac"
     assert item["explicit_identity"] is False
-    assert item["hosted_managed"] is False
-    assert item["hosted_deployment_id"] is None
+    assert "hosted_managed" not in item
+    assert "hosted_deployment_id" not in item
 
     not_modified = await client.get("/v1/agents", headers={"If-None-Match": etag})
     assert not_modified.status_code == 304, not_modified.text
@@ -207,6 +207,13 @@ async def test_agents_support_conditional_get(client: httpx.AsyncClient):
 async def test_environments_mark_only_agents_with_hosted_runtime_state(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
+    """Environment compatibility responses keep deprecated hosted fields.
+
+    This pins the intentional semantic change from earlier in this PR:
+    deprecated hosted ownership fields now reflect direct runtime desired state
+    only, with no sibling or machine-name inference. It is not covering an
+    agent/environment alias regression; `/v1/agents` omits these fields.
+    """
     from app.models.hosted_runtime import HostedRuntimeState
     from tests.conftest import create_env_with_project
 
@@ -270,8 +277,8 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
     assert agents.status_code == 200, agents.text
     agent_by_id = {item["id"]: item for item in agents.json()}
     assert agent_by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
-    assert agent_by_id[str(openclaw.id)]["hosted_managed"] is True
-    assert agent_by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
+    assert "hosted_managed" not in agent_by_id[str(openclaw.id)]
+    assert "hosted_deployment_id" not in agent_by_id[str(openclaw.id)]
 
 
 @pytest.mark.asyncio

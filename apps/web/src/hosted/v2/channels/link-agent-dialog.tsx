@@ -35,7 +35,7 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 
 /**
  * Link an agent to a channel — instant, no token paste. On success

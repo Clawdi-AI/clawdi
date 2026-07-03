@@ -39,7 +39,7 @@ import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 
 /* The #1 job of this dashboard: move skills from one agent/project to
  * another — one at a time from the card hover, or a whole batch from
@@ -75,7 +75,7 @@ export function SendSkillDialog({
 		enabled: open,
 	});
 	const { data: envs } = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: open,
 	});

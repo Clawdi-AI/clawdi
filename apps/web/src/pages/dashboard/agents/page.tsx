@@ -30,7 +30,7 @@ export default function AgentsIndexPage() {
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
 	const { data: environments, isLoading: envsLoading } = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		// Match the Overview/agent-detail 10s cadence so the live status badges
 		// stay live on this list too.

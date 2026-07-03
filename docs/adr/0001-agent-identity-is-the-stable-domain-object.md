@@ -70,7 +70,11 @@ Self-managed agents register through `POST /v1/agents`.
 That endpoint derives a legacy registration key from the submitted machine
 metadata and is idempotent for that user's setup flow. Re-registration refreshes
 machine metadata and returns the same stable `AgentEnvironment.id`.
-`POST /v1/environments` remains a byte-compatible alias for released CLIs.
+`POST /v1/environments` remains a compatibility alias for released CLIs: all
+pre-existing request fields, response fields, request/response shapes, status
+codes, and error bodies remain unchanged. New optional response fields such as
+`name`, `default_name`, and `explicit_identity` are additive safe fields for old
+clients.
 
 Hosted control planes register through the admin API. `/v1/admin/agents` accepts
 `agent_id` for agent-first callers. `/v1/admin/environments` remains intact for

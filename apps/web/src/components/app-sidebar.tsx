@@ -245,7 +245,7 @@ const AGENT_SECTION_TINTS = {
 const LEGACY_DASHBOARD_TINT =
 	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
 
-type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
+type SidebarEnvironment = components["schemas"]["AgentResponse"];
 
 type SidebarNavItem = {
 	id: string;
@@ -919,22 +919,22 @@ function FocusRailContent({
 		mutationFn: async (environmentIds: string[]) =>
 			unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
 		onMutate: async (environmentIds) => {
-			await queryClient.cancelQueries({ queryKey: ["environments"] });
-			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["environments"]);
-			queryClient.setQueryData<SidebarEnvironment[]>(["environments"], (current) =>
+			await queryClient.cancelQueries({ queryKey: ["agents"] });
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["agents"]);
+			queryClient.setQueryData<SidebarEnvironment[]>(["agents"], (current) =>
 				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
 			);
 			return { previous };
 		},
 		onError: (error, _environmentIds, context) => {
 			if (context?.previous) {
-				queryClient.setQueryData(["environments"], context.previous);
+				queryClient.setQueryData(["agents"], context.previous);
 				setRailAgentsOrder([...context.previous].sort(compareAgentEnvironments));
 			}
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
-			queryClient.setQueryData(["environments"], data);
+			queryClient.setQueryData(["agents"], data);
 			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
 		},
 	});
@@ -1477,7 +1477,7 @@ export function AppSidebar({
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});

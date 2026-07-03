@@ -37,7 +37,7 @@ import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -61,7 +61,7 @@ export default function ProjectsPage() {
 
 	const rows = projects.data ?? [];
 	const environments = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/agents")),
 		enabled: rows.some((project) => project.kind === "environment"),
 	});

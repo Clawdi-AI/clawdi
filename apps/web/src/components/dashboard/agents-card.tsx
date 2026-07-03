@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 // Freshness threshold — "active" means the agent pinged us in the last 5 minutes.
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;

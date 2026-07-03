@@ -76,7 +76,7 @@ export function SessionDetailContent({
 		gcTime: SESSION_DETAIL_GC_MS,
 	});
 	const { data: scopedAgent } = useQuery({
-		queryKey: ["agent", agentId],
+		queryKey: ["agents", agentId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}", {

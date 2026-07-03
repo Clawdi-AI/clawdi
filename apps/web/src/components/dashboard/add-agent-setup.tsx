@@ -105,7 +105,7 @@ export function AddAgentSetup() {
 	// Live success detection: snapshot the env ids on first load, then poll
 	// while mounted. Anything new is "your agent just connected".
 	const envs = useQuery({
-		queryKey: ["environments"],
+		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: 5_000,
 	});
