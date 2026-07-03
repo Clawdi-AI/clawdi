@@ -937,6 +937,11 @@ async def delete_environment(
     env = result.scalar_one_or_none()
     if not env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    if env.registration_key is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This agent uses an explicit identity and cannot be disconnected here",
+        )
     await db.delete(env)
     await db.commit()
 

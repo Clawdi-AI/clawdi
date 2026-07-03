@@ -1293,6 +1293,47 @@ async def test_delete_environment_orphans_sessions_via_fk(
 
 
 @pytest.mark.asyncio
+async def test_delete_environment_rejects_explicit_agent_identity(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
+):
+    """Dashboard Disconnect is for self-managed local registrations only.
+
+    Agents registered with an explicit id keep their identity independent from
+    local machine registration metadata. Cloud-api stays generic here: it only
+    knows whether the environment originated from the registration-key path.
+    """
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+    from app.services.agent_environments import register_agent_environment
+
+    agent_id = uuid.uuid4()
+    registered = await register_agent_environment(
+        db_session,
+        user_id=seed_user.id,
+        environment_id=agent_id,
+        machine_id="external-agent-machine",
+        machine_name="External Agent",
+        agent_type="codex",
+        agent_version="1.0.0",
+        os_name="linux",
+        sort_order=0,
+        registration_key=None,
+    )
+
+    r = await client.delete(f"/v1/environments/{registered.env.id}")
+    assert r.status_code == 409, r.text
+
+    env = (
+        await db_session.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == registered.env.id)
+        )
+    ).scalar_one_or_none()
+    assert env is not None
+    assert env.registration_key is None
+
+
+@pytest.mark.asyncio
 async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
     r = await client.delete(f"/v1/environments/{uuid.uuid4()}")
     assert r.status_code == 404
