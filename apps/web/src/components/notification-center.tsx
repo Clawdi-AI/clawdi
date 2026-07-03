@@ -124,7 +124,7 @@ export function NotificationCenter() {
 				>
 					<InboxIcon className="size-4" />
 					{count > 0 ? (
-						<Badge className="-right-1 -top-1 absolute h-4 min-w-4 rounded-full px-1 text-[10px] leading-none">
+						<Badge className="-right-1 -top-1 absolute h-4 min-w-4 rounded-full px-1 text-3xs leading-none">
 							{count > 99 ? "99+" : count}
 						</Badge>
 					) : null}

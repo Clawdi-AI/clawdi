@@ -242,8 +242,7 @@ const AGENT_SECTION_TINTS = {
 	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
-const LEGACY_DASHBOARD_TINT =
-	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+const LEGACY_DASHBOARD_TINT = "bg-warning-muted text-warning-muted-foreground";
 
 type SidebarEnvironment = components["schemas"]["AgentResponse"];
 
@@ -745,7 +744,7 @@ function RailFocusButton({
 				{caption ? (
 					<span
 						className={cn(
-							"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-[11px] leading-[13px] font-medium break-words",
+							"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-2xs font-medium break-words",
 							active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
 						)}
 						title={label}
@@ -853,14 +852,14 @@ function SortableAgentRailItem({
 					{kind === "cloud" ? (
 						<span
 							title="Clawdi Cloud agent"
-							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-sidebar dark:bg-sky-400 dark:text-sky-950"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-info text-info-foreground ring-2 ring-sidebar"
 						>
 							<Cloud aria-hidden="true" className="size-2.5" />
 						</span>
 					) : kind === "legacy" ? (
 						<span
 							title="Legacy agent"
-							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-amber-500 text-white ring-2 ring-sidebar dark:bg-amber-400 dark:text-amber-950"
+							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-warning text-warning-foreground ring-2 ring-sidebar"
 						>
 							<History aria-hidden="true" className="size-2.5" />
 						</span>

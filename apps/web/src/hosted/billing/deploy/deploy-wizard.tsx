@@ -677,7 +677,7 @@ export function DeployWizard() {
 						<button
 							type="button"
 							onClick={() => aiProviders.refetch()}
-							className="min-h-[74px] rounded-lg border border-dashed px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/40 sm:col-span-2"
+							className="min-h-[74px] rounded-lg border border-dashed px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 sm:col-span-2"
 						>
 							Couldn’t load your providers — tap to retry. Managed AI still works.
 						</button>

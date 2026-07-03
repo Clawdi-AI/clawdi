@@ -41,7 +41,7 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 			data-hosted="true"
 			data-v2="true"
 			variant="secondary"
-			className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground"
+			className="rounded-full px-2 py-0.5 text-2xs text-muted-foreground"
 		>
 			{label}
 		</Badge>

@@ -96,7 +96,7 @@ export function SessionFeed({
 		<div className="space-y-5">
 			{groups.map((group) => (
 				<section key={group.key} className="space-y-2">
-					<h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+					<h3 className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
 						{group.label}
 					</h3>
 					<div className="space-y-2">
@@ -137,7 +137,7 @@ function SessionFeedCard({
 		<article
 			className={cn(
 				"group relative z-0 rounded-lg border bg-card transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
-				isAutomated ? "border-transparent bg-muted/40 p-3" : "p-4",
+				isAutomated ? "border-transparent bg-muted/30 p-3" : "p-4",
 			)}
 		>
 			<Link

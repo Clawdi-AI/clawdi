@@ -169,8 +169,7 @@ export function AgentSourceBadge({
 	const Icon = source === "hosted" ? Cloud : Laptop;
 	const label = agentSourceLabel(source);
 	const title = agentSourceDescription(source);
-	const iconClass =
-		source === "hosted" ? "text-sky-600 dark:text-sky-300" : "text-muted-foreground";
+	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
 	return (
 		<span
 			title={title}
@@ -179,10 +178,10 @@ export function AgentSourceBadge({
 				iconOnly
 					? "size-4 justify-center rounded-full p-0"
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-[11px]"
-						: "h-5 gap-1.5 rounded-full px-2 text-[11px]",
+						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
+						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
 				source === "hosted"
-					? "border-sky-200 bg-background text-foreground dark:border-sky-500/35 dark:bg-background/80"
+					? "border-info-muted bg-info-muted text-info-muted-foreground"
 					: "border-border bg-background text-muted-foreground",
 				className,
 			)}
@@ -204,14 +203,14 @@ export function LegacyAgentBadge({
 		<span
 			title="Managed in the legacy hosted dashboard"
 			className={cn(
-				"inline-flex shrink-0 items-center whitespace-nowrap border border-amber-200 bg-background font-medium leading-none text-foreground shadow-sm dark:border-amber-500/35 dark:bg-background/80",
+				"inline-flex shrink-0 items-center whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
 				compact
-					? "h-5 gap-1 rounded-full px-1.5 text-[11px]"
-					: "h-5 gap-1.5 rounded-full px-2 text-[11px]",
+					? "h-5 gap-1 rounded-full px-1.5 text-2xs"
+					: "h-5 gap-1.5 rounded-full px-2 text-2xs",
 				className,
 			)}
 		>
-			<History className="size-3.5 text-amber-600 dark:text-amber-300" />
+			<History className="size-3.5 text-warning-muted-foreground" />
 			Legacy
 		</span>
 	);

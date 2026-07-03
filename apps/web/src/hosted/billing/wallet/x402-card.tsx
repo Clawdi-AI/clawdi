@@ -38,7 +38,7 @@ export function X402Card() {
 				) : address ? (
 					<div className="space-y-1.5">
 						<span className="text-xs text-muted-foreground">Deposit address</span>
-						<div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+						<div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
 							<code className="min-w-0 flex-1 truncate font-mono text-xs">{address}</code>
 							<CopyButton
 								value={address}

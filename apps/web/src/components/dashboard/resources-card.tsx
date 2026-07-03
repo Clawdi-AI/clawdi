@@ -220,7 +220,7 @@ function ResourceRow({
 	return (
 		<Link
 			to={RESOURCE_ROUTES[definition.id]}
-			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-accent/40"
+			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
 		>
 			{/* Same identity hue as this resource's sidebar chip — the rail
 			    and the nav read as one system. */}
@@ -240,11 +240,11 @@ function ResourceRow({
 						<ProjectTypeBreakdown counts={projectTypeCounts} />
 					) : null}
 					{empty ? (
-						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
 							{isProjectRow ? "Start here" : `Start: ${definition.emptyCta}`}
 						</span>
 					) : (
-						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
 							<CheckCircle2 className="size-3" />
 							Active
 						</span>
@@ -277,7 +277,7 @@ function ProjectTypeBreakdown({ counts }: { counts: ProjectTypeCounts }) {
 			{items.map((item) => (
 				<span
 					key={item.label}
-					className="rounded-sm border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+					className="rounded-sm border bg-background px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
 				>
 					<span className="tabular-nums">{formatNumber(item.count)}</span> {item.label}
 				</span>

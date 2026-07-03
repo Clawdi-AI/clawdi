@@ -20,8 +20,9 @@ use them. When a PR and this document disagree, fix one of them.
    marketing whitespace. Tables and lists earn their vertical space.
 4. **Shadows are near-nonexistent.** `shadow-xs`/`shadow-sm` only (≤0.05
    tinted opacity). `shadow-md` and up are banned in app UI.
-5. **Sentence case everywhere.** No Title Case headers, no ALL-CAPS section
-   labels (exception: tiny `text-[11px] tracking-wider uppercase` meta labels).
+5. **Clear casing rules.** Page titles use Title Case. Dialog titles use
+   sentence case. ALL-CAPS is reserved for tiny `text-2xs tracking-wider`
+   meta labels.
 6. **No pills on containers.** Radius band is 6–14px (`rounded-sm` … `rounded-xl`).
    `rounded-full` is allowed only for avatars, status dots, and tiny count badges.
 7. **Never break the data.** Numbers, IDs, hashes, paths: `font-mono` or
@@ -80,24 +81,41 @@ in the Vite entry stylesheet.
 | Role | Classes |
 |---|---|
 | Page title | `text-xl font-semibold tracking-tight` |
-| Section heading | `text-sm font-medium` |
+| Section heading | `text-sm font-semibold` |
 | Body | `text-sm` (default), `leading-relaxed` for prose |
 | Meta/labels | `text-xs text-muted-foreground` |
+| Dense meta/count labels | `text-2xs` (11px), uppercase labels allowed |
+| Micro counters/axis labels | `text-3xs` (10px), only where space is constrained |
 | Data (counts, IDs, paths, tokens) | `font-mono text-xs` or `tabular-nums` |
 
 Large display headings (share pages, auth): `tracking-tight` (−0.02 to
 −0.04em), `leading-[1.1]`, `text-wrap: balance` (applied globally to h1–h4).
 Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
 
+### Component conventions
+
+- Card tiers: entity cards are `rounded-lg p-4`; hero cards are
+  `rounded-xl p-5`. Do not add new card tiers without updating this contract.
+- Hover idioms: clickable rows/cards use `hover:bg-muted/50`; hero-card lift
+  uses `hover:-translate-y-px hover:border-foreground/20`.
+- Tinted panels: subtle inset wells use `bg-muted/30`. Reserve
+  `bg-muted/50` for hover fills and selected/active fills.
+- Icon glyph scale: badge `size-3`, meta `size-3.5`, button `size-4`,
+  tile `size-5`.
+- Destructive actions: primary destructive actions use
+  `variant="destructive"`. Menu or inline rows use ghost treatment plus
+  `text-destructive`.
+- Semantic colors: status and source colors use semantic tokens (`success`,
+  `warning`, `destructive`, `info`) rather than raw palette utilities. Raw
+  amber/sky status classes are banned.
+- Font weights: card titles use `font-medium`; section headings use
+  `font-semibold`.
+
 ### Motion
 
 150–250ms, `transform`/`opacity` only. Buttons: hover background shift +
 `active:scale-[0.98]` + visible `focus-visible` ring. Respect
 `prefers-reduced-motion` (tw-animate-css handles this for its presets).
-
-### Charts
-
-`--chart-1..5`: orange ramp + warm grays. No purple/blue "AI gradient".
 
 ### Identity palette
 

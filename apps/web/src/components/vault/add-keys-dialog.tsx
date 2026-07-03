@@ -287,7 +287,7 @@ export function AddKeysDialog({
 						</Alert>
 					) : null}
 					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (
-						<div className="flex items-start gap-3 rounded-md border bg-muted/20 p-3">
+						<div className="flex items-start gap-3 rounded-md border bg-muted/30 p-3">
 							<Checkbox
 								id="add-keys-update-existing"
 								checked={updateExisting}

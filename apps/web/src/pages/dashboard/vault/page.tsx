@@ -301,7 +301,7 @@ function NewVaultCard() {
 			trigger={
 				<button
 					type="button"
-					className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+					className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
 				>
 					<span className="flex size-9 items-center justify-center rounded-lg bg-muted">
 						<Plus className="size-4" />

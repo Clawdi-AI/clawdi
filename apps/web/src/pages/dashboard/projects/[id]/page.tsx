@@ -600,7 +600,7 @@ function StatTile({ label, value, href }: { label: string; value?: number; href:
 		<a
 			href={href}
 			className={cn(
-				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/15 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
+				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
 				STAT_TILE_TINTS[label] ?? "bg-card",
 			)}
 		>
@@ -751,7 +751,7 @@ function SharedAccessPanel({
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={onLeave}
-							className="bg-destructive text-white hover:bg-destructive/90"
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
 							Leave Project
 						</AlertDialogAction>
@@ -916,7 +916,7 @@ function UseProjectWithAgentDialog({
 							</Select>
 						</div>
 
-						<div className="rounded-md border bg-muted/20 p-3 text-sm">
+						<div className="rounded-md border bg-muted/30 p-3 text-sm">
 							{projectIsHome ? (
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -1039,7 +1039,7 @@ function InstallSkillInProjectForm({
 	};
 
 	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/20 p-3">
+		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
 			<Label htmlFor={`project-skill-repo-${projectId}`} className="text-xs font-medium">
 				GitHub skill repository
 			</Label>
@@ -1104,7 +1104,7 @@ function CreateVaultInProjectForm({
 	});
 
 	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/20 p-3">
+		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
 			<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
 				Vault name
 			</Label>

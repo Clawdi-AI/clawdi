@@ -129,7 +129,7 @@ export function AddAgentSetup() {
 				</div>
 				<div className="mt-2 rounded-lg border bg-muted/30">
 					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-						<span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+						<span className="text-2xs uppercase tracking-wider text-muted-foreground">
 							One command
 						</span>
 						<Button
@@ -209,9 +209,7 @@ export function AddAgentSetup() {
 			<Disclosure summary="Prefer to let the AI set itself up? Send it this prompt">
 				<div className="rounded-lg border bg-muted/30">
 					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-						<span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-							Prompt
-						</span>
+						<span className="text-2xs uppercase tracking-wider text-muted-foreground">Prompt</span>
 						<CopyButton text={prompt} />
 					</div>
 					<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">{prompt}</pre>
