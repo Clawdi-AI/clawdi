@@ -1,8 +1,27 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 
 type Env = components["schemas"]["EnvironmentResponse"];
+const originalWindow = (globalThis as unknown as Record<string, unknown>).window;
+
+function setBrowserHostname(hostname: string) {
+	Object.defineProperty(globalThis, "window", {
+		value: { location: { hostname } },
+		configurable: true,
+	});
+}
+
+afterEach(() => {
+	if (originalWindow === undefined) {
+		Reflect.deleteProperty(globalThis, "window");
+		return;
+	}
+	Object.defineProperty(globalThis, "window", {
+		value: originalWindow,
+		configurable: true,
+	});
+});
 
 function env(overrides: Partial<Env> = {}): Env {
 	return {
@@ -51,6 +70,16 @@ describe("legacyConnectedAgentTiles", () => {
 
 		const [tile] = legacyConnectedAgentTiles([legacy], new Set([legacy.id]));
 		expect(tile.env).toBe(legacy);
+	});
+
+	it("carries the legacy dashboard href when the URL is available", () => {
+		setBrowserHostname("localhost");
+		const legacy = env({
+			id: "33333333-3333-4333-8333-333333333333",
+		});
+
+		const [tile] = legacyConnectedAgentTiles([legacy], new Set([legacy.id]));
+		expect(tile.manageHref).toBe("http://localhost:3000/dashboard");
 	});
 
 	it("excludes environments already claimed by a Cloud deploy-API tile", () => {
