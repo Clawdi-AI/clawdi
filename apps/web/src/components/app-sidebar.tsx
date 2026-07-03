@@ -814,7 +814,7 @@ function SortableAgentRailItem({
 		kind === "legacy"
 			? `Legacy · ${agentTextLabel(agent, { includeSource: false, ownershipKind: kind })}`
 			: agentTextLabel(agent, { includeSource: kind === "cloud", ownershipKind: kind });
-	const caption = displayMachineName(agentDisplayName(agent, { ownershipKind: kind }));
+	const caption = displayMachineName(agentDisplayName(agent));
 	const href = agentSectionHref(agent.id);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
@@ -1187,7 +1187,7 @@ function FocusHeader({
 		);
 	}
 
-	const name = agentDisplayName(activeAgent, { ownershipKind: kind });
+	const name = agentDisplayName(activeAgent);
 	const displayName = displayMachineName(name);
 	const meta = agentHeaderMeta(activeAgent, kind);
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");

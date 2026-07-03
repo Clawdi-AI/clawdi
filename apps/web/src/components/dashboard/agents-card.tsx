@@ -39,10 +39,6 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		id: env.id,
 		source: "self-managed" as const,
 		name: agentDisplayName(env),
-		displayName: env.display_name,
-		apiName: env.name ?? null,
-		defaultName: env.default_name ?? null,
-		machineName: env.machine_name,
 		avatarUrl: env.avatar_url,
 		sortOrder: env.sort_order,
 		agentType: env.agent_type,
@@ -64,10 +60,6 @@ export interface AgentTile {
 	id: string;
 	source: "self-managed" | "on-clawdi" | "legacy-hosted";
 	name: string;
-	displayName?: string | null;
-	apiName?: string | null;
-	defaultName?: string | null;
-	machineName?: string | null;
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
@@ -265,10 +257,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 			)}
 		>
 			<AgentLabel
-				name={tile.apiName ?? tile.name}
-				machineName={tile.machineName}
-				displayName={tile.displayName}
-				defaultName={tile.defaultName}
+				name={tile.name}
+				machineName={tile.name}
 				type={tile.agentType}
 				avatarUrl={tile.avatarUrl}
 				size="lg"

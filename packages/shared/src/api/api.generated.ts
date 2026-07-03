@@ -652,23 +652,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/agents/runtime-observed": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Agent Runtime Observed */
-        get: operations["list_agent_runtime_observed_v1_agents_runtime_observed_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/environments/runtime-observed": {
         parameters: {
             query?: never;
@@ -810,23 +793,6 @@ export interface paths {
          * @deprecated
          */
         delete: operations["clear_environment_avatar_v1_environments__environment_id__avatar_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/agents/{agent_id}/runtime-observed": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Agent Runtime Observed */
-        get: operations["get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2587,38 +2553,6 @@ export interface components {
             explicit_identity: boolean;
             /** Default Project Id */
             default_project_id: string;
-        };
-        /** AgentRuntimeObservedResponse */
-        AgentRuntimeObservedResponse: {
-            environment: components["schemas"]["AgentResponse"];
-            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
-            /** Observed */
-            observed?: {
-                [key: string]: unknown;
-            } | null;
-            health: components["schemas"]["RuntimeObservedHealthResponse"];
-            /**
-             * Provider Health
-             * @default []
-             */
-            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
-        };
-        /** AgentRuntimeObservedSummaryItemResponse */
-        AgentRuntimeObservedSummaryItemResponse: {
-            environment: components["schemas"]["AgentResponse"];
-            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
-            health: components["schemas"]["RuntimeObservedHealthResponse"];
-            /**
-             * Provider Health
-             * @default []
-             */
-            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
-        };
-        /** AgentRuntimeObservedSummaryResponse */
-        AgentRuntimeObservedSummaryResponse: {
-            counts: components["schemas"]["RuntimeObservedSummaryCountsResponse"];
-            /** Items */
-            items: components["schemas"]["AgentRuntimeObservedSummaryItemResponse"][];
         };
         /** AiProviderAuth */
         AiProviderAuth: {
@@ -7003,37 +6937,6 @@ export interface operations {
             };
         };
     };
-    list_agent_runtime_observed_v1_agents_runtime_observed_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentRuntimeObservedSummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_environment_runtime_observed_v1_environments_runtime_observed_get: {
         parameters: {
             query?: {
@@ -7454,37 +7357,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentRuntimeObservedResponse"];
                 };
             };
             /** @description Validation Error */

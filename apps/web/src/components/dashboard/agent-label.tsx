@@ -114,16 +114,6 @@ export type AgentIdentityInput = {
 };
 
 export type AgentIdentity = {
-	/** User-edited override stored on AgentEnvironment.display_name. */
-	customName: string | null;
-	/** Registration/default Agent name stored on AgentEnvironment.default_name. */
-	defaultName: string | null;
-	/** Compatibility alias from EnvironmentResponse.name. */
-	apiName: string | null;
-	/** Observed machine metadata, never the stable identity. */
-	machineName: string | null;
-	/** Friendly runtime label derived from AgentEnvironment.agent_type. */
-	runtimeName: string;
 	/** Canonical primary label for this agent in dashboard chrome. */
 	primaryLabel: string;
 	/** Runtime disambiguator when it is not already the primary label. */
@@ -139,20 +129,12 @@ export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
 	const primaryLabel = customName ?? defaultName ?? apiName ?? machineName ?? runtimeName;
 	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
 	return {
-		customName,
-		defaultName,
-		apiName,
-		machineName,
-		runtimeName,
 		primaryLabel,
 		secondaryLabel,
 	};
 }
 
-export function agentDisplayName(
-	env: AgentIdentityInput,
-	_options: { ownershipKind?: AgentOwnershipKind } = {},
-): string {
+export function agentDisplayName(env: AgentIdentityInput): string {
 	// Ownership affects badges, actions, and lifecycle chrome, not naming.
 	// The Cloud API AgentEnvironment is the identity record for every agent
 	// source, so all sources share the same display fallback.

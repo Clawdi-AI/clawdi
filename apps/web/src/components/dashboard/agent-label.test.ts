@@ -20,14 +20,11 @@ describe("cleanMachineName", () => {
 describe("agentDisplayName", () => {
 	test("uses the default Agent name before machine metadata", () => {
 		expect(
-			agentDisplayName(
-				{
-					default_name: "Research Agent",
-					machine_name: "Shared Hosted Compute",
-					agent_type: "openclaw",
-				},
-				{ ownershipKind: "cloud" },
-			),
+			agentDisplayName({
+				default_name: "Research Agent",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "openclaw",
+			}),
 		).toBe("Research Agent");
 	});
 
@@ -39,27 +36,21 @@ describe("agentDisplayName", () => {
 
 	test("uses the registered machine name as the default Legacy agent name", () => {
 		expect(
-			agentDisplayName(
-				{
-					machine_name: "v1-hosted-runtime",
-					agent_type: "hermes",
-				},
-				{ ownershipKind: "legacy" },
-			),
+			agentDisplayName({
+				machine_name: "v1-hosted-runtime",
+				agent_type: "hermes",
+			}),
 		).toBe("v1-hosted-runtime");
 	});
 
 	test("prefers user display name for every source", () => {
 		expect(
-			agentDisplayName(
-				{
-					display_name: "Launch runner",
-					default_name: "Hermes Agent",
-					machine_name: "Shared Hosted Compute",
-					agent_type: "hermes",
-				},
-				{ ownershipKind: "legacy" },
-			),
+			agentDisplayName({
+				display_name: "Launch runner",
+				default_name: "Hermes Agent",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "hermes",
+			}),
 		).toBe("Launch runner");
 	});
 

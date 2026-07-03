@@ -167,18 +167,12 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		const settingsHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
 			: agentSectionHref(d.id, "settings");
-		const name = matchedEnv
-			? agentDisplayName(matchedEnv, { ownershipKind: "cloud" })
-			: runtimeDisplayName(runtime);
+		const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 		const contextLabel = slug !== name ? slug : null;
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
 			name,
-			displayName: matchedEnv?.display_name ?? null,
-			apiName: matchedEnv?.name ?? null,
-			defaultName: matchedEnv?.default_name ?? null,
-			machineName: matchedEnv?.machine_name ?? null,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,

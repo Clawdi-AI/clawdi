@@ -274,14 +274,6 @@ class RuntimeObservedResponse(BaseModel):
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 
 
-class AgentRuntimeObservedResponse(BaseModel):
-    environment: AgentResponse
-    desired: RuntimeObservedDesiredResponse | None = None
-    observed: dict[str, Any] | None = None
-    health: RuntimeObservedHealthResponse
-    provider_health: list[RuntimeObservedProviderHealthResponse] = []
-
-
 class RuntimeObservedSummaryCountsResponse(BaseModel):
     ok: int = 0
     error: int = 0
@@ -297,21 +289,9 @@ class RuntimeObservedSummaryItemResponse(BaseModel):
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 
 
-class AgentRuntimeObservedSummaryItemResponse(BaseModel):
-    environment: AgentResponse
-    desired: RuntimeObservedDesiredResponse | None = None
-    health: RuntimeObservedHealthResponse
-    provider_health: list[RuntimeObservedProviderHealthResponse] = []
-
-
 class RuntimeObservedSummaryResponse(BaseModel):
     counts: RuntimeObservedSummaryCountsResponse
     items: list[RuntimeObservedSummaryItemResponse]
-
-
-class AgentRuntimeObservedSummaryResponse(BaseModel):
-    counts: RuntimeObservedSummaryCountsResponse
-    items: list[AgentRuntimeObservedSummaryItemResponse]
 
 
 class SessionBatchResponse(BaseModel):

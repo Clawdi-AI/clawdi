@@ -59,8 +59,7 @@ Two auth paths hit the same backend:
 
 `/v1/agents` is the canonical first-party API for Agent identity. New dashboard
 and CLI code registers, lists, updates, reorders, disconnects, uploads avatars,
-reads runtime-observed state, and posts sync heartbeats through `/v1/agents`
-using `agent_id` path parameters.
+and posts sync heartbeats through `/v1/agents` using `agent_id` path parameters.
 
 `/v1/environments` and legacy `/api/*` routes are compatibility aliases. They
 keep all pre-existing request fields, response fields, request/response shapes,

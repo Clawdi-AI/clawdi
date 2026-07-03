@@ -39,9 +39,6 @@ from app.schemas.common import Paginated
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
-    AgentRuntimeObservedResponse,
-    AgentRuntimeObservedSummaryItemResponse,
-    AgentRuntimeObservedSummaryResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentReorderRequest,
@@ -370,13 +367,16 @@ async def _get_agent_identity(
     return payload
 
 
-async def _list_runtime_observed(
-    limit: int,
-    auth: AuthContext,
-    db: AsyncSession,
-    *,
-    agent_response: bool,
-) -> AgentRuntimeObservedSummaryResponse | RuntimeObservedSummaryResponse:
+@router.get(
+    "/environments/runtime-observed",
+    response_model=RuntimeObservedSummaryResponse,
+    deprecated=True,
+)
+async def list_environment_runtime_observed(
+    limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedSummaryResponse:
     bound_env = _bound_env_id(auth)
     filters = [AgentEnvironment.user_id == auth.user_id]
     if bound_env is not None:
@@ -412,50 +412,20 @@ async def _list_runtime_observed(
         )
         states_by_env = {state.environment_id: state for state in states}
     counts = RuntimeObservedSummaryCountsResponse()
-    items: list[AgentRuntimeObservedSummaryItemResponse] | list[RuntimeObservedSummaryItemResponse]
-    items = []
+    items: list[RuntimeObservedSummaryItemResponse] = []
     for env in envs:
         state = states_by_env.get(env.id)
         health = _runtime_observed_health(env, state)
         setattr(counts, health.status, getattr(counts, health.status) + 1)
-        item_cls = (
-            AgentRuntimeObservedSummaryItemResponse
-            if agent_response
-            else RuntimeObservedSummaryItemResponse
-        )
         items.append(
-            item_cls(
-                environment=_identity_response(env, state, agent_response=agent_response),
+            RuntimeObservedSummaryItemResponse(
+                environment=_env_to_response(env, state),
                 desired=_runtime_observed_desired(state) if state is not None else None,
                 health=health,
                 provider_health=_runtime_observed_provider_health(state),
             )
         )
-    if agent_response:
-        return AgentRuntimeObservedSummaryResponse(counts=counts, items=items)
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
-
-
-@router.get("/agents/runtime-observed", response_model=AgentRuntimeObservedSummaryResponse)
-async def list_agent_runtime_observed(
-    limit: int = Query(default=100, ge=1, le=500),
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-) -> AgentRuntimeObservedSummaryResponse:
-    return await _list_runtime_observed(limit, auth, db, agent_response=True)
-
-
-@router.get(
-    "/environments/runtime-observed",
-    response_model=RuntimeObservedSummaryResponse,
-    deprecated=True,
-)
-async def list_environment_runtime_observed(
-    limit: int = Query(default=100, ge=1, le=500),
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeObservedSummaryResponse:
-    return await _list_runtime_observed(limit, auth, db, agent_response=False)
 
 
 async def _reorder_agent_identities(
@@ -766,52 +736,6 @@ async def upload_environment_avatar(
     return await _upload_agent_avatar(environment_id, file, auth, db, agent_response=False)
 
 
-async def _get_runtime_observed(
-    agent_id: UUID,
-    auth: AuthContext,
-    db: AsyncSession,
-    *,
-    agent_response: bool,
-) -> AgentRuntimeObservedResponse | RuntimeObservedResponse:
-    bound_env = _bound_env_id(auth)
-    if bound_env is not None and agent_id != bound_env:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-
-    env = (
-        await db.execute(
-            select(AgentEnvironment).where(
-                AgentEnvironment.id == agent_id,
-                AgentEnvironment.user_id == auth.user_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if env is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    response_cls = AgentRuntimeObservedResponse if agent_response else RuntimeObservedResponse
-    return response_cls(
-        environment=_identity_response(env, state, agent_response=agent_response),
-        desired=_runtime_observed_desired(state) if state is not None else None,
-        observed=state.observed if state is not None else None,
-        health=_runtime_observed_health(env, state),
-        provider_health=_runtime_observed_provider_health(state),
-    )
-
-
-@router.get("/agents/{agent_id}/runtime-observed", response_model=AgentRuntimeObservedResponse)
-async def get_agent_runtime_observed(
-    agent_id: UUID,
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-) -> AgentRuntimeObservedResponse:
-    return await _get_runtime_observed(agent_id, auth, db, agent_response=True)
-
-
 @router.get(
     "/environments/{environment_id}/runtime-observed",
     response_model=RuntimeObservedResponse,
@@ -822,7 +746,33 @@ async def get_environment_runtime_observed(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedResponse:
-    return await _get_runtime_observed(environment_id, auth, db, agent_response=False)
+    bound_env = _bound_env_id(auth)
+    if bound_env is not None and environment_id != bound_env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+
+    state = (
+        await db.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+        )
+    ).scalar_one_or_none()
+    return RuntimeObservedResponse(
+        environment=_env_to_response(env, state),
+        desired=_runtime_observed_desired(state) if state is not None else None,
+        observed=state.observed if state is not None else None,
+        health=_runtime_observed_health(env, state),
+        provider_health=_runtime_observed_provider_health(state),
+    )
 
 
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
@@ -861,7 +811,9 @@ def _env_to_response(
 def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
     return AgentResponse(
         id=str(env.id),
-        name=_agent_name(env),
+        name=_agent_name_from_fields(
+            env.display_name, env.default_name, env.machine_name, env.agent_type
+        ),
         default_name=env.default_name,
         machine_name=env.machine_name,
         display_name=env.display_name,
@@ -894,12 +846,6 @@ def _identity_response(
     if agent_response:
         return _agent_to_response(env)
     return _env_to_response(env, hosted_state)
-
-
-def _agent_name(env: AgentEnvironment) -> str:
-    return _agent_name_from_fields(
-        env.display_name, env.default_name, env.machine_name, env.agent_type
-    )
 
 
 def _agent_name_from_fields(

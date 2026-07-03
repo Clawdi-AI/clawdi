@@ -70,59 +70,6 @@ def _assert_agent_list_response_matches_environment(
     assert all(not _DEPRECATED_HOSTED_FIELDS.intersection(item) for item in agent_response.json())
 
 
-def _assert_agent_runtime_response_matches_environment(
-    agent_response: httpx.Response,
-    environment_response: httpx.Response,
-) -> None:
-    assert agent_response.status_code == environment_response.status_code
-    if agent_response.status_code != 200:
-        assert agent_response.content == environment_response.content
-        return
-    agent_body = agent_response.json()
-    environment_body = environment_response.json()
-    agent_environment = agent_body["environment"]
-    environment_environment = environment_body["environment"]
-    assert not _DEPRECATED_HOSTED_FIELDS.intersection(agent_environment)
-    assert agent_environment == {
-        key: value
-        for key, value in environment_environment.items()
-        if key not in _DEPRECATED_HOSTED_FIELDS
-    }
-    assert {key: value for key, value in agent_body.items() if key != "environment"} == {
-        key: value for key, value in environment_body.items() if key != "environment"
-    }
-
-
-def _assert_agent_runtime_summary_matches_environment(
-    agent_response: httpx.Response,
-    environment_response: httpx.Response,
-) -> None:
-    assert agent_response.status_code == environment_response.status_code
-    if agent_response.status_code != 200:
-        assert agent_response.content == environment_response.content
-        return
-    agent_body = agent_response.json()
-    environment_body = environment_response.json()
-    assert agent_body["counts"] == environment_body["counts"]
-    assert len(agent_body["items"]) == len(environment_body["items"])
-    for agent_item, environment_item in zip(
-        agent_body["items"],
-        environment_body["items"],
-        strict=True,
-    ):
-        agent_environment = agent_item["environment"]
-        environment_environment = environment_item["environment"]
-        assert not _DEPRECATED_HOSTED_FIELDS.intersection(agent_environment)
-        assert agent_environment == {
-            key: value
-            for key, value in environment_environment.items()
-            if key not in _DEPRECATED_HOSTED_FIELDS
-        }
-        assert {key: value for key, value in agent_item.items() if key != "environment"} == {
-            key: value for key, value in environment_item.items() if key != "environment"
-        }
-
-
 @pytest.mark.asyncio
 async def test_agent_and_environment_routes_share_non_deprecated_payloads(
     client: httpx.AsyncClient,
@@ -191,15 +138,6 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
         json={"display_name": "Agent Alias"},
     )
     _assert_agent_response_matches_environment(patched_agent, patched_environment)
-
-    _assert_agent_runtime_summary_matches_environment(
-        await client.get("/v1/agents/runtime-observed"),
-        await client.get("/v1/environments/runtime-observed"),
-    )
-    _assert_agent_runtime_response_matches_environment(
-        await client.get(f"/v1/agents/{agent_id}/runtime-observed"),
-        await client.get(f"/v1/environments/{agent_id}/runtime-observed"),
-    )
 
     cleared_agent = await client.delete(f"/v1/agents/{agent_id}/avatar")
     cleared_environment = await client.delete(f"/v1/environments/{agent_id}/avatar")

@@ -221,7 +221,7 @@ export function ConnectedAgentDetail({
 	});
 
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
-	const agentTitle = agent ? agentDisplayName(agent, { ownershipKind }) : null;
+	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (

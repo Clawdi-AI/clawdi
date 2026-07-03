@@ -198,8 +198,8 @@ export function AgentSettingsPanel({
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = agentDisplayName(agent, { ownershipKind });
-	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null }, { ownershipKind });
+	const displayName = agentDisplayName(agent);
+	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;

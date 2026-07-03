@@ -263,9 +263,7 @@ export function HostedAgentDetail({
 			),
 		enabled: isCloudEnvId(environmentId),
 	});
-	const name = agent
-		? agentDisplayName(agent, { ownershipKind: "cloud" })
-		: deploymentDisplayName(deployment.name);
+	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";

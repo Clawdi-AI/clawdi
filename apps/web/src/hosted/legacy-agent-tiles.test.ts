@@ -61,8 +61,6 @@ describe("legacyConnectedAgentTiles", () => {
 				id: legacy.id,
 				source: "legacy-hosted",
 				name: "v1-hosted-runtime",
-				defaultName: "v1-hosted-runtime",
-				machineName: "v1-hosted-runtime",
 				href: `/agents/${legacy.id}`,
 			}),
 		]);

@@ -54,9 +54,6 @@ describe("selfManagedAgentTiles", () => {
 
 		expect(tile).toMatchObject({
 			name: "Launch runner",
-			displayName: "Launch runner",
-			defaultName: "Research Agent",
-			machineName: "shared-host",
 		});
 		expect("runtimeLabel" in tile).toBe(false);
 	});
