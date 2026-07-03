@@ -346,8 +346,9 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 								<div className="min-w-0">
 									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-									<div className="text-xs capitalize text-muted-foreground">
-										{link.status} · linked {relativeTime(link.created_at)}
+									<div className="text-xs text-muted-foreground">
+										<span className="capitalize">{link.status}</span> · linked{" "}
+										{relativeTime(link.created_at)}
 									</div>
 								</div>
 								<div className="flex shrink-0 flex-wrap items-center gap-1.5">
