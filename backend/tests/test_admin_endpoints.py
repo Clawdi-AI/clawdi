@@ -767,6 +767,59 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
 
 
 @pytest.mark.asyncio
+async def test_admin_register_env_explicit_agent_id_is_idempotent(
+    admin_client, db_session, seed_user
+):
+    """Stable agent ids remain the identity while machine fields refresh."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    agent_id = uuid.uuid4()
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "environment_id": str(agent_id),
+        "machine_id": "hosted-agent-initial",
+        "machine_name": "hosted-pod-initial",
+        "agent_type": "codex",
+        "agent_version": "1.0.0",
+        "os_name": "linux",
+    }
+    first = await admin_client.post("/v1/admin/environments", headers=_AUTH, json=body)
+    second = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            **body,
+            "machine_id": "hosted-agent-moved",
+            "machine_name": "hosted-pod-moved",
+            "agent_version": "1.1.0",
+            "os_name": "darwin",
+        },
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["id"] == str(agent_id)
+    assert second.json()["id"] == str(agent_id)
+
+    envs = (
+        (await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id)))
+        .scalars()
+        .all()
+    )
+    assert len(envs) == 1
+    env = envs[0]
+    assert env.machine_id == "hosted-agent-moved"
+    assert env.machine_name == "hosted-pod-moved"
+    assert env.agent_version == "1.1.0"
+    assert env.os == "darwin"
+    assert env.registration_key is None
+
+
+@pytest.mark.asyncio
 async def test_admin_register_env_explicit_ids_allow_same_machine_metadata(
     admin_client, db_session, seed_user
 ):
@@ -866,7 +919,7 @@ async def test_admin_register_env_explicit_id_rejects_cross_tenant_id(
         env = (
             await db_session.execute(
                 select(AgentEnvironment).where(AgentEnvironment.id == agent_id)
-        )
+            )
         ).scalar_one()
         assert env.user_id == other_id
     finally:

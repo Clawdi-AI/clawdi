@@ -78,6 +78,7 @@ async def register_agent_environment(
                 machine_name=machine_name,
                 agent_type=agent_type,
                 agent_version=agent_version,
+                os_name=os_name,
                 registration_key=registration_key,
             )
             await db.commit()
@@ -102,6 +103,7 @@ async def register_agent_environment(
                 machine_name=machine_name,
                 agent_type=agent_type,
                 agent_version=agent_version,
+                os_name=os_name,
                 registration_key=registration_key,
             )
             await db.commit()
@@ -138,9 +140,32 @@ async def register_agent_environment(
     except IntegrityError:
         await db.rollback()
         if environment_id is not None:
-            raise AgentEnvironmentIdConflict(
-                f"environment {environment_id} could not be registered"
-            ) from None
+            winner = (
+                await db.execute(
+                    select(AgentEnvironment).where(AgentEnvironment.id == environment_id)
+                )
+            ).scalar_one_or_none()
+            if winner is None:
+                raise AgentEnvironmentIdConflict(
+                    f"environment {environment_id} could not be registered"
+                ) from None
+            if winner.user_id != user_id:
+                raise AgentEnvironmentIdConflict(
+                    f"environment {environment_id} is owned by another user"
+                )
+            await _refresh_agent_environment(
+                db,
+                winner,
+                user_id=user_id,
+                machine_id=machine_id,
+                machine_name=machine_name,
+                agent_type=agent_type,
+                agent_version=agent_version,
+                os_name=os_name,
+                registration_key=registration_key,
+            )
+            await db.commit()
+            return AgentEnvironmentRegistration(env=winner, created=False)
         if registration_key is None:
             raise
         winner = (
@@ -165,12 +190,14 @@ async def _refresh_agent_environment(
     machine_name: str,
     agent_type: str,
     agent_version: str | None,
+    os_name: str,
     registration_key: str | None,
 ) -> None:
     env.machine_id = machine_id
     env.machine_name = machine_name
     env.agent_type = agent_type
     env.agent_version = agent_version
+    env.os = os_name
     env.last_seen_at = datetime.now(UTC)
     env.registration_key = registration_key
     if env.default_project_id is None:

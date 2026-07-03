@@ -172,9 +172,8 @@ async def register_environment(
     # create *new* envs (and new env-local projects) would let a
     # leaked key expand the account's footprint — beyond the project
     # of the binding. Allow the idempotent re-register of the same
-    # env (machine_id / agent_type match the one the key is bound
-    # to) so daemons can survive `clawdi setup` re-runs without
-    # rotating keys, but reject everything else with 403.
+    # registration key so daemons can survive `clawdi setup` re-runs
+    # without rotating keys, but reject everything else with 403.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         bound = auth.api_key.environment_id
         # Defense-in-depth: a key bound to env X must also belong to
