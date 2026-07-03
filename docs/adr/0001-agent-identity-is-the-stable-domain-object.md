@@ -42,6 +42,11 @@ In code today:
   metadata. They are never identity.
 - `display_name` is the user's dashboard override.
 - `default_name` is the caller/runtime-provided default Agent name.
+- User-facing labels use one fallback chain across Cloud, legacy, and
+  connected agents: `display_name -> default_name -> name -> machine_name ->
+  agent_type`. `name` is a compatibility response alias, not a separate
+  identity source. Ownership controls badges, available actions, and lifecycle
+  chrome only; it must not change the primary label fallback.
 - `registration_key` is only a legacy/self-managed setup idempotency key. The
   current self-managed registration key is machine-derived from `machine_id`
   and `agent_type`.

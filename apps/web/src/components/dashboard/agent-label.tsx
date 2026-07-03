@@ -12,23 +12,40 @@ import { cn } from "@/lib/utils";
  * the parent layout is `text` rather than `flex column` (e.g.
  * the session detail header where icon+name+type sits next to
  * project path and timestamp on one line). Wraps the same
- * cleanMachineName + agentTypeLabel logic the block-form
- * `<AgentLabel>` uses, so the inline and block variants stay
- * in lockstep. */
+ * `agentIdentity` fallback as the block-form `<AgentLabel>`,
+ * so the inline and block variants stay in lockstep. */
 export function AgentInline({
+	name,
+	displayName,
+	defaultName,
 	machineName,
 	type,
 	className,
 }: {
+	name?: string | null | undefined;
+	displayName?: string | null | undefined;
+	defaultName?: string | null | undefined;
 	machineName: string | null | undefined;
 	type: string | null | undefined;
 	className?: string;
 }) {
-	const machine = cleanMachineName(machineName);
-	const typeLabel = agentTypeLabel(type);
-	const title = machine || typeLabel;
-	const subtitle = machine && type ? typeLabel : null;
-	if (!machine && !type) return null;
+	const hasIdentity = Boolean(
+		cleanMachineName(displayName) ||
+			cleanMachineName(defaultName) ||
+			cleanMachineName(name) ||
+			cleanMachineName(machineName) ||
+			type,
+	);
+	const identity = agentIdentity({
+		name,
+		display_name: displayName,
+		default_name: defaultName,
+		machine_name: machineName,
+		agent_type: type,
+	});
+	const title = identity.primaryLabel;
+	const subtitle = identity.secondaryLabel;
+	if (!hasIdentity) return null;
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
 			<AgentIcon agent={type} size="xs" />
@@ -52,9 +69,10 @@ export function AgentInline({
  *   primary="machine"  (default — every list and the detail hero)
  *     [icon] Research Agent
  *            Hermes · meta…
- *     The identity label is the H1: display override, default Agent
- *     name, machine metadata, then runtime fallback. agent_type drops
- *     to the subtitle where it disambiguates similar names.
+ *     The canonical agent name is the H1: display override,
+ *     default Agent name, API name alias, machine metadata, then
+ *     runtime fallback. agent_type drops to the subtitle where it
+ *     disambiguates sibling runtimes.
  *
  *   primary="type"
  *     [icon] Hermes
@@ -95,24 +113,34 @@ export type AgentIdentityInput = {
 };
 
 export type AgentIdentity = {
+	/** User-edited override stored on AgentEnvironment.display_name. */
 	customName: string | null;
+	/** Registration/default Agent name stored on AgentEnvironment.default_name. */
 	defaultName: string | null;
+	/** Compatibility alias from EnvironmentResponse.name. */
+	apiName: string | null;
+	/** Observed machine metadata, never the stable identity. */
 	machineName: string | null;
+	/** Friendly runtime label derived from AgentEnvironment.agent_type. */
 	runtimeName: string;
+	/** Canonical primary label for this agent in dashboard chrome. */
 	primaryLabel: string;
+	/** Runtime disambiguator when it is not already the primary label. */
 	secondaryLabel: string | null;
 };
 
 export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
 	const customName = cleanMachineName(env.display_name) || null;
-	const defaultName = cleanMachineName(env.default_name) || cleanMachineName(env.name) || null;
+	const defaultName = cleanMachineName(env.default_name) || null;
+	const apiName = cleanMachineName(env.name) || null;
 	const machineName = cleanMachineName(env.machine_name) || null;
 	const runtimeName = agentTypeLabel(env.agent_type);
-	const primaryLabel = customName ?? defaultName ?? machineName ?? runtimeName;
+	const primaryLabel = customName ?? defaultName ?? apiName ?? machineName ?? runtimeName;
 	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
 	return {
 		customName,
 		defaultName,
+		apiName,
 		machineName,
 		runtimeName,
 		primaryLabel,
@@ -124,6 +152,9 @@ export function agentDisplayName(
 	env: AgentIdentityInput,
 	_options: { ownershipKind?: AgentOwnershipKind } = {},
 ): string {
+	// Ownership affects badges, actions, and lifecycle chrome, not naming.
+	// The Cloud API AgentEnvironment is the identity record for every agent
+	// source, so all sources share the same display fallback.
 	return agentIdentity(env).primaryLabel;
 }
 
@@ -328,6 +359,7 @@ const SUBTITLE_GAP: Record<AgentIconSize, string> = {
 };
 
 export function AgentLabel({
+	name,
 	machineName,
 	displayName,
 	defaultName,
@@ -339,6 +371,7 @@ export function AgentLabel({
 	titleAdornment,
 	className,
 }: {
+	name?: string | null | undefined;
 	machineName: string | null | undefined;
 	displayName?: string | null | undefined;
 	defaultName?: string | null | undefined;
@@ -346,7 +379,7 @@ export function AgentLabel({
 	avatarUrl?: string | null | undefined;
 	size?: AgentIconSize;
 	/** Which field is the H1 line. Defaults to "machine": display
-	 * override, then default Agent name, then machine metadata, then runtime. */
+	 * override, default Agent name, API name alias, machine metadata, then runtime. */
 	primary?: "type" | "machine";
 	/** Inline meta items rendered in the subtitle row after the
 	 * primary disambiguator (e.g. last-seen, DaemonStatusBadge).
@@ -364,6 +397,7 @@ export function AgentLabel({
 }) {
 	const typeLabel = agentTypeLabel(type);
 	const identity = agentIdentity({
+		name,
 		display_name: displayName,
 		default_name: defaultName,
 		machine_name: machineName,

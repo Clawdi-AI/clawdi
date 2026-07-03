@@ -69,6 +69,9 @@ describe("legacyConnectedAgentTiles", () => {
 		expect("runtimeLabel" in legacyConnectedAgentTiles([legacy], new Set([legacy.id]))[0]).toBe(
 			false,
 		);
+		expect(
+			legacyConnectedAgentTiles([legacy], new Set([legacy.id]))[0]?.contextLabel,
+		).toBeUndefined();
 	});
 
 	it("carries env so the sync badge renders (with the hosted copy variant)", () => {

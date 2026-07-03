@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
+	agentTextLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -36,6 +37,18 @@ describe("agentDisplayName", () => {
 		);
 	});
 
+	test("uses the registered machine name as the default Legacy agent name", () => {
+		expect(
+			agentDisplayName(
+				{
+					machine_name: "v1-hosted-runtime",
+					agent_type: "hermes",
+				},
+				{ ownershipKind: "legacy" },
+			),
+		).toBe("v1-hosted-runtime");
+	});
+
 	test("prefers user display name for every source", () => {
 		expect(
 			agentDisplayName(
@@ -58,6 +71,19 @@ describe("agentDisplayName", () => {
 				agent_type: "codex",
 			}),
 		).toBe("Hosted Codex");
+	});
+
+	test("keeps runtime as a secondary label when the primary name is not the runtime", () => {
+		expect(
+			agentTextLabel(
+				{
+					default_name: "Research Agent",
+					machine_name: "Research Agent",
+					agent_type: "codex",
+				},
+				{ ownershipKind: "cloud" },
+			),
+		).toBe("Cloud · Research Agent · Codex");
 	});
 });
 

@@ -242,6 +242,9 @@ const AGENT_SECTION_TINTS = {
 	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
+const LEGACY_DASHBOARD_TINT =
+	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+
 type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
 
 type SidebarNavItem = {
@@ -498,16 +501,16 @@ function AgentFocusSections({
 	onNavigate?: () => void;
 }) {
 	const kind = useAgentChromeKind(agent);
-	const legacyDashboardUrl = kind === "legacy" ? legacyHostedDashboardUrl() : null;
-	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardUrl
+	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
 		? [
 				{
 					id: "legacy-dashboard",
 					label: "Legacy dashboard",
-					href: legacyDashboardUrl,
+					href: legacyDashboardHref,
 					icon: History,
-					tint: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200",
-					tooltip: "Open the legacy hosted dashboard",
+					tint: LEGACY_DASHBOARD_TINT,
+					tooltip: "Open legacy dashboard",
 					active: false,
 					external: true,
 				},

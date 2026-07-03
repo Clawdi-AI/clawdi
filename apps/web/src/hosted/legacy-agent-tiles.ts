@@ -39,8 +39,9 @@ export function legacyConnectedAgentTiles(
 		.map((env) => ({
 			id: env.id,
 			source: "legacy-hosted" as const,
-			name: agentDisplayName(env),
+			name: agentDisplayName(env, { ownershipKind: "legacy" }),
 			displayName: env.display_name,
+			apiName: env.name ?? null,
 			defaultName: env.default_name ?? null,
 			machineName: env.machine_name,
 			avatarUrl: env.avatar_url,

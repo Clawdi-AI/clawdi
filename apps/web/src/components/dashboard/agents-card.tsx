@@ -29,23 +29,6 @@ export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
 }
 
-/** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
-export function formatRuntime(agentType: string): string {
-	switch (agentType) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-		case "claude_code":
-		case "claude-code":
-			return "Claude Code";
-		case "codex":
-			return "Codex";
-		default:
-			return agentType;
-	}
-}
-
 /**
  * Build self-managed AgentTiles from cloud-api environments. Shared by the
  * Overview grid and the `/agents` index so the tile shape stays identical
@@ -57,6 +40,7 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		source: "self-managed" as const,
 		name: agentDisplayName(env),
 		displayName: env.display_name,
+		apiName: env.name ?? null,
 		defaultName: env.default_name ?? null,
 		machineName: env.machine_name,
 		avatarUrl: env.avatar_url,
@@ -81,12 +65,13 @@ export interface AgentTile {
 	source: "self-managed" | "on-clawdi" | "legacy-hosted";
 	name: string;
 	displayName?: string | null;
+	apiName?: string | null;
 	defaultName?: string | null;
 	machineName?: string | null;
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Optional context like a hosted deployment slug. Not part of identity. */
+	/** Optional deployment/source context shown after the runtime disambiguator. */
 	contextLabel?: string | null;
 	/** "Synced 2m ago", "Running", "Provisioning…" — already humanized. */
 	statusLabel: string;
@@ -280,7 +265,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 			)}
 		>
 			<AgentLabel
-				machineName={tile.machineName ?? tile.name}
+				name={tile.apiName ?? tile.name}
+				machineName={tile.machineName}
 				displayName={tile.displayName}
 				defaultName={tile.defaultName}
 				type={tile.agentType}

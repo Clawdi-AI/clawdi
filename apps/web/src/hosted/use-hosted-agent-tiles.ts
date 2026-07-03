@@ -167,22 +167,22 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		const settingsHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
 			: agentSectionHref(d.id, "settings");
+		const name = matchedEnv
+			? agentDisplayName(matchedEnv, { ownershipKind: "cloud" })
+			: runtimeDisplayName(runtime);
+		const contextLabel = slug !== name ? slug : null;
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
-			name: matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime),
+			name,
 			displayName: matchedEnv?.display_name ?? null,
-			defaultName: matchedEnv
-				? (matchedEnv.default_name ?? matchedEnv.name ?? null)
-				: runtimeDisplayName(runtime),
+			apiName: matchedEnv?.name ?? null,
+			defaultName: matchedEnv?.default_name ?? null,
 			machineName: matchedEnv?.machine_name ?? null,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
-			// Deployment slug as the secondary line lets users disambiguate
-			// when they have more than one hosted deployment. Mode info ("Daemon") is
-			// implied by the "Clawdi" badge — every hosted runtime is daemon.
-			contextLabel: slug,
+			contextLabel,
 			statusLabel,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			// `?source=on-clawdi` is the breadcrumb the agent detail page
