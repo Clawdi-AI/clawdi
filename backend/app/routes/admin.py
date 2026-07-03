@@ -27,7 +27,6 @@ can land in this file under the same auth dep.
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -44,7 +43,6 @@ from app.models.channel import (
     ChannelAccount,
 )
 from app.models.hosted_runtime import HostedRuntimeState
-from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import (
@@ -64,6 +62,11 @@ from app.schemas.admin import (
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
 from app.schemas.session import EnvironmentCreatedResponse
+from app.services.agent_environments import (
+    AgentEnvironmentIdConflict,
+    local_machine_registration_key,
+    register_agent_environment,
+)
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
 from app.services.channel_config import validate_channel_account_config_urls
@@ -536,101 +539,45 @@ async def admin_register_environment(
     api_key request; this admin variant is gated by the shared
     `X-Admin-Key` header instead.
 
-    Idempotent: re-registering (target_clerk_id, machine_id,
-    agent_type) returns the existing env id and refreshes
-    `machine_name` / `agent_version` / `last_seen_at`. Concurrent
-    callers race-safe via `with_for_update` on the lookup, mirror-
-    ing the heal logic in `register_environment` for the
-    user-facing endpoint.
+    If `environment_id` is supplied, it is the stable agent id and
+    machine metadata is refreshed in place. If omitted, legacy callers
+    remain idempotent through the local machine registration key.
 
     User row is lazy-created if absent — see `_resolve_or_create_user`.
     """
     target = await _resolve_or_create_user(db, body.target_clerk_id)
-
-    # FOR UPDATE row-locks the env so concurrent admin-registers
-    # for the same (user, machine) serialize through the heal
-    # branch — without this both writers would see
-    # default_project_id IS NULL and create competing projects.
-    existing = (
-        await db.execute(
-            select(AgentEnvironment)
-            .where(
-                AgentEnvironment.user_id == target.id,
-                AgentEnvironment.machine_id == body.machine_id,
-                AgentEnvironment.agent_type == body.agent_type,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-
-    if existing is not None:
-        existing.machine_name = body.machine_name
-        existing.agent_version = body.agent_version
-        existing.last_seen_at = datetime.now(UTC)
-        # Heal envs missing default_project_id (older rows or
-        # interrupted creates) — same logic the user-facing route
-        # runs.
-        if existing.default_project_id is None:
-            healing_project = Project(
-                user_id=target.id,
-                name=f"{body.machine_name} ({body.agent_type})",
-                slug=f"env-{uuid.uuid4().hex[:12]}",
-                kind=PROJECT_KIND_ENVIRONMENT,
-                origin_environment_id=existing.id,
-            )
-            db.add(healing_project)
-            await db.flush()
-            existing.default_project_id = healing_project.id
-        await db.commit()
-        return EnvironmentCreatedResponse(id=str(existing.id))
-
-    # Create project first (no origin_environment_id yet — env doesn't
-    # exist), then env pointing at the project, then back-fill
-    # project.origin_environment_id. Mirror of register_environment's
-    # mutual-FK insertion order.
-    project = Project(
-        user_id=target.id,
-        name=f"{body.machine_name} ({body.agent_type})",
-        slug=f"env-{uuid.uuid4().hex[:12]}",
-        kind=PROJECT_KIND_ENVIRONMENT,
-    )
-    db.add(project)
     try:
-        await db.flush()
-        env = AgentEnvironment(
+        registered = await register_agent_environment(
+            db,
             user_id=target.id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
-            os=body.os_name,
-            last_seen_at=datetime.now(UTC),
+            os_name=body.os_name,
             sort_order=await _next_environment_sort_order(db, target.id),
-            default_project_id=project.id,
+            environment_id=body.environment_id,
+            registration_key=None
+            if body.environment_id is not None
+            else local_machine_registration_key(body.machine_id, body.agent_type),
         )
-        db.add(env)
-        await db.flush()
-        project.origin_environment_id = env.id
-        await db.commit()
-        await db.refresh(env)
-    except IntegrityError:
-        # Race: another admin-register won. Re-query.
+        env = registered.env
+    except AgentEnvironmentIdConflict as exc:
         await db.rollback()
-        env = (
-            await db.execute(
-                select(AgentEnvironment).where(
-                    AgentEnvironment.user_id == target.id,
-                    AgentEnvironment.machine_id == body.machine_id,
-                    AgentEnvironment.agent_type == body.agent_type,
-                )
-            )
-        ).scalar_one()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "concurrent registration race; retry the request",
+        ) from None
 
     logger.info(
-        "admin_environment_registered target_clerk_id=%s env_id=%s machine_id=%s",
+        "admin_environment_registered target_clerk_id=%s env_id=%s machine_id=%s explicit_id=%s",
         body.target_clerk_id,
         env.id,
         body.machine_id,
+        body.environment_id is not None,
     )
     return EnvironmentCreatedResponse(id=str(env.id))
 

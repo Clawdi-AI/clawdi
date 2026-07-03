@@ -39,6 +39,7 @@ from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.services.agent_environments import local_machine_registration_key
 
 
 async def _override_factory(db_session: AsyncSession, user: User, api_key: ApiKey | None = None):
@@ -89,6 +90,7 @@ async def env_without_project(db_session: AsyncSession, seed_user: User) -> Agen
         agent_type="claude_code",
         os="darwin",
         default_project_id=project.id,
+        registration_key=local_machine_registration_key("heal-test-mac", "claude_code"),
     )
     db_session.add(env)
     await db_session.flush()

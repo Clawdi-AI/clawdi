@@ -30,8 +30,8 @@ async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machi
 async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
     first = await _register_env(client)
     second = await _register_env(client)
-    # Same (user, machine_id, agent_type) must return the same environment row,
-    # not create a duplicate.
+    # Same local registration key must return the same environment row, not
+    # create a duplicate.
     assert first == second
 
 

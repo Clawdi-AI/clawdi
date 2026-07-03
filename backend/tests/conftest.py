@@ -130,6 +130,7 @@ async def create_env_with_project(
     """
     from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
     from app.models.session import AgentEnvironment
+    from app.services.agent_environments import local_machine_registration_key
 
     # Mutual FK: env.default_project_id (NOT NULL) → project.id;
     # project.origin_environment_id (NULLABLE) → env.id. Insert
@@ -152,6 +153,7 @@ async def create_env_with_project(
         agent_type=agent_type,
         os=os,
         default_project_id=project.id,
+        registration_key=local_machine_registration_key(machine_id, agent_type),
     )
     db_session.add(env)
     await db_session.flush()

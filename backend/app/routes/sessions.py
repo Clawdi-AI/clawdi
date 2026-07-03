@@ -29,7 +29,6 @@ from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.hosted_runtime import HostedRuntimeState
-from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -61,6 +60,10 @@ from app.schemas.session import (
     SessionPermissionResponse,
     SessionPermissionsResponse,
     SessionUploadResponse,
+)
+from app.services.agent_environments import (
+    local_machine_registration_key,
+    register_agent_environment,
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
@@ -164,6 +167,7 @@ async def register_environment(
     auth: AuthContext = Depends(require_scope("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
+    registration_key = local_machine_registration_key(body.machine_id, body.agent_type)
     # Bound deploy keys are pinned to a single env. Letting them
     # create *new* envs (and new env-local projects) would let a
     # leaked key expand the account's footprint — beyond the project
@@ -188,8 +192,7 @@ async def register_environment(
         ).scalar_one_or_none()
         if (
             bound_env is None
-            or bound_env.machine_id != body.machine_id
-            or bound_env.agent_type != body.agent_type
+            or bound_env.registration_key != registration_key
         ):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
@@ -204,119 +207,24 @@ async def register_environment(
                 },
             )
 
-    # Check if environment already exists for this user + machine.
-    # `with_for_update()` row-locks the env so concurrent
-    # `clawdi setup` re-registrations serialize through the
-    # heal path below — without the lock both requests would
-    # read default_project_id IS NULL, both would INSERT a new
-    # project, and the second writer would overwrite env's
-    # default_project_id with its own project, orphaning the first.
-    result = await db.execute(
-        select(AgentEnvironment)
-        .where(
-            AgentEnvironment.user_id == auth.user_id,
-            AgentEnvironment.machine_id == body.machine_id,
-            AgentEnvironment.agent_type == body.agent_type,
-        )
-        .with_for_update()
-    )
-    env = result.scalar_one_or_none()
-
-    if env:
-        env.machine_name = body.machine_name
-        env.agent_version = body.agent_version
-        env.last_seen_at = datetime.now(UTC)
-        # Heal envs that somehow ended up without a default_project_id —
-        # this row predates the project migration, was created via a
-        # path that bypassed the new-env branch below, or had its
-        # project dropped by an earlier broken cleanup. The daemon's
-        # boot path requires a project to upload anything; without
-        # this backfill, re-running `clawdi setup` against an old
-        # env still leaves the daemon dead at startup with the
-        # opaque "environment X has no default_project_id" fatal.
-        # Concurrent calls are serialized by the FOR UPDATE row
-        # lock above — the second writer sees default_project_id
-        # already set and skips this branch.
-        if env.default_project_id is None:
-            import uuid as _uuid
-
-            healing_slug = f"env-{_uuid.uuid4().hex[:12]}"
-            healing_project = Project(
-                user_id=auth.user_id,
-                name=f"{body.machine_name} ({body.agent_type})",
-                slug=healing_slug,
-                kind=PROJECT_KIND_ENVIRONMENT,
-                origin_environment_id=env.id,
-            )
-            db.add(healing_project)
-            await db.flush()
-            env.default_project_id = healing_project.id
-        await db.commit()
-        return EnvironmentCreatedResponse(id=str(env.id))
-
-    # Mutual FK between env.default_project_id (NOT NULL → project) and
-    # project.origin_environment_id (NULLABLE → env). Insert order:
-    #   1. project without origin_environment_id (slug pre-computed
-    #      from a fresh UUID so it's stable across the two writes)
-    #   2. env with default_project_id = project.id
-    #   3. update project.origin_environment_id = env.id
-    #
-    # Concurrent `clawdi setup` runs for the same (user, machine,
-    # agent) race here. The new
-    # `uq_agent_envs_user_machine_agent` constraint at the model
-    # layer means the second writer's commit raises IntegrityError;
-    # we catch it, rollback, and re-query for the winner's row.
-    import uuid as _uuid
-
-    from sqlalchemy.exc import IntegrityError
-
-    pending_slug = f"env-{_uuid.uuid4().hex[:12]}"
-    project = Project(
-        user_id=auth.user_id,
-        name=f"{body.machine_name} ({body.agent_type})",
-        slug=pending_slug,
-        kind=PROJECT_KIND_ENVIRONMENT,
-    )
-    db.add(project)
     try:
-        await db.flush()
-
-        env = AgentEnvironment(
+        registered = await register_agent_environment(
+            db,
             user_id=auth.user_id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
-            os=body.os,
-            last_seen_at=datetime.now(UTC),
+            os_name=body.os,
             sort_order=await _next_environment_sort_order(db, auth.user_id),
-            default_project_id=project.id,
+            registration_key=registration_key,
         )
-        db.add(env)
-        await db.flush()
-
-        project.origin_environment_id = env.id
-        await db.commit()
-        await db.refresh(env)
-        return EnvironmentCreatedResponse(id=str(env.id))
     except IntegrityError:
-        await db.rollback()
-        # Winner's row is committed; re-fetch and return its id
-        # so both clients see the same env.
-        result = await db.execute(
-            select(AgentEnvironment).where(
-                AgentEnvironment.user_id == auth.user_id,
-                AgentEnvironment.machine_id == body.machine_id,
-                AgentEnvironment.agent_type == body.agent_type,
-            )
-        )
-        winner = result.scalar_one_or_none()
-        if winner is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "concurrent registration race; retry the request",
-            ) from None
-        return EnvironmentCreatedResponse(id=str(winner.id))
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "concurrent registration race; retry the request",
+        ) from None
+    return EnvironmentCreatedResponse(id=str(registered.env.id))
 
 
 @router.get(

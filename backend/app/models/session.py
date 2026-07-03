@@ -21,18 +21,14 @@ from app.models.project import Project  # noqa: F401 — register `projects` tab
 
 class AgentEnvironment(Base, TimestampMixin):
     __tablename__ = "agent_environments"
-    # Phase-1 unique constraint. Without it, two parallel `clawdi
-    # setup` runs for the same user+machine+agent both pass the
-    # check-then-insert in `register_environment` and create
-    # duplicate envs. The DB-level guard is the only correctness
-    # boundary; the route's IntegrityError catch reconverges to
-    # the winning row.
+    # `id` is the stable agent identity. `registration_key` is only
+    # an idempotency key for self-managed setup flows that do not
+    # provide an explicit agent id; hosted agents leave it NULL.
     __table_args__ = (
         UniqueConstraint(
             "user_id",
-            "machine_id",
-            "agent_type",
-            name="uq_agent_envs_user_machine_agent",
+            "registration_key",
+            name="uq_agent_envs_user_registration_key",
         ),
     )
 
@@ -48,6 +44,7 @@ class AgentEnvironment(Base, TimestampMixin):
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False)
     agent_version: Mapped[str | None] = mapped_column(String(50))
     os: Mapped[str] = mapped_column(String(50), nullable=False)
+    registration_key: Mapped[str | None] = mapped_column(String(300))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # User-facing identity overrides. Runtime registration keeps
     # machine_name/agent_type accurate; dashboard preferences live here.
