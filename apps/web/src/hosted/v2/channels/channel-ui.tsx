@@ -144,7 +144,7 @@ export function TokenReveal({
 		<div
 			data-hosted="true"
 			data-v2="true"
-			className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
+			className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
 		>
 			<div className="text-xs font-medium text-primary">{label}</div>
 			<div className="flex items-center gap-2">
@@ -176,7 +176,7 @@ export function CopyInline({ value, className }: { value: string; className?: st
 			data-v2="true"
 			onClick={() => copy(value)}
 			className={cn(
-				"inline-flex items-center gap-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground",
+				"inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground",
 				className,
 			)}
 			aria-label="Copy"

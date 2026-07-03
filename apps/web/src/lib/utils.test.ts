@@ -43,6 +43,11 @@ describe("relativeTime", () => {
 		expect(relativeTime(fiveDaysAgo)).toBe("5d ago");
 	});
 
+	test("returns future minute-granularity", () => {
+		const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+		expect(relativeTime(fiveMinFromNow)).toBe("in 5m");
+	});
+
 	test("switches to compact absolute at >=7 days (current year)", () => {
 		const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
 		const result = relativeTime(tenDaysAgo);

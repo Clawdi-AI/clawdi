@@ -1,5 +1,6 @@
 "use client";
 
+import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -7,6 +8,8 @@ import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,16 +31,20 @@ import { formatModelLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
+const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "flex flex-col gap-6 px-4 lg:px-6");
+const PROVIDER_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
 
 export function AiProvidersPage() {
 	const providers = useAiProviders();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
-	const list = providers.data?.providers ?? [];
+	const list = (providers.data?.providers ?? []).filter(
+		(provider) => !isFirstPartyManagedAiProvider(provider),
+	);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
 				title="Model Providers"
 				description={DESCRIPTION}
@@ -56,10 +63,8 @@ export function AiProvidersPage() {
 
 			<ManagedProviderCard />
 
-			<div className="space-y-2">
-				<div className="px-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					Your providers
-				</div>
+			<div className="flex flex-col gap-2">
+				<SectionLabel>Your providers</SectionLabel>
 				{providers.error ? (
 					<ChannelError
 						error={providers.error}
@@ -67,9 +72,9 @@ export function AiProvidersPage() {
 						title="Couldn’t load providers"
 					/>
 				) : providers.isLoading ? (
-					<div className="space-y-2">
-						{[0, 1].map((i) => (
-							<Skeleton key={i} className="h-24 w-full rounded-lg" />
+					<div className={PROVIDER_GRID_CLASS}>
+						{[0, 1, 2].map((i) => (
+							<ProviderCardSkeleton key={i} />
 						))}
 					</div>
 				) : list.length === 0 ? (
@@ -77,9 +82,10 @@ export function AiProvidersPage() {
 						title="No custom providers"
 						description="Add your own OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or a custom OpenAI-compatible endpoint."
 						fillHeight={false}
+						bordered
 					/>
 				) : (
-					<div className="space-y-2">
+					<div className={PROVIDER_GRID_CLASS}>
 						{list.map((provider) => (
 							<ProviderCard
 								key={provider.provider_id}
@@ -114,7 +120,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 	}
 
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col bg-card")}>
 			<EntityHeader
 				align="start"
 				icon={
@@ -138,13 +144,13 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 					</span>,
 				]}
 			/>
-			<div className="mt-3 flex flex-wrap justify-end gap-2">
+			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
 				<Button variant="ghost" size="sm" onClick={runValidate} disabled={validate.isPending}>
-					<BadgeCheck className="size-3.5" />
+					<BadgeCheck />
 					Validate
 				</Button>
 				<Button variant="outline" size="sm" onClick={onEdit}>
-					<Pencil className="size-3.5" />
+					<Pencil />
 					Edit
 				</Button>
 				<ConfirmAction
@@ -160,14 +166,34 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				>
 					<Button
 						variant="ghost"
-						size="sm"
-						className="text-muted-foreground hover:text-destructive"
+						size="icon-sm"
+						className="ml-auto text-muted-foreground hover:text-destructive"
 						disabled={del.isPending}
+						aria-label={`Remove ${provider.label ?? provider.provider_id}`}
 					>
-						<Trash2 className="size-3.5" />
-						Remove
+						<Trash2 />
 					</Button>
 				</ConfirmAction>
+			</div>
+		</div>
+	);
+}
+
+function ProviderCardSkeleton() {
+	return (
+		<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+			<div className="flex items-start gap-3">
+				<Skeleton className="size-10 shrink-0 rounded-lg" />
+				<div className="min-w-0 flex-1">
+					<Skeleton className="h-4 w-28" />
+					<Skeleton className="mt-2 h-3 w-40" />
+					<Skeleton className="mt-1.5 h-3 w-full max-w-56" />
+				</div>
+			</div>
+			<div className="mt-3 flex items-center gap-2">
+				<Skeleton className="h-8 w-20 rounded-md" />
+				<Skeleton className="h-8 w-14 rounded-md" />
+				<Skeleton className="ml-auto size-8 rounded-md" />
 			</div>
 		</div>
 	);

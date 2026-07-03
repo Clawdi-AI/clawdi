@@ -1,7 +1,17 @@
 "use client";
 
+import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { useRouter } from "@tanstack/react-router";
-import { CalendarClock, Cpu, Plus, Rocket, Sparkles, Zap } from "lucide-react";
+import {
+	CalendarClock,
+	Check,
+	ChevronsUpDown,
+	Cpu,
+	Plus,
+	Rocket,
+	Sparkles,
+	Zap,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -11,7 +21,16 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -23,7 +42,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type { DeployRequest, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, DeployRequest, Plan } from "@/hosted/billing/contracts";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 import { normalizeBillingError } from "@/hosted/billing/errors";
@@ -45,6 +64,9 @@ import {
 	type RuntimeAiProviderAuthKind,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
+import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
+import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn } from "@/lib/utils";
@@ -52,7 +74,9 @@ import { cn } from "@/lib/utils";
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
-const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.form, "flex flex-col gap-6 px-4 lg:px-6");
+const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.detail, "flex flex-col gap-6 px-4 lg:px-6");
+const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
+const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 
 /** Personality presets accepted by hosted deployment onboarding. */
 const PERSONALITY_PRESETS = [
@@ -148,11 +172,217 @@ function IconChip({ tint, children }: { tint: string; children: React.ReactNode 
 	);
 }
 
+function AddTile({
+	title,
+	description,
+	onClick,
+}: {
+	title: string;
+	description: string;
+	onClick: () => void;
+}) {
+	return (
+		<EntityChoiceCard
+			selected={false}
+			onClick={onClick}
+			icon={
+				<IconChip tint="bg-muted text-muted-foreground">
+					<Plus />
+				</IconChip>
+			}
+			title={title}
+			description={description}
+			className="h-full border-dashed bg-card"
+		/>
+	);
+}
+
+function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
+	const meta = providerMeta(channel.provider);
+	return (
+		<EntityChoiceCard
+			selected={false}
+			icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
+			title={channel.name}
+			description={`${meta.label} is ready. Link it from the agent page after deploy.`}
+			badge={
+				<Badge variant="outline" className="capitalize">
+					{channel.status}
+				</Badge>
+			}
+			className="h-full bg-card"
+		/>
+	);
+}
+
+function timezoneLabel(timezone: string): string {
+	return timezone.replaceAll("_", " ");
+}
+
+function TimezoneCombobox({
+	value,
+	onValueChange,
+	options,
+}: {
+	value: string;
+	onValueChange: (value: string) => void;
+	options: string[];
+}) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger asChild>
+				<Button
+					id="agent-timezone"
+					type="button"
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					className="w-full justify-between"
+				>
+					<span className={cn("truncate", !value && "text-muted-foreground")}>
+						{value ? timezoneLabel(value) : "Select a timezone"}
+					</span>
+					<ChevronsUpDown className="opacity-50" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+				<Command>
+					<CommandInput placeholder="Search timezones…" />
+					<CommandList className="max-h-72">
+						<CommandEmpty>No timezone found.</CommandEmpty>
+						<CommandGroup>
+							{options.map((tz) => {
+								const selected = value === tz;
+								return (
+									<CommandItem
+										key={tz}
+										value={tz}
+										keywords={[timezoneLabel(tz), tz.replaceAll("/", " ")]}
+										onSelect={() => {
+											onValueChange(tz);
+											setOpen(false);
+										}}
+									>
+										<Check className={cn("size-4", selected ? "opacity-100" : "opacity-0")} />
+										<span className="truncate">{timezoneLabel(tz)}</span>
+										{timezoneLabel(tz) !== tz ? (
+											<span className="ml-auto truncate text-xs text-muted-foreground">{tz}</span>
+										) : null}
+									</CommandItem>
+								);
+							})}
+						</CommandGroup>
+					</CommandList>
+				</Command>
+			</PopoverContent>
+		</Popover>
+	);
+}
+
+function ComputeStatusLine({
+	compute,
+	freeSlotPending,
+	freeSlotUsed,
+	deploymentsError,
+	freePlan,
+	perfOffer,
+}: {
+	compute: Compute;
+	freeSlotPending: boolean;
+	freeSlotUsed: boolean;
+	deploymentsError: unknown;
+	freePlan: Plan | undefined;
+	perfOffer: BillingOffer | null;
+}) {
+	const status = computeStatusLine({
+		compute,
+		freeSlotPending,
+		freeSlotUsed,
+		deploymentsError,
+		freePlan,
+		perfOffer,
+	});
+	if (!status) return null;
+	return (
+		<p
+			className={cn(
+				"text-xs",
+				status.tone === "destructive" ? "text-destructive" : "text-muted-foreground",
+			)}
+		>
+			{status.message}
+		</p>
+	);
+}
+
+function computeStatusLine({
+	compute,
+	freeSlotPending,
+	freeSlotUsed,
+	deploymentsError,
+	freePlan,
+	perfOffer,
+}: {
+	compute: Compute;
+	freeSlotPending: boolean;
+	freeSlotUsed: boolean;
+	deploymentsError: unknown;
+	freePlan: Plan | undefined;
+	perfOffer: BillingOffer | null;
+}): { message: string; tone: "destructive" | "muted" } | null {
+	if (compute === "free") {
+		if (deploymentsError) {
+			return {
+				tone: "destructive",
+				message: "Couldn’t verify your Free slot. Retry this page before deploying Free.",
+			};
+		}
+		if (!freePlan) {
+			return {
+				tone: "destructive",
+				message:
+					"Free compute isn’t available from the billing service. Retry plans before deploying.",
+			};
+		}
+		if (freeSlotUsed) {
+			return {
+				tone: "muted",
+				message:
+					"You already have an active Free agent. Stop or delete it to reuse Free, or deploy a Performance agent.",
+			};
+		}
+		if (freeSlotPending) {
+			return {
+				tone: "muted",
+				message: "Checking whether your Free slot is available before deployment.",
+			};
+		}
+		return null;
+	}
+
+	if (perfOffer && perfOffer.billing_term_months !== 1) {
+		return {
+			tone: "muted",
+			message: `You’ll be sent to checkout. Billed ${formatCentsCompact(
+				perfOffer.price_cents,
+			)}${billingTermSuffix(
+				perfOffer.billing_term_months,
+			)}; each Performance agent uses its own subscription.`,
+		};
+	}
+	return {
+		tone: "muted",
+		message: "You’ll be sent to checkout. Each Performance agent uses its own subscription.",
+	};
+}
+
 export function DeployWizard() {
 	const router = useRouter();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
+	const channels = useChannels();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
 	const runAction = useActionLock();
@@ -190,7 +420,14 @@ export function DeployWizard() {
 
 	const dualAllowed = compute === "performance";
 	const enginesSelected = (Object.keys(engines) as Engine[]).filter((e) => engines[e]);
-	const providerList = aiProviders.data?.providers ?? [];
+	const providerList = useMemo(
+		() =>
+			(aiProviders.data?.providers ?? []).filter(
+				(provider) => !isFirstPartyManagedAiProvider(provider),
+			),
+		[aiProviders.data?.providers],
+	);
+	const channelList = channels.data ?? [];
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan : !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
@@ -356,7 +593,7 @@ export function DeployWizard() {
 
 	if (plans.error) {
 		return (
-			<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
+			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an agent" />
 				<BillingError error={plans.error} onRetry={() => plans.refetch()} />
 			</div>
@@ -365,7 +602,7 @@ export function DeployWizard() {
 
 	if (plans.isLoading) {
 		return (
-			<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
+			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an agent" description="Preparing your compute options…" />
 				<Skeleton className="h-32 w-full rounded-lg" />
 				<Skeleton className="h-32 w-full rounded-lg" />
@@ -375,7 +612,7 @@ export function DeployWizard() {
 	}
 
 	return (
-		<div data-hosted="true" className={DEPLOY_PAGE_CLASS}>
+		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 			<PageHeader
 				title="Deploy an agent"
 				description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
@@ -391,7 +628,7 @@ export function DeployWizard() {
 							: "Codex stays on. Free can add one optional runtime."}
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="grid gap-2 lg:grid-cols-3">
+				<CardContent className={THREE_TILE_GRID_CLASS}>
 					<Tile
 						selected
 						leading={<EntityIcon kind="framework" id="codex" label="Codex" />}
@@ -424,7 +661,7 @@ export function DeployWizard() {
 						Managed AI bills your wallet, or route through one of your own providers.
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="grid gap-2 sm:grid-cols-2">
+				<CardContent className={TWO_TILE_GRID_CLASS}>
 					<Tile
 						selected={aiChoice === "managed"}
 						onClick={() => setAiChoice("managed")}
@@ -438,12 +675,12 @@ export function DeployWizard() {
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
 					{aiProviders.isLoading ? (
-						<Skeleton className="h-[60px] w-full rounded-lg" />
+						<Skeleton className="h-[74px] w-full rounded-lg" />
 					) : aiProviders.error ? (
 						<button
 							type="button"
 							onClick={() => aiProviders.refetch()}
-							className="rounded-lg border border-dashed px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/40 sm:col-span-2"
+							className="min-h-[74px] rounded-lg border border-dashed px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/40 sm:col-span-2"
 						>
 							Couldn’t load your providers — tap to retry. Managed AI still works.
 						</button>
@@ -459,15 +696,11 @@ export function DeployWizard() {
 							badge={<AuthBadge auth={provider.auth} />}
 						/>
 					))}
-					<Button
-						variant="ghost"
-						size="sm"
-						className="justify-start text-muted-foreground"
+					<AddTile
+						title="Add a provider"
+						description="Connect OpenAI, Anthropic, or another endpoint."
 						onClick={() => setAddProviderOpen(true)}
-					>
-						<Plus className="size-3.5" />
-						Add a provider
-					</Button>
+					/>
 				</CardContent>
 			</Card>
 
@@ -481,7 +714,7 @@ export function DeployWizard() {
 						Prepare a bot now, then link it from the agent page once deployment finishes.
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="grid gap-2 sm:grid-cols-2">
+				<CardContent className={TWO_TILE_GRID_CLASS}>
 					<Tile
 						selected
 						leading={
@@ -493,15 +726,15 @@ export function DeployWizard() {
 						subtitle="Channel links need the agent identity created during provisioning."
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="justify-start text-muted-foreground"
+					{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
+					{channels.error
+						? null
+						: channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)}
+					<AddTile
+						title="Connect a channel"
+						description="Prepare a bot; link it after provisioning."
 						onClick={() => setConnectChannelOpen(true)}
-					>
-						<Plus className="size-3.5" />
-						Connect a channel
-					</Button>
+					/>
 				</CardContent>
 			</Card>
 
@@ -514,7 +747,7 @@ export function DeployWizard() {
 						run both optional runtimes.
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="space-y-3">
+				<CardContent className="flex flex-col gap-3">
 					<div className="grid gap-2 sm:grid-cols-2">
 						<Tile
 							selected={compute === "free"}
@@ -565,43 +798,19 @@ export function DeployWizard() {
 							disabled={!perfPlan}
 						/>
 					</div>
-					{compute === "free" && freeSlotPending ? (
-						<p className="text-xs text-muted-foreground">
-							Checking whether your Free slot is available before deployment.
-						</p>
-					) : null}
-					{compute === "free" && freeSlotUsed ? (
-						<p className="text-xs text-muted-foreground">
-							You already have an active Free agent. Stop or delete it to reuse Free, or deploy a
-							Performance agent.
-						</p>
-					) : null}
-					{compute === "free" && deployments.error ? (
-						<p className="text-xs text-destructive">
-							Couldn’t verify your Free slot. Retry this page before deploying Free.
-						</p>
-					) : null}
-					{compute === "free" && !freePlan ? (
-						<p className="text-xs text-destructive">
-							Free compute isn’t available from the billing service. Retry plans before deploying.
-						</p>
-					) : null}
 					{compute === "performance" && perfOffers.length > 1 ? (
-						<div className="space-y-2">
+						<div className="flex flex-col gap-2">
 							<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
-							{perfOffer && perfOffer.billing_term_months !== 1 ? (
-								<p className="text-xs text-muted-foreground">
-									Billed {formatCentsCompact(perfOffer.price_cents)}
-									{billingTermSuffix(perfOffer.billing_term_months)}.
-								</p>
-							) : null}
 						</div>
 					) : null}
-					{compute === "performance" ? (
-						<p className="text-xs text-muted-foreground">
-							You’ll be sent to checkout. Each Performance agent uses its own subscription.
-						</p>
-					) : null}
+					<ComputeStatusLine
+						compute={compute}
+						freeSlotPending={freeSlotPending}
+						freeSlotUsed={freeSlotUsed}
+						deploymentsError={deployments.error}
+						freePlan={freePlan}
+						perfOffer={perfOffer}
+					/>
 				</CardContent>
 			</Card>
 
@@ -613,8 +822,8 @@ export function DeployWizard() {
 					</CardTitle>
 					<CardDescription>Give your agent a name, tone, language, and timezone.</CardDescription>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="space-y-1.5">
+				<CardContent className="flex flex-col gap-4">
+					<div className="flex flex-col gap-1.5">
 						<label htmlFor="agent-name" className="text-sm text-muted-foreground">
 							Name
 						</label>
@@ -627,7 +836,7 @@ export function DeployWizard() {
 						/>
 					</div>
 					<div className="grid gap-4 sm:grid-cols-2">
-						<div className="space-y-1.5">
+						<div className="flex flex-col gap-1.5">
 							<label htmlFor="agent-personality" className="text-sm text-muted-foreground">
 								Personality
 							</label>
@@ -648,7 +857,7 @@ export function DeployWizard() {
 								</SelectContent>
 							</Select>
 						</div>
-						<div className="space-y-1.5">
+						<div className="flex flex-col gap-1.5">
 							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
 								Language
 							</label>
@@ -671,22 +880,11 @@ export function DeployWizard() {
 						</div>
 					</div>
 					{tzOptions.length > 0 ? (
-						<div className="space-y-1.5">
+						<div className="flex flex-col gap-1.5">
 							<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
 								Timezone
 							</label>
-							<Select value={timezone} onValueChange={setTimezone}>
-								<SelectTrigger id="agent-timezone">
-									<SelectValue placeholder="Select a timezone" />
-								</SelectTrigger>
-								<SelectContent className="max-h-72">
-									{tzOptions.map((tz) => (
-										<SelectItem key={tz} value={tz}>
-											{tz}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+							<TimezoneCombobox value={timezone} onValueChange={setTimezone} options={tzOptions} />
 						</div>
 					) : null}
 				</CardContent>

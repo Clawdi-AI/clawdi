@@ -23,14 +23,25 @@ export function relativeTime(dateStr: string | null | undefined): string {
 	if (!dateStr) return "—";
 	const d = new Date(dateStr);
 	if (Number.isNaN(d.getTime())) return "—";
-	const diff = Date.now() - d.getTime();
-	const mins = Math.floor(diff / 60000);
-	if (mins < 1) return "just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	const days = Math.floor(hours / 24);
-	if (days < 7) return `${days}d ago`;
+	const futureDiff = d.getTime() - Date.now();
+	if (futureDiff > 0) {
+		const mins = Math.round(futureDiff / 60000);
+		if (mins < 1) return "just now";
+		if (mins < 60) return `in ${mins}m`;
+		const hours = Math.round(mins / 60);
+		if (hours < 24) return `in ${hours}h`;
+		const days = Math.round(hours / 24);
+		if (days < 7) return `in ${days}d`;
+	} else {
+		const diff = Date.now() - d.getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return "just now";
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days}d ago`;
+	}
 	const now = new Date();
 	const sameYear = d.getFullYear() === now.getFullYear();
 	if (sameYear) {

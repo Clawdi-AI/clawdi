@@ -3,6 +3,8 @@
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { EntityChoiceCard } from "@/components/entity-card";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -77,6 +79,15 @@ function isLoopbackOrPrivateUrl(raw: string): boolean {
 	if (/^10\./.test(host) || /^192\.168\./.test(host)) return true;
 	if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
 	return false;
+}
+
+function providerTypeDescription(type: ProviderTypeId): string {
+	if (type === "openai") return "OpenAI APIs";
+	if (type === "anthropic") return "Claude models";
+	if (type === "openrouter") return "Router models";
+	if (type === "gemini") return "Google models";
+	if (type === "mistral") return "Mistral APIs";
+	return "Custom endpoint";
 }
 
 export function AddProviderDialog({
@@ -500,7 +511,7 @@ export function AddProviderDialog({
 								returns.
 							</DialogDescription>
 						</DialogHeader>
-						<div className="space-y-3">
+						<div className="flex flex-col gap-3">
 							<Button
 								variant="outline"
 								className="w-full"
@@ -547,7 +558,7 @@ export function AddProviderDialog({
 								<summary className="cursor-pointer font-medium text-foreground">
 									Didn’t return automatically?
 								</summary>
-								<div className="mt-2 space-y-2">
+								<div className="mt-2 flex flex-col gap-2">
 									<p>Paste the full address from the OpenAI page after signing in.</p>
 									<Input
 										value={oauthCode}
@@ -585,25 +596,25 @@ export function AddProviderDialog({
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="space-y-4">
-							<div className="space-y-1.5">
-								<Label htmlFor="provider-type">Provider</Label>
-								<Select
-									value={type}
-									onValueChange={(v) => changeType(v as ProviderTypeId)}
-									disabled={isEdit}
-								>
-									<SelectTrigger id="provider-type">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{PROVIDER_TYPES.map((t) => (
-											<SelectItem key={t} value={t}>
-												{providerTypeMeta(t).label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+						<div className="flex flex-col gap-4">
+							<div className="flex flex-col gap-1.5">
+								<Label>Provider</Label>
+								<div className="grid grid-cols-2 gap-2">
+									{PROVIDER_TYPES.map((t) => {
+										const option = providerTypeMeta(t);
+										return (
+											<EntityChoiceCard
+												key={t}
+												selected={type === t}
+												onClick={isEdit ? undefined : () => changeType(t)}
+												disabled={isEdit}
+												icon={<EntityIcon kind="provider" id={t} label={option.label} size="sm" />}
+												title={option.label}
+												description={providerTypeDescription(t)}
+											/>
+										);
+									})}
+								</div>
 							</div>
 
 							<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
@@ -613,7 +624,7 @@ export function AddProviderDialog({
 								</div>
 							</div>
 
-							<div className="space-y-1.5">
+							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="provider-label">Name</Label>
 								<Input
 									id="provider-label"
@@ -625,7 +636,7 @@ export function AddProviderDialog({
 							</div>
 
 							{/* Auth method */}
-							<div className="space-y-1.5">
+							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="provider-auth">Authentication</Label>
 								<Select value={authMethod} onValueChange={(v) => setAuthMethod(v as AuthMethod)}>
 									<SelectTrigger id="provider-auth">
@@ -644,7 +655,7 @@ export function AddProviderDialog({
 
 							{authMethod === "api_key" || authMethod === "vault" ? (
 								<>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-key">
 											API key{canKeepManagedApiKey ? " (leave blank to keep)" : ""}
 										</Label>
@@ -668,7 +679,7 @@ export function AddProviderDialog({
 											</p>
 										) : null}
 									</div>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-env">Runtime env var</Label>
 										<Input
 											id="provider-env"
@@ -682,7 +693,7 @@ export function AddProviderDialog({
 								</>
 							) : null}
 
-							<div className="space-y-1.5">
+							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="provider-base">Base URL</Label>
 								<Input
 									id="provider-base"
@@ -701,7 +712,7 @@ export function AddProviderDialog({
 							</div>
 
 							<div className="grid gap-3 sm:grid-cols-2">
-								<div className="space-y-1.5">
+								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="provider-model">Default model</Label>
 									<Input
 										id="provider-model"
@@ -712,7 +723,7 @@ export function AddProviderDialog({
 										spellCheck={false}
 									/>
 								</div>
-								<div className="space-y-1.5">
+								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="provider-mode">API mode</Label>
 									<Select value={apiMode} onValueChange={(v) => setApiMode(v as ApiMode)}>
 										<SelectTrigger id="provider-mode">

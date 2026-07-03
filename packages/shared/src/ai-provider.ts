@@ -120,15 +120,29 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderType, string>> = {
 	mistral: "https://api.mistral.ai/v1",
 };
 
-const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
+export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
-const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-managed-v2";
+export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-managed-v2";
 const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
-const CLAWDI_MANAGED_PROVIDER_IDS = new Set([
+export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 ]);
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
+
+export interface AiProviderManagedIdentity {
+	id?: string | null;
+	provider_id?: string | null;
+	managed_by?: string | null;
+}
+
+export function isFirstPartyManagedAiProvider(provider: AiProviderManagedIdentity): boolean {
+	const id = provider.provider_id ?? provider.id;
+	return (
+		provider.managed_by === "clawdi" ||
+		(typeof id === "string" && CLAWDI_MANAGED_PROVIDER_IDS.has(id))
+	);
+}
 
 export function isAiProviderId(input: string): boolean {
 	return PROVIDER_ID_RE.test(input);

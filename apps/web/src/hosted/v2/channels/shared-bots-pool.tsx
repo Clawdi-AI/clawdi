@@ -6,6 +6,7 @@ import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -14,6 +15,8 @@ import { AccessBadge, ChannelError } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { cn } from "@/lib/utils";
+
+const BOT_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
 
 /**
  * Shared bot pool — public bots the user can link an agent to instantly (no
@@ -26,7 +29,7 @@ export function SharedBotsPool() {
 
 	if (pool.isLoading) {
 		return (
-			<div data-hosted="true" data-v2="true" className="space-y-3">
+			<div data-hosted="true" data-v2="true" className={BOT_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
 					<Skeleton key={i} className="h-20 w-full rounded-lg" />
 				))}
@@ -65,16 +68,13 @@ export function SharedBotsPool() {
 	}
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6">
+		<div data-hosted="true" data-v2="true" className="flex flex-col gap-6">
 			{sections.map((section) => {
 				const meta = providerMeta(section.provider);
 				return (
-					<div key={section.provider} className="space-y-2">
-						<div className="flex items-center gap-2 px-0.5">
-							<span className="text-sm font-medium">{meta.label}</span>
-							<span className="text-xs text-muted-foreground">{section.items.length}</span>
-						</div>
-						<div className="grid gap-2 sm:grid-cols-2">
+					<div key={section.provider} className="flex flex-col gap-2">
+						<SectionLabel count={section.items.length}>{meta.label}</SectionLabel>
+						<div className={BOT_GRID_CLASS}>
 							{section.items.map((item) => (
 								<PoolCard
 									key={item.id}

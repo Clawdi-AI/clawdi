@@ -119,7 +119,7 @@ export function LinkAgentDialog({
 						fillHeight={false}
 					/>
 				) : (
-					<div className="space-y-2">
+					<div className="flex flex-col gap-2">
 						<Select value={agentId} onValueChange={setAgentId}>
 							<SelectTrigger>
 								<SelectValue placeholder="Choose an agent" />

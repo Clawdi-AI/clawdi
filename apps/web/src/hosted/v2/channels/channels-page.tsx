@@ -1,11 +1,14 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { MessagesSquare, Plus } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
-import { EntityRow } from "@/components/entity-card";
+import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,12 +25,14 @@ import { SharedBotsPool } from "@/hosted/v2/channels/shared-bots-pool";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Connect Telegram, Discord, WhatsApp, and iMessage to your agents.";
+const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "flex flex-col gap-6 px-4 lg:px-6");
+const CHANNEL_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
 
 export function ChannelsPage() {
 	const [connectOpen, setConnectOpen] = useState(false);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
 				title="Channels"
 				description={DESCRIPTION}
@@ -64,9 +69,9 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 
 	if (channels.isLoading) {
 		return (
-			<div className="space-y-2">
+			<div className={CHANNEL_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
-					<Skeleton key={i} className="h-16 w-full rounded-lg" />
+					<ChannelCardSkeleton key={i} />
 				))}
 			</div>
 		);
@@ -112,7 +117,7 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 	})).filter((g) => g.items.length > 0);
 
 	return (
-		<div className="space-y-4">
+		<div className="flex flex-col gap-4">
 			{health.error ? (
 				<ChannelError
 					error={health.error}
@@ -134,17 +139,15 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 				))}
 			</div>
 
-			<div className="space-y-5">
+			<div className="flex flex-col gap-5">
 				{groups.map((group) => (
-					<div key={group.provider} className="space-y-2">
+					<div key={group.provider} className="flex flex-col gap-2">
 						{filter === "all" ? (
-							<div className="px-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-								{providerMeta(group.provider).label}
-							</div>
+							<SectionLabel>{providerMeta(group.provider).label}</SectionLabel>
 						) : null}
-						<div className="space-y-2">
+						<div className={CHANNEL_GRID_CLASS}>
 							{group.items.map((channel) => (
-								<ChannelRow
+								<ChannelCard
 									key={channel.id}
 									channel={channel}
 									health={healthByAccount.get(channel.id)}
@@ -165,7 +168,7 @@ function FilterChip({
 }: {
 	active: boolean;
 	onClick: () => void;
-	children: React.ReactNode;
+	children: ReactNode;
 }) {
 	return (
 		<button
@@ -184,20 +187,51 @@ function FilterChip({
 	);
 }
 
-function ChannelRow({ channel, health }: { channel: ChannelAccount; health?: string }) {
+function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
 	const meta = providerMeta(channel.provider);
+	const linkClassName =
+		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
 	return (
-		<EntityRow
-			href={`/channels/${channel.id}`}
-			icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
-			title={channel.name}
-			meta={[
-				meta.label,
-				<span key="status" className="capitalize">
-					{channel.status}
-				</span>,
-			]}
-			status={health ? <HealthBadge status={health} /> : undefined}
-		/>
+		<div className="group relative z-0 h-full min-w-0">
+			<div
+				className={cn(
+					ENTITY_CARD_BASE,
+					"flex h-full items-start gap-3 bg-card transition-colors group-hover:bg-muted/50",
+				)}
+			>
+				<EntityHeader
+					className="w-full"
+					align="start"
+					icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
+					title={channel.name}
+					titleAdornment={health ? <HealthBadge status={health} /> : undefined}
+					meta={[
+						meta.label,
+						<span key="status" className="capitalize">
+							{channel.status}
+						</span>,
+					]}
+				/>
+			</div>
+			<Link to="/channels/$id" params={{ id: channel.id }} className={linkClassName}>
+				<span className="sr-only">Open {channel.name}</span>
+			</Link>
+		</div>
+	);
+}
+
+function ChannelCardSkeleton() {
+	return (
+		<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+			<div className="flex items-start gap-3">
+				<Skeleton className="size-10 shrink-0 rounded-lg" />
+				<div className="min-w-0 flex-1">
+					<Skeleton className="h-4 w-28" />
+					<Skeleton className="mt-2 h-3 w-32" />
+				</div>
+				<Skeleton className="h-6 w-20 rounded-full" />
+			</div>
+		</div>
 	);
 }
