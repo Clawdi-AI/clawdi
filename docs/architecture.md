@@ -63,7 +63,7 @@ All keyed off Clerk `user_id`:
 |---|---|---|
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
-| `agent_environments` | One row per (machine × agent). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup` |
+| `agent_environments` | Stable agent identity rows. Self-managed agents use `registration_key` for local setup idempotency; hosted agents use explicit ids. `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup`, hosted agent registration |
 | `projects` | Resource availability boundaries for skills, vault attachments, and future memory/session grouping. Kinds are `personal`, `environment`, and `workspace`; `environment` is the internal Agent Project kind | Provisioning, `clawdi setup`, `clawdi project create` |
 | `project_memberships` | Viewer-only shared Project access granted by invite or share link | Share accept / invite accept |
 | `project_share_links` | Hashed bearer links for read-only Project access. Raw tokens are only returned once | `clawdi project share` |

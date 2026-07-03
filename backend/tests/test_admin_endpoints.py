@@ -730,13 +730,206 @@ async def test_admin_register_env_creates_with_project(admin_client, db_session,
     ).scalar_one()
     assert env.user_id == seed_user.id
     assert env.machine_id == "migrate-machine-1"
+    assert env.registration_key == "machine:migrate-machine-1:agent:openclaw"
     assert env.default_project_id is not None  # heal logic ran
 
 
 @pytest.mark.asyncio
+async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_session, seed_user):
+    """Hosted registration owns the stable agent id. Machine fields are metadata."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    agent_id = uuid.uuid4()
+    r = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "environment_id": str(agent_id),
+            "machine_id": "hosted-machine-explicit",
+            "machine_name": "hosted-pod",
+            "agent_type": "codex",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == str(agent_id)
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
+    ).scalar_one()
+    assert env.user_id == seed_user.id
+    assert env.machine_id == "hosted-machine-explicit"
+    assert env.registration_key is None
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_explicit_agent_id_is_idempotent(
+    admin_client, db_session, seed_user
+):
+    """Stable agent ids remain the identity while machine fields refresh."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    agent_id = uuid.uuid4()
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "environment_id": str(agent_id),
+        "machine_id": "hosted-agent-initial",
+        "machine_name": "hosted-pod-initial",
+        "agent_type": "codex",
+        "agent_version": "1.0.0",
+        "os_name": "linux",
+    }
+    first = await admin_client.post("/v1/admin/environments", headers=_AUTH, json=body)
+    second = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            **body,
+            "machine_id": "hosted-agent-moved",
+            "machine_name": "hosted-pod-moved",
+            "agent_version": "1.1.0",
+            "os_name": "darwin",
+        },
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["id"] == str(agent_id)
+    assert second.json()["id"] == str(agent_id)
+
+    envs = (
+        (await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id)))
+        .scalars()
+        .all()
+    )
+    assert len(envs) == 1
+    env = envs[0]
+    assert env.machine_id == "hosted-agent-moved"
+    assert env.machine_name == "hosted-pod-moved"
+    assert env.agent_version == "1.1.0"
+    assert env.os == "darwin"
+    assert env.registration_key is None
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_explicit_ids_allow_same_machine_metadata(
+    admin_client, db_session, seed_user
+):
+    """Two hosted agents can share machine metadata without sharing identity."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    machine_id = "same-hosted-machine"
+    first_id = uuid.uuid4()
+    second_id = uuid.uuid4()
+    body = {
+        "target_clerk_id": seed_user.clerk_id,
+        "machine_id": machine_id,
+        "machine_name": "hosted-pod",
+        "agent_type": "codex",
+    }
+    r1 = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={**body, "environment_id": str(first_id)},
+    )
+    r2 = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={**body, "environment_id": str(second_id)},
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r1.json()["id"] == str(first_id)
+    assert r2.json()["id"] == str(second_id)
+
+    envs = (
+        (
+            await db_session.execute(
+                select(AgentEnvironment).where(
+                    AgentEnvironment.user_id == seed_user.id,
+                    AgentEnvironment.machine_id == machine_id,
+                    AgentEnvironment.agent_type == "codex",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {env.id for env in envs} == {first_id, second_id}
+    assert all(env.registration_key is None for env in envs)
+
+
+@pytest.mark.asyncio
+async def test_admin_register_env_explicit_id_rejects_cross_tenant_id(
+    admin_client, db_session, seed_user
+):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+    from app.models.user import User
+
+    other = User(clerk_id=f"other_env_{uuid.uuid4().hex[:8]}", email="other@x.dev", name="Other")
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    other_id = other.id
+
+    agent_id = uuid.uuid4()
+    try:
+        created = await admin_client.post(
+            "/v1/admin/environments",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": other.clerk_id,
+                "environment_id": str(agent_id),
+                "machine_id": "other-explicit",
+                "machine_name": "other-pod",
+                "agent_type": "codex",
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        rejected = await admin_client.post(
+            "/v1/admin/environments",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "environment_id": str(agent_id),
+                "machine_id": "seed-explicit",
+                "machine_name": "seed-pod",
+                "agent_type": "codex",
+            },
+        )
+        assert rejected.status_code == 409, rejected.text
+
+        env = (
+            await db_session.execute(
+                select(AgentEnvironment).where(AgentEnvironment.id == agent_id)
+            )
+        ).scalar_one()
+        assert env.user_id == other_id
+    finally:
+        await db_session.delete(other)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_admin_register_env_idempotent(admin_client, db_session, seed_user):
-    """Re-registering same (user, machine_id, agent_type) returns
-    the same env id — migration retry safety."""
+    """Legacy admin registration without an explicit id remains idempotent."""
     body = {
         "target_clerk_id": seed_user.clerk_id,
         "machine_id": "idempotent-machine",

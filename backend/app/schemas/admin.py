@@ -32,12 +32,13 @@ class AdminEnvironmentCreate(BaseModel):
     user-facing EnvironmentCreate but takes target_clerk_id
     instead of relying on auth context to resolve the user.
 
-    Idempotent — re-registering the same (user, machine_id) pair
-    updates `machine_name` / `agent_version` / `last_seen_at` and
-    returns the existing env id.
+    If `environment_id` is set, it is the caller-owned stable agent id.
+    Otherwise this uses the legacy self-managed registration key derived from
+    `(user, machine_id, agent_type)` for idempotent retries.
     """
 
     target_clerk_id: str
+    environment_id: UUID | None = None
     machine_id: str
     machine_name: str
     agent_type: str

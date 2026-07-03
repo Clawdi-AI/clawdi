@@ -19,7 +19,7 @@ colleagues (viewer-only v1).
 
 ```
 User (account root)
-├── AgentEnvironment ("agent") — one per (machine × agent-type)
+├── AgentEnvironment ("agent") — stable agent identity row
 │     ├── default Project (kind=environment, auto-created, not shareable)
 │     ├── AgentProjectBinding: primary (its own project) + context (added
 │     │   workspace projects, read-only) — THIS is "add project to agent"
