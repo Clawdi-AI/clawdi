@@ -5,18 +5,11 @@ you start at the repository root unless a command changes directory.
 
 ## Local backend loop
 
-Start the development Postgres service first. The root `docker-compose.yml`
-uses `pgvector/pgvector:pg16`, exposes Postgres on `127.0.0.1:5433`, and keeps
-the backend process on the host for reload speed.
-
-```bash
-docker compose up -d postgres
-cd backend
-cp .env.example .env
-uv sync
-pdm migrate
-pdm dev
-```
+Use the canonical local-stack runbook in
+[`AGENTS.md`](../AGENTS.md#local-end-to-end) to start Postgres, configure
+`backend/.env`, run migrations, start the backend, and mint a local CLI key.
+This backend guide only records backend-specific commands and contributor
+checks.
 
 `pdm dev` is defined in `backend/pyproject.toml` as:
 
@@ -24,22 +17,8 @@ pdm dev
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-For local dashboard testing without Clerk, set these local-only values before
-starting the backend and web app:
-
-```dotenv
-# backend/.env
-DEV_AUTH_BYPASS=true
-DEV_AUTH_TOKEN=dev-bypass
-```
-
-`backend/.env.example` also leaves `VAULT_ENCRYPTION_KEY` and
-`ENCRYPTION_KEY` blank. Generate different local-only values before exercising
-vault or MCP bridge paths:
-
-```bash
-python3 -c 'import os; print(os.urandom(32).hex())'
-```
+The root `docker-compose.yml` keeps only development infrastructure in Docker.
+The backend process runs on the host for reload speed.
 
 ## Verification
 
@@ -197,25 +176,17 @@ limit 10;
 
 ## Local admin API
 
-Admin endpoints are disabled by default. To exercise them locally, set
-`ADMIN_API_KEY` in `backend/.env` to your own local-only random value and
-restart `pdm dev`. Do not commit or share that value.
+Admin endpoints are disabled by default. The local setup and key-minting flow is
+in [`AGENTS.md`](../AGENTS.md#local-end-to-end). To exercise admin endpoints
+locally, set `ADMIN_API_KEY` in `backend/.env` to your own local-only random
+value and restart `pdm dev`. Do not commit or share that value.
 
 The backend reads that value as `settings.admin_api_key`; requests must send it
 in the `X-Admin-Key` header. Empty configuration returns `503`, and an
 incorrect header returns `401`.
 
-Mint a local API key for the dev-auth dashboard user. Use the same
-`ADMIN_API_KEY` value that your local backend read from `backend/.env`:
-
-```bash
-export ADMIN_API_KEY="<value-from-backend-env>"
-curl -sS -X POST http://localhost:8000/v1/admin/auth/keys \
-  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"target_clerk_id":"dev_browser","label":"local-cli"}' \
-  | jq -r .raw_key
-```
+Use `/v1/admin/auth/keys` to mint local CLI keys for the dev-auth dashboard
+user. The canonical command is in the local-stack runbook.
 
 Register an explicit local agent identity through the agent-first admin route:
 

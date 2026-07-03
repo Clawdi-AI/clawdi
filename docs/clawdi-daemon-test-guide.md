@@ -1,14 +1,18 @@
 # Testing `clawdi daemon`
 
-How to verify the daemon works on your machine, end to end. Two
-paths: the **automated script** (one command, ~10 seconds) and
-the **manual workflow** (lets you click around the dashboard
-while it's running).
+How to verify the current singleton `clawdi daemon` works end to end. Some
+script names and log paths still say `serve`; that is historical internal
+terminology. The user-facing command surface is `clawdi daemon`.
+
+Use the canonical local-stack runbook in [`AGENTS.md`](../AGENTS.md#local-end-to-end)
+before running the manual path. It covers backend, dashboard, auth bypass,
+local API key minting, health checks, and cleanup.
 
 ## Prerequisites
 
 - Postgres running on `localhost:5433` with the `clawdi` DB
-  (this is the dev default; see `README.md` for the full setup)
+  (this is the dev default; see
+  [`AGENTS.md`](../AGENTS.md#local-end-to-end) for setup)
 - Migrations at head: `cd backend && pdm migrate`
 - All deps installed: `bun install`
 
@@ -62,7 +66,7 @@ Leave running.
 ### Terminal 2 — web dashboard
 
 ```sh
-bun run dev
+bun run --cwd apps/web dev
 ```
 
 Open `http://localhost:3000` and sign in via Clerk. The first
@@ -156,10 +160,10 @@ project-explicit upload route. `PROJECT_ID` is the agent's
 
 ```sh
 PROJECT_ID=$(curl -s -H "Authorization: Bearer $RAW_KEY" \
-  http://localhost:8000/api/environments | jq -r '.[0].default_project_id')
+  http://localhost:8000/v1/agents | jq -r '.[0].default_project_id')
 echo "# edited from the dashboard $(date)" >> /tmp/manual-claude/skills/test-skill/SKILL.md
 TAR=$(mktemp); ( cd /tmp/manual-claude/skills && tar czf $TAR test-skill )
-curl -X POST "http://localhost:8000/api/projects/$PROJECT_ID/skills/upload" \
+curl -X POST "http://localhost:8000/v1/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
   -F "skill_key=test-skill" -F "file=@$TAR"
 ```
@@ -273,15 +277,20 @@ with a delay. Forced by `CLAWDI_SERVE_MODE=container`.
 unknown. Check `CLAWDI_API_URL` and that the env still exists
 server-side.
 
+## Legacy alias testing
+
+Use `/v1/...` in new examples and manual checks. The hidden `/api/...` aliases
+exist only for released clients built before the `/v1` prefix migration. Test
+them deliberately when changing compatibility behavior; do not use them as the
+default path in new documentation.
+
 ## Running `clawdi daemon` inside a hosted agent image
 
-The daemon was designed for laptops but works inside the clawdi
-agent container with three caveats. The hosted agent service
-drives the dashboard's `POST /api/auth/keys`
-flow on the user's behalf to mint a deploy key bound to the env,
-then bakes the resulting key into the pod's environment. No
-backend-to-backend secret involved — the user's Clerk JWT is the
-only conduit.
+The daemon was designed for laptops but works inside a hosted agent container
+with three caveats. A hosted agent service can drive the dashboard's
+`POST /v1/auth/keys` flow on the user's behalf to mint a deploy key bound to
+the Agent, then inject that key into the runtime environment. No
+backend-to-backend secret is required; the user's Clerk JWT is the conduit.
 
 ### Env vars the container must set
 

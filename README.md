@@ -222,31 +222,12 @@ Best when you want to inspect, modify, self-host, or build on Clawdi.
 ```bash
 git clone https://github.com/Clawdi-AI/clawdi.git
 cd clawdi
-bun install
-docker compose up -d postgres
 ```
 
-Then run the backend and dashboard locally:
-
-```bash
-cd backend
-cp .env.example .env
-uv sync
-pdm migrate
-pdm dev
-```
-
-```bash
-cd ../apps/web
-cp .env.example .env.local
-bun run dev
-```
-
-Point your CLI at your local backend:
-
-```bash
-clawdi config set apiUrl http://localhost:8000
-```
+For the canonical backend + dashboard + CLI local runbook, see
+[`AGENTS.md#local-end-to-end`](AGENTS.md#local-end-to-end). It covers
+dependency install, local env keys, `VITE_CLAWDI_API_URL`, dev auth bypass,
+local API key minting, health checks, `clawdi doctor`, and cleanup.
 
 Local self-hosting currently expects:
 
@@ -383,13 +364,8 @@ bun run check
 bun run typecheck
 ```
 
-Run backend checks:
-
-```bash
-cd backend
-pdm lint
-pdm test
-```
+Run backend checks with the Ruff, compile, and throwaway-Postgres pytest flow
+in [`docs/backend-development.md#verification`](docs/backend-development.md#verification).
 
 Run the CLI from source:
 

@@ -1,5 +1,7 @@
 # Preview Deployments (Coolify + Cloudflare Tunnel)
 
+> OSS-safe deployment template only — not a live production runbook; do not add production addresses or environment-specific operations here.
+
 Per-PR / per-branch preview environments deployed by Coolify on a self-hosted
 server, fronted by Cloudflare Tunnel (no public IP, no inbound ports needed).
 

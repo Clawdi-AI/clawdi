@@ -6,14 +6,19 @@ Query, Zustand, and Clerk.
 
 ## Local web loop
 
-Install workspace dependencies from the repository root:
+Use the canonical local-stack runbook in
+[`AGENTS.md`](../AGENTS.md#local-end-to-end) when you need backend + dashboard +
+CLI running together. For app-only work, start the web dev server from the
+repository root:
 
 ```bash
-bun install
+bun run --cwd apps/web dev
 ```
 
-Run the backend first if you need real data. For local browser testing without
-Clerk, pair the backend dev auth bypass with these web values:
+Open `http://localhost:3000`.
+
+For local browser testing without Clerk, keep `apps/web/.env.local` aligned
+with the AGENTS runbook:
 
 ```dotenv
 # apps/web/.env.local
@@ -22,33 +27,26 @@ VITE_DEV_AUTH_BYPASS=true
 VITE_DEV_AUTH_TOKEN=dev-bypass
 ```
 
-Then start the web app:
-
-```bash
-bun run --cwd apps/web dev
-```
-
-Open `http://localhost:3000`.
-
 ## Verification
 
-Use the workspace package manager declared in `package.json`:
+This is the canonical web verification set. Run it before sending web changes
+for review, swapping the targeted test path for the file or directory touched by
+the change:
 
 ```bash
 bun run --cwd apps/web typecheck
-bun run --cwd apps/web test
-bun run --cwd apps/web build:oss
+bun run --cwd apps/web test src/hosted/oss-clean.test.ts
 bunx biome check apps/web/src
+bun run --cwd apps/web build:oss
 ```
 
 `typecheck` runs `tsr generate` before `tsc --noEmit`, so TanStack Router's
 generated route tree stays current.
 
-For targeted tests, pass the file or directory to the package script:
+For broader changes, run the full web test suite:
 
 ```bash
-bun run --cwd apps/web test src/hosted/oss-clean.test.ts
-bun run --cwd apps/web test src/hosted/posthog.test.ts
+bun run --cwd apps/web test
 ```
 
 `apps/web/bunfig.toml` preloads `test-setup.ts`, which sets

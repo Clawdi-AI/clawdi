@@ -139,16 +139,9 @@ validate installation and adapter `detect()` but not session parsing.
 
 ## Running the backend
 
-Full-pipe commands need the Clawdi backend on `:8000`. PostgreSQL
-(with `pgvector` + `pg_trgm`) must be running first — see the root
-README for setup details.
-
-```bash
-cd backend
-uv sync       # install Python deps
-pdm migrate   # alembic upgrade head
-pdm dev       # uvicorn app.main:app --reload on :8000
-```
+Full-pipe commands need the Clawdi backend on `:8000`. Use the canonical local
+stack runbook in [`AGENTS.md`](../AGENTS.md#local-end-to-end) for Postgres,
+backend, dashboard, local key minting, and cleanup.
 
 Once it's up, a canonical smoke loop:
 
@@ -173,6 +166,9 @@ bun run --cwd packages/cli build       # produces dist/
 All tests run with `bun test` (~5s for the full suite, ~350 tests) and never
 touch the network, your real `~/.clawdi`, or a real agent install. They're
 designed to be safe to run on every file save.
+
+For daemon end-to-end and manual browser verification, see
+[`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).
 
 ### Layers
 
