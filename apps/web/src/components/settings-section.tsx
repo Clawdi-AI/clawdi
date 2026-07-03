@@ -1,6 +1,7 @@
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
+/** Flat form/settings section; use SectionLabel for list-group captions and DashboardSection for bordered content containers. */
 export function SettingsSection({
 	title,
 	description,
@@ -15,9 +16,9 @@ export function SettingsSection({
 	tone?: "default" | "danger";
 }) {
 	return (
-		<section className={cn("grid gap-4 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-x-10", className)}>
-			<Separator className="lg:col-span-2" />
-			<div className="flex max-w-sm flex-col gap-1.5">
+		<section className={cn("flex flex-col gap-4", className)}>
+			<Separator />
+			<div className="flex max-w-2xl flex-col gap-1.5">
 				<div className={cn("text-sm font-semibold", tone === "danger" && "text-destructive")}>
 					{title}
 				</div>

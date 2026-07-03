@@ -308,12 +308,12 @@ function ComputeStatusLine(input: ComputeStatusInput) {
 
 function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
 	return (
-		<section className="grid gap-4 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-x-10">
-			<Separator className="lg:col-span-2" />
-			<div className="flex max-w-sm flex-col gap-2">
+		<section className="flex flex-col gap-4">
+			<Separator />
+			<div className="flex max-w-2xl flex-col gap-2">
 				<Skeleton className="h-4 w-24" />
-				<Skeleton className="h-3.5 w-full" />
-				<Skeleton className="h-3.5 w-3/4" />
+				<Skeleton className="h-3.5 w-80 max-w-full" />
+				<Skeleton className="h-3.5 w-56 max-w-full" />
 			</div>
 			<div className={columns === 3 ? THREE_TILE_GRID_CLASS : TWO_TILE_GRID_CLASS}>
 				{Array.from({ length: columns }).map((_, index) => (
