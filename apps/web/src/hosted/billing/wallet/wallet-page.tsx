@@ -17,7 +17,7 @@ import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Your AI Credits balance, top-ups, and auto-reload.";
-const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "space-y-6 px-4 lg:px-6");
+const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
 	document.getElementById("auto-reload")?.scrollIntoView({ behavior: "smooth", block: "center" });

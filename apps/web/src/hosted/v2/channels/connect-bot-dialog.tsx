@@ -62,17 +62,16 @@ export function ConnectBotDialog({
 	const [created, setCreated] = useState<ChannelCreated | null>(null);
 
 	useEffect(() => {
-		if (!open) {
-			setProvider("telegram");
-			setName("");
-			setToken("");
-			setApplicationId("");
-			setPublicKey("");
-			setGuildId("");
-			setServerUrl("");
-			setAuthMode("password_query");
-			setCreated(null);
-		}
+		if (!open) return;
+		setProvider("telegram");
+		setName("");
+		setToken("");
+		setApplicationId("");
+		setPublicKey("");
+		setGuildId("");
+		setServerUrl("");
+		setAuthMode("password_query");
+		setCreated(null);
 	}, [open]);
 
 	const meta = providerMeta(provider);

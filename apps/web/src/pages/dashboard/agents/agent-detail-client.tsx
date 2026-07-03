@@ -2,6 +2,7 @@
 
 import { lazy, Suspense } from "react";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AgentSectionId } from "@/lib/agent-routes";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
@@ -48,7 +49,7 @@ export function AgentDetailClient({
 
 function AgentDetailSkeleton() {
 	return (
-		<div className="space-y-4 px-4 py-2 lg:px-6">
+		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}>
 			<Skeleton className="h-10 w-64" />
 			<Skeleton className="h-9 w-full max-w-md" />
 			<Skeleton className="h-48 w-full" />

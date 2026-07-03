@@ -1,11 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { ChevronDown, Key, Plus, Share2, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -57,6 +58,7 @@ export default function ProjectsPage() {
 	const projects = useQuery({
 		queryKey: ["projects"],
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
+		placeholderData: keepPreviousData,
 	});
 
 	const rows = projects.data ?? [];
@@ -80,11 +82,13 @@ export default function ProjectsPage() {
 					unwrap(await api.GET("/v1/skills", { params: { query: { page, page_size: pageSize } } })),
 				{ pageSize: 200, resourceName: "skills" },
 			),
+		placeholderData: keepPreviousData,
 	});
 	const vaults = useQuery({
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
 			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
+		placeholderData: keepPreviousData,
 	});
 	const skillCounts = useMemo(() => {
 		const m = new Map<string, number>();
@@ -169,7 +173,7 @@ export default function ProjectsPage() {
 
 	if (projects.isLoading) {
 		return (
-			<div className="space-y-6 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
 				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
 					{Array.from({ length: 6 }).map((_, i) => (
@@ -181,7 +185,7 @@ export default function ProjectsPage() {
 	}
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<PageHeader
 				title="Projects"
 				description={PROJECTS_RESOURCE.managementDescription}
@@ -283,7 +287,12 @@ export default function ProjectsPage() {
 					No projects match “{search.trim()}”.
 				</p>
 			) : (
-				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+				<div
+					className={cn(
+						"grid gap-4 transition-opacity sm:grid-cols-2 xl:grid-cols-3",
+						projects.isFetching && !projects.isLoading ? "opacity-60" : "opacity-100",
+					)}
+				>
 					{gridProjects.map(({ project, shared }) => (
 						<ProjectCard
 							key={project.id}

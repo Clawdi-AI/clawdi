@@ -1,13 +1,15 @@
 "use client";
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { TimeTooltip } from "@/components/time-tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +38,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { unwrap, useApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
@@ -87,7 +90,7 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
 	});
 
-	const { data, isLoading, error } = useQuery({
+	const { data, isLoading, isFetching, error } = useQuery({
 		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
 		queryFn: async () =>
 			unwrap(
@@ -102,6 +105,7 @@ export default function MemoriesPage() {
 					},
 				}),
 			),
+		placeholderData: keepPreviousData,
 	});
 
 	const memories = data?.items;
@@ -134,7 +138,7 @@ export default function MemoriesPage() {
 		/>
 	);
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<PageHeader
 				title="Memories"
 				description={MEMORIES_RESOURCE.managementDescription}
@@ -208,7 +212,12 @@ export default function MemoriesPage() {
 					<AlertDescription>{errorMessage(error)}</AlertDescription>
 				</Alert>
 			) : (
-				<>
+				<div
+					className={cn(
+						"space-y-6 transition-opacity",
+						isFetching && !isLoading ? "opacity-60" : "opacity-100",
+					)}
+				>
 					<MemoryNotesGrid
 						memories={memories ?? []}
 						isLoading={isLoading}
@@ -216,7 +225,7 @@ export default function MemoriesPage() {
 						onDelete={requestDeleteMemory}
 					/>
 					{paginationFooter}
-				</>
+				</div>
 			)}
 		</div>
 	);
@@ -286,15 +295,21 @@ function MemoryNotesGrid({
 							</span>
 						))}
 						<span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
-							{memory.created_at ? <span>{relativeTime(memory.created_at)}</span> : null}
+							{memory.created_at ? (
+								<TimeTooltip value={memory.created_at}>
+									<span>{relativeTime(memory.created_at)}</span>
+								</TimeTooltip>
+							) : null}
 							{memory.source_machine_name ? (
-								<span
-									className="inline-flex min-w-0 items-center gap-1"
-									title={`Learned on ${memory.source_machine_name}`}
-								>
-									<Laptop className="size-3 shrink-0" />
-									<span className="max-w-28 truncate">{memory.source_machine_name}</span>
-								</span>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex min-w-0 items-center gap-1">
+											<Laptop className="size-3 shrink-0" />
+											<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+										</span>
+									</TooltipTrigger>
+									<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
+								</Tooltip>
 							) : null}
 						</span>
 					</div>

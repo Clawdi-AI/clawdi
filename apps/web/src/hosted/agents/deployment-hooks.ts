@@ -58,6 +58,7 @@ export function useSetAgentEnabled() {
 			client.setAgentEnabled(vars.id, vars.agentType, vars.enabled),
 		onSuccess: (_d, vars) => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
 			toast.success(vars.enabled ? "Runtime enabled" : "Runtime disabled");
 		},
 		onError: toastBillingError("Couldn't update runtime"),
@@ -80,7 +81,10 @@ export function useSetAgentAiProvider() {
 			}
 			return last;
 		},
-		onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.deployments }),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
+		},
 		onError: toastBillingError("Couldn't update provider"),
 	});
 }
@@ -93,6 +97,7 @@ export function useOnboardAgent() {
 			client.onboardAgent(vars.id, vars.agentType),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
 			toast.success("Runtime added");
 		},
 		onError: toastBillingError("Couldn't add runtime"),
@@ -118,6 +123,7 @@ export function useDeploymentLifecycle() {
 		},
 		onSuccess: (_d, vars) => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
 			const msg =
 				vars.action === "restart"
 					? "Restarting agent…"
@@ -135,7 +141,10 @@ export function useDeleteDeployment() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => client.deleteDeployment(id),
-		onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.deployments }),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
+		},
 		onError: toastBillingError("Couldn't delete agent"),
 	});
 }

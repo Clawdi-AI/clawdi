@@ -17,10 +17,12 @@ import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { MessageList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
+import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,13 +36,7 @@ import {
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
 } from "@/lib/session-queries";
-import {
-	cn,
-	formatAbsoluteTooltip,
-	formatNumber,
-	formatSessionSummary,
-	relativeTime,
-} from "@/lib/utils";
+import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
 	return <SessionDetailContent sessionId={sessionId} />;
@@ -243,7 +239,7 @@ export function SessionDetailContent({
 
 	if (isSessionLoading) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailSkeleton />
 			</div>
 		);
@@ -251,7 +247,7 @@ export function SessionDetailContent({
 
 	if (!session || !summaryText) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<p className="text-muted-foreground">Session not found.</p>
 			</div>
 		);
@@ -260,7 +256,7 @@ export function SessionDetailContent({
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 flex-1 space-y-2">
 					<DetailTitle>{summaryText}</DetailTitle>
@@ -279,9 +275,9 @@ export function SessionDetailContent({
 							</>
 						) : null}
 						<span>·</span>
-						<span title={formatAbsoluteTooltip(session.started_at)}>
-							Started {relativeTime(session.started_at)}
-						</span>
+						<TimeTooltip value={session.started_at}>
+							<span>Started {relativeTime(session.started_at)}</span>
+						</TimeTooltip>
 						{/* Surface "last activity" only when meaningfully
 					    different from started_at (long-running sessions).
 					    Threshold of 5 minutes — short sessions render
@@ -296,9 +292,9 @@ export function SessionDetailContent({
 						5 * 60_000 ? (
 							<>
 								<span>·</span>
-								<span title={formatAbsoluteTooltip(session.last_activity_at)}>
-									Last activity {relativeTime(session.last_activity_at)}
-								</span>
+								<TimeTooltip value={session.last_activity_at}>
+									<span>Last activity {relativeTime(session.last_activity_at)}</span>
+								</TimeTooltip>
 							</>
 						) : null}
 					</DetailMeta>

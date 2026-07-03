@@ -2,6 +2,7 @@
 
 import { useLocation } from "@tanstack/react-router";
 import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
@@ -41,7 +42,10 @@ export function AgentHome({
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading || (requestedHostedAgent && !deployment && isFetching)) {
 		return (
-			<div data-hosted="true" className="space-y-4 px-4 lg:px-6 py-2">
+			<div
+				data-hosted="true"
+				className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
+			>
 				<Skeleton className="h-10 w-64" />
 				<Skeleton className="h-9 w-full max-w-md" />
 				<Skeleton className="h-48 w-full" />
@@ -51,7 +55,10 @@ export function AgentHome({
 
 	if (error && requestedHostedAgent) {
 		return (
-			<div data-hosted="true" className="space-y-4 px-4 py-2 lg:px-6">
+			<div
+				data-hosted="true"
+				className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
+			>
 				<BillingError error={error} title="Couldn’t load hosted agent" />
 			</div>
 		);
@@ -76,7 +83,10 @@ export function AgentHome({
 
 	if (requestedHostedAgent) {
 		return (
-			<div data-hosted="true" className="space-y-4 px-4 py-2 lg:px-6">
+			<div
+				data-hosted="true"
+				className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
+			>
 				<BillingEmpty
 					title="Clawdi Cloud agent not found"
 					description="This Clawdi Cloud agent may still be provisioning or may have been removed."

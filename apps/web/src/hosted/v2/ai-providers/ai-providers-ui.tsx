@@ -3,6 +3,7 @@
 import { ShieldCheck, Sparkles } from "lucide-react";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
+import { Badge } from "@/components/ui/badge";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 import { cn } from "@/lib/utils";
@@ -36,13 +37,14 @@ const AUTH_LABEL: Record<string, string> = {
 export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 	const label = AUTH_LABEL[auth.type] ?? auth.type;
 	return (
-		<span
+		<Badge
 			data-hosted="true"
 			data-v2="true"
-			className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+			variant="secondary"
+			className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground"
 		>
 			{label}
-		</span>
+		</Badge>
 	);
 }
 

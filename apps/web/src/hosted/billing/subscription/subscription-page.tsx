@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 const DESCRIPTION =
 	"Plan options for new hosted agents. Existing compute is managed from each agent’s Settings.";
 const SUBSCRIPTION_PAGE_CLASS = cn(
-	CENTERED_PAGE_WIDTH_CLASS.wide,
+	CENTERED_PAGE_WIDTH_CLASS.page,
 	"flex flex-col gap-6 px-4 lg:px-6",
 );
 

@@ -8,8 +8,8 @@ export function SettingsSection({
 	className,
 	tone = "default",
 }: {
-	title: string;
-	description?: string;
+	title: React.ReactNode;
+	description?: React.ReactNode;
 	children: React.ReactNode;
 	className?: string;
 	tone?: "default" | "danger";
@@ -22,7 +22,7 @@ export function SettingsSection({
 					{title}
 				</div>
 				{description ? (
-					<p className="text-sm leading-5 text-muted-foreground">{description}</p>
+					<div className="text-sm leading-5 text-muted-foreground">{description}</div>
 				) : null}
 			</div>
 			<div className="min-w-0">{children}</div>

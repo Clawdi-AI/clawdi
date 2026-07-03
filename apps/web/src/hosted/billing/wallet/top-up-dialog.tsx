@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,9 +73,13 @@ export function TopUpDialog({
 	}
 
 	function close(next: boolean) {
-		if (!next) reset();
 		onOpenChange(next);
 	}
+
+	useEffect(() => {
+		if (!open) return;
+		reset();
+	}, [open]);
 
 	async function onContinue() {
 		// Guard double-submit: the button disables on pending, but a fast

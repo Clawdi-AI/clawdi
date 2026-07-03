@@ -12,7 +12,6 @@ import {
 	agentDisplayName,
 	agentTypeLabel,
 } from "@/components/dashboard/agent-label";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -34,6 +33,7 @@ type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
 
 const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const SETTINGS_PANEL_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
 	queryClient.setQueryData(["agents", environment.id], environment);
@@ -158,7 +158,7 @@ export function AgentSettingsPanel({
 
 	if (isLoading) {
 		return (
-			<div className={cn(contained && CENTERED_PAGE_WIDTH_CLASS.settings, className)}>
+			<div className={cn(contained && SETTINGS_PANEL_WIDTH_CLASS, className)}>
 				<Skeleton className="h-[420px] w-full rounded-lg" />
 			</div>
 		);
@@ -169,7 +169,7 @@ export function AgentSettingsPanel({
 			<div
 				className={cn(
 					"flex flex-col gap-1 rounded-md border p-4",
-					contained && CENTERED_PAGE_WIDTH_CLASS.settings,
+					contained && SETTINGS_PANEL_WIDTH_CLASS,
 					className,
 				)}
 			>
@@ -205,13 +205,7 @@ export function AgentSettingsPanel({
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 
 	return (
-		<div
-			className={cn(
-				"flex flex-col gap-9",
-				contained && CENTERED_PAGE_WIDTH_CLASS.settings,
-				className,
-			)}
-		>
+		<div className={cn("flex flex-col gap-9", contained && SETTINGS_PANEL_WIDTH_CLASS, className)}>
 			<input
 				ref={fileInputRef}
 				type="file"

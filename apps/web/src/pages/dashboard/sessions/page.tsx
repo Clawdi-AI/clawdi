@@ -14,6 +14,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -65,7 +66,7 @@ export default function SessionsPage() {
 	return (
 		<Suspense
 			fallback={
-				<div className="space-y-5 px-4 lg:px-6">
+				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 					<PageHeader title="Sessions" />
 				</div>
 			}
@@ -307,7 +308,7 @@ function SessionsListInner() {
 	);
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader
 				title="Sessions"
 				description={SESSIONS_RESOURCE.managementDescription}

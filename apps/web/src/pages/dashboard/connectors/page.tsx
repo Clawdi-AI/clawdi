@@ -15,6 +15,7 @@ import {
 } from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,11 +59,8 @@ export default function ConnectorsPage() {
 
 function ConnectorsListSkeleton() {
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
-			<div className="flex flex-col gap-2">
-				<Skeleton className="h-8 w-32" />
-				<Skeleton className="h-4 w-72" />
-			</div>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
 			<Skeleton className="h-10 w-full" />
 			<div className={CONNECTOR_GRID_CLASS}>
 				{Array.from({ length: 16 }).map((_, i) => (
@@ -141,7 +139,7 @@ function ConnectorsList() {
 		!debouncedQuery && (connected.activeConnections.length > 0 || !!connected.error);
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
 
 			<DashboardSection>

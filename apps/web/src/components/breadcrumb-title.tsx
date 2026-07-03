@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { type AgentSectionId, agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
+import { APP_TITLE, formatDocumentTitle } from "@/lib/document-title";
 
 /**
  * Context for "what the breadcrumb's last segment should say".
@@ -84,8 +85,21 @@ export function useBreadcrumbSegmentTitles(): SegmentTitles {
 export function useSetBreadcrumbTitle(title: string | null | undefined) {
 	const setTitle = useContext(SetTitleContext);
 	useEffect(() => {
-		setTitle(title?.trim() || null);
-		return () => setTitle(null);
+		const trimmed = title?.trim() || null;
+		setTitle(trimmed);
+		if (!trimmed || typeof document === "undefined") {
+			return () => setTitle(null);
+		}
+
+		const previousTitle = document.title || APP_TITLE;
+		const nextTitle = formatDocumentTitle(trimmed);
+		document.title = nextTitle;
+		return () => {
+			setTitle(null);
+			if (document.title === nextTitle) {
+				document.title = previousTitle || APP_TITLE;
+			}
+		};
 	}, [setTitle, title]);
 }
 

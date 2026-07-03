@@ -1,11 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { ProjectTab } from "@/components/projects/project-tab";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
@@ -47,11 +49,13 @@ export default function VaultPage() {
 		queryKey: ["vaults", "all"],
 		queryFn: async () =>
 			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
+		placeholderData: keepPreviousData,
 	});
 
 	const projects = useQuery({
 		queryKey: ["projects"],
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
+		placeholderData: keepPreviousData,
 	});
 	const projectNameById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p.name])),
@@ -95,7 +99,7 @@ export default function VaultPage() {
 	const shared = filtered.filter((v) => v.is_owner === false).sort(byKeysDesc);
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<PageHeader
 				title="Vaults"
 				description={VAULTS_RESOURCE.managementDescription}
@@ -153,7 +157,12 @@ export default function VaultPage() {
 				</div>
 			) : (
 				<>
-					<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+					<div
+						className={cn(
+							"grid gap-4 transition-opacity sm:grid-cols-2 xl:grid-cols-3",
+							vaults.isFetching && !vaults.isLoading ? "opacity-60" : "opacity-100",
+						)}
+					>
 						{mine.map((vault) => (
 							<VaultCard key={vault.id} vault={vault} projectNameById={projectNameById} />
 						))}
@@ -246,10 +255,15 @@ function VaultCard({
 			<div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
 				<span>{keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
 				{usedBy.length > 0 ? (
-					<span className="truncate" title={usedBy.join(", ")}>
-						used by {usedBy.slice(0, 2).join(", ")}
-						{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
-					</span>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="truncate">
+								used by {usedBy.slice(0, 2).join(", ")}
+								{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
+							</span>
+						</TooltipTrigger>
+						<TooltipContent>{usedBy.join(", ")}</TooltipContent>
+					</Tooltip>
 				) : (
 					<span>not in any Project yet</span>
 				)}

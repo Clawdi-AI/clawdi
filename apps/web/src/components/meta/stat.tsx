@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,13 +25,17 @@ export function Stat({
 	title?: string;
 	className?: string;
 }) {
-	return (
-		<span
-			title={title}
-			className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground", className)}
-		>
+	const stat = (
+		<span className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground", className)}>
 			<Icon className="size-3.5 shrink-0" />
 			<span className="truncate">{label}</span>
 		</span>
+	);
+	if (!title) return stat;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>{stat}</TooltipTrigger>
+			<TooltipContent>{title}</TooltipContent>
+		</Tooltip>
 	);
 }

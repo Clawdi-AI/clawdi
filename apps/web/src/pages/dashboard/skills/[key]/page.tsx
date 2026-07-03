@@ -29,6 +29,7 @@ import {
 } from "@/components/detail/layout";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { isProjectOwner, ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
-import { errorMessage, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
 // renderer doesn't show "name:" / "description:" lines (already
@@ -304,7 +305,7 @@ export function SkillDetailContent({
 	);
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			{!skillKey ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
 			) : error ? (

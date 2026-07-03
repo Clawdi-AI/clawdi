@@ -11,7 +11,7 @@ import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "AI Credit consumption across your agents. Wallet credits do not reset.";
-const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "space-y-6 px-4 lg:px-6");
+const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 export function UsagePage() {
 	const usage = useUsage();

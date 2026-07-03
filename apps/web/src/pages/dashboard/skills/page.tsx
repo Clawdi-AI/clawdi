@@ -1,7 +1,7 @@
 "use client";
 
 import { FEATURED_SKILLS } from "@clawdi/shared/consts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
 	AlertCircle,
@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { agentIdentity } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	compareProjectsForUse,
 	displayProjectName,
@@ -155,6 +156,7 @@ function SkillsPageInner() {
 	const {
 		data: skillsData,
 		isLoading: skillsLoading,
+		isFetching: skillsFetching,
 		error: skillsError,
 	} = useQuery({
 		queryKey: ["skills", "all-projects"],
@@ -169,6 +171,7 @@ function SkillsPageInner() {
 				{ pageSize: 200, resourceName: "skills" },
 			),
 		enabled: !isResolvingTarget,
+		placeholderData: keepPreviousData,
 	});
 	// Tab row shows custom + personal projects; the per-agent long tail
 	// lives behind one overflow menu (a 16-tab row teaches nothing).
@@ -495,7 +498,7 @@ function SkillsPageInner() {
 		) : null;
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<PageHeader
 				title="Skills"
 				description={SKILLS_RESOURCE.managementDescription}
@@ -614,7 +617,12 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			<section className="space-y-3">
+			<section
+				className={cn(
+					"space-y-3 transition-opacity",
+					skillsFetching && !skillsLoading ? "opacity-60" : "opacity-100",
+				)}
+			>
 				<div className="flex flex-wrap items-center gap-2">
 					<div className="flex items-center gap-2">
 						<h2 className="text-sm font-semibold">Installed</h2>

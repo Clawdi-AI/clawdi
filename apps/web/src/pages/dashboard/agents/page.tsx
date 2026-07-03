@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { unwrap, useApi } from "@/lib/api";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
@@ -47,7 +48,7 @@ export default function AgentsIndexPage() {
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-6 px-4 lg:px-6`}>
 			<PageHeader title="Agents" description="Every agent connected to your account." />
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
