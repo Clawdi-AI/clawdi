@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
+import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
+import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["EnvironmentResponse"];
@@ -193,6 +194,7 @@ export function AgentSettingsPanel({
 	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null }, { ownershipKind });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
+	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 
 	return (
 		<div
@@ -319,6 +321,25 @@ export function AgentSettingsPanel({
 					</div>
 				</div>
 			</SettingsSection>
+
+			{legacyDashboardUrl ? (
+				<SettingsSection
+					title="Legacy dashboard"
+					description="Manage this v1 hosted agent in the legacy dashboard."
+				>
+					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+						<p className="max-w-md text-sm text-muted-foreground">
+							This agent uses the legacy v1 management surface for runtime actions.
+						</p>
+						<Button variant="outline" size="sm" asChild>
+							<a href={legacyDashboardUrl} target="_blank" rel="noopener noreferrer">
+								<ExternalLink data-icon="inline-start" />
+								Open legacy dashboard
+							</a>
+						</Button>
+					</div>
+				</SettingsSection>
+			) : null}
 
 			{!disconnectUnavailable ? (
 				<SettingsSection

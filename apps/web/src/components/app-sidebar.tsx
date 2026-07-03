@@ -102,6 +102,7 @@ import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	projectResourceDefinitionsForGroup,
@@ -1163,6 +1164,12 @@ function FocusHeader({
 	const displayName = displayMachineName(name);
 	const meta = agentHeaderMeta(activeAgent, kind);
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
+	const manageHref =
+		kind === "cloud"
+			? agentSectionHref(activeAgent.id, "settings")
+			: kind === "legacy"
+				? (legacyHostedDashboardUrl() ?? undefined)
+				: undefined;
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={title}>
@@ -1183,12 +1190,12 @@ function FocusHeader({
 			) : null}
 			<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
 				{/* Legacy agents share the hosted copy variant (supervised
-				 * daemon, no CLI steps), but the legacy management app is no
-				 * longer linked from this dashboard. */}
+				 * daemon, no CLI steps), while remediation stays in the legacy
+				 * v1 dashboard when that URL is configured. */}
 				<DaemonStatusBadge
 					env={activeAgent}
 					source={kind !== "connected" ? "on-clawdi" : "self-managed"}
-					manageHref={kind === "cloud" ? agentSectionHref(activeAgent.id, "settings") : undefined}
+					manageHref={manageHref}
 					compact
 					tooltipDetail={meta.detailLabel}
 				/>
