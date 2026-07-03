@@ -35,10 +35,12 @@ def _rename_scopes_to_projects() -> None:
     op.alter_column("vaults", "scope_id", new_column_name="project_id")
 
     op.execute(
-        'ALTER TABLE "projects" RENAME CONSTRAINT "uq_scopes_user_slug" TO "uq_projects_user_slug"'
+        'ALTER TABLE "projects" '
+        'RENAME CONSTRAINT "uq_scopes_user_slug" TO "uq_projects_user_slug"'
     )
     op.execute(
-        'ALTER TABLE "projects" RENAME CONSTRAINT "ck_scopes_kind_v1" TO "ck_projects_kind_v1"'
+        'ALTER TABLE "projects" '
+        'RENAME CONSTRAINT "ck_scopes_kind_v1" TO "ck_projects_kind_v1"'
     )
     op.execute('ALTER INDEX "ix_scopes_user_id" RENAME TO "ix_projects_user_id"')
     op.execute(
@@ -56,7 +58,8 @@ def _rename_scopes_to_projects() -> None:
         'TO "fk_agent_environments_default_project_id"'
     )
     op.execute(
-        'ALTER TABLE "skills" RENAME CONSTRAINT "fk_skills_scope_id" TO "fk_skills_project_id"'
+        'ALTER TABLE "skills" '
+        'RENAME CONSTRAINT "fk_skills_scope_id" TO "fk_skills_project_id"'
     )
     op.execute('ALTER INDEX "ix_skills_scope_id" RENAME TO "ix_skills_project_id"')
     op.execute(
@@ -65,7 +68,8 @@ def _rename_scopes_to_projects() -> None:
     )
 
     op.execute(
-        'ALTER TABLE "vaults" RENAME CONSTRAINT "fk_vaults_scope_id" TO "fk_vaults_project_id"'
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "fk_vaults_scope_id" TO "fk_vaults_project_id"'
     )
     op.execute(
         'ALTER TABLE "vaults" '
@@ -81,10 +85,12 @@ def _rename_projects_to_scopes() -> None:
     op.alter_column("vaults", "project_id", new_column_name="scope_id")
 
     op.execute(
-        'ALTER TABLE "scopes" RENAME CONSTRAINT "uq_projects_user_slug" TO "uq_scopes_user_slug"'
+        'ALTER TABLE "scopes" '
+        'RENAME CONSTRAINT "uq_projects_user_slug" TO "uq_scopes_user_slug"'
     )
     op.execute(
-        'ALTER TABLE "scopes" RENAME CONSTRAINT "ck_projects_kind_v1" TO "ck_scopes_kind_v1"'
+        'ALTER TABLE "scopes" '
+        'RENAME CONSTRAINT "ck_projects_kind_v1" TO "ck_scopes_kind_v1"'
     )
     op.execute('ALTER INDEX "ix_projects_user_id" RENAME TO "ix_scopes_user_id"')
     op.execute(
@@ -102,7 +108,8 @@ def _rename_projects_to_scopes() -> None:
         'TO "fk_agent_environments_default_scope_id"'
     )
     op.execute(
-        'ALTER TABLE "skills" RENAME CONSTRAINT "fk_skills_project_id" TO "fk_skills_scope_id"'
+        'ALTER TABLE "skills" '
+        'RENAME CONSTRAINT "fk_skills_project_id" TO "fk_skills_scope_id"'
     )
     op.execute('ALTER INDEX "ix_skills_project_id" RENAME TO "ix_skills_scope_id"')
     op.execute(
@@ -111,7 +118,8 @@ def _rename_projects_to_scopes() -> None:
     )
 
     op.execute(
-        'ALTER TABLE "vaults" RENAME CONSTRAINT "fk_vaults_project_id" TO "fk_vaults_scope_id"'
+        'ALTER TABLE "vaults" '
+        'RENAME CONSTRAINT "fk_vaults_project_id" TO "fk_vaults_scope_id"'
     )
     op.execute(
         'ALTER TABLE "vaults" '

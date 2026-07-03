@@ -5,9 +5,8 @@ Revises: 9f74c827cec3
 Create Date: 2026-04-16 21:30:00.000000
 """
 
-import sqlalchemy as sa
-
 from alembic import op
+import sqlalchemy as sa
 
 revision = "a3d1f2e4b567"
 down_revision = "9f74c827cec3"

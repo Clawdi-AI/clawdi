@@ -20,14 +20,16 @@ Pre-FK cleanup: any `environment_id` that doesn't match an existing row gets
 set to NULL up-front, otherwise the constraint fails to add.
 """
 
-from collections.abc import Sequence
+from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
+
 
 revision: str = "6dee7134c53f"
-down_revision: str | Sequence[str] | None = "f972e0fac9ef"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "f972e0fac9ef"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:

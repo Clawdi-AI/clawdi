@@ -34,17 +34,17 @@ source is the JSONL on the daemon's machine, re-stamped as soon as
 the next push lands.
 """
 
-from collections.abc import Sequence
-
-import sqlalchemy as sa
+from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
+
 
 # revision identifiers, used by Alembic.
 revision: str = "d2f9e1a0c4b3"
-down_revision: str | Sequence[str] | None = "c1d99ac4f9e6"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "c1d99ac4f9e6"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
