@@ -1,5 +1,10 @@
 # Scenario 3: Memory — Claude Code Session Sync
 
+> HISTORICAL - early 2026-04 memory extraction scenario. Current memory behavior
+> is explicit user/agent writes through MCP or CLI; see
+> [`../architecture.md#memory`](../architecture.md#memory) and
+> [`../using-clawdi-with-claude-code.md`](../using-clawdi-with-claude-code.md).
+
 **Date:** 2026-04-15
 **Context:** Memory is Layer 1 (LLM-facing). Cross-agent recall via `memory_search` MCP tool.
 

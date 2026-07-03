@@ -1,5 +1,10 @@
 # AI Provider Catalog Design
 
+> HISTORICAL - design plan that led to the current AI Provider implementation.
+> Use [`../ai-providers.md`](../ai-providers.md) for current user behavior and
+> [`../ai-provider-agent-contract-audit.md`](../ai-provider-agent-contract-audit.md)
+> for pinned target contracts.
+
 **Status:** implementation slice in progress
 **Last updated:** 2026-06-01
 **Owner:** product + platform

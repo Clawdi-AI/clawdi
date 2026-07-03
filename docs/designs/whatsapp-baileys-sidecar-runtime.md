@@ -95,7 +95,7 @@ channel account id:
 ```
 
 Startup health checks are best-effort. A configured but unavailable sidecar is
-still registered so `/api/channels/debug/health` can report `mode=sidecar` and
+still registered so `/v1/channels/debug/health` can report `mode=sidecar` and
 `shared-bot-transport-disconnected` instead of hiding the configured runtime.
 
 ## Non-Goals

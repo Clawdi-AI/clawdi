@@ -1,5 +1,9 @@
 # Scenario 2: Vault + Claude Code (CLI-First)
 
+> HISTORICAL - early 2026-04 vault scenario. Current vault behavior is in
+> [`../architecture.md#vault`](../architecture.md#vault) and
+> [`../using-clawdi-with-claude-code.md`](../using-clawdi-with-claude-code.md).
+
 **Date:** 2026-04-15
 **Context:** Vault is Layer 2 infrastructure — secrets never enter LLM context.
 

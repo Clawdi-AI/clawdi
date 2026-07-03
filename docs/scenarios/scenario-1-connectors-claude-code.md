@@ -1,5 +1,10 @@
 # Scenario 1: Clawdi + Claude Code (CLI-First)
 
+> HISTORICAL - early 2026-04 CLI-first scenario. Current Claude Code setup is in
+> [`../using-clawdi-with-claude-code.md`](../using-clawdi-with-claude-code.md);
+> current API/MCP compatibility is in
+> [`../api-compatibility.md`](../api-compatibility.md).
+
 **Date:** 2026-04-15
 **Context:** Based on product-design.md, adopting CLI-first approach over remote MCP endpoint.
 

@@ -1,5 +1,10 @@
 # Scenario 4: Channels — Telegram ↔ Claude Code Bridge
 
+> HISTORICAL - early 2026-04 local channel-serve concept. Current native
+> Channels are backend-owned; see
+> [`../designs/native-channels-product-model.md`](../designs/native-channels-product-model.md)
+> and [`../architecture.md#channels`](../architecture.md#channels).
+
 **Date:** 2026-04-15
 **Context:** Channels decouple bot tokens from deployments. This scenario focuses on using Telegram to remotely drive Claude Code on your local machine.
 

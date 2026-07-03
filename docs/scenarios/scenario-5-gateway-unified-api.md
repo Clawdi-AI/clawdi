@@ -1,5 +1,10 @@
 # Scenario 5: Managed API Gateway
 
+> HISTORICAL - early 2026-04 managed-gateway concept. Current AI Provider
+> behavior does not proxy BYOK model traffic; see
+> [`../ai-providers.md`](../ai-providers.md) and
+> [`../architecture.md#ai-providers`](../architecture.md#ai-providers).
+
 **Date:** 2026-04-15
 **Context:** A managed API gateway can provide a zero-config fallback when a
 user does not bring provider keys through Vault.

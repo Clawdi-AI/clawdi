@@ -9,7 +9,7 @@ repository, especially `backend/app/main.py`,
 
 For the domain decision behind the naming, read
 [`ADR-0001`](adr/0001-agent-identity-is-the-stable-domain-object.md). For the
-system map, read [`architecture.md`](architecture.md#api-surface).
+system map, read [`architecture.md`](architecture.md#api-and-identity).
 
 ## Canonical surface
 

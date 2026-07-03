@@ -1,5 +1,10 @@
 # Clawdi Vault Password Manager Research
 
+> HISTORICAL - research notes, not current product behavior. Use
+> [`../architecture.md#vault`](../architecture.md#vault) and
+> [`../using-clawdi-with-claude-code.md#b-vault-inject-secrets-at-runtime-without-putting-them-on-disk`](../using-clawdi-with-claude-code.md#b-vault-inject-secrets-at-runtime-without-putting-them-on-disk)
+> for current vault behavior.
+
 **Status:** reviewed; Phase 1 implementation target
 **Last updated:** 2026-05-19
 **Owner:** product + platform
@@ -84,8 +89,8 @@ Decision impact from the second pass:
   `local_agent_profile`, `service_binding`, `proxy_binding`,
   `workload_identity`, and `delegated_tool_grant`.
 - The product must label credential custody explicitly. Client-managed vault
-  items, server-managed connected accounts, TEE-managed proxy sessions, and
-  external workload identities have different security claims.
+  items, server-managed connected accounts, attested-runtime proxy sessions,
+  and external workload identities have different security claims.
 - Agent Vault-style proxying is still the right hosted-agent security track,
   but it remains a later proof of concept because its guarantee depends on
   controlled egress and proxy enforcement.
@@ -524,11 +529,11 @@ material into follow-up actions. The core risks are:
 This threat model pushes Clawdi toward several distinct delivery modes: local
 dev env injection for compatibility, lease-scoped hosted-agent plaintext for
 the near-term hosted path, local/sidecar service for workload ergonomics,
-authorization/tool grants for SaaS tools, and proxy/TEE-backed access for
+authorization/tool grants for SaaS tools, and proxy/attested-runtime access for
 hosted agents with stronger controls. Reference UX and scoped runtime leases
-are near-term product work. Proxy/TEE belongs behind a separate proof of
-concept because it needs runtime network control to make the security claim
-honest.
+are near-term product work. Proxy/attested-runtime work belongs behind a
+separate proof of concept because it needs runtime network control to make the
+security claim honest.
 
 Second-pass research adds a fourth direction: **authorization instead of
 secret delivery**. For SaaS tools and MCP servers, the safer primitive is often
@@ -556,7 +561,7 @@ credential-and-capability layer, not only a secret-string store.
 6. **Move toward a client-managed trust model**
    - For ordinary user vault items, the target state is server-stored
      ciphertext with client-held or client-unwrapped keys.
-7. **Reserve proxy/TEE for controlled managed runtimes**
+7. **Reserve proxy/attested-runtime work for controlled managed runtimes**
    - Agent Vault-style proxying remains a strategic track, but only where
      Clawdi can enforce network/proxy behavior.
 8. **Keep key-management infrastructure behind adapters**
@@ -1013,11 +1018,11 @@ Deep Module responsible for delivering secrets to processes and agents:
      careful request/response logging policy.
    - Treat as a later proof of concept, not Phase 1 or Phase 2.
 
-7. **TEE-backed mode**
+7. **Attested-runtime mode**
    - Decryption or proxy runs inside an attested confidential VM.
    - Useful for stronger "operator cannot inspect runtime memory" claims.
    - Requires separate confidential compute evaluation.
-   - Second-pass search found strong TEE material for confidential agent
+   - Second-pass search found strong confidential-runtime material for agent
      runtimes, but no public evidence that OpenBao or Agent Vault has already
      been productized inside a reusable attested-runtime reference stack.
 
@@ -1339,7 +1344,7 @@ Properties:
 - Scopes, consent, refresh, revocation, and audit are first-class product
   objects.
 - Clawdi may still hold or refresh tokens unless the integration is
-  client-managed, external-provider managed, or TEE-managed.
+  client-managed, external-provider managed, or attested-runtime managed.
 
 This is the recommended direction for SaaS and MCP integrations. It should be
 designed with Vault because it shares Project/Agent grants and audit, but it
@@ -1359,7 +1364,7 @@ This is the recommended secure-agent direction, but it is not recommended for
 Phase 1. Treat it as a hosted-agent proof of concept after reference UX and
 basic Vault maturity are in place.
 
-### Option G: TEE Runtime
+### Option G: Attested Runtime
 
 Properties:
 
@@ -1619,7 +1624,8 @@ Deliver:
 - Tool/capability gateway for one OAuth-backed integration, so Clawdi can test
   whether "authorize an agent action" is a better UX than "give an agent a
   token" for SaaS tools.
-- TEE proof-of-concept only if product wants verifiable runtime privacy.
+- Attested-runtime proof of concept only if product wants verifiable runtime
+  privacy.
 
 Security statement:
 
@@ -1641,8 +1647,8 @@ Recommended decision:
    egress and CA/proxy bootstrapping.
 5. Treat OAuth connected accounts, delegated tool grants, and workload identity
    as typed future credential modes, not as generic secret fields.
-6. Treat TEE deployment as a separate high-trust hosted agent feasibility
-   project.
+6. Treat attested-runtime deployment as a separate high-trust hosted agent
+   feasibility project.
 
 Rejected alternatives:
 
@@ -1670,7 +1676,7 @@ Do say:
 - "Resolve secrets through Project and Agent context at runtime."
 - "Audit, expire, and revoke runtime secret access."
 - "Credential custody is explicit: client-managed, server-managed,
-  TEE-managed, or external-provider managed."
+  attested-runtime managed, or external-provider managed."
 - "Future client-managed vaults can prevent Clawdi servers from decrypting
   ordinary item values."
 
@@ -1723,8 +1729,8 @@ semantics, without turning every workflow into plaintext env sprawl."
    - OAuth refresh tokens for hosted tools may need server custody.
    - Ordinary static API keys and `.env` replacements should move toward
      client-managed custody.
-   - Enterprise customers may ask for external-provider or TEE-managed custody
-     before allowing hosted agent execution.
+   - Enterprise customers may ask for external-provider or attested-runtime
+     managed custody before allowing hosted agent execution.
 
 ## Source Notes
 
@@ -1813,5 +1819,5 @@ semantics, without turning every workflow into plaintext env sprawl."
   <https://openbao.org/docs/secrets/transit/>
   <https://openbao.org/docs/audit/>
   <https://openbao.org/docs/concepts/policies/>
-- TEE-based confidential compute is relevant for future attested hosted-agent
-  runtimes, not as the immediate Vault replacement.
+- Confidential compute is relevant for future attested hosted-agent runtimes,
+  not as the immediate Vault replacement.

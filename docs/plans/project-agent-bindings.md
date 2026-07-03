@@ -1,5 +1,11 @@
 # Project + Agent Project Design
 
+> HISTORICAL - PR design record for the Project + Agent Project rollout. Use
+> [`../architecture.md#projects-and-agent-use`](../architecture.md#projects-and-agent-use)
+> and
+> [`../scenarios/project-sharing-agent-bindings-demo.md`](../scenarios/project-sharing-agent-bindings-demo.md)
+> for the current summary and runnable demo.
+
 **Status:** CLI/backend ship-state for PR #88; web surfaces are split out
 **Last updated:** 2026-05-16
 **Owner:** product + platform

@@ -31,9 +31,9 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
 | External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
 | Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. | `ChannelAccount.visibility` |
-| Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/api/channels/bot-pool` response |
-| Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/api/channels/bot-pool` response |
-| Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/api/channels/bot-pool` |
+| Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/v1/channels/bot-pool` response |
+| Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
+| Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
 | Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp Graph/Baileys, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
 | External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
@@ -117,7 +117,7 @@ These rules define the product, not just the current implementation:
 
 Private bots:
 
-- Created through the ordinary user `/api/channels` API.
+- Created through the ordinary user `/v1/channels` API.
 - Owned by the creating user.
 - Visible only to that owner.
 - Linkable only to that owner's agents.
@@ -125,7 +125,7 @@ Private bots:
 
 Public bots:
 
-- Created and managed only through `/api/admin/channels`.
+- Created and managed only through `/v1/admin/channels`.
 - Stored as `visibility = public`.
 - Visible to authenticated users for linking and pairing.
 - Provider credentials, webhook secret rotation, archive, and provider-wide
@@ -157,7 +157,7 @@ can access the account. The difference is account management, not runtime use:
 
 Bot pool:
 
-- `GET /api/channels/bot-pool` returns the user's selectable bot candidates
+- `GET /v1/channels/bot-pool` returns the user's selectable bot candidates
   grouped by provider.
 - Owned private bots appear only for their owner.
 - Only active bots appear in the selectable pool. Disabled private bots remain
@@ -363,41 +363,42 @@ Repository and service ownership:
 | Owner | Responsibility |
 | --- | --- |
 | `clawdi` repo | Native channel tables, user/admin channel APIs, provider webhooks, pair/unpair state machine, visible command replies, provider protocol adapters, workers, agent SDK emulation, and CLI/runtime channel materialization. |
-| Managed runtime control plane | Deployment profile selection, feature flags, and calls into `clawdi` native channel APIs to create or reuse accounts, links, pair codes, and runtime manifests. |
+| First-party hosted control planes | Hosted profile selection, feature flags, and calls into `clawdi` native channel APIs to create or reuse accounts, links, pair codes, and runtime manifests. |
 
-The managed runtime control plane must not duplicate channel bindings, pair-code claiming,
-provider webhook handlers, provider protocol state, or `/bot_pair` behavior.
+First-party hosted control planes must not duplicate channel bindings,
+pair-code claiming, provider webhook handlers, provider protocol state, or
+`/bot_pair` behavior.
 Those are product-state concerns owned by `clawdi` native Channels. Managed
-deployment code may pass a Clawdi auth token and selected channel intent into a
-runtime, or call user-facing channel APIs before launch, but the canonical
-channel state remains in the native channel backend.
+runtime code may pass a Clawdi auth token and selected channel intent into a
+runtime, or call user-facing channel APIs before launch, but canonical channel
+state remains in the native channel backend.
 
 User-facing control plane:
 
 | API | Scope |
 | --- | --- |
-| `GET /api/channels` | Lists caller-owned private bots only. Use bot-pool for selectable public bots. |
-| `GET /api/channels/bot-pool` | Lists selectable bot candidates grouped by provider, including caller access and capabilities. |
-| `POST /api/channels` | Creates private bots only. |
-| `GET /api/channels/{id}` | Reads an owned private bot or accessible public bot. |
-| `POST /api/channels/{id}/agent-links` | Creates a user-owned link from an active accessible bot to one of the user's agents. |
-| `GET /api/channels/{id}/agent-links` | Lists only the caller's links. |
-| `POST /api/channels/{id}/agent-links/{link_id}/token` | Rotates only the caller's link token. |
-| `POST /api/channels/{id}/pair-codes` | Creates a one-time code for one caller-owned link on an active accessible bot. |
-| `GET /api/channels/{id}/bindings` | Lists only the caller's active bindings. |
-| `POST /api/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
-| `DELETE /api/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
-| `POST /api/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
-| `POST /api/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
-| `GET /api/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
-| `GET /api/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
+| `GET /v1/channels` | Lists caller-owned private bots only. Use bot-pool for selectable public bots. |
+| `GET /v1/channels/bot-pool` | Lists selectable bot candidates grouped by provider, including caller access and capabilities. |
+| `POST /v1/channels` | Creates private bots only. |
+| `GET /v1/channels/{id}` | Reads an owned private bot or accessible public bot. |
+| `POST /v1/channels/{id}/agent-links` | Creates a user-owned link from an active accessible bot to one of the user's agents. |
+| `GET /v1/channels/{id}/agent-links` | Lists only the caller's links. |
+| `POST /v1/channels/{id}/agent-links/{link_id}/token` | Rotates only the caller's link token. |
+| `POST /v1/channels/{id}/pair-codes` | Creates a one-time code for one caller-owned link on an active accessible bot. |
+| `GET /v1/channels/{id}/bindings` | Lists only the caller's active bindings. |
+| `POST /v1/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
+| `DELETE /v1/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
+| `POST /v1/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
+| `POST /v1/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
+| `GET /v1/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
+| `GET /v1/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
 
 CLI control plane:
 
 | CLI | Scope |
 | --- | --- |
 | `clawdi channel list` | Lists caller-owned private bots only. |
-| `clawdi channel available` | Lists selectable owned private and public bots from `/api/channels/bot-pool`. |
+| `clawdi channel available` | Lists selectable owned private and public bots from `/v1/channels/bot-pool`. |
 | `clawdi channel create <provider> <name>` | Creates a private bot, optionally with an initial `--agent` link. |
 | `clawdi channel links <channel-id>` | Lists only the caller's bot-agent links for that bot. |
 | `clawdi channel link <channel-id> --agent <agent-id>` | Creates a caller-owned link from an accessible bot to one of the caller's agents. |
@@ -412,41 +413,41 @@ operations.
 Declarative runtime setup belongs in `clawdi runtime apply` using
 `clawdi.runtime.yaml`, described in
 `docs/designs/channel-runtime-manifest.md`. That manifest composes the same
-user-facing `/api/channels` APIs, materializes agent SDK tokens and target
+user-facing `/v1/channels` APIs, materializes agent SDK tokens and target
 runtime config, and still does not expose admin channel management in the CLI.
 
 Admin control plane:
 
 | API | Scope |
 | --- | --- |
-| `GET /api/admin/channels` | Lists managed channel accounts. |
-| `POST /api/admin/channels` | Creates private or public managed channel accounts. |
-| `GET /api/admin/channels/{id}` | Reads a managed channel account. |
-| `PATCH /api/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. |
-| `POST /api/admin/channels/{id}/webhook-secret/rotate` | Rotates provider ingress secret. |
-| `POST /api/admin/channels/{id}/commands/sync` | Syncs provider-wide pair/unpair commands. |
-| `DELETE /api/admin/channels/{id}` | Archives the account and active child state. |
+| `GET /v1/admin/channels` | Lists managed channel accounts. |
+| `POST /v1/admin/channels` | Creates private or public managed channel accounts. |
+| `GET /v1/admin/channels/{id}` | Reads a managed channel account. |
+| `PATCH /v1/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. |
+| `POST /v1/admin/channels/{id}/webhook-secret/rotate` | Rotates provider ingress secret. |
+| `POST /v1/admin/channels/{id}/commands/sync` | Syncs provider-wide pair/unpair commands. |
+| `DELETE /v1/admin/channels/{id}` | Archives the account and active child state. |
 
 Provider ingress:
 
-- `/api/channels/telegram/{id}/webhook`
-- `/api/channels/discord/{id}/webhook`
-- `/api/channels/whatsapp/{id}/webhook`
-- `/api/channels/imessage/{id}/webhook`
-- `/api/channels/discord/gateway` for agent-facing replay
-- `/api/channels/whatsapp/{id}/baileys` for Baileys-compatible WhatsApp Web
+- `/v1/channels/telegram/{id}/webhook`
+- `/v1/channels/discord/{id}/webhook`
+- `/v1/channels/whatsapp/{id}/webhook`
+- `/v1/channels/imessage/{id}/webhook`
+- `/v1/channels/discord/gateway` for agent-facing replay
+- `/v1/channels/whatsapp/{id}/baileys` for Baileys-compatible WhatsApp Web
   runtime ingress
 
 Agent SDK emulation:
 
-- Telegram Bot API-compatible routes under `/api/channels/telegram/bot/{token}`.
+- Telegram Bot API-compatible routes under `/v1/channels/telegram/bot/{token}`.
   Telegram `agent_token` values deliberately keep a Bot API-looking
   `<9-digit bot id>:<secret>` shape so SDKs and OpenClaw-compatible clients
   that validate token syntax continue to work.
-- Discord REST and Gateway-compatible routes under `/api/channels/discord`.
-- WhatsApp Graph and Baileys-compatible routes under `/api/channels/whatsapp`.
+- Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
+- WhatsApp Graph and Baileys-compatible routes under `/v1/channels/whatsapp`.
 - BlueBubbles-compatible REST and Socket.IO routes under
-  `/api/channels/imessage`.
+  `/v1/channels/imessage`.
 
 ## Provider Adapter Contract
 

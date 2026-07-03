@@ -1,5 +1,9 @@
 # UI 2.0 — taste audit (redesign-skill + minimalist-skill rubric)
 
+> HISTORICAL - UI taste audit from the 2026-06 redesign pass. Use
+> [`../frontend-development.md`](../frontend-development.md) for current web
+> verification and `apps/web/src/` for current UI state.
+
 Surveyed 2026-06-03 against `Leonxlnx/taste-skill` (redesign-skill §Design
 Audit + minimalist-skill §Protocol), on the post-B1–B8 build with full prod
 data. Compliant areas omitted; findings ordered by severity.

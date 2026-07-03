@@ -1,5 +1,10 @@
 # Channels Native Backend Migration
 
+> HISTORICAL - completed migration plan. Use
+> [`../designs/native-channels-product-model.md`](../designs/native-channels-product-model.md)
+> for the current product model and [`../architecture.md#channels`](../architecture.md#channels)
+> for the current system summary.
+
 This branch replaces the legacy channel bridge wrapper plan with a Clawdi-native backend
 module. The backend owns channel data directly in Postgres and exposes new
 Clawdi routes plus Python-native channel-emulation surfaces for agent SDKs. It

@@ -36,7 +36,7 @@ runtime program from the local service plan.
 
 ```mermaid
 flowchart LR
-    ControlPlane[Control plane API] --> Manifest[Runtime manifest]
+    ControlPlane[First-party hosted control plane] --> Manifest[Runtime manifest]
     ControlPlane --> Channels[Runtime channel state]
     Manifest --> CLI[clawdi runtime reconciler]
     Channels --> CLI
@@ -110,7 +110,7 @@ The CLI may own:
 The CLI must not own:
 
 - private service routing policy;
-- production control-plane behavior;
+- first-party hosted control-plane behavior;
 - long-lived protocol credentials;
 - target runtime update channels;
 - user BYOK provider traffic interception by default.

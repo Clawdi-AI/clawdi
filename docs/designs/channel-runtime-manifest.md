@@ -12,7 +12,7 @@ materializes agent-facing SDK config into explicit local runtime outputs.
 What exists today:
 
 - `clawdi channel ...` manages the user-facing channel control plane through
-  `/api/channels`.
+  `/v1/channels`.
 - `clawdi run ...` injects Vault and AI Provider runtime env into a child
   process.
 - `clawdi ai-provider apply ...` materializes AI Provider config into selected
@@ -55,11 +55,11 @@ source of truth is Clawdi-native channel state:
 
 ## Requirements
 
-- User CLI only. No `/api/admin/*` calls, no admin key, no public bot creation.
+- User CLI only. No `/v1/admin/*` calls, no admin key, no public bot creation.
 - No Project concept. Channels link bots to agents.
 - Public bots are referenced by id. Public bot publishing and provider
   credential rotation stay admin API concerns.
-- Private bots are created by the user through `/api/channels`.
+- Private bots are created by the user through `/v1/channels`.
 - One external chat session still routes to exactly one active bot-agent link.
 - A bot can link to many agents, and one agent can link to many bots.
 - Local runtime outputs must be written under explicit manifest output paths
@@ -142,18 +142,18 @@ outputs:
 
 1. Parse and validate the manifest.
 2. Resolve all provider token and secret env refs.
-3. List caller-owned private channels through `GET /api/channels` when the
+3. List caller-owned private channels through `GET /v1/channels` when the
    manifest needs to create or reuse a private bot.
-4. For provider selection UX, optionally read `GET /api/channels/bot-pool` so
+4. For provider selection UX, optionally read `GET /v1/channels/bot-pool` so
    the user or managed runtime can choose among owned private and public bots
    without hardcoding ids. Selection should use `capabilities` instead of
    inferring permissions from `visibility`.
 5. For `account.id`, fetch and validate the channel account.
 6. For `account.private`, reuse an existing private channel by
-   `(provider, name)` or create it through `POST /api/channels`.
+   `(provider, name)` or create it through `POST /v1/channels`.
 7. List the caller's links for the account.
 8. Reuse an existing link by `(account, agent_id)` or create one through
-   `POST /api/channels/{account_id}/agent-links`.
+   `POST /v1/channels/{account_id}/agent-links`.
 9. Rotate only when requested by the manifest or CLI flag.
 10. Create pair codes when requested.
 11. Sync provider commands when requested.
@@ -204,29 +204,29 @@ Telegram:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<agent-sdk-token>
-TELEGRAM_BOT_API_BASE_URL=https://channels.example.test/api/channels/telegram
+TELEGRAM_BOT_API_BASE_URL=https://channels.example.test/v1/channels/telegram
 ```
 
 Discord:
 
 ```dotenv
 DISCORD_BOT_TOKEN=<agent-sdk-token>
-DISCORD_BOT_API_BASE_URL=https://channels.example.test/api/channels/discord
-DISCORD_GATEWAY_URL=wss://channels.example.test/api/channels/discord/gateway
+DISCORD_BOT_API_BASE_URL=https://channels.example.test/v1/channels/discord
+DISCORD_GATEWAY_URL=wss://channels.example.test/v1/channels/discord/gateway
 ```
 
 WhatsApp Graph-compatible runtime:
 
 ```dotenv
 WHATSAPP_ACCESS_TOKEN=<agent-sdk-token>
-WHATSAPP_GRAPH_API_BASE_URL=https://channels.example.test/api/channels/whatsapp/graph
+WHATSAPP_GRAPH_API_BASE_URL=https://channels.example.test/v1/channels/whatsapp/graph
 ```
 
 iMessage / BlueBubbles-compatible runtime:
 
 ```dotenv
-BLUEBUBBLES_SERVER_URL=https://channels.example.test/api/channels/imessage/bluebubbles
-BLUEBUBBLES_API_BASE_URL=https://channels.example.test/api/channels/imessage/bluebubbles/v1
+BLUEBUBBLES_SERVER_URL=https://channels.example.test/v1/channels/imessage/bluebubbles
+BLUEBUBBLES_API_BASE_URL=https://channels.example.test/v1/channels/imessage/bluebubbles/v1
 BLUEBUBBLES_PASSWORD=<agent-sdk-token>
 ```
 
@@ -236,14 +236,14 @@ intentionally absent. SDK compatibility should use provider-prefixed routes or
 target-native adapters.
 
 For Telegram specifically, current FastAPI routes are
-`/api/channels/telegram/bot/{token}/{method}` and
-`/api/channels/telegram/file/bot/{token}/{file_path}`. Many Telegram SDKs build
+`/v1/channels/telegram/bot/{token}/{method}` and
+`/v1/channels/telegram/file/bot/{token}/{file_path}`. Many Telegram SDKs build
 the official shape `/bot<token>/<method>` from an `apiRoot`, so full
 drop-in compatibility needs one of:
 
 - a provider-prefixed alias
-  `/api/channels/telegram/bot<token>/<method>` plus matching
-  `/api/channels/telegram/file/bot<token>/<file_path>`, or
+  `/v1/channels/telegram/bot<token>/<method>` plus matching
+  `/v1/channels/telegram/file/bot<token>/<file_path>`, or
 - a target adapter that knows Clawdi's slashful `/bot/{token}` route shape.
 
 The Telegram `agent_token` is intentionally generated in Bot API-looking
@@ -252,8 +252,8 @@ OpenClaw-compatible clients may validate it before sending requests.
 
 For BlueBubbles, many clients append `/api/v1` under `BLUEBUBBLES_SERVER_URL`.
 Full drop-in compatibility needs either
-`/api/channels/imessage/bluebubbles/api/v1/*` aliases or a target adapter that
-uses the existing `/api/channels/imessage/bluebubbles/v1/*` routes directly.
+`/v1/channels/imessage/bluebubbles/api/v1/*` aliases or a target adapter that
+uses the existing `/v1/channels/imessage/bluebubbles/v1/*` routes directly.
 
 ### OpenClaw Projection
 
@@ -283,8 +283,8 @@ platforms:
     enabled: true
     token: "${TELEGRAM_BOT_TOKEN}"
     extra:
-      base_url: "https://channels.example.test/api/channels/telegram/bot"
-      base_file_url: "https://channels.example.test/api/channels/telegram/file/bot"
+      base_url: "https://channels.example.test/v1/channels/telegram/bot"
+      base_file_url: "https://channels.example.test/v1/channels/telegram/file/bot"
 ```
 
 This Hermes Telegram shape assumes the provider-prefixed `/bot<token>` alias
@@ -300,8 +300,8 @@ platforms:
     enabled: true
     token: "${DISCORD_BOT_TOKEN}"
     extra:
-      base_url: "https://channels.example.test/api/channels/discord/v10"
-      gateway_url: "wss://channels.example.test/api/channels/discord/gateway"
+      base_url: "https://channels.example.test/v1/channels/discord/v10"
+      gateway_url: "wss://channels.example.test/v1/channels/discord/gateway"
 ```
 
 Hermes currently supports one profile per platform in the old integration
@@ -331,16 +331,16 @@ channels:
 
 Apply should call:
 
-- `POST /api/channels/whatsapp/{account_id}/tenant-creds` to mint or reuse a
+- `POST /v1/channels/whatsapp/{account_id}/tenant-creds` to mint or reuse a
   link-scoped credential.
-- `GET /api/channels/whatsapp/{account_id}/auth-cert` when the runtime needs
+- `GET /v1/channels/whatsapp/{account_id}/auth-cert` when the runtime needs
   shared account public auth material.
 
 It should write the Baileys auth state into the requested credential directory
 with private permissions and emit:
 
 ```dotenv
-WA_WEBSOCKET_URL=wss://channels.example.test/api/channels/whatsapp/<account-id>/baileys
+WA_WEBSOCKET_URL=wss://channels.example.test/v1/channels/whatsapp/<account-id>/baileys
 CLAWDI_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
 ```
 
@@ -371,25 +371,25 @@ Do not add admin subcommands under `runtime`.
 
 The CLI should use only existing user APIs:
 
-- `GET /api/channels`
-- `GET /api/channels/bot-pool`
-- `POST /api/channels`
-- `GET /api/channels/{account_id}`
-- `GET /api/channels/{account_id}/agent-links`
-- `POST /api/channels/{account_id}/agent-links`
-- `POST /api/channels/{account_id}/agent-links/{link_id}/token`
-- `POST /api/channels/{account_id}/pair-codes`
-- `POST /api/channels/{account_id}/commands/sync`
-- `POST /api/channels/whatsapp/{account_id}/tenant-creds`
-- `GET /api/channels/whatsapp/{account_id}/tenant-creds`
-- `GET /api/channels/whatsapp/{account_id}/auth-cert`
+- `GET /v1/channels`
+- `GET /v1/channels/bot-pool`
+- `POST /v1/channels`
+- `GET /v1/channels/{account_id}`
+- `GET /v1/channels/{account_id}/agent-links`
+- `POST /v1/channels/{account_id}/agent-links`
+- `POST /v1/channels/{account_id}/agent-links/{link_id}/token`
+- `POST /v1/channels/{account_id}/pair-codes`
+- `POST /v1/channels/{account_id}/commands/sync`
+- `POST /v1/channels/whatsapp/{account_id}/tenant-creds`
+- `GET /v1/channels/whatsapp/{account_id}/tenant-creds`
+- `GET /v1/channels/whatsapp/{account_id}/auth-cert`
 
 No admin endpoint is needed for user runtime setup.
 
-Hosted deployment code should follow the same boundary. It may invoke the CLI
-inside the runtime or call these user APIs directly before launch, but it should
-not store its own pair-code state, implement provider webhooks, or recreate the
-legacy channel bridge tenant router.
+First-party hosted control planes should follow the same boundary. They may
+invoke the CLI inside the runtime or call these user APIs directly before
+launch, but they should not store their own pair-code state, implement provider
+webhooks, or recreate the legacy channel bridge tenant router.
 
 ## Compatibility Mapping
 
