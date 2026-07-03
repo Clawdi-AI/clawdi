@@ -20,7 +20,6 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 	agentTypeLabel,
-	cleanMachineName,
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
@@ -236,9 +235,7 @@ export function ConnectedAgentDetail({
 				</div>
 			) : agent ? (
 				<>
-					<h1 className="sr-only">
-						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
-					</h1>
+					<h1 className="sr-only">{agentTitle || agentTypeLabel(agent.agent_type)}</h1>
 
 					<section className={cn("flex flex-col gap-4", contentWidthClass)}>
 						<div className="flex flex-wrap items-start justify-between gap-3">

@@ -57,10 +57,12 @@ describe("legacyConnectedAgentTiles", () => {
 				id: legacy.id,
 				source: "legacy-hosted",
 				name: "v1-hosted-runtime",
-				runtimeLabel: "OpenClaw",
 				href: `/agents/${legacy.id}`,
 			}),
 		]);
+		expect(
+			legacyConnectedAgentTiles([legacy], new Set([legacy.id]))[0]?.contextLabel,
+		).toBeUndefined();
 	});
 
 	it("carries env so the sync badge renders (with the hosted copy variant)", () => {

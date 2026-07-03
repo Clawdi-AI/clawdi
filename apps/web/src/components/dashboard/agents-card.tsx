@@ -30,23 +30,6 @@ export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
 }
 
-/** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
-export function formatRuntime(agentType: string): string {
-	switch (agentType) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-		case "claude_code":
-		case "claude-code":
-			return "Claude Code";
-		case "codex":
-			return "Codex";
-		default:
-			return agentType;
-	}
-}
-
 /**
  * Build self-managed AgentTiles from cloud-api environments. Shared by the
  * Overview grid and the `/agents` index so the tile shape stays identical
@@ -61,7 +44,6 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		avatarUrl: env.avatar_url,
 		sortOrder: env.sort_order,
 		agentType: env.agent_type,
-		runtimeLabel: formatRuntime(env.agent_type),
 		statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 		lastSeenAt: env.last_seen_at,
 		href: agentSectionHref(env.id),
@@ -84,8 +66,8 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** "OpenClaw", "Claude Code", etc. — agent name only, no jargon suffix. */
-	runtimeLabel: string;
+	/** Optional deployment/source context shown after the runtime disambiguator. */
+	contextLabel?: string | null;
 	/** "Synced 2m ago", "Running", "Provisioning…" — already humanized. */
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
@@ -248,14 +230,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// "sync state under the agent name" — pre-fix-attempt the
 	// badge was floated to the trailing edge.
 	const meta: ReactNode[] = [];
-	// Hosted (on-clawdi) tiles use `runtimeLabel` to carry the
-	// deployment slug — without it two OpenClaw / Hermes deployments
-	// linking to different deploy URLs would render
-	// indistinguishably ('OpenClaw · Running' on both). Self-
-	// managed tiles already convey the runtime via the
-	// AgentLabel `type` prop (the icon badge), so adding
-	// runtimeLabel there would just duplicate the agent type.
-	if ((onClawdi || legacyHosted) && tile.runtimeLabel) meta.push(tile.runtimeLabel);
+	if (tile.contextLabel) meta.push(tile.contextLabel);
 	if (tile.statusLabel) meta.push(tile.statusLabel);
 	if (tile.env) {
 		meta.push(

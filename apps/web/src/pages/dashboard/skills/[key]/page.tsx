@@ -19,7 +19,7 @@ import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { cleanMachineName } from "@/components/dashboard/agent-label";
+import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import {
 	DetailMeta,
 	DetailNotFound,
@@ -115,9 +115,24 @@ export function SkillDetailContent({
 		},
 	});
 
+	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
+	const { data: skillAgent } = useQuery({
+		queryKey: ["agent", agentEnvironmentId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/environments/{environment_id}", {
+					params: { path: { environment_id: agentEnvironmentId ?? "" } },
+				}),
+			),
+		enabled: !!agentEnvironmentId,
+	});
+	const skillAgentLabel = skillAgent
+		? agentDisplayName(skillAgent)
+		: skill?.machine_name
+			? cleanMachineName(skill.machine_name)
+			: null;
 	const breadcrumbTitle = skill?.name || (skill ? skillKey : null);
-	const agentTitle = skill?.machine_name ? cleanMachineName(skill.machine_name) : null;
-	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, agentTitle);
+	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, skillAgentLabel);
 	useSetBreadcrumbTitle(breadcrumbTitle);
 
 	const { data: defaultProject, error: projectError } = useQuery({
@@ -210,8 +225,8 @@ export function SkillDetailContent({
 		},
 		onSuccess: () => {
 			toast.success("Skill Saved", {
-				description: skill?.machine_name
-					? `${skill.machine_name} picks up the new version within a couple seconds via sync.`
+				description: skillAgentLabel
+					? `${skillAgentLabel} picks up the new version within a couple seconds via sync.`
 					: "The change applies on this agent within a couple seconds via sync.",
 			});
 			setIsEditing(false);
@@ -250,8 +265,8 @@ export function SkillDetailContent({
 		},
 		onSuccess: () => {
 			toast.success("Skill Uninstalled", {
-				description: skill?.machine_name
-					? `Removed from ${skill.machine_name}. Other agents keep their copies.`
+				description: skillAgentLabel
+					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
 					: "Removed from this agent. Other agents keep their copies.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -273,9 +288,9 @@ export function SkillDetailContent({
 	};
 
 	const sourceProjectName = skill?.project_name ?? null;
-	const uninstallLocation = skill?.machine_name ? `from ${skill.machine_name}` : "from this agent";
-	const agentCaption = skill?.machine_name
-		? `on ${skill.machine_name}`
+	const uninstallLocation = skillAgentLabel ? `from ${skillAgentLabel}` : "from this agent";
+	const agentCaption = skillAgentLabel
+		? `on ${skillAgentLabel}`
 		: sourceProjectName
 			? `in ${sourceProjectName}`
 			: null;

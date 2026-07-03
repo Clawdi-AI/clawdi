@@ -24,11 +24,11 @@ export function AgentInline({
 	type: string | null | undefined;
 	className?: string;
 }) {
-	const machine = cleanMachineName(machineName);
-	const typeLabel = agentTypeLabel(type);
-	const title = machine || typeLabel;
-	const subtitle = machine && type ? typeLabel : null;
-	if (!machine && !type) return null;
+	const hasIdentity = Boolean(cleanMachineName(machineName) || type);
+	const identity = agentIdentity({ machine_name: machineName, agent_type: type });
+	const title = identity.primaryLabel;
+	const subtitle = identity.secondaryLabel;
+	if (!hasIdentity) return null;
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
 			<AgentIcon agent={type} size="xs" />
@@ -50,11 +50,10 @@ export function AgentInline({
  * fits both "many agents on one screen" and "one agent in a hero":
  *
  *   primary="machine"  (default — every list and the detail hero)
- *     [icon] Jings-MacBook-Pro.local
+ *     [icon] Launch runner
  *            Hermes · meta…
- *     The machine name is the H1 because that's the label the
- *     user picked themselves; agent_type drops to the subtitle
- *     where it disambiguates 4 agents on the same laptop.
+ *     The canonical agent name is the H1; agent_type drops to
+ *     the subtitle where it disambiguates sibling runtimes.
  *
  *   primary="type"
  *     [icon] Hermes
@@ -86,18 +85,48 @@ function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind {
 	return kind === "cloud" ? "hosted" : "connected";
 }
 
+export type AgentIdentityInput = {
+	display_name?: string | null;
+	machine_name?: string | null;
+	agent_type?: string | null;
+};
+
+export type AgentIdentity = {
+	/** User-edited override stored on AgentEnvironment.display_name. */
+	customName: string | null;
+	/** Registration/default name stored on AgentEnvironment.machine_name. */
+	machineName: string | null;
+	/** Friendly runtime label derived from AgentEnvironment.agent_type. */
+	runtimeName: string;
+	/** Canonical primary label for this agent in dashboard chrome. */
+	primaryLabel: string;
+	/** Runtime disambiguator when it is not already the primary label. */
+	secondaryLabel: string | null;
+};
+
+export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
+	const customName = cleanMachineName(env.display_name) || null;
+	const machineName = cleanMachineName(env.machine_name) || null;
+	const runtimeName = agentTypeLabel(env.agent_type);
+	const primaryLabel = customName ?? machineName ?? runtimeName;
+	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
+	return {
+		customName,
+		machineName,
+		runtimeName,
+		primaryLabel,
+		secondaryLabel,
+	};
+}
+
 export function agentDisplayName(
-	env: {
-		display_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-	},
-	{ ownershipKind = "connected" }: { ownershipKind?: AgentOwnershipKind } = {},
+	env: AgentIdentityInput,
+	_options: { ownershipKind?: AgentOwnershipKind } = {},
 ): string {
-	const custom = cleanMachineName(env.display_name);
-	if (custom) return custom;
-	if (ownershipKind !== "connected") return agentTypeLabel(env.agent_type);
-	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+	// Ownership affects badges, actions, and lifecycle chrome, not naming.
+	// The Cloud API AgentEnvironment is the identity record for every agent
+	// source, so all sources share the same display fallback.
+	return agentIdentity(env).primaryLabel;
 }
 
 export function agentSourceLabel(source: AgentSourceKind): string {
@@ -207,24 +236,18 @@ export function AgentSourceBadgeForEnvironment({
 }
 
 export function agentTextLabel(
-	env: {
-		id?: string | null;
-		display_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-	},
+	env: AgentIdentityInput & { id?: string | null },
 	{
 		includeSource = true,
 		ownershipKind = "connected",
 	}: { includeSource?: boolean; ownershipKind?: AgentOwnershipKind } = {},
 ): string {
-	const identity = agentDisplayName(env, { ownershipKind });
-	const runtime = agentTypeLabel(env.agent_type);
+	const identity = agentIdentity(env);
 	const source = sourceFromOwnershipKind(ownershipKind);
 	const parts = [
 		includeSource && source === "hosted" ? agentSourceLabel(source) : null,
-		identity,
-		runtime !== identity ? runtime : null,
+		identity.primaryLabel,
+		identity.secondaryLabel,
 	].filter((part): part is string => Boolean(part));
 	return parts.join(" · ");
 }
@@ -318,9 +341,8 @@ export function AgentLabel({
 	type: string | null | undefined;
 	avatarUrl?: string | null | undefined;
 	size?: AgentIconSize;
-	/** Which field is the H1 line. Defaults to "machine" — the
-	 * machine name is the user's own label; agent_type drops to
-	 * the subtitle as a disambiguator. */
+	/** Which field is the H1 line. Defaults to "machine": display name
+	 * if present, then registered machine name, then runtime type. */
 	primary?: "type" | "machine";
 	/** Inline meta items rendered in the subtitle row after the
 	 * primary disambiguator (e.g. last-seen, DaemonStatusBadge).

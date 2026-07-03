@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
+	agentTextLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -17,7 +18,7 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses runtime as the default Cloud agent name", () => {
+	test("uses the registered machine name as the default Cloud agent name", () => {
 		expect(
 			agentDisplayName(
 				{
@@ -26,13 +27,25 @@ describe("agentDisplayName", () => {
 				},
 				{ ownershipKind: "cloud" },
 			),
-		).toBe("OpenClaw");
+		).toBe("Shared Hosted Compute");
 	});
 
 	test("uses machine name as the default connected agent name", () => {
 		expect(agentDisplayName({ machine_name: "Jing-Mac.local", agent_type: "codex" })).toBe(
 			"Jing-Mac",
 		);
+	});
+
+	test("uses the registered machine name as the default Legacy agent name", () => {
+		expect(
+			agentDisplayName(
+				{
+					machine_name: "v1-hosted-runtime",
+					agent_type: "hermes",
+				},
+				{ ownershipKind: "legacy" },
+			),
+		).toBe("v1-hosted-runtime");
 	});
 
 	test("prefers user display name for every source", () => {
@@ -46,6 +59,18 @@ describe("agentDisplayName", () => {
 				{ ownershipKind: "legacy" },
 			),
 		).toBe("Launch runner");
+	});
+
+	test("keeps runtime as a secondary label when the primary name is not the runtime", () => {
+		expect(
+			agentTextLabel(
+				{
+					machine_name: "Research Agent",
+					agent_type: "codex",
+				},
+				{ ownershipKind: "cloud" },
+			),
+		).toBe("Cloud · Research Agent · Codex");
 	});
 });
 

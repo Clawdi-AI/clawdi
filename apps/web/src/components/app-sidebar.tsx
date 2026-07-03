@@ -242,6 +242,9 @@ const AGENT_SECTION_TINTS = {
 	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
+const LEGACY_DASHBOARD_TINT =
+	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+
 type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
 
 type SidebarNavItem = {
@@ -318,7 +321,12 @@ function SidebarNavSection({
 							<SidebarMenuItem key={item.id}>
 								<SidebarMenuButton asChild isActive={item.active} tooltip={item.tooltip}>
 									{item.external ? (
-										<a href={item.href} onClick={onNavigate}>
+										<a
+											href={item.href}
+											target="_blank"
+											rel="noopener noreferrer"
+											onClick={onNavigate}
+										>
 											<NavIconChip tint={item.tint}>
 												<Icon />
 											</NavIconChip>
@@ -428,11 +436,13 @@ function AgentSectionList({
 	agentId,
 	sections,
 	activeSection,
+	extraPrimaryItems = [],
 	onNavigate,
 }: {
 	agentId: string;
 	sections: readonly AgentSectionDefinition[];
 	activeSection: AgentSectionId;
+	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
 	const normalizedActiveSection = sections.some((section) => section.id === activeSection)
@@ -445,18 +455,21 @@ function AgentSectionList({
 		(section) => section.id !== "overview" && section.id !== "console" && section.id !== "terminal",
 	);
 
-	const primaryItems = primarySections.map((section): SidebarNavItem => {
-		const Icon = section.icon;
-		return {
-			id: section.id,
-			label: agentSectionLabel(section.id),
-			href: agentSectionHref(agentId, section.id),
-			icon: Icon,
-			tint: AGENT_SECTION_TINTS[section.id],
-			tooltip: section.tooltip,
-			active: normalizedActiveSection === section.id,
-		};
-	});
+	const primaryItems = [
+		...primarySections.map((section): SidebarNavItem => {
+			const Icon = section.icon;
+			return {
+				id: section.id,
+				label: agentSectionLabel(section.id),
+				href: agentSectionHref(agentId, section.id),
+				icon: Icon,
+				tint: AGENT_SECTION_TINTS[section.id],
+				tooltip: section.tooltip,
+				active: normalizedActiveSection === section.id,
+			};
+		}),
+		...extraPrimaryItems,
+	];
 	const resourceItems = resourceSections.map((section): SidebarNavItem => {
 		const Icon = section.icon;
 		return {
@@ -488,11 +501,27 @@ function AgentFocusSections({
 	onNavigate?: () => void;
 }) {
 	const kind = useAgentChromeKind(agent);
+	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
+		? [
+				{
+					id: "legacy-dashboard",
+					label: "Legacy dashboard",
+					href: legacyDashboardHref,
+					icon: History,
+					tint: LEGACY_DASHBOARD_TINT,
+					tooltip: "Open legacy dashboard",
+					active: false,
+					external: true,
+				},
+			]
+		: [];
 	return (
 		<AgentSectionList
 			agentId={agent.id}
 			sections={kind === "cloud" ? HOSTED_AGENT_SECTIONS : CONNECTED_AGENT_SECTIONS}
 			activeSection={activeSection}
+			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
 		/>
 	);

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentInline, agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import { AgentInline, agentDisplayName } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -73,6 +73,16 @@ export function SessionDetailContent({
 		},
 		staleTime: SESSION_DETAIL_STALE_MS,
 		gcTime: SESSION_DETAIL_GC_MS,
+	});
+	const { data: scopedAgent } = useQuery({
+		queryKey: ["agent", agentId],
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/environments/{environment_id}", {
+					params: { path: { environment_id: agentId ?? "" } },
+				}),
+			),
+		enabled: !!agentId,
 	});
 
 	// Direction toggle: "desc" (newest-first, default) is the most
@@ -215,7 +225,9 @@ export function SessionDetailContent({
 		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
 		: null;
 	const agentBreadcrumbTitle = session
-		? cleanMachineName(session.machine_name) || agentTypeLabel(session.agent_type)
+		? scopedAgent
+			? agentDisplayName(scopedAgent)
+			: agentDisplayName({ machine_name: session.machine_name, agent_type: session.agent_type })
 		: null;
 	useSetAgentBreadcrumbTitle({
 		agentId,
@@ -248,7 +260,10 @@ export function SessionDetailContent({
 				<div className="min-w-0 flex-1 space-y-2">
 					<DetailTitle>{summaryText}</DetailTitle>
 					<DetailMeta>
-						<AgentInline machineName={session.machine_name} type={session.agent_type} />
+						<AgentInline
+							machineName={scopedAgent ? agentDisplayName(scopedAgent) : session.machine_name}
+							type={session.agent_type}
+						/>
 						{session.project_path ? (
 							<>
 								<span>·</span>
