@@ -242,7 +242,10 @@ const AGENT_SECTION_TINTS = {
 	settings: "bg-identity-4-bg text-identity-4-fg",
 } satisfies Record<AgentSectionId, string>;
 
-type SidebarEnvironment = components["schemas"]["EnvironmentResponse"];
+const LEGACY_DASHBOARD_TINT =
+	"bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+
+type SidebarEnvironment = components["schemas"]["AgentResponse"];
 
 type SidebarNavItem = {
 	id: string;
@@ -318,7 +321,12 @@ function SidebarNavSection({
 							<SidebarMenuItem key={item.id}>
 								<SidebarMenuButton asChild isActive={item.active} tooltip={item.tooltip}>
 									{item.external ? (
-										<a href={item.href} onClick={onNavigate}>
+										<a
+											href={item.href}
+											target="_blank"
+											rel="noopener noreferrer"
+											onClick={onNavigate}
+										>
 											<NavIconChip tint={item.tint}>
 												<Icon />
 											</NavIconChip>
@@ -428,11 +436,13 @@ function AgentSectionList({
 	agentId,
 	sections,
 	activeSection,
+	extraPrimaryItems = [],
 	onNavigate,
 }: {
 	agentId: string;
 	sections: readonly AgentSectionDefinition[];
 	activeSection: AgentSectionId;
+	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
 	const normalizedActiveSection = sections.some((section) => section.id === activeSection)
@@ -445,18 +455,21 @@ function AgentSectionList({
 		(section) => section.id !== "overview" && section.id !== "console" && section.id !== "terminal",
 	);
 
-	const primaryItems = primarySections.map((section): SidebarNavItem => {
-		const Icon = section.icon;
-		return {
-			id: section.id,
-			label: agentSectionLabel(section.id),
-			href: agentSectionHref(agentId, section.id),
-			icon: Icon,
-			tint: AGENT_SECTION_TINTS[section.id],
-			tooltip: section.tooltip,
-			active: normalizedActiveSection === section.id,
-		};
-	});
+	const primaryItems = [
+		...primarySections.map((section): SidebarNavItem => {
+			const Icon = section.icon;
+			return {
+				id: section.id,
+				label: agentSectionLabel(section.id),
+				href: agentSectionHref(agentId, section.id),
+				icon: Icon,
+				tint: AGENT_SECTION_TINTS[section.id],
+				tooltip: section.tooltip,
+				active: normalizedActiveSection === section.id,
+			};
+		}),
+		...extraPrimaryItems,
+	];
 	const resourceItems = resourceSections.map((section): SidebarNavItem => {
 		const Icon = section.icon;
 		return {
@@ -488,11 +501,27 @@ function AgentFocusSections({
 	onNavigate?: () => void;
 }) {
 	const kind = useAgentChromeKind(agent);
+	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
+	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
+		? [
+				{
+					id: "legacy-dashboard",
+					label: "Legacy dashboard",
+					href: legacyDashboardHref,
+					icon: History,
+					tint: LEGACY_DASHBOARD_TINT,
+					tooltip: "Open legacy dashboard",
+					active: false,
+					external: true,
+				},
+			]
+		: [];
 	return (
 		<AgentSectionList
 			agentId={agent.id}
 			sections={kind === "cloud" ? HOSTED_AGENT_SECTIONS : CONNECTED_AGENT_SECTIONS}
 			activeSection={activeSection}
+			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
 		/>
 	);
@@ -785,7 +814,7 @@ function SortableAgentRailItem({
 		kind === "legacy"
 			? `Legacy · ${agentTextLabel(agent, { includeSource: false, ownershipKind: kind })}`
 			: agentTextLabel(agent, { includeSource: kind === "cloud", ownershipKind: kind });
-	const caption = displayMachineName(agentDisplayName(agent, { ownershipKind: kind }));
+	const caption = displayMachineName(agentDisplayName(agent));
 	const href = agentSectionHref(agent.id);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
@@ -888,26 +917,24 @@ function FocusRailContent({
 	const orderedAgentIds = orderedAgents.map((agent) => agent.id);
 	const reorderAgents = useMutation({
 		mutationFn: async (environmentIds: string[]) =>
-			unwrap(
-				await api.PATCH("/v1/environments/order", { body: { environment_ids: environmentIds } }),
-			),
+			unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
 		onMutate: async (environmentIds) => {
-			await queryClient.cancelQueries({ queryKey: ["environments"] });
-			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["environments"]);
-			queryClient.setQueryData<SidebarEnvironment[]>(["environments"], (current) =>
+			await queryClient.cancelQueries({ queryKey: ["agents"] });
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["agents"]);
+			queryClient.setQueryData<SidebarEnvironment[]>(["agents"], (current) =>
 				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
 			);
 			return { previous };
 		},
 		onError: (error, _environmentIds, context) => {
 			if (context?.previous) {
-				queryClient.setQueryData(["environments"], context.previous);
+				queryClient.setQueryData(["agents"], context.previous);
 				setRailAgentsOrder([...context.previous].sort(compareAgentEnvironments));
 			}
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
-			queryClient.setQueryData(["environments"], data);
+			queryClient.setQueryData(["agents"], data);
 			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
 		},
 	});
@@ -1160,7 +1187,7 @@ function FocusHeader({
 		);
 	}
 
-	const name = agentDisplayName(activeAgent, { ownershipKind: kind });
+	const name = agentDisplayName(activeAgent);
 	const displayName = displayMachineName(name);
 	const meta = agentHeaderMeta(activeAgent, kind);
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
@@ -1450,8 +1477,8 @@ export function AppSidebar({
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
 	const hydratedEnvironments = mounted ? environments : undefined;

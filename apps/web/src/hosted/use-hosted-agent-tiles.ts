@@ -3,6 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
@@ -12,7 +13,7 @@ import { billingKeys } from "@/hosted/billing/hooks";
 import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 /**
  * Env ids claimed by Cloud deploy-API deployments (lower-cased —
@@ -102,7 +103,7 @@ export function useHostedAgentTiles({
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
-	// — which cloud-api also returns from /api/environments because
+	// — which cloud-api also returns from /v1/agents because
 	// the admin endpoint registered it — doesn't double-count as both
 	// a hosted tile and a self-managed tile. Lower-cased for the same
 	// case-sensitivity defense as `envById`.
@@ -166,22 +167,16 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		const settingsHref = matchedEnv
 			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
 			: agentSectionHref(d.id, "settings");
+		const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
+		const contextLabel = slug !== name ? slug : null;
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
-			// Runtime is the primary identifier on hosted tiles since the
-			// AgentIcon already brands it and one deployment fans out to
-			// multiple tiles — using `d.name` here would print
-			// "openclaw-b5451f9c" on a Hermes tile.
-			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
-			displayName: matchedEnv?.display_name ?? null,
+			name,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
-			// Deployment slug as the secondary line lets users disambiguate
-			// when they have more than one hosted deployment. Mode info ("Daemon") is
-			// implied by the "Clawdi" badge — every hosted runtime is daemon.
-			runtimeLabel: slug,
+			contextLabel,
 			statusLabel,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			// `?source=on-clawdi` is the breadcrumb the agent detail page

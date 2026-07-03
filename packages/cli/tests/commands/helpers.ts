@@ -142,7 +142,7 @@ export const jsonResponse = (data: unknown, status = 200) =>
 	});
 
 /**
- * `clawdi push` now probes /v1/environments/{id} before doing any work, to
+ * `clawdi push` now probes /v1/agents/{id} before doing any work, to
  * fail fast on a stale local env_id. Tests that exercise the happy path need
  * the probe to return 200 — drop this handler near the top of the handler
  * list and all push tests "just work".
@@ -158,7 +158,7 @@ export const okEnvironmentProbe = (
 	defaultProjectId = "00000000-0000-0000-0000-000000000099",
 ) => ({
 	method: "GET",
-	path: `/v1/environments/${envId}`,
+	path: `/v1/agents/${envId}`,
 	response: () =>
 		jsonResponse({
 			id: envId,

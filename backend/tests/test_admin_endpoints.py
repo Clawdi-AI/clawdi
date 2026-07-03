@@ -703,7 +703,7 @@ async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_creates_with_project(admin_client, db_session, seed_user):
+async def test_admin_register_env_creates_with_project(admin_client, client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
     default project, matching the user-facing register_environment
     contract. Migration tooling depends on default_project_id being
@@ -733,15 +733,36 @@ async def test_admin_register_env_creates_with_project(admin_client, db_session,
     assert env.registration_key == "machine:migrate-machine-1:agent:openclaw"
     assert env.default_project_id is not None  # heal logic ran
 
+    detail = await client.get(f"/v1/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is False
+    assert "registration_key" not in body
+
 
 @pytest.mark.asyncio
-async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_session, seed_user):
+async def test_admin_register_env_accepts_explicit_agent_id(
+    admin_client, client, db_session, seed_user
+):
     """Hosted registration owns the stable agent id. Machine fields are metadata."""
     import uuid
 
     from sqlalchemy import select
 
     from app.models.session import AgentEnvironment
+
+    machine_key = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "machine-key-before-explicit",
+            "machine_name": "machine-key-pod",
+            "agent_type": "openclaw",
+        },
+    )
+    assert machine_key.status_code == 200, machine_key.text
+    machine_key_env_id = machine_key.json()["id"]
 
     agent_id = uuid.uuid4()
     r = await admin_client.post(
@@ -752,6 +773,7 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
             "environment_id": str(agent_id),
             "machine_id": "hosted-machine-explicit",
             "machine_name": "hosted-pod",
+            "default_name": "Hosted Codex",
             "agent_type": "codex",
         },
     )
@@ -763,7 +785,107 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
     ).scalar_one()
     assert env.user_id == seed_user.id
     assert env.machine_id == "hosted-machine-explicit"
+    assert env.machine_name == "hosted-pod"
+    assert env.default_name == "Hosted Codex"
     assert env.registration_key is None
+
+    detail = await client.get(f"/v1/environments/{agent_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is True
+    assert "registration_key" not in body
+
+    agent_detail = await client.get(f"/v1/agents/{agent_id}")
+    assert agent_detail.status_code == 200, agent_detail.text
+    assert agent_detail.json()["explicit_identity"] is True
+
+    listing = await client.get("/v1/environments")
+    assert listing.status_code == 200, listing.text
+    by_id = {item["id"]: item for item in listing.json()}
+    assert {
+        machine_key_env_id: by_id[machine_key_env_id]["explicit_identity"],
+        str(agent_id): by_id[str(agent_id)]["explicit_identity"],
+    } == {machine_key_env_id: False, str(agent_id): True}
+
+
+@pytest.mark.asyncio
+async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
+    admin_client, db_session, seed_user
+):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.session import AgentEnvironment
+
+    agent_id = uuid.uuid4()
+    created = await admin_client.post(
+        "/v1/admin/agents",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "agent_id": str(agent_id),
+            "machine_id": "admin-agent-alias",
+            "machine_name": "admin-agent-pod",
+            "default_name": "Admin Agent Alias",
+            "agent_type": "codex",
+            "agent_version": "1.0.0",
+            "os_name": "linux",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["id"] == str(agent_id)
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
+    ).scalar_one()
+    assert env.user_id == seed_user.id
+    assert env.default_name == "Admin Agent Alias"
+    assert env.registration_key is None
+
+    runtime = await admin_client.put(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "dep-admin-agent-alias",
+            "instance_id": "iid-admin-agent-alias",
+            "generation": 7,
+            "provider_id": "clawdi-managed",
+            "runtimes": {"codex": {"enabled": True}},
+        },
+    )
+    assert runtime.status_code == 200, runtime.text
+    assert runtime.json()["environment_id"] == str(agent_id)
+
+    state = (
+        await db_session.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+        )
+    ).scalar_one_or_none()
+    assert state is not None
+    assert state.deployment_id == "dep-admin-agent-alias"
+
+    deleted_state = await admin_client.delete(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+    )
+    assert deleted_state.status_code == 204, deleted_state.text
+
+    state = (
+        await db_session.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+        )
+    ).scalar_one_or_none()
+    assert state is None
+
+    deleted_agent = await admin_client.delete(f"/v1/admin/agents/{agent_id}", headers=_AUTH)
+    assert deleted_agent.status_code == 204, deleted_agent.text
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
+    ).scalar_one_or_none()
+    assert env is None
 
 
 @pytest.mark.asyncio
@@ -783,6 +905,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
         "environment_id": str(agent_id),
         "machine_id": "hosted-agent-initial",
         "machine_name": "hosted-pod-initial",
+        "default_name": "Initial Hosted Codex",
         "agent_type": "codex",
         "agent_version": "1.0.0",
         "os_name": "linux",
@@ -795,6 +918,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
             **body,
             "machine_id": "hosted-agent-moved",
             "machine_name": "hosted-pod-moved",
+            "default_name": "Moved Hosted Codex",
             "agent_version": "1.1.0",
             "os_name": "darwin",
         },
@@ -814,6 +938,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
     env = envs[0]
     assert env.machine_id == "hosted-agent-moved"
     assert env.machine_name == "hosted-pod-moved"
+    assert env.default_name == "Moved Hosted Codex"
     assert env.agent_version == "1.1.0"
     assert env.os == "darwin"
     assert env.registration_key is None

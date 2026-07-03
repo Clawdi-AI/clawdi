@@ -108,8 +108,8 @@ export function useChannelActivity(id: string) {
 export function useEnvironments() {
 	const api = useApi();
 	return useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 	});
 }
 

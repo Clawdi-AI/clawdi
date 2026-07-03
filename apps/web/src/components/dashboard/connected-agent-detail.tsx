@@ -20,7 +20,6 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 	agentTypeLabel,
-	cleanMachineName,
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
@@ -107,11 +106,11 @@ export function ConnectedAgentDetail({
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["agent", id],
+		queryKey: ["agents", id],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: id } },
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: id } },
 				}),
 			),
 	});
@@ -222,7 +221,7 @@ export function ConnectedAgentDetail({
 	});
 
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
-	const agentTitle = agent ? agentDisplayName(agent, { ownershipKind }) : null;
+	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (
@@ -236,9 +235,7 @@ export function ConnectedAgentDetail({
 				</div>
 			) : agent ? (
 				<>
-					<h1 className="sr-only">
-						{cleanMachineName(agent.machine_name) || agentTypeLabel(agent.agent_type)}
-					</h1>
+					<h1 className="sr-only">{agentTitle || agentTypeLabel(agent.agent_type)}</h1>
 
 					<section className={cn("flex flex-col gap-4", contentWidthClass)}>
 						<div className="flex flex-wrap items-start justify-between gap-3">

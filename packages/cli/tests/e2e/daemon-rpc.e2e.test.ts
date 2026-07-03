@@ -45,7 +45,7 @@ beforeAll(() => {
 				body,
 			});
 
-			if (req.method === "GET" && url.pathname === `/v1/environments/${ENV_ID}`) {
+			if (req.method === "GET" && url.pathname === `/v1/agents/${ENV_ID}`) {
 				return json({
 					id: ENV_ID,
 					default_project_id: PROJECT_ID,
@@ -148,7 +148,7 @@ if (process.platform !== "win32") {
 				const staleToken = await postRpcWithToken(rpcPort, oldToken);
 				expect(staleToken.status).toBe(401);
 
-				expect(apiCalls.some((call) => call.path === `/v1/environments/${ENV_ID}`)).toBe(true);
+				expect(apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}`)).toBe(true);
 				expect(apiCalls.some((call) => call.path.startsWith("/v1/skills?"))).toBe(true);
 				expect(apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`)).toBe(
 					true,

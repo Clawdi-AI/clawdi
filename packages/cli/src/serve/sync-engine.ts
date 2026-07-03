@@ -11,7 +11,7 @@
  *                        (replica restart, transient disconnect)
  *   - project-refresh    — periodic re-fetch of the env's default_project_id
  *                        so a runtime project reassignment converges
- *   - heartbeat        — periodic POST to /api/agents/{env}/sync-heartbeat
+ *   - heartbeat        — periodic POST to /v1/agents/{agent_id}/sync-heartbeat
  *
  * Single-writer model: the daemon (and any CLI command run on
  * the same machine) is the only content writer for its env's
@@ -321,8 +321,8 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// SSE events belong to us.
 	const fetchDefaultProjectId = async (): Promise<string> => {
 		const envInfo = unwrap(
-			await api.GET("/v1/environments/{environment_id}", {
-				params: { path: { environment_id: opts.environmentId } },
+			await api.GET("/v1/agents/{agent_id}", {
+				params: { path: { agent_id: opts.environmentId } },
 			}),
 		);
 		const projectId = envInfo.default_project_id;
@@ -389,8 +389,8 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// `auth_revoked` `last_sync_error` and the daemon just
 		// "goes stale" silently.
 		void shutdownApi
-			.POST("/v1/agents/{environment_id}/sync-heartbeat", {
-				params: { path: { environment_id: opts.environmentId } },
+			.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+				params: { path: { agent_id: opts.environmentId } },
 				body: {
 					// Report the peak since boot, not current depth.
 					// The dashboard's "queue depth high water"
@@ -2225,8 +2225,8 @@ async function heartbeatLoop(
 		const dropped = queue.drainDroppedDelta();
 		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			await api.POST("/v1/agents/{environment_id}/sync-heartbeat", {
-				params: { path: { environment_id: opts.environmentId } },
+			await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+				params: { path: { agent_id: opts.environmentId } },
 				body: {
 					// Peak since boot rather than sampled current
 					// depth — see the comment on the auth-failure

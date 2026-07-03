@@ -2,7 +2,7 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AgentLabel } from "@/components/dashboard/agent-label";
+import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
@@ -43,11 +43,10 @@ const summaryColumn: ColumnDef<SessionListItem> = {
 
 const agentColumn: ColumnDef<SessionListItem> = {
 	id: "agent",
-	accessorFn: (s) => `${s.machine_name ?? ""} ${s.agent_type ?? ""}`,
+	accessorFn: (s) =>
+		`${s.agent_display_name ?? ""} ${s.agent_default_name ?? ""} ${s.agent_name ?? ""} ${s.machine_name ?? ""} ${s.agent_type ?? ""}`,
 	header: "Agent",
-	cell: ({ row }) => (
-		<AgentLabel machineName={row.original.machine_name} type={row.original.agent_type} size="sm" />
-	),
+	cell: ({ row }) => <SessionAgentLabel session={row.original} size="sm" />,
 	size: 180,
 };
 

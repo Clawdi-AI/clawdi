@@ -20,20 +20,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
+import {
+	agentDisconnectUnavailable,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
 
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
 
 const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
-	queryClient.setQueryData(["agent", environment.id], environment);
-	queryClient.setQueryData<Environment[]>(["environments"], (current) =>
+	queryClient.setQueryData(["agents", environment.id], environment);
+	queryClient.setQueryData<Environment[]>(["agents"], (current) =>
 		current?.map((item) => (item.id === environment.id ? environment : item)),
 	);
 }
@@ -59,11 +63,11 @@ export function AgentSettingsPanel({
 		isLoading,
 		error,
 	} = useQuery({
-		queryKey: ["agent", environmentId],
+		queryKey: ["agents", environmentId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: environmentId } },
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: environmentId } },
 				}),
 			),
 	});
@@ -76,8 +80,8 @@ export function AgentSettingsPanel({
 	const updateIdentity = useMutation({
 		mutationFn: async (body: EnvironmentUpdate) =>
 			unwrap(
-				await api.PATCH("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: environmentId } },
+				await api.PATCH("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: environmentId } },
 					body,
 				}),
 			),
@@ -100,8 +104,8 @@ export function AgentSettingsPanel({
 	const clearAvatar = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/v1/environments/{environment_id}/avatar", {
-					params: { path: { environment_id: environmentId } },
+				await api.DELETE("/v1/agents/{agent_id}/avatar", {
+					params: { path: { agent_id: environmentId } },
 				}),
 			),
 		onSuccess: (data) => {
@@ -114,8 +118,8 @@ export function AgentSettingsPanel({
 	const disconnect = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.DELETE("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: environmentId } },
+				await api.DELETE("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: environmentId } },
 				}),
 			),
 		onSuccess: () => {
@@ -125,7 +129,7 @@ export function AgentSettingsPanel({
 			queryClient.invalidateQueries({
 				predicate: (q) => {
 					const key = q.queryKey[0];
-					return key === "environments" || key === "sessions" || key === "agent";
+					return key === "agents" || key === "sessions";
 				},
 			});
 			void router.navigate({ href: "/" });
@@ -184,14 +188,18 @@ export function AgentSettingsPanel({
 	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
-	const disconnectUnavailable = ownership === null || ownershipKind !== "connected";
+	const disconnectUnavailable = agentDisconnectUnavailable({
+		envId: agent.id,
+		explicitIdentity: agent.explicit_identity,
+		ownership,
+	});
 	const isBusy =
 		updateIdentity.isPending ||
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = agentDisplayName(agent, { ownershipKind });
-	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null }, { ownershipKind });
+	const displayName = agentDisplayName(agent);
+	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;

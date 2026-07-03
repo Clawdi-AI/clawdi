@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
 	agentTextLabel,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -40,7 +39,7 @@ import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 
 /* The #1 job of this dashboard: move skills from one agent/project to
  * another — one at a time from the card hover, or a whole batch from
@@ -76,8 +75,8 @@ export function SendSkillDialog({
 		enabled: open,
 	});
 	const { data: envs } = useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: open,
 	});
 
@@ -288,12 +287,15 @@ function AgentTargetOption({ env }: { env: Environment }) {
 	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
-			machineName={agentDisplayName(env, { ownershipKind })}
+			machineName={env.machine_name}
 			displayName={env.display_name}
+			defaultName={env.default_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+			titleAdornment={
+				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
+			}
 		/>
 	);
 }

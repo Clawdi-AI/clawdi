@@ -2,8 +2,8 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { MessageSquare, Zap } from "lucide-react";
-import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Stat } from "@/components/meta/stat";
+import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import {
@@ -163,9 +163,7 @@ function SessionFeedCard({
 				</span>
 			</div>
 			<div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-				{showAgent ? (
-					<AgentLabel machineName={session.machine_name} type={session.agent_type} size="sm" />
-				) : null}
+				{showAgent ? <SessionAgentLabel session={session} size="sm" /> : null}
 				{projectFolder ? (
 					<span className="truncate font-mono" title={session.project_path ?? undefined}>
 						{projectFolder}

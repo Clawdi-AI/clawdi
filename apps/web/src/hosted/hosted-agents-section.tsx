@@ -14,7 +14,7 @@ import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 /**
  * Hosted-only branch of the dashboard's agent panel.

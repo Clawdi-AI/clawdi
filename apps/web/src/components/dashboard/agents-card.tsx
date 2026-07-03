@@ -8,7 +8,6 @@ import {
 	AgentLabel,
 	AgentSourceBadge,
 	agentDisplayName,
-	cleanMachineName,
 	compareAgentEnvironments,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
@@ -20,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 // Freshness threshold — "active" means the agent pinged us in the last 5 minutes.
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
@@ -28,23 +27,6 @@ const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
 	if (!lastSeenAt) return false;
 	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
-}
-
-/** Agent-type → friendly runtime label (OpenClaw, Claude Code, …). */
-export function formatRuntime(agentType: string): string {
-	switch (agentType) {
-		case "openclaw":
-			return "OpenClaw";
-		case "hermes":
-			return "Hermes";
-		case "claude_code":
-		case "claude-code":
-			return "Claude Code";
-		case "codex":
-			return "Codex";
-		default:
-			return agentType;
-	}
 }
 
 /**
@@ -57,11 +39,9 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		id: env.id,
 		source: "self-managed" as const,
 		name: agentDisplayName(env),
-		displayName: env.display_name,
 		avatarUrl: env.avatar_url,
 		sortOrder: env.sort_order,
 		agentType: env.agent_type,
-		runtimeLabel: formatRuntime(env.agent_type),
 		statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 		lastSeenAt: env.last_seen_at,
 		href: agentSectionHref(env.id),
@@ -80,12 +60,11 @@ export interface AgentTile {
 	id: string;
 	source: "self-managed" | "on-clawdi" | "legacy-hosted";
 	name: string;
-	displayName?: string | null;
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** "OpenClaw", "Claude Code", etc. — agent name only, no jargon suffix. */
-	runtimeLabel: string;
+	/** Optional deployment/source context shown after the runtime disambiguator. */
+	contextLabel?: string | null;
 	/** "Synced 2m ago", "Running", "Provisioning…" — already humanized. */
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
@@ -248,14 +227,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// "sync state under the agent name" — pre-fix-attempt the
 	// badge was floated to the trailing edge.
 	const meta: ReactNode[] = [];
-	// Hosted (on-clawdi) tiles use `runtimeLabel` to carry the
-	// deployment slug — without it two OpenClaw / Hermes deployments
-	// linking to different deploy URLs would render
-	// indistinguishably ('OpenClaw · Running' on both). Self-
-	// managed tiles already convey the runtime via the
-	// AgentLabel `type` prop (the icon badge), so adding
-	// runtimeLabel there would just duplicate the agent type.
-	if ((onClawdi || legacyHosted) && tile.runtimeLabel) meta.push(tile.runtimeLabel);
+	if (tile.contextLabel) meta.push(tile.contextLabel);
 	if (tile.statusLabel) meta.push(tile.statusLabel);
 	if (tile.env) {
 		meta.push(
@@ -277,9 +249,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
 	) : null;
 
-	// Strip mDNS suffixes (`.local`/`.lan`) and middle-truncate generated deployment
-	// names so the distinguishing tail survives; the full name stays on hover.
-	const cleanedName = cleanMachineName(tile.name) || tile.name;
 	const card = (
 		<div
 			className={cn(
@@ -288,8 +257,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 			)}
 		>
 			<AgentLabel
-				machineName={cleanedName}
-				displayName={tile.displayName}
+				name={tile.name}
+				machineName={tile.name}
 				type={tile.agentType}
 				avatarUrl={tile.avatarUrl}
 				size="lg"

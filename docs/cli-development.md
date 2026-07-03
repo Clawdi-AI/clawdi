@@ -154,7 +154,7 @@ Once it's up, a canonical smoke loop:
 
 ```bash
 clawdi auth login     # paste an API key from the web dashboard
-clawdi setup          # register this machine + install the built-in skill
+clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
 ```

@@ -36,6 +36,85 @@ async def test_environment_register_is_idempotent(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_environment_register_uses_machine_key_identity(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    machine_id = f"machine-key-{uuid.uuid4().hex}"
+    env_id = await _register_env(client, machine_id=machine_id)
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one()
+    assert env.registration_key == f"machine:{machine_id}:agent:claude-code"
+
+    detail = await client.get(f"/v1/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is False
+    assert "registration_key" not in body
+
+
+@pytest.mark.asyncio
+async def test_environment_register_falls_back_to_long_machine_name_for_default_name(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    long_machine_name = "agent-" + ("x" * 144)
+    r = await client.post(
+        "/v1/environments",
+        json={
+            "machine_id": f"long-default-{uuid.uuid4().hex}",
+            "machine_name": long_machine_name,
+            "agent_type": "codex",
+            "agent_version": "0.1.0",
+            "os": "linux",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    env = (
+        await db_session.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == r.json()["id"])
+        )
+    ).scalar_one()
+    assert len(long_machine_name) > 120
+    assert len(long_machine_name) <= 200
+    assert env.default_name == long_machine_name
+
+
+@pytest.mark.asyncio
+async def test_register_agent_environment_requires_identity_or_registration_key(
+    db_session: AsyncSession, seed_user
+):
+    from app.services.agent_environments import register_agent_environment
+
+    with pytest.raises(
+        ValueError,
+        match="requires environment_id or registration_key",
+    ):
+        await register_agent_environment(
+            db_session,
+            user_id=seed_user.id,
+            machine_id="missing-idempotency",
+            machine_name="Missing Idempotency",
+            default_name=None,
+            agent_type="codex",
+            agent_version=None,
+            os_name="linux",
+            sort_order=0,
+            environment_id=None,
+            registration_key=None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_environments_support_conditional_get(client: httpx.AsyncClient):
     env_id = await _register_env(client, machine_id=f"etag-{uuid.uuid4().hex}")
 
@@ -86,9 +165,55 @@ async def test_environment_detail_supports_conditional_get(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_environments_mark_hosted_runtime_siblings(
+async def test_agents_support_conditional_get(client: httpx.AsyncClient):
+    env_id = await _register_env(client, machine_id=f"agent-etag-{uuid.uuid4().hex}")
+
+    first = await client.get("/v1/agents")
+    assert first.status_code == 200, first.text
+    etag = first.headers.get("ETag")
+    assert etag
+    item = next(agent for agent in first.json() if agent["id"] == env_id)
+    assert item["name"] == "Test Mac"
+    assert item["default_name"] == "Test Mac"
+    assert item["explicit_identity"] is False
+    assert "hosted_managed" not in item
+    assert "hosted_deployment_id" not in item
+
+    not_modified = await client.get("/v1/agents", headers={"If-None-Match": etag})
+    assert not_modified.status_code == 304, not_modified.text
+    assert not_modified.headers.get("ETag") == etag
+
+    detail = await client.get(f"/v1/agents/{env_id}")
+    assert detail.status_code == 200, detail.text
+    detail_etag = detail.headers.get("ETag")
+    assert detail_etag
+    detail_not_modified = await client.get(
+        f"/v1/agents/{env_id}",
+        headers={"If-None-Match": detail_etag},
+    )
+    assert detail_not_modified.status_code == 304, detail_not_modified.text
+
+    heartbeat = await client.post(f"/v1/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    changed = await client.get("/v1/agents", headers={"If-None-Match": etag})
+    assert changed.status_code == 200, changed.text
+    assert changed.headers.get("ETag") != etag
+    updated = next(agent for agent in changed.json() if agent["id"] == env_id)
+    assert updated["queue_depth_high_water"] == 1
+
+
+@pytest.mark.asyncio
+async def test_environments_mark_only_agents_with_hosted_runtime_state(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
+    """Environment compatibility responses keep deprecated hosted fields.
+
+    This pins the intentional semantic change from earlier in this PR:
+    deprecated hosted ownership fields now reflect direct runtime desired state
+    only, with no sibling or machine-name inference. It is not covering an
+    agent/environment alias regression; `/v1/agents` omits these fields.
+    """
     from app.models.hosted_runtime import HostedRuntimeState
     from tests.conftest import create_env_with_project
 
@@ -131,15 +256,29 @@ async def test_environments_mark_hosted_runtime_siblings(
 
     assert by_id[str(openclaw.id)]["hosted_managed"] is True
     assert by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
-    assert by_id[str(codex.id)]["hosted_managed"] is True
-    assert by_id[str(codex.id)]["hosted_deployment_id"] == "hdep_test"
+    assert by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
+    assert by_id[str(openclaw.id)]["default_name"] == "Hosted Runtime"
+    assert by_id[str(codex.id)]["hosted_managed"] is False
+    assert by_id[str(codex.id)]["hosted_deployment_id"] is None
     assert by_id[str(laptop.id)]["hosted_managed"] is False
     assert by_id[str(laptop.id)]["hosted_deployment_id"] is None
 
     detail = await client.get(f"/v1/environments/{codex.id}")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["hosted_managed"] is True
-    assert detail.json()["hosted_deployment_id"] == "hdep_test"
+    assert detail.json()["hosted_managed"] is False
+    assert detail.json()["hosted_deployment_id"] is None
+
+    runtime_detail = await client.get(f"/v1/environments/{openclaw.id}")
+    assert runtime_detail.status_code == 200, runtime_detail.text
+    assert runtime_detail.json()["hosted_managed"] is True
+    assert runtime_detail.json()["hosted_deployment_id"] == "hdep_test"
+
+    agents = await client.get("/v1/agents")
+    assert agents.status_code == 200, agents.text
+    agent_by_id = {item["id"]: item for item in agents.json()}
+    assert agent_by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
+    assert "hosted_managed" not in agent_by_id[str(openclaw.id)]
+    assert "hosted_deployment_id" not in agent_by_id[str(openclaw.id)]
 
 
 @pytest.mark.asyncio
@@ -214,6 +353,57 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
     listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 2
     assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
+
+
+@pytest.mark.asyncio
+async def test_session_list_and_detail_include_canonical_agent_identity_fields(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    env_id = await _register_env(client, machine_id=f"session-label-{uuid.uuid4().hex}")
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one()
+    env.display_name = "Launch runner"
+    env.default_name = "Research Agent"
+    env.machine_name = "Shared Hosted Compute"
+    await db_session.commit()
+
+    started = datetime.now(UTC).isoformat()
+    batch = await client.post(
+        "/v1/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "session-canonical-agent-label",
+                    "started_at": started,
+                    "message_count": 1,
+                }
+            ]
+        },
+    )
+    assert batch.status_code == 200, batch.text
+
+    listing = (await client.get("/v1/sessions")).json()
+    item = next(
+        s for s in listing["items"] if s["local_session_id"] == "session-canonical-agent-label"
+    )
+    assert item["agent_name"] == "Launch runner"
+    assert item["agent_display_name"] == "Launch runner"
+    assert item["agent_default_name"] == "Research Agent"
+    assert item["machine_name"] == "Shared Hosted Compute"
+    assert item["agent_type"] == "claude-code"
+
+    detail = await client.get(f"/v1/sessions/{item['id']}")
+    assert detail.status_code == 200, detail.text
+    detail_body = detail.json()
+    assert detail_body["agent_name"] == "Launch runner"
+    assert detail_body["agent_display_name"] == "Launch runner"
+    assert detail_body["agent_default_name"] == "Research Agent"
 
 
 @pytest.mark.asyncio
@@ -1270,6 +1460,9 @@ async def test_delete_environment_orphans_sessions_via_fk(
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
+    assert item["agent_name"] is None
+    assert item["agent_display_name"] is None
+    assert item["agent_default_name"] is None
     assert item["agent_type"] is None
     assert item["machine_name"] is None
 
@@ -1314,6 +1507,7 @@ async def test_delete_environment_rejects_explicit_agent_identity(
         environment_id=agent_id,
         machine_id="external-agent-machine",
         machine_name="External Agent",
+        default_name="External Agent",
         agent_type="codex",
         agent_version="1.0.0",
         os_name="linux",

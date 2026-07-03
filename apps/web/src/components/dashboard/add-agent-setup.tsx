@@ -105,8 +105,8 @@ export function AddAgentSetup() {
 	// Live success detection: snapshot the env ids on first load, then poll
 	// while mounted. Anything new is "your agent just connected".
 	const envs = useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: 5_000,
 	});
 	const baseline = useRef<Set<string> | null>(null);
@@ -176,6 +176,7 @@ export function AddAgentSetup() {
 								<AgentLabel
 									machineName={env.machine_name}
 									displayName={env.display_name}
+									defaultName={env.default_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
 									size="sm"

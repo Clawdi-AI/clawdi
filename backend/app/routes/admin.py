@@ -46,6 +46,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.admin import (
+    AdminAgentCreate,
     AdminApiKeyCreate,
     AdminChannelCreate,
     AdminChannelCreatedResponse,
@@ -525,26 +526,10 @@ async def admin_delete_channel(
     logger.info("admin_channel_archived channel_id=%s", account.id)
 
 
-@router.post("/environments", response_model=EnvironmentCreatedResponse)
-async def admin_register_environment(
+async def _admin_register_environment(
     body: AdminEnvironmentCreate,
-    _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession,
 ) -> EnvironmentCreatedResponse:
-    """Register an AgentEnvironment row on behalf of a target user.
-
-    Migration tooling needs to seed env_id for legacy deployments
-    where no per-user Clerk JWT is in project. The user-facing
-    `POST /v1/environments` requires a Clerk-authed or Agent environment
-    api_key request; this admin variant is gated by the shared
-    `X-Admin-Key` header instead.
-
-    If `environment_id` is supplied, it is the stable agent id and
-    machine metadata is refreshed in place. If omitted, legacy callers
-    remain idempotent through the local machine registration key.
-
-    User row is lazy-created if absent — see `_resolve_or_create_user`.
-    """
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     try:
         registered = await register_agent_environment(
@@ -552,6 +537,7 @@ async def admin_register_environment(
             user_id=target.id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
+            default_name=body.default_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
             os_name=body.os_name,
@@ -582,17 +568,58 @@ async def admin_register_environment(
     return EnvironmentCreatedResponse(id=str(env.id))
 
 
-@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_delete_environment(
-    environment_id: UUID,
+@router.post("/agents", response_model=EnvironmentCreatedResponse)
+async def admin_register_agent(
+    body: AdminAgentCreate,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
-) -> None:
-    """Delete an AgentEnvironment row on behalf of first-party hosted infra.
+) -> EnvironmentCreatedResponse:
+    return await _admin_register_environment(
+        AdminEnvironmentCreate(
+            target_clerk_id=body.target_clerk_id,
+            environment_id=body.agent_id,
+            machine_id=body.machine_id,
+            machine_name=body.machine_name,
+            default_name=body.default_name,
+            agent_type=body.agent_type,
+            agent_version=body.agent_version,
+            os_name=body.os_name,
+        ),
+        db,
+    )
 
-    Sessions keep their history via ON DELETE SET NULL, matching the
-    dashboard-only `/api/environments/{id}` semantics.
+
+@router.post(
+    "/environments",
+    response_model=EnvironmentCreatedResponse,
+    deprecated=True,
+)
+async def admin_register_environment(
+    body: AdminEnvironmentCreate,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentCreatedResponse:
+    """Register an AgentEnvironment row on behalf of a target user.
+
+    Migration tooling needs to seed env_id for legacy deployments
+    where no per-user Clerk JWT is in project. The user-facing
+    `POST /v1/environments` requires a Clerk-authed or Agent environment
+    api_key request; this admin variant is gated by the shared
+    `X-Admin-Key` header instead.
+
+    If `environment_id` is supplied, it is the stable agent id and
+    machine metadata is refreshed in place. If omitted, legacy callers
+    remain idempotent through the local machine registration key.
+
+    User row is lazy-created if absent — see `_resolve_or_create_user`.
     """
+    return await _admin_register_environment(body, db)
+
+
+async def _admin_delete_environment(
+    environment_id: UUID,
+    db: AsyncSession,
+) -> None:
     env = (
         await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
     ).scalar_one_or_none()
@@ -601,6 +628,34 @@ async def admin_delete_environment(
     await db.delete(env)
     await db.commit()
     logger.info("admin_environment_deleted env_id=%s", environment_id)
+
+
+@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_agent(
+    agent_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await _admin_delete_environment(agent_id, db)
+
+
+@router.delete(
+    "/environments/{environment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    deprecated=True,
+)
+async def admin_delete_environment(
+    environment_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete an AgentEnvironment row on behalf of first-party hosted infra.
+
+    Sessions keep their history via ON DELETE SET NULL, matching the
+    user-facing `/v1/environments/{id}` semantics. Unlike the dashboard route,
+    first-party cleanup may delete explicit-identity rows.
+    """
+    await _admin_delete_environment(environment_id, db)
 
 
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
@@ -614,15 +669,10 @@ async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
     return int(value)
 
 
-@router.put(
-    "/environments/{environment_id}/runtime-state",
-    response_model=AdminRuntimeStateResponse,
-)
-async def admin_upsert_runtime_state(
+async def _admin_upsert_runtime_state(
     environment_id: UUID,
     body: AdminRuntimeStateUpsert,
-    _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
         await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
@@ -700,14 +750,36 @@ async def admin_upsert_runtime_state(
     )
 
 
-@router.delete(
-    "/environments/{environment_id}/runtime-state",
-    status_code=status.HTTP_204_NO_CONTENT,
+@router.put(
+    "/agents/{agent_id}/runtime-state",
+    response_model=AdminRuntimeStateResponse,
 )
-async def admin_delete_runtime_state(
-    environment_id: UUID,
+async def admin_upsert_agent_runtime_state(
+    agent_id: UUID,
+    body: AdminRuntimeStateUpsert,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
+) -> AdminRuntimeStateResponse:
+    return await _admin_upsert_runtime_state(agent_id, body, db)
+
+
+@router.put(
+    "/environments/{environment_id}/runtime-state",
+    response_model=AdminRuntimeStateResponse,
+    deprecated=True,
+)
+async def admin_upsert_runtime_state(
+    environment_id: UUID,
+    body: AdminRuntimeStateUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminRuntimeStateResponse:
+    return await _admin_upsert_runtime_state(environment_id, body, db)
+
+
+async def _admin_delete_runtime_state(
+    environment_id: UUID,
+    db: AsyncSession,
 ) -> None:
     env = (
         await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
@@ -755,6 +827,31 @@ async def admin_delete_runtime_state(
         environment_id,
         state is not None,
     )
+
+
+@router.delete(
+    "/agents/{agent_id}/runtime-state",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def admin_delete_agent_runtime_state(
+    agent_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await _admin_delete_runtime_state(agent_id, db)
+
+
+@router.delete(
+    "/environments/{environment_id}/runtime-state",
+    status_code=status.HTTP_204_NO_CONTENT,
+    deprecated=True,
+)
+async def admin_delete_runtime_state(
+    environment_id: UUID,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await _admin_delete_runtime_state(environment_id, db)
 
 
 async def _admin_get_channel_row(

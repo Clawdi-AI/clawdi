@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
+	agentTextLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -17,16 +18,14 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses runtime as the default Cloud agent name", () => {
+	test("uses the default Agent name before machine metadata", () => {
 		expect(
-			agentDisplayName(
-				{
-					machine_name: "Shared Hosted Compute",
-					agent_type: "openclaw",
-				},
-				{ ownershipKind: "cloud" },
-			),
-		).toBe("OpenClaw");
+			agentDisplayName({
+				default_name: "Research Agent",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "openclaw",
+			}),
+		).toBe("Research Agent");
 	});
 
 	test("uses machine name as the default connected agent name", () => {
@@ -35,17 +34,47 @@ describe("agentDisplayName", () => {
 		);
 	});
 
+	test("uses the registered machine name as the default Legacy agent name", () => {
+		expect(
+			agentDisplayName({
+				machine_name: "v1-hosted-runtime",
+				agent_type: "hermes",
+			}),
+		).toBe("v1-hosted-runtime");
+	});
+
 	test("prefers user display name for every source", () => {
 		expect(
-			agentDisplayName(
-				{
-					display_name: "Launch runner",
-					machine_name: "Shared Hosted Compute",
-					agent_type: "hermes",
-				},
-				{ ownershipKind: "legacy" },
-			),
+			agentDisplayName({
+				display_name: "Launch runner",
+				default_name: "Hermes Agent",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "hermes",
+			}),
 		).toBe("Launch runner");
+	});
+
+	test("uses the API name alias before machine metadata when default_name is absent", () => {
+		expect(
+			agentDisplayName({
+				name: "Hosted Codex",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "codex",
+			}),
+		).toBe("Hosted Codex");
+	});
+
+	test("keeps runtime as a secondary label when the primary name is not the runtime", () => {
+		expect(
+			agentTextLabel(
+				{
+					default_name: "Research Agent",
+					machine_name: "Research Agent",
+					agent_type: "codex",
+				},
+				{ ownershipKind: "cloud" },
+			),
+		).toBe("Cloud · Research Agent · Codex");
 	});
 });
 

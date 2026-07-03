@@ -6,7 +6,13 @@ import { cn } from "@/lib/utils";
  * default; transcript bubbles can opt into a circular crop.
  */
 
-const KNOWN: ReadonlySet<string> = new Set(["claude_code", "codex", "hermes", "openclaw"]);
+const KNOWN: ReadonlySet<string> = new Set([
+	"claude-code",
+	"claude_code",
+	"codex",
+	"hermes",
+	"openclaw",
+]);
 
 export type AgentIconSize = "xs" | "sm" | "md" | "lg" | "rail" | "xl";
 

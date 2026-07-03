@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
 	agentTextLabel,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -36,7 +35,7 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 
-type Environment = components["schemas"]["EnvironmentResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 
 /**
  * Link an agent to a channel — instant, no token paste. On success
@@ -183,12 +182,15 @@ function AgentOption({
 }) {
 	return (
 		<AgentLabel
-			machineName={agentDisplayName(env, { ownershipKind })}
+			machineName={env.machine_name}
 			displayName={env.display_name}
+			defaultName={env.default_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+			titleAdornment={
+				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
+			}
 		/>
 	);
 }

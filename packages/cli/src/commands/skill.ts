@@ -268,7 +268,7 @@ export async function skillAdd(
 		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/environments"));
+		const envs = unwrap(await api.GET("/v1/agents"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);
@@ -379,7 +379,7 @@ export async function skillInstall(
 		// that project. Mirrors the dashboard's "Install" semantics
 		// when no env is selected.
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/environments"));
+		const envs = unwrap(await api.GET("/v1/agents"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		// Match the owning env to a LOCAL env on THIS machine. The
 		// account's default project can belong to a sibling machine
@@ -557,7 +557,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		projectId = await fetchProjectIdForEnv(api, envId);
 	} else {
 		projectId = await fetchDefaultProjectId(api);
-		const envs = unwrap(await api.GET("/v1/environments"));
+		const envs = unwrap(await api.GET("/v1/agents"));
 		const owning = envs.find((e) => e.default_project_id === projectId);
 		if (owning) {
 			const localEnvIdForAgent = getEnvIdByAgent(owning.agent_type);

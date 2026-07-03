@@ -21,7 +21,7 @@ import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BulkActionBar } from "@/components/bulk-action-bar";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import { agentIdentity } from "@/components/dashboard/agent-label";
 import { PageHeader } from "@/components/page-header";
 import {
 	compareProjectsForUse,
@@ -113,8 +113,8 @@ function SkillsPageInner() {
 	);
 
 	const { data: envs } = useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 	});
 
 	// Resolution order:
@@ -209,11 +209,14 @@ function SkillsPageInner() {
 
 	const targetAgentLabel = useMemo(() => {
 		if (!envs || envs.length === 0 || !targetEnv) return FALLBACK_TARGET_LABEL;
-		const baseName = cleanMachineName(targetEnv.machine_name) || FALLBACK_TARGET_LABEL;
+		const identity = agentIdentity(targetEnv);
+		const baseName = identity.primaryLabel || FALLBACK_TARGET_LABEL;
 		const collidesWithSibling = envs.some(
-			(e) => e.id !== targetEnv.id && e.machine_name === targetEnv.machine_name,
+			(e) => e.id !== targetEnv.id && agentIdentity(e).primaryLabel === baseName,
 		);
-		if (collidesWithSibling) return `${baseName} · ${agentTypeLabel(targetEnv.agent_type)}`;
+		if (collidesWithSibling && identity.secondaryLabel) {
+			return `${baseName} · ${identity.secondaryLabel}`;
+		}
 		return baseName;
 	}, [envs, targetEnv]);
 

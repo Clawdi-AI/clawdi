@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 const originalWindow = (globalThis as unknown as Record<string, unknown>).window;
 
 function setBrowserHostname(hostname: string) {
@@ -26,6 +26,8 @@ afterEach(() => {
 function env(overrides: Partial<Env> = {}): Env {
 	return {
 		id: "11111111-1111-4111-8111-111111111111",
+		name: "workstation",
+		default_name: "workstation",
 		machine_name: "workstation",
 		agent_type: "openclaw",
 		agent_version: null,
@@ -49,6 +51,8 @@ describe("legacyConnectedAgentTiles", () => {
 	it("projects legacy-owned environments as legacy-badged connected agent tiles", () => {
 		const legacy = env({
 			id: "33333333-3333-4333-8333-333333333333",
+			name: "v1-hosted-runtime",
+			default_name: "v1-hosted-runtime",
 			machine_name: "v1-hosted-runtime",
 		});
 
@@ -57,10 +61,15 @@ describe("legacyConnectedAgentTiles", () => {
 				id: legacy.id,
 				source: "legacy-hosted",
 				name: "v1-hosted-runtime",
-				runtimeLabel: "OpenClaw",
 				href: `/agents/${legacy.id}`,
 			}),
 		]);
+		expect("runtimeLabel" in legacyConnectedAgentTiles([legacy], new Set([legacy.id]))[0]).toBe(
+			false,
+		);
+		expect(
+			legacyConnectedAgentTiles([legacy], new Set([legacy.id]))[0]?.contextLabel,
+		).toBeUndefined();
 	});
 
 	it("carries env so the sync badge renders (with the hosted copy variant)", () => {
@@ -85,10 +94,14 @@ describe("legacyConnectedAgentTiles", () => {
 	it("excludes environments already claimed by a Cloud deploy-API tile", () => {
 		const claimed = env({
 			id: "44444444-4444-4444-8444-444444444444",
+			name: "v2-cloud-runtime",
+			default_name: "v2-cloud-runtime",
 			machine_name: "v2-cloud-runtime",
 		});
 		const legacyOnly = env({
 			id: "55555555-5555-4555-8555-555555555555",
+			name: "v1-hosted-runtime",
+			default_name: "v1-hosted-runtime",
 			machine_name: "v1-hosted-runtime",
 		});
 

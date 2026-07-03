@@ -60,3 +60,19 @@ export function agentOwnershipKindFromId(
 	if (ownership.legacyEnvIds.has(normalized)) return "legacy";
 	return "connected";
 }
+
+export function agentDisconnectUnavailable({
+	envId,
+	explicitIdentity,
+	ownership,
+}: {
+	envId: string | null | undefined;
+	explicitIdentity?: boolean | null;
+	ownership: AgentOwnership | null;
+}): boolean {
+	return (
+		explicitIdentity === true ||
+		ownership === null ||
+		agentOwnershipKindFromId(envId, ownership) !== "connected"
+	);
+}

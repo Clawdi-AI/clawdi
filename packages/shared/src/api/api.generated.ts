@@ -610,6 +610,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agents */
+        get: operations["list_agents_v1_agents_get"];
+        put?: never;
+        /** Register Agent */
+        post: operations["register_agent_v1_agents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/environments": {
         parameters: {
             query?: never;
@@ -617,10 +635,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Environments */
+        /**
+         * List Environments
+         * @deprecated
+         */
         get: operations["list_environments_v1_environments_get"];
         put?: never;
-        /** Register Environment */
+        /**
+         * Register Environment
+         * @deprecated
+         */
         post: operations["register_environment_v1_environments_post"];
         delete?: never;
         options?: never;
@@ -635,7 +659,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Environment Runtime Observed */
+        /**
+         * List Environment Runtime Observed
+         * @deprecated
+         */
         get: operations["list_environment_runtime_observed_v1_environments_runtime_observed_get"];
         put?: never;
         post?: never;
@@ -643,6 +670,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Reorder Agents */
+        patch: operations["reorder_agents_v1_agents_order_patch"];
         trace?: never;
     };
     "/v1/environments/order": {
@@ -658,8 +702,30 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Reorder Environments */
+        /**
+         * Reorder Environments
+         * @deprecated
+         */
         patch: operations["reorder_environments_v1_environments_order_patch"];
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent */
+        get: operations["get_agent_v1_agents__agent_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Agent */
+        delete: operations["delete_agent_v1_agents__agent_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Agent */
+        patch: operations["update_agent_v1_agents__agent_id__patch"];
         trace?: never;
     };
     "/v1/environments/{environment_id}": {
@@ -669,21 +735,43 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Environment */
+        /**
+         * Get Environment
+         * @deprecated
+         */
         get: operations["get_environment_v1_environments__environment_id__get"];
         put?: never;
         post?: never;
         /**
          * Delete Environment
-         * @description Delete an agent environment. Existing sessions remain (orphaned)
-         *     so users don't lose history when removing a machine. The session
-         *     list query uses an outer-join so orphaned rows still render.
+         * @deprecated
          */
         delete: operations["delete_environment_v1_environments__environment_id__delete"];
         options?: never;
         head?: never;
-        /** Update Environment */
+        /**
+         * Update Environment
+         * @deprecated
+         */
         patch: operations["update_environment_v1_environments__environment_id__patch"];
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Agent Avatar */
+        post: operations["upload_agent_avatar_v1_agents__agent_id__avatar_post"];
+        /** Clear Agent Avatar */
+        delete: operations["clear_agent_avatar_v1_agents__agent_id__avatar_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/environments/{environment_id}/avatar": {
@@ -695,9 +783,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upload Environment Avatar */
+        /**
+         * Upload Environment Avatar
+         * @deprecated
+         */
         post: operations["upload_environment_avatar_v1_environments__environment_id__avatar_post"];
-        /** Clear Environment Avatar */
+        /**
+         * Clear Environment Avatar
+         * @deprecated
+         */
         delete: operations["clear_environment_avatar_v1_environments__environment_id__avatar_delete"];
         options?: never;
         head?: never;
@@ -711,7 +805,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Environment Runtime Observed */
+        /**
+         * Get Environment Runtime Observed
+         * @deprecated
+         */
         get: operations["get_environment_runtime_observed_v1_environments__environment_id__runtime_observed_get"];
         put?: never;
         post?: never;
@@ -721,7 +818,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/agents/{environment_id}/sync-heartbeat": {
+    "/v1/agents/{agent_id}/sync-heartbeat": {
         parameters: {
             query?: never;
             header?: never;
@@ -736,7 +833,7 @@ export interface paths {
          *     light endpoint: validate ownership / env-id binding, update a
          *     handful of columns, commit. No heavy queries.
          */
-        post: operations["sync_heartbeat_v1_agents__environment_id__sync_heartbeat_post"];
+        post: operations["sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2396,6 +2493,67 @@ export interface components {
              */
             created_at: string;
         };
+        /** AgentReorderRequest */
+        AgentReorderRequest: {
+            /** Agent Ids */
+            agent_ids: string[];
+        };
+        /** AgentResponse */
+        AgentResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Default Name */
+            default_name?: string | null;
+            /** Machine Name */
+            machine_name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Avatar Url */
+            avatar_url?: string | null;
+            /**
+             * Sort Order
+             * @default 0
+             */
+            sort_order: number;
+            /** Agent Type */
+            agent_type: string;
+            /** Agent Version */
+            agent_version: string | null;
+            /** Os */
+            os: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Last Sync At */
+            last_sync_at?: string | null;
+            /** Last Sync Error */
+            last_sync_error?: string | null;
+            /** Last Revision Seen */
+            last_revision_seen?: number | null;
+            /**
+             * Queue Depth High Water
+             * @default 0
+             */
+            queue_depth_high_water: number;
+            /**
+             * Dropped Count
+             * @default 0
+             */
+            dropped_count: number;
+            /**
+             * Sync Enabled
+             * @default false
+             */
+            sync_enabled: boolean;
+            /**
+             * Explicit Identity
+             * @default false
+             */
+            explicit_identity: boolean;
+            /** Default Project Id */
+            default_project_id: string;
+        };
         /** AiProviderAuth */
         AiProviderAuth: {
             /**
@@ -2734,6 +2892,11 @@ export interface components {
              * @constant
              */
             status: "reordered";
+        };
+        /** Body_upload_agent_avatar_v1_agents__agent_id__avatar_post */
+        Body_upload_agent_avatar_v1_agents__agent_id__avatar_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_environment_avatar_v1_environments__environment_id__avatar_post */
         Body_upload_environment_avatar_v1_environments__environment_id__avatar_post: {
@@ -3665,6 +3828,8 @@ export interface components {
             machine_id: string;
             /** Machine Name */
             machine_name: string;
+            /** Default Name */
+            default_name?: string | null;
             /** Agent Type */
             agent_type: string;
             /** Agent Version */
@@ -3686,6 +3851,10 @@ export interface components {
         EnvironmentResponse: {
             /** Id */
             id: string;
+            /** Name */
+            name: string;
+            /** Default Name */
+            default_name?: string | null;
             /** Machine Name */
             machine_name: string;
             /** Display Name */
@@ -3727,14 +3896,23 @@ export interface components {
              */
             sync_enabled: boolean;
             /**
+             * Explicit Identity
+             * @default false
+             */
+            explicit_identity: boolean;
+            /** Default Project Id */
+            default_project_id: string;
+            /**
              * Hosted Managed
+             * @description Deprecated. True only when this environment has direct hosted runtime desired state in Cloud API. This no longer infers hosted ownership from machine_id, machine_name, or sibling runtime metadata; dashboard consumers should use control-plane ownership sets instead.
              * @default false
              */
             hosted_managed: boolean;
-            /** Hosted Deployment Id */
+            /**
+             * Hosted Deployment Id
+             * @description Deprecated. Deployment id from direct hosted runtime desired state only. This no longer falls back to sibling runtime inference.
+             */
             hosted_deployment_id?: string | null;
-            /** Default Project Id */
-            default_project_id: string;
         };
         /** EnvironmentUpdate */
         EnvironmentUpdate: {
@@ -4366,6 +4544,12 @@ export interface components {
             local_session_id: string;
             /** Project Path */
             project_path: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Agent Display Name */
+            agent_display_name?: string | null;
+            /** Agent Default Name */
+            agent_default_name?: string | null;
             /** Agent Type */
             agent_type: string | null;
             /** Machine Name */
@@ -4437,6 +4621,12 @@ export interface components {
             local_session_id: string;
             /** Project Path */
             project_path: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Agent Display Name */
+            agent_display_name?: string | null;
+            /** Agent Default Name */
+            agent_default_name?: string | null;
             /** Agent Type */
             agent_type: string | null;
             /** Machine Name */
@@ -6627,6 +6817,66 @@ export interface operations {
             };
         };
     };
+    list_agents_v1_agents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"][];
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    register_agent_v1_agents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_environments_v1_environments_get: {
         parameters: {
             query?: never;
@@ -6718,6 +6968,39 @@ export interface operations {
             };
         };
     };
+    reorder_agents_v1_agents_order_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReorderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reorder_environments_v1_environments_order_patch: {
         parameters: {
             query?: never;
@@ -6738,6 +7021,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_v1_agents__agent_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_v1_agents__agent_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_v1_agents__agent_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6853,6 +7238,72 @@ export interface operations {
             };
         };
     };
+    upload_agent_avatar_v1_agents__agent_id__avatar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_agent_avatar_v1_agents__agent_id__avatar_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_agent_avatar_v1_agents__agent_id__avatar_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     upload_environment_avatar_v1_environments__environment_id__avatar_post: {
         parameters: {
             query?: never;
@@ -6950,12 +7401,12 @@ export interface operations {
             };
         };
     };
-    sync_heartbeat_v1_agents__environment_id__sync_heartbeat_post: {
+    sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                environment_id: string;
+                agent_id: string;
             };
             cookie?: never;
         };

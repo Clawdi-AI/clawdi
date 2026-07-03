@@ -14,7 +14,7 @@ export { ApiError, toastApiError } from "@/lib/api-errors";
 
 const API_URL = env.VITE_CLAWDI_API_URL;
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
-type EnvironmentResponse = components["schemas"]["EnvironmentResponse"];
+type EnvironmentResponse = components["schemas"]["AgentResponse"];
 
 function apiUrl(path: string): string {
 	const base = API_URL.endsWith("/") ? API_URL : `${API_URL}/`;
@@ -163,7 +163,7 @@ export function useAgentAvatarUploader() {
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await fetchWithTimeout(
-				new Request(apiUrl(`/v1/environments/${encodeURIComponent(environmentId)}/avatar`), {
+				new Request(apiUrl(`/v1/agents/${encodeURIComponent(environmentId)}/avatar`), {
 					method: "POST",
 					headers,
 					body: form,

@@ -254,18 +254,16 @@ export function HostedAgentDetail({
 	const router = useRouter();
 	const ci = deployment.config_info;
 	const { data: agent } = useQuery({
-		queryKey: ["agent", environmentId],
+		queryKey: ["agents", environmentId],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: environmentId } },
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: environmentId } },
 				}),
 			),
 		enabled: isCloudEnvId(environmentId),
 	});
-	const name = agent
-		? agentDisplayName(agent, { ownershipKind: "cloud" })
-		: deploymentDisplayName(deployment.name);
+	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";

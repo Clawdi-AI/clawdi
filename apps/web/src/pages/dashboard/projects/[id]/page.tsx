@@ -68,11 +68,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import {
-	type AgentOwnership,
-	agentOwnershipKindFromId,
-	useAgentOwnership,
-} from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
@@ -84,7 +79,7 @@ import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type VaultSummary = components["schemas"]["VaultResponse"];
-type Env = components["schemas"]["EnvironmentResponse"];
+type Env = components["schemas"]["AgentResponse"];
 type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -94,7 +89,6 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const ownership = useAgentOwnership();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
@@ -133,8 +127,8 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	};
 
 	const environments = useQuery({
-		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: !!project,
 	});
 	const agentsById = useMemo(
@@ -550,8 +544,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						{(boundAgents.data ?? []).map(({ env, home }) => (
 							<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 								<AgentLabel
-									machineName={displayAgentName(env, ownership)}
+									machineName={env.machine_name}
 									displayName={env.display_name}
+									defaultName={env.default_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
 									size="sm"
@@ -572,7 +567,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 									params={{ id: env.id }}
 									className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
-									<span className="sr-only">Open agent {displayAgentName(env, ownership)}</span>
+									<span className="sr-only">Open agent {displayAgentName(env)}</span>
 								</Link>
 							</div>
 						))}
@@ -777,7 +772,6 @@ function UseProjectWithAgentDialog({
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const ownership = useAgentOwnership();
 	const projectName = displayProjectName(project);
 	const [selectedAgentId, setSelectedAgentId] = useState("");
 	const orderedEnvironments = useMemo(
@@ -817,7 +811,7 @@ function UseProjectWithAgentDialog({
 			);
 		},
 		onSuccess: () => {
-			const agentName = selectedEnv ? displayAgentName(selectedEnv, ownership) : "the agent";
+			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["vaults"] });
@@ -872,8 +866,9 @@ function UseProjectWithAgentDialog({
 								>
 									{selectedEnv ? (
 										<AgentLabel
-											machineName={displayAgentName(selectedEnv, ownership)}
+											machineName={selectedEnv.machine_name}
 											displayName={selectedEnv.display_name}
+											defaultName={selectedEnv.default_name}
 											type={selectedEnv.agent_type}
 											avatarUrl={selectedEnv.avatar_url}
 											size="sm"
@@ -889,12 +884,13 @@ function UseProjectWithAgentDialog({
 										<SelectItem
 											key={env.id}
 											value={env.id}
-											textValue={displayAgentName(env, ownership)}
+											textValue={displayAgentName(env)}
 											className="py-2"
 										>
 											<AgentLabel
-												machineName={displayAgentName(env, ownership)}
+												machineName={env.machine_name}
 												displayName={env.display_name}
+												defaultName={env.default_name}
 												type={env.agent_type}
 												avatarUrl={env.avatar_url}
 												size="sm"
@@ -1167,10 +1163,8 @@ function compareEnvironmentsForUse(a: Env, b: Env) {
 	return compareAgentEnvironments(a, b);
 }
 
-function displayAgentName(env: Env, ownership: AgentOwnership | null) {
-	return agentDisplayName(env, {
-		ownershipKind: agentOwnershipKindFromId(env.id, ownership),
-	});
+function displayAgentName(env: Env) {
+	return agentDisplayName(env);
 }
 
 function formatShortDate(value: string) {
