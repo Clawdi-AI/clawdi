@@ -78,11 +78,7 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 		description: "Name and avatar used across the dashboard.",
 	},
 };
-const AGENT_DETAIL_INNER_WIDTH_CLASS = {
-	default: "mx-auto w-full max-w-4xl",
-	skills: "mx-auto w-full max-w-6xl",
-	settings: "mx-auto w-full max-w-4xl",
-} as const;
+const AGENT_DETAIL_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 
 export function ConnectedAgentDetail({
 	environmentId,
@@ -214,7 +210,6 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
-	const contentWidthClass = connectedAgentContentWidthClass(activeTab);
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id, sessionId },
@@ -243,36 +238,38 @@ export function ConnectedAgentDetail({
 					<h1 className="sr-only">{agentTitle || agentTypeLabel(agent.agent_type)}</h1>
 
 					<section className="flex flex-col gap-4">
-						<div className="flex flex-wrap items-start justify-between gap-3">
-							<div>
-								<div className="flex items-center gap-2">
-									{ActiveTabIcon ? (
-										<ActiveTabIcon className="size-4 text-muted-foreground" />
-									) : null}
-									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-									{showSourceBadge ? (
-										<AgentSourceBadgeForEnvironment
-											env={agent}
-											ownershipKind={ownershipKind}
-											compact
-										/>
+						<div className={cn(AGENT_DETAIL_INNER_WIDTH_CLASS, "flex flex-col gap-4")}>
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<div className="flex items-center gap-2">
+										{ActiveTabIcon ? (
+											<ActiveTabIcon className="size-4 text-muted-foreground" />
+										) : null}
+										<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
+										{showSourceBadge ? (
+											<AgentSourceBadgeForEnvironment
+												env={agent}
+												ownershipKind={ownershipKind}
+												compact
+											/>
+										) : null}
+									</div>
+									{activeTabMeta.description ? (
+										<p className="mt-1 text-sm text-muted-foreground">
+											{activeTabMeta.description}
+										</p>
 									) : null}
 								</div>
-								{activeTabMeta.description ? (
-									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
+								{activeTab === "skills" ? (
+									<Button asChild variant="outline" size="sm">
+										<Link to="/skills" search={{ target: id }}>
+											<Plus />
+											Install skills
+										</Link>
+									</Button>
 								) : null}
 							</div>
-							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm">
-									<Link to="/skills" search={{ target: id }}>
-										<Plus />
-										Install skills
-									</Link>
-								</Button>
-							) : null}
-						</div>
 
-						<div className={contentWidthClass}>
 							{activeTab === "overview" ? (
 								<div className="flex flex-col gap-4">
 									<div className="grid gap-3 sm:grid-cols-3">
@@ -347,12 +344,6 @@ function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
 	if (value === "overview") return "overview";
 	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
-}
-
-function connectedAgentContentWidthClass(tab: AgentTab): string {
-	if (tab === "settings") return AGENT_DETAIL_INNER_WIDTH_CLASS.settings;
-	if (tab === "skills") return AGENT_DETAIL_INNER_WIDTH_CLASS.skills;
-	return AGENT_DETAIL_INNER_WIDTH_CLASS.default;
 }
 
 function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {

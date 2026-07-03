@@ -171,11 +171,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
-const HOSTED_AGENT_INNER_WIDTH_CLASS = {
-	default: "mx-auto w-full max-w-4xl",
-	form: "mx-auto w-full max-w-2xl",
-	settings: "mx-auto w-full max-w-4xl",
-} as const;
+const HOSTED_AGENT_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
 const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
 const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
@@ -202,14 +198,6 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 		HOSTED_AGENT_TABS.has(value as HostedAgentTab)
 		? (value as HostedAgentTab)
 		: null;
-}
-
-function hostedAgentContentWidthClass(tab: HostedAgentTab): string {
-	if (tab === "settings") return HOSTED_AGENT_INNER_WIDTH_CLASS.settings;
-	if (tab === "ai" || tab === "channels") {
-		return HOSTED_AGENT_INNER_WIDTH_CLASS.form;
-	}
-	return HOSTED_AGENT_INNER_WIDTH_CLASS.default;
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -298,7 +286,6 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
-	const contentWidthClass = hostedAgentContentWidthClass(activeTab);
 
 	return (
 		<div
@@ -312,7 +299,10 @@ export function HostedAgentDetail({
 		>
 			<h1 className="sr-only">{agentTitle}</h1>
 			<section
-				className={cn(isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4")}
+				className={cn(
+					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : HOSTED_AGENT_INNER_WIDTH_CLASS,
+					!isLiveToolTab && "flex flex-col gap-4",
+				)}
 			>
 				{isLiveToolTab ? null : (
 					<div className="flex flex-wrap items-start justify-between gap-3">
@@ -336,7 +326,7 @@ export function HostedAgentDetail({
 						) : null}
 					</div>
 				)}
-				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : contentWidthClass}>
+				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{activeTab === "overview" ? (
 						<OverviewTab
 							deployment={deployment}
