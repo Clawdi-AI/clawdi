@@ -1,27 +1,7 @@
 "use client";
 
-import { AlertCircle, LogIn, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-	Empty,
-	EmptyContent,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isAuthError, normalizeBillingError } from "@/hosted/billing/errors";
-
-/** Send the user back through Clerk, returning to wherever they are now. */
-function reauthenticate() {
-	if (typeof window === "undefined") return;
-	const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-	window.location.href = `/sign-in?redirect_url=${redirect}`;
-}
 
 /** Generic card-height skeleton stack. Prefer the structural skeletons below. */
 export function BillingLoading({ rows = 3 }: { rows?: number }) {
@@ -115,72 +95,5 @@ export function UsageSkeleton() {
 			</Card>
 			<CardSkeleton lines={5} />
 		</div>
-	);
-}
-
-/**
- * Normalized error panel with an optional retry. When the failure is a
- * session-expiry 401 we lead with a "Sign in again" action (a fresh retry
- * can't fix a dead token) and keep Retry as a secondary affordance for the
- * race where Clerk has already refreshed the token in the background.
- */
-export function BillingError({
-	error,
-	onRetry,
-	title = "Couldn’t load this",
-}: {
-	error: unknown;
-	onRetry?: () => void;
-	title?: string;
-}) {
-	const expired = isAuthError(error);
-	return (
-		<Alert data-hosted="true" variant="destructive">
-			<AlertCircle />
-			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
-			<AlertDescription className="flex flex-col items-start gap-3">
-				<span>{normalizeBillingError(error)}</span>
-				<div className="flex flex-wrap gap-2">
-					{expired ? (
-						<Button size="sm" onClick={reauthenticate}>
-							<LogIn /> Sign in again
-						</Button>
-					) : null}
-					{onRetry ? (
-						<Button size="sm" variant="outline" onClick={onRetry}>
-							<RefreshCw /> Retry
-						</Button>
-					) : null}
-				</div>
-			</AlertDescription>
-		</Alert>
-	);
-}
-
-/**
- * Empty-state block for a billing surface. Built on the design-system `Empty`
- * primitive (icon chip + title + description + optional action) so it matches
- * the empty states used across the OSS dashboard.
- */
-export function BillingEmpty({
-	icon,
-	title,
-	description,
-	action,
-}: {
-	icon?: ReactNode;
-	title: string;
-	description?: string;
-	action?: ReactNode;
-}) {
-	return (
-		<Empty data-hosted="true" className="border">
-			<EmptyHeader>
-				{icon ? <EmptyMedia variant="icon">{icon}</EmptyMedia> : null}
-				<EmptyTitle>{title}</EmptyTitle>
-				{description ? <EmptyDescription>{description}</EmptyDescription> : null}
-			</EmptyHeader>
-			{action ? <EmptyContent>{action}</EmptyContent> : null}
-		</Empty>
 	);
 }

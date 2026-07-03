@@ -14,8 +14,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
+import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
@@ -41,12 +43,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { BillingOffer, DeployRequest, Plan } from "@/hosted/billing/contracts";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
-import { normalizeBillingError } from "@/hosted/billing/errors";
+import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
 	useCheckout,
@@ -125,53 +126,6 @@ function aiAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
 	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
 		? "codex_oauth"
 		: "api_key";
-}
-
-/** Deploy-wizard option — the family's selectable-choice card. */
-function Tile({
-	selected,
-	onClick,
-	leading,
-	title,
-	subtitle,
-	badge,
-	disabled,
-}: {
-	selected: boolean;
-	onClick?: () => void;
-	leading: React.ReactNode;
-	title: string;
-	subtitle: string;
-	badge?: React.ReactNode;
-	disabled?: boolean;
-}) {
-	return (
-		<EntityChoiceCard
-			selected={selected}
-			onClick={onClick}
-			icon={leading}
-			title={title}
-			description={subtitle}
-			badge={badge}
-			disabled={disabled}
-		/>
-	);
-}
-
-/** Tinted chip for abstract options (managed AI, attach-later, compute tiers) —
- * matches EntityIcon md geometry so it sits flush with the brand icons. */
-function IconChip({ tint, children }: { tint: string; children: React.ReactNode }) {
-	return (
-		<span
-			className={cn(
-				"flex size-10 shrink-0 items-center justify-center rounded-lg [&>svg]:size-5",
-				tint,
-			)}
-			aria-hidden="true"
-		>
-			{children}
-		</span>
-	);
 }
 
 function AddTile({
@@ -592,7 +546,11 @@ export function DeployWizard() {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an Agent" />
-				<BillingError error={plans.error} onRetry={() => plans.refetch()} />
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
+					error={plans.error}
+					onRetry={() => plans.refetch()}
+				/>
 			</div>
 		);
 	}
@@ -626,30 +584,28 @@ export function DeployWizard() {
 				}
 			>
 				<div className={THREE_TILE_GRID_CLASS}>
-					<Tile
+					<EntityChoiceCard
 						selected
-						leading={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
+						icon={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
 						title={runtimeDisplayName("codex")}
-						subtitle={runtimeBlurb("codex")}
+						description={runtimeBlurb("codex")}
 						badge={<Badge variant="outline">Always on</Badge>}
 					/>
-					<Tile
+					<EntityChoiceCard
 						selected={engines.openclaw}
 						onClick={() => toggleEngine("openclaw")}
-						leading={
+						icon={
 							<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
 						}
 						title={runtimeDisplayName("openclaw")}
-						subtitle={runtimeBlurb("openclaw")}
+						description={runtimeBlurb("openclaw")}
 					/>
-					<Tile
+					<EntityChoiceCard
 						selected={engines.hermes}
 						onClick={() => toggleEngine("hermes")}
-						leading={
-							<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
-						}
+						icon={<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />}
 						title={runtimeDisplayName("hermes")}
-						subtitle={runtimeBlurb("hermes")}
+						description={runtimeBlurb("hermes")}
 					/>
 				</div>
 			</SettingsSection>
@@ -659,16 +615,16 @@ export function DeployWizard() {
 				description="Managed AI bills your wallet, or route through one of your own providers."
 			>
 				<div className={TWO_TILE_GRID_CLASS}>
-					<Tile
+					<EntityChoiceCard
 						selected={aiChoice === "managed"}
 						onClick={() => setAiChoice("managed")}
-						leading={
+						icon={
 							<IconChip tint="bg-primary/10 text-primary">
 								<Sparkles />
 							</IconChip>
 						}
 						title="Managed by Clawdi"
-						subtitle="AI Credits from your wallet."
+						description="AI Credits from your wallet."
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
 					{aiProviders.isLoading ? (
@@ -683,13 +639,13 @@ export function DeployWizard() {
 						</button>
 					) : null}
 					{providerList.map((provider) => (
-						<Tile
+						<EntityChoiceCard
 							key={provider.provider_id}
 							selected={aiChoice === provider.provider_id}
 							onClick={() => setAiChoice(provider.provider_id)}
-							leading={<ProviderTypeChip type={provider.type} />}
+							icon={<ProviderTypeChip type={provider.type} />}
 							title={provider.label ?? provider.provider_id}
-							subtitle={provider.default_model ?? providerTypeLabelFallback(provider)}
+							description={provider.default_model ?? providerTypeLabelFallback(provider)}
 							badge={<AuthBadge auth={provider.auth} />}
 						/>
 					))}
@@ -710,15 +666,15 @@ export function DeployWizard() {
 				description="Prepare a bot now, then link it from the agent page once deployment finishes."
 			>
 				<div className={TWO_TILE_GRID_CLASS}>
-					<Tile
+					<EntityChoiceCard
 						selected
-						leading={
+						icon={
 							<IconChip tint="bg-muted text-muted-foreground">
 								<CalendarClock />
 							</IconChip>
 						}
 						title="Link after deploy"
-						subtitle="Channel links need the agent identity created during provisioning."
+						description="Channel links need the agent identity created during provisioning."
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
 					{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
@@ -739,16 +695,16 @@ export function DeployWizard() {
 			>
 				<div className="flex flex-col gap-3">
 					<div className="grid gap-2 sm:grid-cols-2">
-						<Tile
+						<EntityChoiceCard
 							selected={compute === "free"}
 							onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
-							leading={
+							icon={
 								<IconChip tint="bg-identity-3-bg text-identity-3-fg">
 									<Cpu />
 								</IconChip>
 							}
 							title="Free"
-							subtitle={
+							description={
 								freeSlotUsed
 									? "Free slot already in use"
 									: freeSlotPending
@@ -762,16 +718,16 @@ export function DeployWizard() {
 							badge={<Badge variant="secondary">$0</Badge>}
 							disabled={freeSlotUnavailable}
 						/>
-						<Tile
+						<EntityChoiceCard
 							selected={compute === "performance"}
 							onClick={perfPlan ? () => setComputeTier("performance") : undefined}
-							leading={
+							icon={
 								<IconChip tint="bg-identity-8-bg text-identity-8-fg">
 									<Zap />
 								</IconChip>
 							}
 							title="Performance"
-							subtitle={
+							description={
 								perfPlan
 									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
 									: "Performance plan unavailable"

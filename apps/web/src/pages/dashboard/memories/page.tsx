@@ -7,6 +7,7 @@ import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
+import { HERO_CARD_BASE } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
@@ -247,7 +248,7 @@ function MemoryNotesGrid({
 		return (
 			<div className="columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
 				{cardLineCounts.map((lineCount, index) => (
-					<div key={index} className="rounded-xl border bg-card p-4">
+					<div key={index} className={HERO_CARD_BASE}>
 						<div className="space-y-2">
 							{Array.from({ length: lineCount }).map((_, lineIndex) => (
 								<Skeleton
@@ -276,7 +277,10 @@ function MemoryNotesGrid({
 			{memories.map((memory) => (
 				<article
 					key={memory.id}
-					className="group relative z-0 rounded-xl border bg-card p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20"
+					className={cn(
+						HERO_CARD_BASE,
+						"group relative z-0 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
+					)}
 				>
 					<Link
 						to="/memories/$id"

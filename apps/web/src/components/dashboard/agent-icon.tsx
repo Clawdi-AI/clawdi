@@ -1,18 +1,10 @@
-import { Laptop } from "lucide-react";
+import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { cn } from "@/lib/utils";
 
 /**
  * Per-agent brand-mark icon. Product surfaces share one corner radius by
  * default; transcript bubbles can opt into a circular crop.
  */
-
-const KNOWN: ReadonlySet<string> = new Set([
-	"claude-code",
-	"claude_code",
-	"codex",
-	"hermes",
-	"openclaw",
-]);
 
 export type AgentIconSize = "xs" | "sm" | "md" | "lg" | "rail" | "xl";
 
@@ -43,10 +35,6 @@ const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
 	xl: "size-6",
 };
 
-function imageFile(agent: string): string {
-	return `/agents/${agent === "claude_code" ? "claude-code" : agent}.png`;
-}
-
 export function AgentIcon({
 	agent,
 	size = "md",
@@ -61,42 +49,15 @@ export function AgentIcon({
 	className?: string;
 }) {
 	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
-	const customAvatar = avatarUrl?.trim();
-	const pixelSize = SIZE_PX[size];
-	if (customAvatar) {
-		return (
-			<img
-				src={customAvatar}
-				alt=""
-				width={pixelSize}
-				height={pixelSize}
-				draggable={false}
-				className={cn(SIZE_CLASS[size], "shrink-0 bg-muted object-cover", radius, className)}
-			/>
-		);
-	}
-	if (agent && KNOWN.has(agent)) {
-		return (
-			<img
-				src={imageFile(agent)}
-				alt=""
-				width={pixelSize}
-				height={pixelSize}
-				draggable={false}
-				className={cn(SIZE_CLASS[size], "shrink-0 object-cover", radius, className)}
-			/>
-		);
-	}
 	return (
-		<div
-			className={cn(
-				SIZE_CLASS[size],
-				"flex shrink-0 items-center justify-center bg-muted text-muted-foreground",
-				radius,
-				className,
-			)}
-		>
-			<Laptop className={FALLBACK_ICON_CLASS[size]} />
-		</div>
+		<AgentFrameworkIcon
+			agent={agent}
+			pixelSize={SIZE_PX[size]}
+			boxClassName={cn(SIZE_CLASS[size], radius)}
+			fallbackIconClassName={FALLBACK_ICON_CLASS[size]}
+			avatarUrl={avatarUrl}
+			className={className}
+			draggable={false}
+		/>
 	);
 }

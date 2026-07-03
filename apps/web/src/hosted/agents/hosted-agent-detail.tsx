@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
@@ -61,14 +62,13 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
-import { BillingError } from "@/hosted/billing/components/state-views";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
 	HostedDeployment,
 	Plan,
 	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
-import { normalizeBillingError } from "@/hosted/billing/errors";
+import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
 	useCancelSubscription,
@@ -98,7 +98,7 @@ import {
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import { ChannelError, ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
 	useBotPool,
@@ -345,7 +345,7 @@ export function HostedAgentDetail({
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
 						sessions.error ? (
-							<ChannelError
+							<ApiErrorPanel
 								error={sessions.error}
 								onRetry={() => sessions.refetch()}
 								title="Couldn't load sessions"
@@ -426,7 +426,7 @@ function OverviewTab({
 			<div>
 				<div className="mb-2 text-sm font-medium">Recent sessions</div>
 				{sessionsError ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={sessionsError}
 						onRetry={onRetrySessions}
 						title="Couldn't load sessions"
@@ -890,7 +890,8 @@ function AiProviderTab({
 				</button>
 				{providers.isLoading ? <ProviderOptionSkeleton /> : null}
 				{providers.error ? (
-					<BillingError
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
 						error={providers.error}
 						onRetry={() => providers.refetch()}
 						title="Couldn't load providers"
@@ -1062,7 +1063,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 				{linked.isLoading ? (
 					<Skeleton className="h-16 w-full rounded-lg" />
 				) : linked.error ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={linked.error}
 						onRetry={() => linked.refetch()}
 						title="Couldn't load linked channels"
@@ -1115,7 +1116,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 					</Button>
 				</div>
 				{channels.error || botPool.error ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={channels.error ?? botPool.error}
 						onRetry={() => {
 							channels.refetch();
@@ -1646,7 +1647,7 @@ function ComputeSettingsSections({
 			<SettingsSection
 				title="Danger zone"
 				description="Tear down this hosted compute and every runtime agent on it."
-				tone="danger"
+				variant="destructive"
 			>
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 					<div>

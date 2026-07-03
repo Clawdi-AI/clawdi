@@ -1,10 +1,13 @@
 "use client";
 
 import { Activity } from "lucide-react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BillingEmpty, BillingError, UsageSkeleton } from "@/hosted/billing/components/state-views";
+import { UsageSkeleton } from "@/hosted/billing/components/state-views";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatCredits } from "@/hosted/billing/format";
 import { useUsage } from "@/hosted/billing/hooks";
 import { formatShortDate } from "@/lib/format";
@@ -29,7 +32,11 @@ export function UsagePage() {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
-				<BillingError error={usage.error} onRetry={() => usage.refetch()} />
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
+					error={usage.error}
+					onRetry={() => usage.refetch()}
+				/>
 			</div>
 		);
 	}
@@ -42,8 +49,11 @@ export function UsagePage() {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
-				<BillingEmpty
-					icon={<Activity />}
+				<EmptyState
+					bordered
+					fillHeight={false}
+					icon={Activity}
+					iconVariant="icon"
 					title="No usage yet"
 					description="Once your agents start running, credit consumption shows up here."
 				/>

@@ -5,6 +5,8 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { HERO_CARD_BASE } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { ProjectTab } from "@/components/projects/project-tab";
@@ -234,20 +236,20 @@ function VaultCard({
 		.filter((n): n is string => !!n);
 
 	return (
-		<div className="group relative z-0 flex min-h-36 flex-col gap-3 rounded-xl border bg-card p-5 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20">
-			<span
-				className={cn(
-					"relative flex size-10 shrink-0 select-none items-center justify-center rounded-lg text-xl leading-none",
-					identityFor(vault.name).colorClasses,
-				)}
-			>
+		<div
+			className={cn(
+				HERO_CARD_BASE,
+				"group relative z-0 flex min-h-36 flex-col gap-3 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
+			)}
+		>
+			<IconChip tint={identityFor(vault.name).colorClasses} className="relative text-xl">
 				{identityFor(vault.name).emoji}
 				{shared ? (
 					<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
 						<Lock className="size-2.5 text-muted-foreground" />
 					</span>
 				) : null}
-			</span>
+			</IconChip>
 			<div className="min-w-0">
 				<h3 className="truncate text-base font-semibold tracking-tight">{vault.name}</h3>
 				<p className="truncate font-mono text-xs text-muted-foreground">{vault.slug}</p>
@@ -281,7 +283,7 @@ function VaultCard({
 
 function VaultCardSkeleton() {
 	return (
-		<div className="flex min-h-36 flex-col gap-3 rounded-xl border bg-card p-5">
+		<div className={cn(HERO_CARD_BASE, "flex min-h-36 flex-col gap-3")}>
 			<Skeleton className="size-10 rounded-lg" />
 			<div className="min-w-0 space-y-2">
 				<Skeleton className="h-5 w-40 max-w-full" />
@@ -303,9 +305,9 @@ function NewVaultCard() {
 					type="button"
 					className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
 				>
-					<span className="flex size-9 items-center justify-center rounded-lg bg-muted">
+					<IconChip size="sm" tint="bg-muted text-muted-foreground" className="size-9 rounded-lg">
 						<Plus className="size-4" />
-					</span>
+					</IconChip>
 					<span className="text-sm font-medium">New vault</span>
 				</button>
 			}

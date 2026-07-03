@@ -148,7 +148,7 @@ function ConnectorsList() {
 					title="Connector catalog"
 					count={total > 0 ? `${total.toLocaleString()} available` : undefined}
 					description="Connectors let agents use outside apps after you approve access. They are account-level, not tied to one Project."
-					toolbar={
+					actions={
 						connected.activeConnections.length > 0 ? (
 							<Badge>{connected.activeConnections.length} active</Badge>
 						) : null

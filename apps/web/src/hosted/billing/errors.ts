@@ -148,3 +148,8 @@ export function normalizeBillingError(error: unknown): string {
 export function toastBillingError(title: string) {
 	return (error: unknown) => toast.error(title, { description: normalizeBillingError(error) });
 }
+
+export const billingErrorNormalizer = {
+	isAuthError,
+	normalizeError: normalizeBillingError,
+};

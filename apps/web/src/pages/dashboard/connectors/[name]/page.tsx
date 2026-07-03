@@ -292,7 +292,7 @@ function ConnectorDetail({ name }: { name: string }) {
 							? "This connector does not require an account connection."
 							: "Connect an account once. Approved tools become available to agents through this connector."
 					}
-					toolbar={
+					actions={
 						!usesNoAuth && !isSetupBlocked && activeConnections.length > 0 ? (
 							<Button
 								variant="outline"
@@ -550,7 +550,7 @@ function ConnectorToolsList({
 						? "Review the actions agents can request through this connector."
 						: "Review the actions agents can request without account setup."
 				}
-				toolbar={
+				actions={
 					tools.length > 8 ? (
 						<SearchInput
 							value={search}

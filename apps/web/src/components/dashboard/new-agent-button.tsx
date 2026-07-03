@@ -4,6 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
+import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -147,9 +148,9 @@ function ChoiceCard({
 				!disabled && "hover:border-primary/40 hover:bg-muted/50",
 			)}
 		>
-			<span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary transition-colors">
+			<IconChip size="sm" tint="bg-primary/10 text-primary" className="size-9 transition-colors">
 				{icon}
-			</span>
+			</IconChip>
 			<span className="text-sm font-medium">{title}</span>
 			<span className="text-xs text-muted-foreground">{description}</span>
 		</Button>

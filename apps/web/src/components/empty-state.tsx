@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { isValidElement, type ReactNode } from "react";
 import {
 	Empty,
 	EmptyContent,
@@ -11,10 +11,12 @@ import {
 import { cn } from "@/lib/utils";
 
 interface EmptyStateProps {
-	icon?: LucideIcon;
+	icon?: LucideIcon | ReactNode;
 	title?: string;
 	description?: ReactNode;
 	action?: ReactNode;
+	/** Use `icon` for the shadcn icon tile used by standalone empty panels. */
+	iconVariant?: "default" | "icon";
 	/** When set, wraps in a rounded muted tile. Default is flat — just centered text. */
 	bordered?: boolean;
 	/**
@@ -40,10 +42,12 @@ export function EmptyState({
 	title,
 	description,
 	action,
+	iconVariant = "default",
 	bordered = false,
 	fillHeight = true,
 	className,
 }: EmptyStateProps) {
+	const icon = renderEmptyIcon(Icon, iconVariant);
 	return (
 		<Empty
 			className={cn(
@@ -56,15 +60,23 @@ export function EmptyState({
 			)}
 		>
 			<EmptyHeader>
-				{Icon ? (
-					<EmptyMedia>
-						<Icon className="size-8 text-muted-foreground/60" aria-hidden />
-					</EmptyMedia>
-				) : null}
+				{icon ? <EmptyMedia variant={iconVariant}>{icon}</EmptyMedia> : null}
 				{title ? <EmptyTitle className="text-sm">{title}</EmptyTitle> : null}
 				{description ? <EmptyDescription>{description}</EmptyDescription> : null}
 			</EmptyHeader>
 			{action ? <EmptyContent>{action}</EmptyContent> : null}
 		</Empty>
+	);
+}
+
+function renderEmptyIcon(icon: EmptyStateProps["icon"], variant: EmptyStateProps["iconVariant"]) {
+	if (!icon) return null;
+	if (isValidElement(icon) || typeof icon === "string" || typeof icon === "number") return icon;
+	const Icon = icon as LucideIcon;
+	return (
+		<Icon
+			className={variant === "icon" ? "size-5" : "size-8 text-muted-foreground/60"}
+			aria-hidden
+		/>
 	);
 }

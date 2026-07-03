@@ -4,6 +4,7 @@ import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -26,7 +27,6 @@ import {
 	providerTypeMeta,
 } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { ChannelError } from "@/hosted/v2/channels/channel-ui";
 import { formatModelLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -66,7 +66,7 @@ export function AiProvidersPage() {
 			<div className="flex flex-col gap-2">
 				<SectionLabel>Your providers</SectionLabel>
 				{providers.error ? (
-					<ChannelError
+					<ApiErrorPanel
 						error={providers.error}
 						onRetry={() => providers.refetch()}
 						title="Couldn’t load providers"
@@ -120,7 +120,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 	}
 
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col bg-card")}>
+		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
 			<EntityHeader
 				align="start"
 				icon={
@@ -181,7 +181,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 
 function ProviderCardSkeleton() {
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+		<div className={ENTITY_CARD_BASE}>
 			<div className="flex items-start gap-3">
 				<Skeleton className="size-10 shrink-0 rounded-lg" />
 				<div className="min-w-0 flex-1">

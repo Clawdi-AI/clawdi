@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
  * rigid shape:
  *
  *   - `EntityIcon` (separate module)  — the real brand/app-icon tile
+ *   - `IconChip` (separate module)    — the tinted symbolic glyph tile
  *   - `EntityHeader` / `EntityMeta`   — the `[icon] [title + meta]` lockup
  *   - `StatusBadge`, the p-4/gap-3/rounded-lg/border + hover/focus tokens
  *
@@ -20,7 +21,10 @@ import { cn } from "@/lib/utils";
  *     where they need a richer, bespoke body.
  */
 
-export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border p-4";
+export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border bg-card p-4";
+
+/** Top-level resource card tier: projects, vaults, skills, memories. */
+export const HERO_CARD_BASE = "min-w-0 rounded-xl border bg-card p-5";
 
 /** Responsive card grid every entity-card collection shares (providers,
  * channels, shared bots). */
@@ -30,6 +34,10 @@ export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
  * controls independently clickable — pairs with a `relative z-0` wrapper. */
 export const ENTITY_STRETCHED_LINK_CLASS =
 	"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+/** Focus ring for whole-card buttons matching the stretched-link treatment. */
+export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
+	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /** Meta line — array items render middot-separated; truncates per item. */
 export function EntityMeta({
@@ -167,6 +175,7 @@ export function EntityRow({
 				className={cn(
 					ENTITY_CARD_BASE,
 					"flex w-full items-center gap-3 text-left transition-colors hover:bg-muted/50",
+					ENTITY_CARD_BUTTON_FOCUS_CLASS,
 					disabled && "pointer-events-none opacity-60",
 					className,
 				)}
@@ -251,6 +260,7 @@ export function EntityChoiceCard({
 	const cardClass = cn(
 		ENTITY_CARD_BASE,
 		"flex w-full items-start gap-3 text-left transition-colors",
+		onClick && ENTITY_CARD_BUTTON_FOCUS_CLASS,
 		selected
 			? "border-primary bg-primary/5 ring-1 ring-primary/30"
 			: onClick && "hover:bg-muted/50",
