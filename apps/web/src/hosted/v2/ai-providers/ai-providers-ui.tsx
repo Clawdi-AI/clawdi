@@ -1,9 +1,11 @@
 "use client";
 
 import { ShieldCheck, Sparkles } from "lucide-react";
+import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
+import { cn } from "@/lib/utils";
 
 /** Real brand-logo icon for a provider type (delegates to the unified EntityIcon). */
 export function ProviderTypeChip({
@@ -47,25 +49,23 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 /** The always-on managed default, no setup. */
 export function ManagedProviderCard() {
 	return (
-		<div data-hosted="true" data-v2="true" className="rounded-lg border bg-card p-4">
-			<div className="flex items-start gap-3">
-				<span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-					<Sparkles className="size-5" />
-				</span>
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="text-sm font-medium">Managed by Clawdi</span>
-						<span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success-muted-foreground">
-							<ShieldCheck className="size-3" />
-							Default
-						</span>
-					</div>
-					<p className="text-sm text-muted-foreground">
-						Managed agents use Clawdi-managed models out of the box — no API key, no setup. Usage
-						draws from your wallet balance.
-					</p>
-				</div>
-			</div>
+		<div data-hosted="true" data-v2="true" className={cn(ENTITY_CARD_BASE, "bg-card")}>
+			<EntityHeader
+				align="start"
+				icon={
+					<span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+						<Sparkles className="size-5" />
+					</span>
+				}
+				title="Managed by Clawdi"
+				titleAdornment={
+					<span className="inline-flex items-center gap-1 rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success-muted-foreground">
+						<ShieldCheck className="size-3" />
+						Default
+					</span>
+				}
+				meta={["No setup required", "Wallet billed"]}
+			/>
 		</div>
 	);
 }

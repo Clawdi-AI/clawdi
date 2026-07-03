@@ -15,7 +15,7 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
@@ -23,8 +23,12 @@ import {
 	agentTextLabel,
 } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
+import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import { EntityIcon } from "@/components/entity-icon";
 import { InfoCard } from "@/components/info-card";
 import { PageHeader } from "@/components/page-header";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
@@ -49,7 +53,6 @@ import {
 	CopyInline,
 	DeliveryBadge,
 	HealthBadge,
-	ProviderChip,
 	TokenReveal,
 } from "@/hosted/v2/channels/channel-ui";
 import {
@@ -74,20 +77,11 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
+import { cn, relativeTime } from "@/lib/utils";
 
-function formatWhen(iso: string | null | undefined): string {
-	if (!iso) return "—";
-	const delta = new Date(iso).getTime() - Date.now(); // positive = future
-	const future = delta > 0;
-	const phrase = (value: number, unit: string) =>
-		future ? `in ${value}${unit}` : `${value}${unit} ago`;
-	const min = Math.round(Math.abs(delta) / 60000);
-	if (min < 1) return "just now";
-	if (min < 60) return phrase(min, "m");
-	const hr = Math.round(min / 60);
-	if (hr < 24) return phrase(hr, "h");
-	return new Date(iso).toLocaleDateString();
-}
+const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.detail, "flex flex-col gap-6 px-4 lg:px-6");
+const LIST_TAB_CLASS = "mt-4 min-w-0";
+const FORM_TAB_CLASS = "mt-4 min-w-0 max-w-xl";
 
 type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
 type Environment = NonNullable<EnvironmentList>[number];
@@ -132,6 +126,31 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 	);
 }
 
+function DetailIcon({ children }: { children: ReactNode }) {
+	return (
+		<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground [&_svg]:size-4">
+			{children}
+		</span>
+	);
+}
+
+function SectionHeader({
+	label,
+	count,
+	action,
+}: {
+	label: string;
+	count?: number;
+	action?: ReactNode;
+}) {
+	return (
+		<div className="flex flex-wrap items-center justify-between gap-2">
+			<SectionLabel count={count}>{label}</SectionLabel>
+			{action ? <div className="shrink-0">{action}</div> : null}
+		</div>
+	);
+}
+
 export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const channel = useChannel(id);
 	const health = useChannelHealth();
@@ -147,16 +166,26 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 	if (channel.isLoading) {
 		return (
-			<div data-hosted="true" data-v2="true" className="space-y-6 px-4 lg:px-6">
-				<Skeleton className="h-12 w-64" />
-				<Skeleton className="h-64 w-full rounded-lg" />
+			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
+				<div className="flex items-center gap-3">
+					<Skeleton className="size-12 shrink-0 rounded-xl" />
+					<div className="min-w-0 flex-1">
+						<Skeleton className="h-6 w-52 max-w-full" />
+						<Skeleton className="mt-2 h-4 w-40 max-w-full" />
+						<Skeleton className="mt-2 h-5 w-32 max-w-full rounded-full" />
+					</div>
+				</div>
+				<div className="flex flex-col gap-4">
+					<Skeleton className="h-9 w-full max-w-xl rounded-lg" />
+					<Skeleton className="h-64 w-full rounded-lg" />
+				</div>
 			</div>
 		);
 	}
 
 	if (channel.error) {
 		return (
-			<div data-hosted="true" data-v2="true" className="px-4 lg:px-6">
+			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 				<ChannelError
 					error={channel.error}
 					onRetry={() => channel.refetch()}
@@ -168,7 +197,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 	if (!channel.data) {
 		return (
-			<div data-hosted="true" data-v2="true" className="px-4 lg:px-6">
+			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 				<EmptyState
 					icon={MessageSquareDashed}
 					title="Channel not found"
@@ -187,10 +216,17 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const meta = providerMeta(ch.provider);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6 px-4 lg:px-6">
+		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
 				title={ch.name}
 				description={`${meta.label} · ${ch.visibility === "public" ? "Shared bot" : "Private bot"}`}
+				adornment={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
+				status={
+					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+						<span className="capitalize">{ch.status}</span>
+						{healthItem ? <HealthBadge status={healthItem.health_status} /> : null}
+					</div>
+				}
 				actions={
 					<ConfirmAction
 						title={`Remove ${ch.name}?`}
@@ -213,16 +249,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 			/>
 
-			<div className="flex items-center gap-3">
-				<ProviderChip provider={ch.provider} />
-				<div className="flex items-center gap-2 text-sm text-muted-foreground">
-					<span className="capitalize">{ch.status}</span>
-					{healthItem ? <HealthBadge status={healthItem.health_status} /> : null}
-				</div>
-			</div>
-
-			<Tabs defaultValue="agents">
-				<TabsList className="flex-wrap">
+			<Tabs defaultValue="agents" className="min-w-0">
+				<TabsList className="h-auto flex-wrap justify-start">
 					<TabsTrigger value="agents">Agents</TabsTrigger>
 					{ch.provider === "whatsapp" ? (
 						<TabsTrigger value="devices">Linked devices</TabsTrigger>
@@ -234,27 +262,27 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					<TabsTrigger value="commands">Commands</TabsTrigger>
 				</TabsList>
 
-				<TabsContent value="agents" className="mt-4">
+				<TabsContent value="agents" className={LIST_TAB_CLASS}>
 					<AgentsTab accountId={id} accountName={ch.name} />
 				</TabsContent>
 				{ch.provider === "whatsapp" ? (
-					<TabsContent value="devices" className="mt-4">
+					<TabsContent value="devices" className={FORM_TAB_CLASS}>
 						<WhatsAppDevicesTab accountId={id} />
 					</TabsContent>
 				) : null}
-				<TabsContent value="pair" className="mt-4">
+				<TabsContent value="pair" className={FORM_TAB_CLASS}>
 					<PairCodeTab accountId={id} provider={ch.provider} />
 				</TabsContent>
-				<TabsContent value="bindings" className="mt-4">
+				<TabsContent value="bindings" className={LIST_TAB_CLASS}>
 					<BindingsTab accountId={id} />
 				</TabsContent>
-				<TabsContent value="activity" className="mt-4">
+				<TabsContent value="activity" className={LIST_TAB_CLASS}>
 					<ActivityTab accountId={id} />
 				</TabsContent>
-				<TabsContent value="health" className="mt-4">
+				<TabsContent value="health" className={LIST_TAB_CLASS}>
 					<HealthTab accountId={id} />
 				</TabsContent>
-				<TabsContent value="commands" className="mt-4">
+				<TabsContent value="commands" className={FORM_TAB_CLASS}>
 					<CommandsTab accountId={id} provider={ch.provider} />
 				</TabsContent>
 			</Tabs>
@@ -285,7 +313,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 	const items = links.data ?? [];
 
 	return (
-		<div className="space-y-3">
+		<div className="flex flex-col gap-3">
 			{envs.error ? (
 				<ChannelError
 					error={envs.error}
@@ -293,12 +321,16 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 					title="Couldn't load agent names"
 				/>
 			) : null}
-			<div className="flex justify-end">
-				<Button size="sm" onClick={() => setLinkOpen(true)}>
-					<Link2 className="size-3.5" />
-					Link an agent
-				</Button>
-			</div>
+			<SectionHeader
+				label="Linked agents"
+				count={items.length}
+				action={
+					<Button size="sm" onClick={() => setLinkOpen(true)}>
+						<Link2 className="size-3.5" />
+						Link an agent
+					</Button>
+				}
+			/>
 
 			{items.length === 0 ? (
 				<EmptyState
@@ -308,17 +340,18 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 					fillHeight={false}
 				/>
 			) : (
-				<div className="space-y-2">
+				<div className="flex flex-col gap-2">
 					{items.map((link: ChannelAgentLink) => (
-						<div key={link.id} className="rounded-lg border p-3">
-							<div className="flex items-center justify-between gap-3">
+						<div key={link.id} className={cn(ENTITY_CARD_BASE, "bg-card")}>
+							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 								<div className="min-w-0">
 									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-									<div className="text-xs capitalize text-muted-foreground">
-										{link.status} · linked {formatWhen(link.created_at)}
+									<div className="text-xs text-muted-foreground">
+										<span className="capitalize">{link.status}</span> · linked{" "}
+										{relativeTime(link.created_at)}
 									</div>
 								</div>
-								<div className="flex shrink-0 items-center gap-1.5">
+								<div className="flex shrink-0 flex-wrap items-center gap-1.5">
 									<Button
 										variant="outline"
 										size="sm"
@@ -404,7 +437,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const effectiveLink = linkId || (linkItems.length === 1 ? linkItems[0].id : "");
 
 	return (
-		<div className="max-w-xl space-y-4">
+		<div className="flex flex-col gap-4">
 			<InfoCard icon={Smartphone} title="Link a WhatsApp number">
 				WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by
 				scanning it in WhatsApp → Linked devices. The credential is handed to the agent runtime to
@@ -427,7 +460,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 					description="A WhatsApp device is minted per agent. Link an agent on the Agents tab, then come back."
 				/>
 			) : (
-				<div className="space-y-2">
+				<div className="flex flex-col gap-2">
 					{envs.error ? (
 						<ChannelError
 							error={envs.error}
@@ -436,7 +469,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 						/>
 					) : null}
 					{linkItems.length > 1 ? (
-						<div className="space-y-1.5">
+						<div className="flex flex-col gap-1.5">
 							<Label htmlFor="wa-agent">Agent</Label>
 							<Select value={effectiveLink} onValueChange={setLinkId}>
 								<SelectTrigger id="wa-agent">
@@ -469,8 +502,8 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 				</div>
 			)}
 
-			<div className="space-y-2">
-				<div className="text-sm font-medium">Linked devices</div>
+			<div className="flex flex-col gap-2">
+				<SectionLabel count={devices.length}>Linked devices</SectionLabel>
 				{creds.isLoading ? (
 					<Skeleton className="h-16 w-full rounded-lg" />
 				) : creds.error ? (
@@ -487,21 +520,23 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 					devices.map((d) => (
 						<div
 							key={d.credential_id}
-							className="flex items-center justify-between gap-3 rounded-lg border p-3"
+							className={cn(ENTITY_CARD_BASE, "flex items-center justify-between gap-3 bg-card")}
 						>
-							<div className="min-w-0">
-								{d.jid ? (
-									<div className="truncate font-mono text-xs">{d.jid}</div>
-								) : (
-									<div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-										<Spinner className="size-3" />
-										Pending pairing
-									</div>
-								)}
-								<div className="text-xs text-muted-foreground">
-									{envName(envs.data, d.agent_id, ownership)} · added {formatWhen(d.created_at)}
-								</div>
-							</div>
+							<EntityHeader
+								className="min-w-0 flex-1"
+								icon={
+									<DetailIcon>
+										<Smartphone />
+									</DetailIcon>
+								}
+								title={
+									d.jid ? <span className="font-mono text-xs">{d.jid}</span> : "Pending pairing"
+								}
+								titleAdornment={!d.jid ? <Spinner className="size-3" /> : undefined}
+								meta={`${envName(envs.data, d.agent_id, ownership)} · added ${relativeTime(
+									d.created_at,
+								)}`}
+							/>
 							<ConfirmAction
 								title="Unlink this device?"
 								description={<p>The WhatsApp credential is revoked. This can't be undone.</p>}
@@ -554,14 +589,14 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	}
 
 	return (
-		<div className="max-w-xl space-y-4">
+		<div className="flex flex-col gap-4">
 			<InfoCard icon={QrCode} title="Pair a chat">
 				Generate a one-time code, then send it from the {meta.label} chat you want to pair — the
 				agent links that conversation when it sees the code.
 			</InfoCard>
 
 			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="space-y-1.5">
+				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-agent">Agent</Label>
 					{envs.isLoading ? (
 						<Skeleton className="h-10 w-full rounded-md" />
@@ -584,7 +619,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 						</Select>
 					)}
 				</div>
-				<div className="space-y-1.5">
+				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-ttl">Expires in</Label>
 					<Select value={ttl} onValueChange={setTtl}>
 						<SelectTrigger id="pair-ttl">
@@ -615,12 +650,12 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 			</Button>
 
 			{result ? (
-				<div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+				<div className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
 					<div className="text-xs font-medium text-primary">Pairing code</div>
 					<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
 					<p className="text-sm text-muted-foreground">
 						Send <span className="font-mono font-medium">{result.code}</span> from the chat you want
-						to pair. Expires {formatWhen(result.expires_at)}.
+						to pair. Expires {relativeTime(result.expires_at)}.
 					</p>
 				</div>
 			) : null}
@@ -655,17 +690,24 @@ function BindingsTab({ accountId }: { accountId: string }) {
 	}
 
 	return (
-		<div className="space-y-2">
+		<div className="flex flex-col gap-2">
 			{items.map((b: ChannelBinding) => (
-				<div key={b.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-					<div className="min-w-0">
-						<div className="truncate text-sm font-medium">{b.external_chat_name ?? "Chat"}</div>
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<span className="capitalize">{b.external_chat_type ?? "chat"}</span>
-							<span>·</span>
-							<CopyInline value={b.external_chat_id} />
-						</div>
-					</div>
+				<div key={b.id} className={cn(ENTITY_CARD_BASE, "flex items-center gap-3 bg-card")}>
+					<EntityHeader
+						className="min-w-0 flex-1"
+						icon={
+							<DetailIcon>
+								<MessageSquareDashed />
+							</DetailIcon>
+						}
+						title={b.external_chat_name ?? "Chat"}
+						meta={[
+							<span key="type" className="capitalize">
+								{b.external_chat_type ?? "chat"}
+							</span>,
+							<CopyInline key="chat-id" value={b.external_chat_id} />,
+						]}
+					/>
 					<span className="text-xs capitalize text-muted-foreground">{b.status}</span>
 				</div>
 			))}
@@ -700,7 +742,7 @@ function ActivityTab({ accountId }: { accountId: string }) {
 	}
 
 	return (
-		<div className="space-y-2">
+		<div className="flex flex-col gap-2">
 			{items.map((item: ChannelActivityItem) => (
 				<ActivityRow key={item.id} item={item} />
 			))}
@@ -714,24 +756,18 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 	const error = item.delivery_last_error ?? item.error;
 
 	return (
-		<div className="flex items-start gap-3 rounded-lg border p-3">
-			<span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-				{isEvent ? (
-					<TerminalSquare className="size-3.5" />
-				) : inbound ? (
-					<ArrowDownLeft className="size-3.5" />
-				) : (
-					<ArrowUpRight className="size-3.5" />
-				)}
-			</span>
+		<div className={cn(ENTITY_CARD_BASE, "flex items-start gap-3 bg-card")}>
+			<DetailIcon>
+				{isEvent ? <TerminalSquare /> : inbound ? <ArrowDownLeft /> : <ArrowUpRight />}
+			</DetailIcon>
 			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-2">
+				<div className="flex flex-wrap items-center gap-2">
 					<span className="text-xs font-medium capitalize">
 						{isEvent ? (item.stage ?? "event") : inbound ? "Inbound" : "Outbound"}
 					</span>
 					{item.delivery_status ? <DeliveryBadge status={item.delivery_status} /> : null}
-					<span className="ml-auto shrink-0 text-xs text-muted-foreground">
-						{formatWhen(item.created_at)}
+					<span className="shrink-0 text-xs text-muted-foreground sm:ml-auto">
+						{relativeTime(item.created_at)}
 					</span>
 				</div>
 				{item.text ? <p className="mt-1 text-sm">{item.text}</p> : null}
@@ -777,7 +813,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 	];
 
 	return (
-		<div className="space-y-4">
+		<div className="flex flex-col gap-4">
 			<div className="flex items-center gap-2">
 				<HealthBadge status={h.health_status} />
 				{(h.reasons ?? []).length > 0 ? (
@@ -791,7 +827,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 
 			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
 				{stats.map((s) => (
-					<div key={s.label} className="rounded-lg border p-3">
+					<div key={s.label} className={cn(ENTITY_CARD_BASE, "bg-card")}>
 						<div className="text-2xl font-semibold tabular-nums">{s.value}</div>
 						<div className="text-xs text-muted-foreground">{s.label}</div>
 					</div>
@@ -799,7 +835,12 @@ function HealthTab({ accountId }: { accountId: string }) {
 			</div>
 
 			{h.last_error ? (
-				<div className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+				<div
+					className={cn(
+						ENTITY_CARD_BASE,
+						"flex flex-col gap-1 border-destructive/30 bg-destructive/5",
+					)}
+				>
 					<div className="flex items-center gap-1.5 text-sm font-medium text-destructive">
 						<TriangleAlert className="size-4" />
 						Last error
@@ -807,16 +848,14 @@ function HealthTab({ accountId }: { accountId: string }) {
 					<p className="text-sm text-destructive/90">{h.last_error}</p>
 					<p className="text-xs text-muted-foreground">
 						{[h.last_error_stage, h.last_error_outcome].filter(Boolean).join(" · ")} ·{" "}
-						{formatWhen(h.last_error_at)}
+						{relativeTime(h.last_error_at)}
 					</p>
 				</div>
 			) : null}
 
 			{h.native_transport ? (
-				<div className="rounded-lg border p-3">
-					<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						Native transport
-					</div>
+				<div className={cn(ENTITY_CARD_BASE, "bg-card")}>
+					<SectionLabel className="mb-2 px-0">Native transport</SectionLabel>
 					<pre className="overflow-x-auto text-xs text-muted-foreground">
 						{JSON.stringify(h.native_transport, null, 2)}
 					</pre>
@@ -835,7 +874,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 	const commands = sync.data?.commands ?? [];
 
 	return (
-		<div className="max-w-xl space-y-4">
+		<div className="flex flex-col gap-4">
 			<InfoCard icon={KeyRound} title="Slash commands">
 				{supportsCommands
 					? `Publish this agent's slash commands to ${meta.label}.`
@@ -849,7 +888,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 						{sync.isPending ? "Syncing…" : "Sync commands"}
 					</Button>
 					{commands.length > 0 ? (
-						<div className="space-y-2 rounded-lg border p-3">
+						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2 bg-card")}>
 							<div className="text-xs font-medium text-success-muted-foreground">
 								Synced {commands.length} command{commands.length === 1 ? "" : "s"}
 							</div>

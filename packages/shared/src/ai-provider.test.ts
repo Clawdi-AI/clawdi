@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { isProviderAuthProfileId, validateAiProviderCatalog } from "./ai-provider";
+import {
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	isFirstPartyManagedAiProvider,
+	isProviderAuthProfileId,
+	validateAiProviderCatalog,
+} from "./ai-provider";
 
 describe("validateAiProviderCatalog", () => {
 	test("returns validation errors instead of throwing for malformed catalog entries", () => {
@@ -230,6 +236,29 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(
 			"Provider clawdi-managed-v2 managed_by clawdi must use api_mode openai_chat.",
+		);
+	});
+});
+
+describe("isFirstPartyManagedAiProvider", () => {
+	test("matches first-party managed ids even when old rows are missing managed_by", () => {
+		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID })).toBe(
+			true,
+		);
+		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V2_PROVIDER_ID })).toBe(
+			true,
+		);
+	});
+
+	test("matches managed_by clawdi for current rows", () => {
+		expect(isFirstPartyManagedAiProvider({ provider_id: "custom", managed_by: "clawdi" })).toBe(
+			true,
+		);
+	});
+
+	test("does not match user providers", () => {
+		expect(isFirstPartyManagedAiProvider({ provider_id: "openai-prod", managed_by: "user" })).toBe(
+			false,
 		);
 	});
 });

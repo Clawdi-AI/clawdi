@@ -20,7 +20,16 @@ import { cn } from "@/lib/utils";
  *     where they need a richer, bespoke body.
  */
 
-export const ENTITY_CARD_BASE = "rounded-lg border p-4";
+export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border p-4";
+
+/** Responsive card grid every entity-card collection shares (providers,
+ * channels, shared bots). */
+export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+
+/** Stretched link that makes a whole card navigate while keeping inner
+ * controls independently clickable — pairs with a `relative z-0` wrapper. */
+export const ENTITY_STRETCHED_LINK_CLASS =
+	"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /** Meta line — array items render middot-separated; truncates per item. */
 export function EntityMeta({
@@ -85,9 +94,9 @@ export function EntityHeader({
 		>
 			{icon}
 			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium">{title}</span>
-					{titleAdornment}
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>
 				{meta !== undefined ? <EntityMeta items={meta} /> : null}
 			</div>
@@ -168,10 +177,9 @@ export function EntityRow({
 	}
 
 	if (href) {
-		const linkClass =
-			"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+		const linkClass = ENTITY_STRETCHED_LINK_CLASS;
 		return (
-			<div className="group relative z-0">
+			<div className="group relative z-0 min-w-0">
 				<div
 					className={cn(
 						ENTITY_CARD_BASE,
@@ -229,11 +237,13 @@ export function EntityChoiceCard({
 		<>
 			{icon}
 			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium">{title}</span>
-					{badge}
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+					{badge ? <span className="shrink-0">{badge}</span> : null}
 				</div>
-				{description ? <p className="mt-0.5 text-sm text-muted-foreground">{description}</p> : null}
+				{description ? (
+					<p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
+				) : null}
 			</div>
 			{selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden /> : null}
 		</>

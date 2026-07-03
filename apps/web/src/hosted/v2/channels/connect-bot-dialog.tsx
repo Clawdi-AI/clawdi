@@ -177,8 +177,8 @@ export function ConnectBotDialog({
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="space-y-4">
-							<div className="space-y-1.5">
+						<div className="flex flex-col gap-4">
+							<div className="flex flex-col gap-1.5">
 								<Label>Provider</Label>
 								<div className="grid grid-cols-2 gap-2">
 									{CHANNEL_PROVIDERS.map((p) => (
@@ -186,7 +186,14 @@ export function ConnectBotDialog({
 											key={p}
 											selected={provider === p}
 											onClick={() => changeProvider(p)}
-											icon={<EntityIcon kind="channel" id={p} label={PROVIDER_META[p].label} />}
+											icon={
+												<EntityIcon
+													kind="channel"
+													id={p}
+													label={PROVIDER_META[p].label}
+													size="sm"
+												/>
+											}
 											title={PROVIDER_META[p].label}
 										/>
 									))}
@@ -198,7 +205,7 @@ export function ConnectBotDialog({
 								<p className="text-xs text-muted-foreground">{meta.hint}</p>
 							</div>
 
-							<div className="space-y-1.5">
+							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="connect-name">Name</Label>
 								<Input
 									id="connect-name"
@@ -211,7 +218,7 @@ export function ConnectBotDialog({
 
 							{/* Telegram / Discord bot token, or iMessage BlueBubbles password. */}
 							{meta.connect !== "whatsapp" ? (
-								<div className="space-y-1.5">
+								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="connect-token">{meta.tokenLabel}</Label>
 									<Input
 										id="connect-token"
@@ -228,7 +235,7 @@ export function ConnectBotDialog({
 							{/* Discord: application_id (+ public_key, guild_id). */}
 							{meta.connect === "discord" ? (
 								<>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-app-id">Application ID</Label>
 										<Input
 											id="connect-app-id"
@@ -242,7 +249,7 @@ export function ConnectBotDialog({
 											Required to publish slash commands.
 										</p>
 									</div>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-public-key">
 											Public key <span className="text-muted-foreground">· recommended</span>
 										</Label>
@@ -258,7 +265,7 @@ export function ConnectBotDialog({
 											Verifies incoming interaction signatures.
 										</p>
 									</div>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-guild-id">
 											Guild ID <span className="text-muted-foreground">· optional</span>
 										</Label>
@@ -277,7 +284,7 @@ export function ConnectBotDialog({
 							{/* iMessage: BlueBubbles server URL + auth mode. */}
 							{meta.connect === "imessage" ? (
 								<>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-server-url">BlueBubbles server URL</Label>
 										<Input
 											id="connect-server-url"
@@ -288,7 +295,7 @@ export function ConnectBotDialog({
 											spellCheck={false}
 										/>
 									</div>
-									<div className="space-y-1.5">
+									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-auth-mode">Auth mode</Label>
 										<Select value={authMode} onValueChange={setAuthMode}>
 											<SelectTrigger id="connect-auth-mode">
