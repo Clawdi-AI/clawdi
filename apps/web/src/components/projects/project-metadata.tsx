@@ -165,7 +165,7 @@ function ProjectIcon({
 	return (
 		<span
 			className={cn(
-				"mt-0.5 flex size-6 shrink-0 select-none items-center justify-center rounded-md text-[13px] leading-none",
+				"mt-0.5 flex size-6 shrink-0 select-none items-center justify-center rounded-md text-xs leading-none",
 				id.colorClasses,
 				className,
 			)}
@@ -270,7 +270,7 @@ export function ProjectScopePicker({
 				<SelectTrigger
 					aria-label={label}
 					className={cn(
-						"h-auto min-h-16 w-full max-w-full justify-between rounded-[10px] border-border/80 bg-background/70 px-3 py-2.5 whitespace-normal shadow-xs transition-colors hover:bg-muted/20",
+						"h-auto min-h-16 w-full max-w-full justify-between rounded-md border bg-card px-3 py-2.5 whitespace-normal transition-colors hover:bg-muted/50",
 						isStacked ? "min-w-0" : "min-w-[260px] sm:w-[420px]",
 						triggerClassName,
 					)}
@@ -296,7 +296,7 @@ export function ProjectScopePicker({
 					{allowAll && groupedProjects.length > 0 ? <SelectSeparator /> : null}
 					{groupedProjects.map((group, groupIndex) => (
 						<SelectGroup key={group.id}>
-							<SelectLabel className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide">
+							<SelectLabel className="px-2 py-1.5 text-2xs font-medium uppercase tracking-wide">
 								{group.label}
 							</SelectLabel>
 							{group.projects.map((project) =>
@@ -366,7 +366,7 @@ export function ProjectCompactPicker({
 					</span>
 				) : value === "all" && allowAll ? (
 					<span className="flex min-w-0 items-center gap-2 text-left">
-						<span className="flex size-5 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+						<span className="flex size-5 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
 							<FolderKanban className="size-3" />
 						</span>
 						<span className="truncate font-medium">{allLabel}</span>
@@ -383,7 +383,7 @@ export function ProjectCompactPicker({
 				{allowAll ? (
 					<SelectItem value="all" className="py-2">
 						<div className="flex min-w-0 items-center gap-2">
-							<span className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+							<span className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
 								<FolderKanban className="size-3.5" />
 							</span>
 							<div className="min-w-0">
@@ -421,9 +421,9 @@ function ProjectPickerValue({
 }) {
 	return (
 		<span className="flex min-w-0 flex-1 items-center gap-3 pr-1 text-left">
-			<ProjectIcon project={project} agent={agent} className="mt-0 size-7 rounded-[8px]" />
+			<ProjectIcon project={project} agent={agent} className="mt-0 size-7 rounded-md" />
 			<span className="grid min-w-0 flex-1 gap-0.5">
-				<span className="truncate text-[15px] leading-5 font-semibold">
+				<span className="truncate text-sm leading-5 font-semibold">
 					{displayProjectName(project)}
 				</span>
 				<span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
@@ -488,14 +488,14 @@ function ProjectPickerAllItem({
 		<span className="flex min-w-0 items-center gap-2 text-left">
 			<span
 				className={cn(
-					"flex shrink-0 items-center justify-center rounded-[8px] border bg-muted/40 text-muted-foreground",
+					"flex shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground",
 					compact ? "size-7" : "size-6",
 				)}
 			>
 				<FolderKanban className={compact ? "size-3.5" : "size-3.5"} />
 			</span>
 			<span className={cn("min-w-0", compact && "grid gap-0.5")}>
-				<span className={cn("block truncate font-medium", compact && "text-[15px] leading-5")}>
+				<span className={cn("block truncate font-medium", compact && "text-sm leading-5")}>
 					{label}
 				</span>
 				<span className="block truncate text-xs text-muted-foreground">{description}</span>
@@ -539,7 +539,7 @@ function ProjectTypeBadge({
 		<Badge
 			variant="outline"
 			className={cn(
-				"shrink-0 border-border/70 px-1.5 py-0 text-[11px] font-normal text-muted-foreground",
+				"shrink-0 border-border/70 px-1.5 py-0 text-2xs font-normal text-muted-foreground",
 				compact && "hidden sm:inline-flex",
 			)}
 		>
@@ -597,8 +597,8 @@ export function projectKindMeta(kind: string): {
 		groupLabel: "Other Projects",
 		description: `Project type: ${kind}`,
 		icon: FolderKanban,
-		iconClassName: "border-border bg-muted/40 text-muted-foreground",
-		badgeClassName: "border-border bg-muted/40 text-muted-foreground",
+		iconClassName: "border-border bg-muted/30 text-muted-foreground",
+		badgeClassName: "border-border bg-muted/30 text-muted-foreground",
 	};
 }
 

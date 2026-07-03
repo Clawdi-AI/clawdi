@@ -56,7 +56,7 @@ const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> 
 };
 
 const SIZE = {
-	sm: { px: 24, box: "size-6 rounded-md", mono: "text-[10px]" },
+	sm: { px: 24, box: "size-6 rounded-md", mono: "text-3xs" },
 	md: { px: 40, box: "size-10 rounded-lg", mono: "text-sm" },
 	lg: { px: 48, box: "size-12 rounded-xl", mono: "text-base" },
 } as const;

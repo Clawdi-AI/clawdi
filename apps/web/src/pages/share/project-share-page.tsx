@@ -250,7 +250,7 @@ function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
 		? "Use Vault values through CLI runtime reads"
 		: "Use Vault values through CLI runtime reads if added later";
 	return (
-		<div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+		<div className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
 			<div className="space-y-2">
 				<p className="font-medium">Viewer Can</p>
 				<ul className="space-y-1.5 text-muted-foreground">
@@ -295,7 +295,7 @@ function ContentTile({
 	muted?: boolean;
 }) {
 	return (
-		<div className={`rounded-lg border p-4 ${muted ? "bg-muted/20 text-muted-foreground" : ""}`}>
+		<div className={`rounded-lg border p-4 ${muted ? "bg-muted/30 text-muted-foreground" : ""}`}>
 			<div className="flex items-center gap-2 text-sm">
 				{icon}
 				<span className="font-medium">{label}</span>

@@ -368,7 +368,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div className="min-w-0">
 							<div className="text-xs font-medium">Agent Handoff Prompt</div>
-							<div className="truncate font-mono text-[11px] text-muted-foreground">
+							<div className="truncate font-mono text-2xs text-muted-foreground">
 								Viewer access · add to an agent later · {link.prefix}
 							</div>
 						</div>
@@ -468,7 +468,7 @@ function LinkRow({
 								<AlertDialogCancel>Cancel</AlertDialogCancel>
 								<AlertDialogAction
 									onClick={onRevoke}
-									className="bg-destructive text-white hover:bg-destructive/90"
+									className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 								>
 									Turn Off Link
 								</AlertDialogAction>
@@ -639,7 +639,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 										<AlertDialogCancel>Keep invitation</AlertDialogCancel>
 										<AlertDialogAction
 											onClick={() => cancel.mutate(inv.id)}
-											className="bg-destructive text-white hover:bg-destructive/90"
+											className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 										>
 											Cancel invitation
 										</AlertDialogAction>
@@ -746,7 +746,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							<AlertDialogCancel>Keep Sharing</AlertDialogCancel>
 							<AlertDialogAction
 								onClick={() => unshare.mutate()}
-								className="bg-destructive text-white hover:bg-destructive/90"
+								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 							>
 								Stop all sharing
 							</AlertDialogAction>
@@ -811,7 +811,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 											<AlertDialogCancel>Cancel</AlertDialogCancel>
 											<AlertDialogAction
 												onClick={() => remove.mutate(member.user_id)}
-												className="bg-destructive text-white hover:bg-destructive/90"
+												className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 											>
 												Remove Member
 											</AlertDialogAction>

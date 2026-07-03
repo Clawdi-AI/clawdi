@@ -484,7 +484,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 										</TooltipTrigger>
 										<TooltipContent>{name}</TooltipContent>
 									</Tooltip>
-									<span className="shrink-0 font-mono text-[10px] text-muted-foreground select-none">
+									<span className="shrink-0 font-mono text-3xs text-muted-foreground select-none">
 										••••••
 									</span>
 									{selectMode ? (

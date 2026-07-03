@@ -401,12 +401,10 @@ function SyncHelpDialog({
 												This won&apos;t auto-recover — the daemon dropped the change after the
 												server rejected it. Common cause: skill folder bigger than the 25 MB upload
 												cap (check for{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-													node_modules
-												</code>
-												, <code className="rounded bg-muted px-1 py-0.5 text-[11px]">.git</code>,
-												build output). Fix the source and re-save to retry — the daemon is still
-												healthy and will pick up the next edit.
+												<code className="rounded bg-muted px-1 py-0.5 text-2xs">node_modules</code>,{" "}
+												<code className="rounded bg-muted px-1 py-0.5 text-2xs">.git</code>, build
+												output). Fix the source and re-save to retry — the daemon is still healthy
+												and will pick up the next edit.
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
@@ -603,7 +601,7 @@ function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
 			Token turned off or expired? Log in again with{" "}
-			<code className="rounded bg-muted px-1 py-0.5 text-[11px]">clawdi auth login</code>.
+			<code className="rounded bg-muted px-1 py-0.5 text-2xs">clawdi auth login</code>.
 		</p>
 	);
 }
@@ -655,10 +653,10 @@ function CommandLine({ command, hint }: { command: string; hint?: string }) {
 					});
 			}}
 			title={hint}
-			className="flex w-full items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2 text-left font-mono text-xs hover:bg-muted/60"
+			className="flex w-full items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-left font-mono text-xs hover:bg-muted/50"
 		>
 			<code className="truncate">{command}</code>
-			<span className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
+			<span className="flex shrink-0 items-center gap-2 text-3xs text-muted-foreground">
 				{hint ? <span className="hidden font-sans not-italic sm:inline">{hint}</span> : null}
 				<span>{copied ? "Copied" : "Copy"}</span>
 			</span>

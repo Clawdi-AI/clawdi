@@ -184,7 +184,7 @@ function FilterChip({
 				"rounded-full border px-3 py-1 text-xs font-medium transition-colors",
 				active
 					? "border-primary bg-primary/10 text-primary"
-					: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+					: "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
 			)}
 		>
 			{children}

@@ -121,7 +121,7 @@ function MessageBlock({
 					// so without this fallback mobile users lose the
 					// timestamp entirely on grouped continuation rows.
 					<div
-						className="hidden h-5 w-8 items-center justify-end pr-1 text-[10px] tabular-nums text-muted-foreground/60 group-hover:flex [@media(hover:none)]:flex"
+						className="hidden h-5 w-8 items-center justify-end pr-1 text-3xs tabular-nums text-muted-foreground/60 group-hover:flex [@media(hover:none)]:flex"
 						title={formatAbsoluteTooltip(message.timestamp)}
 					>
 						{new Date(message.timestamp).toLocaleTimeString([], {
@@ -238,7 +238,7 @@ function SlashCommandPill({ name, args }: { name: string; args?: string }) {
 function CollapsibleBlock({ label, content }: { label: string; content: string }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="rounded-md border border-dashed border-border/70 bg-muted/20">
+		<div className="rounded-md border border-dashed border-border/70 bg-muted/30">
 			<Button
 				variant="ghost"
 				size="sm"

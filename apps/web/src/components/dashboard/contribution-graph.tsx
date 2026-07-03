@@ -93,7 +93,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 			<div className="flex gap-1.5">
 				{/* Day-of-week labels: only label odd rows so they don't overflow the cell heights. */}
 				<div
-					className="flex shrink-0 flex-col gap-[3px] pt-5 text-[10px] text-muted-foreground tabular-nums"
+					className="flex shrink-0 flex-col gap-[3px] pt-5 text-3xs text-muted-foreground tabular-nums"
 					style={{ width: DAY_LABEL_W - 6 }}
 					aria-hidden
 				>
@@ -108,7 +108,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 
 				<div className="min-w-0 flex-1">
 					{/* Month labels, positioned absolutely above the week they start. */}
-					<div className="relative mb-1 h-4 text-[10px] leading-4 text-muted-foreground">
+					<div className="relative mb-1 h-4 text-3xs leading-4 text-muted-foreground">
 						{monthLabels.map((m, i) =>
 							m ? (
 								<span

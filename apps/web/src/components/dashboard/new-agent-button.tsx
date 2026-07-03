@@ -144,7 +144,7 @@ function ChoiceCard({
 			variant="outline"
 			className={cn(
 				"h-auto min-h-32 w-full flex-col items-start justify-start gap-2 whitespace-normal p-4 text-left",
-				!disabled && "hover:border-primary/40 hover:bg-accent/40",
+				!disabled && "hover:border-primary/40 hover:bg-muted/50",
 			)}
 		>
 			<span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary transition-colors">

@@ -50,7 +50,7 @@ export function EmptyState({
 				// shadcn's default already includes `rounded-lg border-dashed p-6
 				// md:p-12`. The flat variant (default) strips the border + padding
 				// because most of our usages live inside existing card chrome.
-				bordered ? "border bg-muted/20" : "border-none p-0 md:p-0",
+				bordered ? "border bg-muted/30" : "border-none p-0 md:p-0",
 				fillHeight ? "min-h-[320px]" : "py-8 md:py-8",
 				className,
 			)}

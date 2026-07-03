@@ -60,13 +60,6 @@
 	--info-muted: oklch(0.96 0.018 245);
 	--info-muted-foreground: oklch(0.44 0.085 245);
 
-	/* charts — orange ramp + warm grays only (no off-brand hues) */
-	--chart-1: oklch(0.6171 0.1375 39);
-	--chart-2: oklch(0.5 0.11 42);
-	--chart-3: oklch(0.75 0.08 45);
-	--chart-4: oklch(0.62 0.01 95);
-	--chart-5: oklch(0.42 0.008 95);
-
 	/* identity palette — vivid flat pairs for object avatars (projects,
 	 * vaults). Deterministically assigned by name hash; these are the ONLY
 	 * sanctioned multi-hue colors besides the semantic status set. */
@@ -98,23 +91,18 @@
 	--sidebar-ring: oklch(0.6171 0.1375 39.0427);
 
 	--font-sans: "Geist Sans", sans-serif;
-	--font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
 	--font-mono: "Geist Mono", ui-monospace, monospace;
 
 	/* radius band: sm 6 / md 8 / lg 10 / xl 14 — no pills on containers */
 	--radius: 0.625rem;
 
 	/* shadows are near-nonexistent; hierarchy comes from hairline borders */
-	--shadow-2xs: 0 1px 2px 0px oklch(0.25 0.01 95 / 0.03);
 	--shadow-xs: 0 1px 2px 0px oklch(0.25 0.01 95 / 0.03);
 	--shadow-sm: 0 1px 2px 0px oklch(0.25 0.01 95 / 0.04);
 	--shadow: 0 1px 2px 0px oklch(0.25 0.01 95 / 0.04);
 	--shadow-md: 0 1px 3px 0px oklch(0.25 0.01 95 / 0.045);
 	--shadow-lg: 0 2px 4px -1px oklch(0.25 0.01 95 / 0.05);
-	--shadow-xl: 0 2px 6px -1px oklch(0.25 0.01 95 / 0.05);
-	--shadow-2xl: 0 3px 8px -2px oklch(0.25 0.01 95 / 0.05);
 
-	--tracking-normal: 0em;
 	--spacing: 0.25rem;
 }
 
@@ -142,7 +130,7 @@
 	--ring: oklch(0.6724 0.1308 38.7559);
 
 	--destructive: oklch(0.62 0.19 27);
-	--destructive-foreground: oklch(0.145 0.004 95);
+	--destructive-foreground: oklch(0.985 0.002 95);
 	--destructive-muted: oklch(0.245 0.045 27);
 	--destructive-muted-foreground: oklch(0.74 0.13 27);
 	--success: oklch(0.66 0.11 150);
@@ -157,12 +145,6 @@
 	--info-foreground: oklch(0.145 0.004 95);
 	--info-muted: oklch(0.24 0.03 245);
 	--info-muted-foreground: oklch(0.75 0.08 245);
-
-	--chart-1: oklch(0.6724 0.1308 39);
-	--chart-2: oklch(0.55 0.11 42);
-	--chart-3: oklch(0.78 0.08 45);
-	--chart-4: oklch(0.6 0.008 95);
-	--chart-5: oklch(0.8 0.006 95);
 
 	--identity-1-bg: oklch(0.32 0.07 25);
 	--identity-1-fg: oklch(0.84 0.09 30);
@@ -225,11 +207,6 @@
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
-	--color-chart-1: var(--chart-1);
-	--color-chart-2: var(--chart-2);
-	--color-chart-3: var(--chart-3);
-	--color-chart-4: var(--chart-4);
-	--color-chart-5: var(--chart-5);
 	--color-identity-1-bg: var(--identity-1-bg);
 	--color-identity-1-fg: var(--identity-1-fg);
 	--color-identity-2-bg: var(--identity-2-bg);
@@ -257,21 +234,22 @@
 
 	--font-sans: var(--font-sans);
 	--font-mono: var(--font-mono);
-	--font-serif: var(--font-serif);
+
+	--text-2xs: 0.6875rem;
+	--text-2xs--line-height: 0.8125rem;
+	--text-3xs: 0.625rem;
+	--text-3xs--line-height: 0.75rem;
 
 	--radius-sm: calc(var(--radius) - 4px);
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
 
-	--shadow-2xs: var(--shadow-2xs);
 	--shadow-xs: var(--shadow-xs);
 	--shadow-sm: var(--shadow-sm);
 	--shadow: var(--shadow);
 	--shadow-md: var(--shadow-md);
 	--shadow-lg: var(--shadow-lg);
-	--shadow-xl: var(--shadow-xl);
-	--shadow-2xl: var(--shadow-2xl);
 }
 
 @layer base {

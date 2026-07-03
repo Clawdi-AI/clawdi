@@ -433,7 +433,7 @@ function ProjectCardSkeleton() {
 
 function StatusChip({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="shrink-0 rounded-sm bg-info-muted px-1.5 py-0.5 text-[11px] font-medium text-info-muted-foreground">
+		<span className="shrink-0 rounded-sm bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info-muted-foreground">
 			{children}
 		</span>
 	);
@@ -444,7 +444,7 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
+			className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
 		>
 			<span className="flex size-9 items-center justify-center rounded-lg bg-muted">
 				<Plus className="size-4" />
@@ -467,7 +467,7 @@ function SystemProjectRow({
 }) {
 	const isGlobal = project.kind === "personal";
 	return (
-		<div className="group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/20">
+		<div className="group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50">
 			<span
 				className={cn(
 					"flex size-7 shrink-0 select-none items-center justify-center rounded-md text-sm leading-none",

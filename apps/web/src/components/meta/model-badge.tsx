@@ -24,7 +24,7 @@ export function ModelBadge({
 			className={cn(
 				// Match the visual weight of a `Stat` (text-xs, baseline-aligned).
 				// `h-5` keeps the pill from making the row taller than the icons.
-				"h-5 border-primary/30 px-1.5 font-mono text-[0.7rem] text-primary leading-none",
+				"h-5 border-primary/30 px-1.5 font-mono text-2xs text-primary leading-none",
 				className,
 			)}
 		>

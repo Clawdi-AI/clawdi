@@ -202,7 +202,7 @@ export function SplitVaultDialog({
 								<label
 									key={g.slug}
 									htmlFor={`split-prefix-${g.slug}`}
-									className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent/40"
+									className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50"
 								>
 									<Checkbox
 										id={`split-prefix-${g.slug}`}

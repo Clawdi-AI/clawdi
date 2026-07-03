@@ -94,7 +94,7 @@ export function UsagePage() {
 							/>
 						))}
 					</div>
-					<div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground">
+					<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
 						<span>{u.by_day[0]?.date.slice(5)}</span>
 						<span>{u.by_day[u.by_day.length - 1]?.date.slice(5)}</span>
 					</div>

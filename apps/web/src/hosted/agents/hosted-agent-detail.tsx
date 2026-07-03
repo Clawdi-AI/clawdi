@@ -584,9 +584,9 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 				className={cn(
 					"size-2 rounded-full",
 					status === "connected"
-						? "bg-emerald-500"
+						? "bg-success"
 						: status === "connecting"
-							? "bg-amber-500"
+							? "bg-warning"
 							: "bg-destructive",
 				)}
 			/>
@@ -700,7 +700,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 			<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
 				<div className="flex min-h-0 flex-1 items-center justify-center bg-background px-4 py-10">
 					<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-						<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/40">
+						<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/30">
 							{terminalFailure ? (
 								<TerminalSquare className="size-5 text-muted-foreground" />
 							) : (
@@ -749,7 +749,7 @@ function selectableCard(active: boolean): string {
 	return `w-full rounded-lg border p-4 text-left transition-colors ${
 		active
 			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: "border-border hover:bg-accent/40"
+			: "border-border hover:bg-muted/50"
 	}`;
 }
 

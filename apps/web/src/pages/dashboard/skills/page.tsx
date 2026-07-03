@@ -545,7 +545,7 @@ function SkillsPageInner() {
 										"inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-sm transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
 										overflowActive
 											? "border-foreground/20 bg-accent font-medium text-foreground"
-											: "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+											: "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
 									)}
 								>
 									{overflowActive && targetProject
@@ -945,7 +945,7 @@ function SkillsPageInner() {
 						</Alert>
 					) : null}
 
-					<p className="pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+					<p className="pt-2 text-2xs font-medium uppercase tracking-wider text-muted-foreground">
 						Suggested
 					</p>
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
