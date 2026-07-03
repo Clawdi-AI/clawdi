@@ -161,7 +161,7 @@ export function LegacyAgentBadge({
 }) {
 	return (
 		<span
-			title="Managed in the legacy hosted dashboard"
+			title="Legacy hosted agent"
 			className={cn(
 				"inline-flex shrink-0 items-center whitespace-nowrap border border-amber-200 bg-background font-medium leading-none text-foreground shadow-sm dark:border-amber-500/35 dark:bg-background/80",
 				compact

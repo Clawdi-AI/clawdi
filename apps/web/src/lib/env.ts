@@ -47,10 +47,6 @@ export const env = createEnv({
 		// profile calls in hosted builds.
 		VITE_CLAWDI_DEPLOY_API_URL: httpsOrHttp().default("http://localhost:50021"),
 
-		// Legacy hosted dashboard URL. This is a full app surface linked from
-		// the new Clawdi dashboard for users that still have v1 access.
-		VITE_CLAWDI_LEGACY_DASHBOARD_URL: httpsOrHttp().default("http://localhost:3000/dashboard"),
-
 		// Clerk publishable key. Local auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.
 		VITE_CLERK_PUBLISHABLE_KEY: isLocalDevAuthBypass

@@ -4,7 +4,6 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Brain,
-	Cloud,
 	Key,
 	LayoutDashboard,
 	type LucideIcon,
@@ -29,10 +28,6 @@ import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import {
-	isLegacyHostedDashboardConfigured,
-	legacyHostedDashboardUrl,
-} from "@/lib/legacy-hosted-dashboard";
 import {
 	PROJECT_RESOURCE_GROUPS,
 	projectResourceDefinitionsForGroup,
@@ -172,27 +167,11 @@ function CommandPalette({
 			searchText: "settings general profile api keys model providers billing preferences account",
 		};
 		const shortcuts = [...BASE_NAV_SHORTCUTS, settingsShortcut];
-		if (
-			IS_HOSTED &&
-			hostedAccess.canUseLegacyHostedDashboard &&
-			isLegacyHostedDashboardConfigured()
-		) {
-			const url = legacyHostedDashboardUrl();
-			if (url) {
-				shortcuts.push({
-					label: "Hosted Dashboard",
-					href: url,
-					icon: Cloud,
-					subtitle: "Legacy hosted app",
-					searchText: "hosted dashboard legacy v1 billing settings agents",
-				});
-			}
-		}
 		if (IS_HOSTED && hostedAccess.canUseCloudAgents) {
 			shortcuts.push(...CLOUD_NAV_SHORTCUTS);
 		}
 		return shortcuts;
-	}, [hostedAccess.canUseLegacyHostedDashboard, hostedAccess.canUseCloudAgents]);
+	}, [hostedAccess.canUseCloudAgents]);
 
 	// Reset the input when the palette closes so reopening is a fresh state
 	// — otherwise stale results from the previous query briefly flash before

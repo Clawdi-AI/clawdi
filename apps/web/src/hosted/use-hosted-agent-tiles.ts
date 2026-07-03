@@ -11,7 +11,6 @@ import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
 import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 
 type Env = components["schemas"]["EnvironmentResponse"];
 
@@ -51,11 +50,9 @@ export function claimedEnvIdsFromDeployments(
 export function useHostedAgentTiles({
 	cloudEnvs,
 	includeDeployments = true,
-	includeLegacyDashboard = false,
 }: {
 	cloudEnvs: Env[];
 	includeDeployments?: boolean;
-	includeLegacyDashboard?: boolean;
 }) {
 	const client = useBillingClient();
 	// Not configured (preview/self-hosted mirror pointing at the default
@@ -98,12 +95,10 @@ export function useHostedAgentTiles({
 	// TanStack Query gives the same `data` reference back on no-op
 	// refetches, so the memo deps stay stable.
 	const tiles = useMemo<AgentTile[]>(() => {
-		const deploymentTiles = includeDeployments
+		return includeDeployments
 			? (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById))
 			: [];
-		const legacyUrl = includeLegacyDashboard ? legacyHostedDashboardUrl() : null;
-		return legacyUrl ? [legacyDashboardTile(legacyUrl), ...deploymentTiles] : deploymentTiles;
-	}, [includeDeployments, includeLegacyDashboard, query.data, envById]);
+	}, [includeDeployments, query.data, envById]);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
@@ -131,26 +126,6 @@ export function useHostedAgentTiles({
 		// stays 'pending'); mask both flags when we never fetch.
 		isLoading: configured && includeDeployments ? query.isLoading : false,
 		error: configured && includeDeployments && !unreachableFromOrigin ? query.error : null,
-	};
-}
-
-function legacyDashboardTile(url: string): AgentTile {
-	return {
-		id: "legacy-hosted-dashboard",
-		source: "legacy-hosted" as const,
-		name: "Hosted Dashboard",
-		displayName: null,
-		avatarUrl: null,
-		sortOrder: -1000,
-		agentType: null,
-		runtimeLabel: "Legacy app",
-		statusLabel: "Available",
-		href: url,
-		external: true,
-		active: true,
-		env: null,
-		computeId: "legacy-hosted-dashboard",
-		computeName: "Hosted Dashboard",
 	};
 }
 

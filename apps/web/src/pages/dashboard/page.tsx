@@ -21,7 +21,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { isLegacyHostedDashboardConfigured } from "@/lib/legacy-hosted-dashboard";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { relativeTime } from "@/lib/utils";
 
@@ -136,9 +135,6 @@ export default function DashboardPage() {
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
-	const legacyHostedDashboardEnabled = Boolean(
-		legacyHostedAgentsEnabled && isLegacyHostedDashboardConfigured(),
-	);
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
@@ -168,7 +164,6 @@ export default function DashboardPage() {
 								cloudEnvs={environments ?? []}
 								showCloudDeployments={hostedAgentsEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
-								showLegacyDashboard={legacyHostedDashboardEnabled}
 							/>
 						</Suspense>
 					) : ossIsEmptyState ? (
@@ -233,7 +228,6 @@ export default function DashboardPage() {
 								cloudEnvs={environments ?? []}
 								showCloudDeployments={hostedAgentsEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
-								showLegacyDashboard={legacyHostedDashboardEnabled}
 							/>
 						</Suspense>
 					) : hasAgents ? (
