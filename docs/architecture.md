@@ -63,13 +63,13 @@ All keyed off Clerk `user_id`:
 |---|---|---|
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
-| `agent_environments` | Stable agent identity rows. Self-managed agents use `registration_key` for local setup idempotency; hosted agents use explicit ids. `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup`, hosted agent registration |
+| `agent_environments` | Agent identity rows. The domain object is Agent; `AgentEnvironment` and `environment_id` are legacy persistence/wire names kept for compatibility. `id` is the stable agent id; self-managed agents use `registration_key` only for setup idempotency; first-party hosted control planes supply caller-owned stable agent ids. See [ADR-0001](adr/0001-agent-identity-is-the-stable-domain-object.md). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup`, hosted agent registration |
 | `projects` | Resource availability boundaries for skills, vault attachments, and future memory/session grouping. Kinds are `personal`, `environment`, and `workspace`; `environment` is the internal Agent Project kind | Provisioning, `clawdi setup`, `clawdi project create` |
 | `project_memberships` | Viewer-only shared Project access granted by invite or share link | Share accept / invite accept |
 | `project_share_links` | Hashed bearer links for read-only Project access. Raw tokens are only returned once | `clawdi project share` |
 | `project_invitations` | Pending directed invites to existing Clawdi users | `clawdi project invite` |
 | `agent_project_bindings` | Runtime Agent composition: one fixed `primary` Agent Project row plus ordered `context` attachments | `clawdi setup`, `clawdi agent projects ...` |
-| `sessions` | Per-conversation metadata: `environment_id`, `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi push` |
+| `sessions` | Per-conversation metadata: `environment_id` (legacy field name for the stable agent id), `local_session_id`, `project_path`, token counts, model, summary, status. **Raw transcript body is in the file store**, keyed by `file_key` | `clawdi push` |
 | `skills` | Per-skill metadata + tar.gz body in file store | CLI `skill add / install`, dashboard upload |
 | `vaults` + `vault_project_attachments` + `vault_items` | Three-level secrets: vault → section → field. Vaults own their keys; Projects only attach to a vault to make those keys available. Values are AES-256-GCM encrypted. `/vault/resolve` decrypts readable Project values for CLI/API-key callers | `clawdi vault set` |
 | `memories` | Long-term recall. `content` (text), `category`, `tags`, plus three search columns (`content_tsv` generated tsvector, `embedding vector(768)`) | CLI and MCP `memory_add` |
