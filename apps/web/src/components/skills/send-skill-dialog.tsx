@@ -76,7 +76,7 @@ export function SendSkillDialog({
 	});
 	const { data: envs } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: open,
 	});
 

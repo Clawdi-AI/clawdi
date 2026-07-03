@@ -103,7 +103,7 @@ export function useHostedAgentTiles({
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
-	// — which cloud-api also returns from /api/environments because
+	// — which cloud-api also returns from /v1/agents because
 	// the admin endpoint registered it — doesn't double-count as both
 	// a hosted tile and a self-managed tile. Lower-cased for the same
 	// case-sensitivity defense as `envById`.

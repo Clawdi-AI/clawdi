@@ -87,7 +87,7 @@ export default function DashboardPage() {
 
 	const { data: environments, isLoading: envsLoading } = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		// Daemon-status badge classification is time-sensitive — a
 		// daemon that paused while the tab was open would otherwise
 		// stay green indefinitely. Match the agent detail page's

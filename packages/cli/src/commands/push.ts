@@ -314,8 +314,8 @@ async function scanOneAgent(
 	if (!opts.dryRun && envId) {
 		const probe = new ApiClient();
 		try {
-			const res = await probe.GET("/v1/environments/{environment_id}", {
-				params: { path: { environment_id: envId } },
+			const res = await probe.GET("/v1/agents/{agent_id}", {
+				params: { path: { agent_id: envId } },
 			});
 			if (res.error || !res.data) {
 				const status = res.response?.status ?? 0;

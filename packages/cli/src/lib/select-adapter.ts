@@ -75,8 +75,8 @@ export async function fetchProjectIdForEnv(
 ): Promise<string> {
 	const { unwrap } = await import("./api-client");
 	const env = unwrap(
-		await api.GET("/v1/environments/{environment_id}", {
-			params: { path: { environment_id: envId } },
+		await api.GET("/v1/agents/{agent_id}", {
+			params: { path: { agent_id: envId } },
 		}),
 	);
 	const legacy = env as { default_project_id?: string };

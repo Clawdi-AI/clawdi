@@ -179,6 +179,12 @@ class EnvironmentReorderRequest(BaseModel):
     environment_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
 
 
+class AgentReorderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
 class EnvironmentResponse(BaseModel):
     id: str
     name: str
@@ -232,26 +238,7 @@ class EnvironmentResponse(BaseModel):
     default_project_id: str
 
 
-class AgentResponse(BaseModel):
-    id: str
-    name: str
-    default_name: str | None = None
-    machine_name: str
-    display_name: str | None = None
-    avatar_url: str | None = None
-    sort_order: int = 0
-    agent_type: str
-    agent_version: str | None
-    os: str
-    last_seen_at: datetime | None
-    last_sync_at: datetime | None = None
-    last_sync_error: str | None = None
-    last_revision_seen: int | None = None
-    queue_depth_high_water: int = 0
-    dropped_count: int = 0
-    sync_enabled: bool = False
-    explicit_identity: bool = False
-    default_project_id: str
+AgentResponse = EnvironmentResponse
 
 
 class RuntimeObservedDesiredResponse(BaseModel):

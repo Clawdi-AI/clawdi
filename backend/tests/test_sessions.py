@@ -176,8 +176,8 @@ async def test_agents_support_conditional_get(client: httpx.AsyncClient):
     assert item["name"] == "Test Mac"
     assert item["default_name"] == "Test Mac"
     assert item["explicit_identity"] is False
-    assert "hosted_managed" not in item
-    assert "hosted_deployment_id" not in item
+    assert item["hosted_managed"] is False
+    assert item["hosted_deployment_id"] is None
 
     not_modified = await client.get("/v1/agents", headers={"If-None-Match": etag})
     assert not_modified.status_code == 304, not_modified.text
@@ -270,8 +270,8 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
     assert agents.status_code == 200, agents.text
     agent_by_id = {item["id"]: item for item in agents.json()}
     assert agent_by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
-    assert "hosted_managed" not in agent_by_id[str(openclaw.id)]
-    assert "hosted_deployment_id" not in agent_by_id[str(openclaw.id)]
+    assert agent_by_id[str(openclaw.id)]["hosted_managed"] is True
+    assert agent_by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
 
 
 @pytest.mark.asyncio

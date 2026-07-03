@@ -114,7 +114,7 @@ describe("setup daemon install", () => {
 			captured.some(
 				(req) =>
 					req.method === "POST" &&
-					req.path === "/v1/environments" &&
+					req.path === "/v1/agents" &&
 					(req.body as { agent_type?: string } | undefined)?.agent_type === "codex",
 			),
 		).toBe(true);
@@ -261,7 +261,7 @@ function installEnvironmentMock(envId: string) {
 	const mock = mockFetch([
 		{
 			method: "POST",
-			path: "/v1/environments",
+			path: "/v1/agents",
 			response: () => jsonResponse({ id: envId }),
 		},
 	]);
@@ -273,7 +273,7 @@ function installFailingEnvironmentMock() {
 	const mock = mockFetch([
 		{
 			method: "POST",
-			path: "/v1/environments",
+			path: "/v1/agents",
 			response: () => jsonResponse({ error: "boom" }, 500),
 		},
 	]);

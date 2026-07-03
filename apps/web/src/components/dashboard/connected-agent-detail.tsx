@@ -109,8 +109,8 @@ export function ConnectedAgentDetail({
 		queryKey: ["agent", id],
 		queryFn: async () =>
 			unwrap(
-				await api.GET("/v1/environments/{environment_id}", {
-					params: { path: { environment_id: id } },
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: id } },
 				}),
 			),
 	});

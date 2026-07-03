@@ -47,6 +47,23 @@ class AdminEnvironmentCreate(BaseModel):
     os_name: str = "linux"
 
 
+class AdminAgentCreate(BaseModel):
+    """Body for `POST /v1/admin/agents`.
+
+    Agent-first alias of `AdminEnvironmentCreate`; `agent_id` maps to the
+    legacy `environment_id` field consumed by the shared handler.
+    """
+
+    target_clerk_id: str
+    agent_id: UUID | None = None
+    machine_id: str
+    machine_name: str
+    default_name: str | None = Field(default=None, max_length=200)
+    agent_type: str
+    agent_version: str | None = None
+    os_name: str = "linux"
+
+
 class AdminApiKeyCreate(BaseModel):
     """Body for `POST /v1/admin/auth/keys` — mint an api_key on
     behalf of a user identified by Clerk id. The route resolves

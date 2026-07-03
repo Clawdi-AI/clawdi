@@ -127,7 +127,7 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 
 	// 2. Backend env row — intentionally left as dangling metadata.
 	//    With the local env file gone, push --agent X already errors out.
-	//    A future --remote flag could DELETE /api/environments/{id}; backend
+	//    A future --remote flag could DELETE /api/agents/{id}; backend
 	//    needs to add that endpoint first.
 
 	// 3. Bundled skill

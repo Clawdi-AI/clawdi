@@ -809,6 +809,86 @@ async def test_admin_register_env_accepts_explicit_agent_id(
 
 
 @pytest.mark.asyncio
+async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
+    admin_client, db_session, seed_user
+):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.session import AgentEnvironment
+
+    agent_id = uuid.uuid4()
+    created = await admin_client.post(
+        "/v1/admin/agents",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "agent_id": str(agent_id),
+            "machine_id": "admin-agent-alias",
+            "machine_name": "admin-agent-pod",
+            "default_name": "Admin Agent Alias",
+            "agent_type": "codex",
+            "agent_version": "1.0.0",
+            "os_name": "linux",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["id"] == str(agent_id)
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
+    ).scalar_one()
+    assert env.user_id == seed_user.id
+    assert env.default_name == "Admin Agent Alias"
+    assert env.registration_key is None
+
+    runtime = await admin_client.put(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "dep-admin-agent-alias",
+            "instance_id": "iid-admin-agent-alias",
+            "generation": 7,
+            "provider_id": "clawdi-managed",
+            "runtimes": {"codex": {"enabled": True}},
+        },
+    )
+    assert runtime.status_code == 200, runtime.text
+    assert runtime.json()["environment_id"] == str(agent_id)
+
+    state = (
+        await db_session.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+        )
+    ).scalar_one_or_none()
+    assert state is not None
+    assert state.deployment_id == "dep-admin-agent-alias"
+
+    deleted_state = await admin_client.delete(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+    )
+    assert deleted_state.status_code == 204, deleted_state.text
+
+    state = (
+        await db_session.execute(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+        )
+    ).scalar_one_or_none()
+    assert state is None
+
+    deleted_agent = await admin_client.delete(f"/v1/admin/agents/{agent_id}", headers=_AUTH)
+    assert deleted_agent.status_code == 204, deleted_agent.text
+
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
+    ).scalar_one_or_none()
+    assert env is None
+
+
+@pytest.mark.asyncio
 async def test_admin_register_env_explicit_agent_id_is_idempotent(
     admin_client, db_session, seed_user
 ):

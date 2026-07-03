@@ -30,7 +30,7 @@ export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionMessageResponse"];
 export type SessionUploadResult = Schemas["SessionUploadResponse"];
 export type Environment = Schemas["EnvironmentResponse"];
-export type Agent = Schemas["AgentResponse"];
+export type Agent = Schemas["EnvironmentResponse"];
 
 // ── Memories ─────────────────────────────────────────────────────────────
 export type Memory = Schemas["MemoryResponse"];

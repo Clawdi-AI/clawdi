@@ -14,8 +14,8 @@ environment.
 
 That name is now misleading. A Clawdi Agent is the first-class domain object:
 one stable agent identity that may refresh its machine metadata over time.
-Compatibility still matters, so the current table and API field names remain in
-place until there is a strong reason to migrate them.
+Compatibility still matters, so the current table and legacy wire field names
+remain in place until there is a strong reason to migrate them.
 
 ## Decision
 
@@ -27,6 +27,11 @@ names for that object. `environment_id` is the legacy wire and database field
 name for the stable agent id. New product and architecture language should say
 **Agent**, **agent identity**, or **agent id** when describing the domain model,
 while accepting the legacy names in existing API and database contracts.
+
+The canonical first-party user-facing API surface is `/v1/agents` with
+`agent_id` path parameters. `/v1/environments` and legacy `/api/*` paths remain
+compatibility aliases with their existing `environment_id` request and response
+wire shapes. Session payloads continue to use `environment_id`.
 
 In code today:
 
@@ -60,13 +65,16 @@ In code today:
 
 ## Registration Contract
 
-Self-managed agents register through `POST /v1/environments`.
+Self-managed agents register through `POST /v1/agents`.
 
 That endpoint derives a legacy registration key from the submitted machine
 metadata and is idempotent for that user's setup flow. Re-registration refreshes
 machine metadata and returns the same stable `AgentEnvironment.id`.
+`POST /v1/environments` remains a byte-compatible alias for released CLIs.
 
-Hosted control planes register through the admin API.
+Hosted control planes register through the admin API. `/v1/admin/agents` accepts
+`agent_id` for agent-first callers. `/v1/admin/environments` remains intact for
+the hosted control plane until that separate service migrates.
 
 They may supply an explicit caller-owned stable id. The supplied id is the
 agent identity. Re-registration with the same user and same id refreshes
@@ -79,8 +87,11 @@ conflict. Explicit-identity rows use `registration_key = NULL`.
   even where code still says `AgentEnvironment`.
 - New code should not derive ownership, identity, or uniqueness from machine
   metadata.
+- New first-party clients should call `/v1/agents`. Released clients that call
+  `/v1/environments` or `/api/*` remain supported.
 - Public API clients should continue to treat existing `environment_id` fields
-  as stable agent ids.
+  as stable agent ids wherever those fields remain in compatibility and session
+  payloads.
 - Deprecated environment fields `hosted_managed` and `hosted_deployment_id`
   remain on `EnvironmentResponse`, but their compatibility meaning is now
   intentionally narrow: they reflect only direct hosted runtime desired state
@@ -98,8 +109,6 @@ decision:
 
 - Rename service-layer concepts toward agent identity, for example
   `register_agent_identity`.
-- Add an agent-first admin API such as `/v1/admin/agents` while keeping the
-  existing environment endpoint compatible.
 - Add a runtime manifest `agentId` alias for the current legacy field.
 - Consider a database/table rename only much later, after API and service
   terminology have settled.

@@ -37,6 +37,7 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.session import (
+    AgentReorderRequest,
     AgentResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
@@ -156,16 +157,10 @@ def _clamp_last_activity(
     return candidate
 
 
-@router.post("/environments")
-async def register_environment(
+async def _register_agent_identity(
     body: EnvironmentCreate,
-    # Daemons register themselves on `clawdi setup`; they hold a
-    # write-scoped key. Without `require_scope`, a read-only key
-    # could create new env rows that the rest of the heartbeat /
-    # session path then refuses to write — half-registered ghosts
-    # in the dashboard.
-    auth: AuthContext = Depends(require_scope("skills:write")),
-    db: AsyncSession = Depends(get_session),
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> EnvironmentCreatedResponse:
     registration_key = local_machine_registration_key(body.machine_id, body.agent_type)
     # Bound deploy keys are pinned to a single env. Letting them
@@ -224,23 +219,34 @@ async def register_environment(
     return EnvironmentCreatedResponse(id=str(registered.env.id))
 
 
-@router.get(
-    "/environments",
-    response_model=list[EnvironmentResponse],
-    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
-)
-async def list_environments(
+@router.post("/agents")
+async def register_agent(
+    body: EnvironmentCreate,
+    # Daemons register themselves on `clawdi setup`; they hold a
+    # write-scoped key. Without `require_scope`, a read-only key
+    # could create new agent rows that the rest of the heartbeat /
+    # session path then refuses to write — half-registered ghosts
+    # in the dashboard.
+    auth: AuthContext = Depends(require_scope("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentCreatedResponse:
+    return await _register_agent_identity(body, auth, db)
+
+
+@router.post("/environments")
+async def register_environment(
+    body: EnvironmentCreate,
+    auth: AuthContext = Depends(require_scope("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentCreatedResponse:
+    return await _register_agent_identity(body, auth, db)
+
+
+async def _list_agent_identities(
     request: Request,
     response: Response,
-    # Bare get_auth is intentional. Even narrowly-scoped api_keys
-    # (e.g. the legacy `sessions:write`-only deploy key) need to
-    # discover their own env at boot to find its default_project.
-    # Auth is enforced via the user_id filter + the env-binding
-    # restriction below — a bound key only sees its own env regardless
-    # of API permission list, and an unbound key is just the user
-    # themselves.
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
@@ -301,54 +307,57 @@ async def list_agents(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
-    bound_env = _bound_env_id(auth)
-    stmt = (
-        select(AgentEnvironment)
-        .where(AgentEnvironment.user_id == auth.user_id)
-        .order_by(
-            AgentEnvironment.sort_order.asc(),
-            AgentEnvironment.created_at.asc(),
-            AgentEnvironment.id.asc(),
-        )
-    )
-    if bound_env is not None:
-        stmt = stmt.where(AgentEnvironment.id == bound_env)
-    envs = (await db.execute(stmt)).scalars().all()
-    payload = [_agent_to_response(env) for env in envs]
-    etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
-    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
-    if if_none_match_contains(request.headers.get("if-none-match"), etag):
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
-    response.headers.update(headers)
-    return payload
+    return await _list_agent_identities(request, response, auth, db)
 
 
 @router.get(
-    "/agents/{agent_id}",
-    response_model=AgentResponse,
+    "/environments",
+    response_model=list[EnvironmentResponse],
     responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
 )
-async def get_agent(
+async def list_environments(
+    request: Request,
+    response: Response,
+    # Bare get_auth is intentional. Even narrowly-scoped api_keys
+    # (e.g. the legacy `sessions:write`-only deploy key) need to
+    # discover their own env at boot to find its default_project.
+    # Auth is enforced via the user_id filter + the env-binding
+    # restriction below — a bound key only sees its own env regardless
+    # of API permission list, and an unbound key is just the user
+    # themselves.
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[EnvironmentResponse] | Response:
+    return await _list_agent_identities(request, response, auth, db)
+
+
+async def _get_agent_identity(
     agent_id: UUID,
     request: Request,
     response: Response,
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-) -> AgentResponse | Response:
+    auth: AuthContext,
+    db: AsyncSession,
+) -> EnvironmentResponse | Response:
     bound_env = _bound_env_id(auth)
     if bound_env is not None and agent_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    env = (
+    row = (
         await db.execute(
-            select(AgentEnvironment).where(
+            select(AgentEnvironment, HostedRuntimeState)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
-    ).scalar_one_or_none()
-    if env is None:
+    ).first()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    payload = _agent_to_response(env)
+    env, state = row
+    payload = _env_to_response(env, state)
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
@@ -357,11 +366,10 @@ async def get_agent(
     return payload
 
 
-@router.get("/environments/runtime-observed")
-async def list_environment_runtime_observed(
-    limit: int = Query(default=100, ge=1, le=500),
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
+async def _list_runtime_observed(
+    limit: int,
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> RuntimeObservedSummaryResponse:
     bound_env = _bound_env_id(auth)
     filters = [AgentEnvironment.user_id == auth.user_id]
@@ -417,13 +425,29 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
-@router.patch("/environments/order", response_model=list[EnvironmentResponse])
-async def reorder_environments(
-    body: EnvironmentReorderRequest,
-    auth: AuthContext = Depends(require_web_auth),
+@router.get("/agents/runtime-observed")
+async def list_agent_runtime_observed(
+    limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedSummaryResponse:
+    return await _list_runtime_observed(limit, auth, db)
+
+
+@router.get("/environments/runtime-observed")
+async def list_environment_runtime_observed(
+    limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedSummaryResponse:
+    return await _list_runtime_observed(limit, auth, db)
+
+
+async def _reorder_agent_identities(
+    requested_ids: list[UUID],
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> list[EnvironmentResponse]:
-    requested_ids = body.environment_ids
     requested_set = set(requested_ids)
     if len(requested_set) != len(requested_ids):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Duplicate agent ids in order")
@@ -476,6 +500,39 @@ async def reorder_environments(
     ]
 
 
+@router.patch("/agents/order", response_model=list[AgentResponse])
+async def reorder_agents(
+    body: AgentReorderRequest,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[AgentResponse]:
+    return await _reorder_agent_identities(body.agent_ids, auth, db)
+
+
+@router.patch("/environments/order", response_model=list[EnvironmentResponse])
+async def reorder_environments(
+    body: EnvironmentReorderRequest,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[EnvironmentResponse]:
+    return await _reorder_agent_identities(body.environment_ids, auth, db)
+
+
+@router.get(
+    "/agents/{agent_id}",
+    response_model=AgentResponse,
+    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
+)
+async def get_agent(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentResponse | Response:
+    return await _get_agent_identity(agent_id, request, response, auth, db)
+
+
 @router.get(
     "/environments/{environment_id}",
     response_model=EnvironmentResponse,
@@ -488,49 +545,19 @@ async def get_environment(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse | Response:
-    # Bound api_keys may only fetch their own env. Without this an
-    # env-A deploy key could probe sibling envs by id and read their
-    # `default_project_id` — the same boundary that list_environments
-    # enforces, applied per-row.
-    bound_env = _bound_env_id(auth)
-    if bound_env is not None and environment_id != bound_env:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    row = (
-        await db.execute(
-            select(AgentEnvironment, HostedRuntimeState)
-            .outerjoin(
-                HostedRuntimeState,
-                HostedRuntimeState.environment_id == AgentEnvironment.id,
-            )
-            .where(
-                AgentEnvironment.id == environment_id,
-                AgentEnvironment.user_id == auth.user_id,
-            )
-        )
-    ).first()
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    env, state = row
-    payload = _env_to_response(env, state)
-    etag = strong_json_etag(payload.model_dump(mode="json"))
-    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
-    if if_none_match_contains(request.headers.get("if-none-match"), etag):
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
-    response.headers.update(headers)
-    return payload
+    return await _get_agent_identity(environment_id, request, response, auth, db)
 
 
-@router.patch("/environments/{environment_id}", response_model=EnvironmentResponse)
-async def update_environment(
-    environment_id: UUID,
+async def _update_agent_identity(
+    agent_id: UUID,
     body: EnvironmentUpdate,
-    auth: AuthContext = Depends(require_web_auth),
-    db: AsyncSession = Depends(get_session),
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> EnvironmentResponse:
     env = (
         await db.execute(
             select(AgentEnvironment).where(
-                AgentEnvironment.id == environment_id,
+                AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
@@ -545,22 +572,41 @@ async def update_environment(
 
     state = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
         )
     ).scalar_one_or_none()
     return _env_to_response(env, state)
 
 
-@router.delete("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
-async def clear_environment_avatar(
-    environment_id: UUID,
+@router.patch("/agents/{agent_id}", response_model=AgentResponse)
+async def update_agent(
+    agent_id: UUID,
+    body: EnvironmentUpdate,
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
+) -> AgentResponse:
+    return await _update_agent_identity(agent_id, body, auth, db)
+
+
+@router.patch("/environments/{environment_id}", response_model=EnvironmentResponse)
+async def update_environment(
+    environment_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    return await _update_agent_identity(environment_id, body, auth, db)
+
+
+async def _clear_agent_avatar(
+    agent_id: UUID,
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> EnvironmentResponse:
     env = (
         await db.execute(
             select(AgentEnvironment).where(
-                AgentEnvironment.id == environment_id,
+                AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
@@ -576,23 +622,40 @@ async def clear_environment_avatar(
 
     state = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
         )
     ).scalar_one_or_none()
     return _env_to_response(env, state)
 
 
-@router.post("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
-async def upload_environment_avatar(
-    environment_id: UUID,
-    file: UploadFile = File(...),
+@router.delete("/agents/{agent_id}/avatar", response_model=AgentResponse)
+async def clear_agent_avatar(
+    agent_id: UUID,
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
+) -> AgentResponse:
+    return await _clear_agent_avatar(agent_id, auth, db)
+
+
+@router.delete("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+async def clear_environment_avatar(
+    environment_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    return await _clear_agent_avatar(environment_id, auth, db)
+
+
+async def _upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile,
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> EnvironmentResponse:
     env = (
         await db.execute(
             select(AgentEnvironment).where(
-                AgentEnvironment.id == environment_id,
+                AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
@@ -625,26 +688,45 @@ async def upload_environment_avatar(
 
     state = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
         )
     ).scalar_one_or_none()
     return _env_to_response(env, state)
 
 
-@router.get("/environments/{environment_id}/runtime-observed")
-async def get_environment_runtime_observed(
-    environment_id: UUID,
-    auth: AuthContext = Depends(get_auth),
+@router.post("/agents/{agent_id}/avatar", response_model=AgentResponse)
+async def upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile = File(...),
+    auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
+) -> AgentResponse:
+    return await _upload_agent_avatar(agent_id, file, auth, db)
+
+
+@router.post("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
+async def upload_environment_avatar(
+    environment_id: UUID,
+    file: UploadFile = File(...),
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentResponse:
+    return await _upload_agent_avatar(environment_id, file, auth, db)
+
+
+async def _get_runtime_observed(
+    agent_id: UUID,
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> RuntimeObservedResponse:
     bound_env = _bound_env_id(auth)
-    if bound_env is not None and environment_id != bound_env:
+    if bound_env is not None and agent_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
     env = (
         await db.execute(
             select(AgentEnvironment).where(
-                AgentEnvironment.id == environment_id,
+                AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
@@ -654,7 +736,7 @@ async def get_environment_runtime_observed(
 
     state = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
         )
     ).scalar_one_or_none()
     return RuntimeObservedResponse(
@@ -664,6 +746,24 @@ async def get_environment_runtime_observed(
         health=_runtime_observed_health(env, state),
         provider_health=_runtime_observed_provider_health(state),
     )
+
+
+@router.get("/agents/{agent_id}/runtime-observed")
+async def get_agent_runtime_observed(
+    agent_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    return await _get_runtime_observed(agent_id, auth, db)
+
+
+@router.get("/environments/{environment_id}/runtime-observed")
+async def get_environment_runtime_observed(
+    environment_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    return await _get_runtime_observed(environment_id, auth, db)
 
 
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
@@ -715,30 +815,6 @@ def _env_to_response(
         # NOT NULL per schema; the heal path in register_environment
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
-        default_project_id=str(env.default_project_id),
-    )
-
-
-def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
-    return AgentResponse(
-        id=str(env.id),
-        name=_agent_name(env),
-        default_name=env.default_name,
-        machine_name=env.machine_name,
-        display_name=env.display_name,
-        avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
-        sort_order=env.sort_order,
-        agent_type=env.agent_type,
-        agent_version=env.agent_version,
-        os=env.os,
-        last_seen_at=env.last_seen_at,
-        last_sync_at=env.last_sync_at,
-        last_sync_error=env.last_sync_error,
-        last_revision_seen=env.last_revision_seen,
-        queue_depth_high_water=env.queue_depth_high_water_since_start,
-        dropped_count=env.dropped_count_since_start,
-        sync_enabled=env.sync_enabled,
-        explicit_identity=env.registration_key is None,
         default_project_id=str(env.default_project_id),
     )
 
@@ -976,22 +1052,17 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_environment(
-    environment_id: UUID,
-    # Dashboard-only: a leaked deploy-key would otherwise be able
-    # to delete its own env (de-registering the machine on the
-    # owner's dashboard) or sibling envs under the same user.
-    # Mirrors the lockdown applied to /v1/auth/keys in round 6.
-    auth: AuthContext = Depends(require_web_auth),
-    db: AsyncSession = Depends(get_session),
+async def _delete_agent_identity(
+    agent_id: UUID,
+    auth: AuthContext,
+    db: AsyncSession,
 ) -> None:
     """Delete an agent environment. Existing sessions remain (orphaned)
     so users don't lose history when removing a machine. The session
     list query uses an outer-join so orphaned rows still render."""
     result = await db.execute(
         select(AgentEnvironment).where(
-            AgentEnvironment.id == environment_id,
+            AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == auth.user_id,
         )
     )
@@ -1005,6 +1076,28 @@ async def delete_environment(
         )
     await db.delete(env)
     await db.commit()
+
+
+@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: UUID,
+    # Dashboard-only: a leaked deploy-key would otherwise be able
+    # to delete its own agent (de-registering the machine on the
+    # owner's dashboard) or sibling agents under the same user.
+    # Mirrors the lockdown applied to /v1/auth/keys in round 6.
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await _delete_agent_identity(agent_id, auth, db)
+
+
+@router.delete("/environments/{environment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_environment(
+    environment_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await _delete_agent_identity(environment_id, auth, db)
 
 
 class SyncHeartbeatRequest(BaseModel):
@@ -1051,9 +1144,9 @@ def _runtime_observed_comparison_value(
     return {key: item for key, item in value.items() if key != "reportedAt"}
 
 
-@router.post("/agents/{environment_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/agents/{agent_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
 async def sync_heartbeat(
-    environment_id: UUID,
+    agent_id: UUID,
     body: SyncHeartbeatRequest,
     # Heartbeat is the daemon's write path for liveness fields. A
     # read-only key would otherwise be able to write `last_sync_error
@@ -1069,7 +1162,7 @@ async def sync_heartbeat(
     env = (
         await db.execute(
             select(AgentEnvironment).where(
-                AgentEnvironment.id == environment_id,
+                AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
             )
         )
@@ -1085,7 +1178,7 @@ async def sync_heartbeat(
         auth.is_cli
         and auth.api_key is not None
         and auth.api_key.environment_id is not None
-        and auth.api_key.environment_id != environment_id
+        and auth.api_key.environment_id != agent_id
     ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -1113,9 +1206,7 @@ async def sync_heartbeat(
     if runtime_observed is not None:
         hosted_state = (
             await db.execute(
-                select(HostedRuntimeState).where(
-                    HostedRuntimeState.environment_id == environment_id
-                )
+                select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
             )
         ).scalar_one_or_none()
         observed_changed = hosted_state is not None and _runtime_observed_comparison_value(

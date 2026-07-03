@@ -322,7 +322,7 @@ describe("push — env_id probe (Codex plan A)", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/v1/environments/env-test",
+				path: "/v1/agents/env-test",
 				response: () => new Response("", { status: 404 }),
 			},
 		]);
@@ -513,8 +513,8 @@ describe("push — --all flag fan-out", () => {
 		}
 		// Both env probes happened — proof the scan phase visited both
 		// agents before any upload.
-		expect(captured.some((c) => c.path === "/v1/environments/env-test")).toBe(true);
-		expect(captured.some((c) => c.path === "/v1/environments/env-codex")).toBe(true);
+		expect(captured.some((c) => c.path === "/v1/agents/env-test")).toBe(true);
+		expect(captured.some((c) => c.path === "/v1/agents/env-codex")).toBe(true);
 		// claude_code's session uploaded; codex contributed nothing but
 		// didn't abort the run.
 		const batches = captured.filter((c) => c.path === "/v1/sessions/batch");

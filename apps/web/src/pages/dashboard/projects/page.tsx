@@ -62,7 +62,7 @@ export default function ProjectsPage() {
 	const rows = projects.data ?? [];
 	const environments = useQuery({
 		queryKey: ["environments"],
-		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/environments")),
+		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/agents")),
 		enabled: rows.some((project) => project.kind === "environment"),
 	});
 	const agentsById = useMemo(

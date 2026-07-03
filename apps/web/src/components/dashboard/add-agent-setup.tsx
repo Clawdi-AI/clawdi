@@ -106,7 +106,7 @@ export function AddAgentSetup() {
 	// while mounted. Anything new is "your agent just connected".
 	const envs = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: 5_000,
 	});
 	const baseline = useRef<Set<string> | null>(null);

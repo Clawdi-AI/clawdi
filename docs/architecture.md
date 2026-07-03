@@ -55,6 +55,26 @@ Two auth paths hit the same backend:
 
 ---
 
+## API Surface
+
+`/v1/agents` is the canonical first-party API for Agent identity. New dashboard
+and CLI code registers, lists, updates, reorders, disconnects, uploads avatars,
+reads runtime-observed state, and posts sync heartbeats through `/v1/agents`
+using `agent_id` path parameters.
+
+`/v1/environments` and legacy `/api/*` routes are compatibility aliases. They
+keep their old request and response field names, including `environment_id`,
+so released CLIs and session ingestion clients remain byte-compatible. Session
+payloads and filters still use `environment_id`; that field is the legacy wire
+name for the stable agent id.
+
+Admin has both `/v1/admin/agents` and `/v1/admin/environments`. The agent route
+accepts `agent_id` for new first-party admin callers. The environment route is
+still fully supported because the hosted control plane migration is a separate
+cross-service change.
+
+---
+
 ## Data model
 
 All keyed off Clerk `user_id`:
@@ -63,7 +83,7 @@ All keyed off Clerk `user_id`:
 |---|---|---|
 | `users` | Clerk user mirror + email | Sign-in |
 | `api_keys` | SHA-256-hashed CLI bearer tokens | Dashboard |
-| `agent_environments` | Agent identity rows. The domain object is Agent; `AgentEnvironment` and `environment_id` are legacy persistence/wire names kept for compatibility. `id` is the stable agent id; self-managed agents use `registration_key` only for setup idempotency; hosted control planes may supply caller-owned stable agent ids. See [ADR-0001](adr/0001-agent-identity-is-the-stable-domain-object.md). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `clawdi setup`, hosted agent registration |
+| `agent_environments` | Agent identity rows. The domain object is Agent; `AgentEnvironment` and `environment_id` are legacy persistence/wire names kept for compatibility. `id` is the stable agent id; self-managed agents use `registration_key` only for setup idempotency; hosted control planes may supply caller-owned stable agent ids. See [ADR-0001](adr/0001-agent-identity-is-the-stable-domain-object.md). `agent_type ∈ {claude_code, codex, hermes, openclaw}` | `POST /v1/agents`, admin hosted agent registration |
 | `projects` | Resource availability boundaries for skills, vault attachments, and future memory/session grouping. Kinds are `personal`, `environment`, and `workspace`; `environment` is the internal Agent Project kind | Provisioning, `clawdi setup`, `clawdi project create` |
 | `project_memberships` | Viewer-only shared Project access granted by invite or share link | Share accept / invite accept |
 | `project_share_links` | Hashed bearer links for read-only Project access. Raw tokens are only returned once | `clawdi project share` |

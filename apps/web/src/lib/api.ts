@@ -163,7 +163,7 @@ export function useAgentAvatarUploader() {
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await fetchWithTimeout(
-				new Request(apiUrl(`/v1/environments/${encodeURIComponent(environmentId)}/avatar`), {
+				new Request(apiUrl(`/v1/agents/${encodeURIComponent(environmentId)}/avatar`), {
 					method: "POST",
 					headers,
 					body: form,

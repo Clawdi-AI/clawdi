@@ -45,6 +45,7 @@ def test_every_v1_route_has_api_legacy_alias():
         "/vault",
         "/connectors",
         "/skills",
+        "/agents",
         "/environments",
         "/runtime/manifest",
     ],

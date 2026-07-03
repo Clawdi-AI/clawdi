@@ -134,7 +134,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	const environments = useQuery({
 		queryKey: ["environments"],
-		queryFn: async () => unwrap(await api.GET("/v1/environments")),
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: !!project,
 	});
 	const agentsById = useMemo(
