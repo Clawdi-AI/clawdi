@@ -751,6 +751,19 @@ async def test_admin_register_env_accepts_explicit_agent_id(
 
     from app.models.session import AgentEnvironment
 
+    machine_key = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "machine-key-before-explicit",
+            "machine_name": "machine-key-pod",
+            "agent_type": "openclaw",
+        },
+    )
+    assert machine_key.status_code == 200, machine_key.text
+    machine_key_env_id = machine_key.json()["id"]
+
     agent_id = uuid.uuid4()
     r = await admin_client.post(
         "/v1/admin/environments",
@@ -778,6 +791,14 @@ async def test_admin_register_env_accepts_explicit_agent_id(
     body = detail.json()
     assert body["explicit_identity"] is True
     assert "registration_key" not in body
+
+    listing = await client.get("/v1/environments")
+    assert listing.status_code == 200, listing.text
+    by_id = {item["id"]: item for item in listing.json()}
+    assert {
+        machine_key_env_id: by_id[machine_key_env_id]["explicit_identity"],
+        str(agent_id): by_id[str(agent_id)]["explicit_identity"],
+    } == {machine_key_env_id: False, str(agent_id): True}
 
 
 @pytest.mark.asyncio
