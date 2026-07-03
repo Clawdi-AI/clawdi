@@ -59,7 +59,7 @@ async def test_environment_register_uses_machine_key_identity(
 
 
 @pytest.mark.asyncio
-async def test_environment_register_falls_back_to_long_machine_name_for_default_name(
+async def test_environment_register_keeps_long_machine_name_without_default_name(
     client: httpx.AsyncClient, db_session: AsyncSession
 ):
     from sqlalchemy import select
@@ -86,7 +86,12 @@ async def test_environment_register_falls_back_to_long_machine_name_for_default_
     ).scalar_one()
     assert len(long_machine_name) > 120
     assert len(long_machine_name) <= 200
-    assert env.default_name == long_machine_name
+    assert env.machine_name == long_machine_name
+    assert env.default_name is None
+
+    detail = await client.get(f"/v1/environments/{r.json()['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["name"] == long_machine_name
 
 
 @pytest.mark.asyncio
@@ -104,7 +109,6 @@ async def test_register_agent_environment_requires_identity_or_registration_key(
             user_id=seed_user.id,
             machine_id="missing-idempotency",
             machine_name="Missing Idempotency",
-            default_name=None,
             agent_type="codex",
             agent_version=None,
             os_name="linux",
@@ -174,7 +178,7 @@ async def test_agents_support_conditional_get(client: httpx.AsyncClient):
     assert etag
     item = next(agent for agent in first.json() if agent["id"] == env_id)
     assert item["name"] == "Test Mac"
-    assert item["default_name"] == "Test Mac"
+    assert item["default_name"] is None
     assert item["explicit_identity"] is False
     assert "hosted_managed" not in item
     assert "hosted_deployment_id" not in item
@@ -257,7 +261,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
     assert by_id[str(openclaw.id)]["hosted_managed"] is True
     assert by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
     assert by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
-    assert by_id[str(openclaw.id)]["default_name"] == "Hosted Runtime"
+    assert by_id[str(openclaw.id)]["default_name"] is None
     assert by_id[str(codex.id)]["hosted_managed"] is False
     assert by_id[str(codex.id)]["hosted_deployment_id"] is None
     assert by_id[str(laptop.id)]["hosted_managed"] is False
@@ -1507,7 +1511,6 @@ async def test_delete_environment_rejects_explicit_agent_identity(
         environment_id=agent_id,
         machine_id="external-agent-machine",
         machine_name="External Agent",
-        default_name="External Agent",
         agent_type="codex",
         agent_version="1.0.0",
         os_name="linux",

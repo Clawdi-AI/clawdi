@@ -45,13 +45,18 @@ In code today:
 - `agent_id` is the identity and remains stable across re-registrations.
 - `machine_id`, `machine_name`, `os`, and `agent_version` are refreshable
   metadata. They are never identity.
-- `display_name` is the user's dashboard override.
-- `default_name` is the caller/runtime-provided default Agent name.
-- User-facing labels use one fallback chain across Cloud, legacy, and
-  connected agents: `display_name -> default_name -> name -> machine_name ->
-  agent_type`. `name` is a compatibility response alias, not a separate
-  identity source. Ownership controls badges, available actions, and lifecycle
-  chrome only; it must not change the primary label fallback.
+- An Agent has one user-facing name: `display_name` if the user set one, else
+  the Cloud API-assigned `default_name` for hosted explicit identities, else
+  `machine_name` / `agent_type` for self-managed agents. `default_name` is
+  assigned once as the agent-type label plus a per-user same-type index for
+  hosted agents, for example `OpenClaw`, `OpenClaw 2`, or `Hermes`.
+- Compute and deployment names are infrastructure context, never Agent names.
+  The system never composes names beyond the Cloud API-assigned hosted
+  `default_name`; `display_name` is the only user-writable name.
+- The `name` response field is a compatibility alias for the resolved
+  user-facing label, not a separate identity source. Ownership controls badges,
+  available actions, and lifecycle chrome only; it must not change the primary
+  label fallback.
 - `registration_key` is only a legacy/self-managed setup idempotency key. The
   current self-managed registration key is machine-derived from `machine_id`
   and `agent_type`.

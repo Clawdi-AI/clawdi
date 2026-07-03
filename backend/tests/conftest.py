@@ -150,7 +150,7 @@ async def create_env_with_project(
         user_id=user_id,
         machine_id=machine_id,
         machine_name=machine_name,
-        default_name=machine_name,
+        default_name=None,
         agent_type=agent_type,
         os=os,
         default_project_id=project.id,

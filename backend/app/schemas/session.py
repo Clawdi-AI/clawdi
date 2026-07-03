@@ -149,7 +149,11 @@ class SessionBatchRequest(BaseModel):
 class EnvironmentCreate(BaseModel):
     machine_id: str
     machine_name: str
-    default_name: str | None = Field(default=None, max_length=200)
+    default_name: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Deprecated and ignored; agent default names are assigned by the server.",
+    )
     agent_type: str
     agent_version: str | None = None
     os: str

@@ -37,11 +37,12 @@ class AdminEnvironmentCreate(BaseModel):
     `(user, machine_id, agent_type)` for idempotent retries.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     target_clerk_id: str
     environment_id: UUID | None = None
     machine_id: str
     machine_name: str
-    default_name: str | None = Field(default=None, max_length=200)
     agent_type: str
     agent_version: str | None = None
     os_name: str = "linux"
@@ -54,11 +55,12 @@ class AdminAgentCreate(BaseModel):
     legacy `environment_id` field consumed by the shared handler.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     target_clerk_id: str
     agent_id: UUID | None = None
     machine_id: str
     machine_name: str
-    default_name: str | None = Field(default=None, max_length=200)
     agent_type: str
     agent_version: str | None = None
     os_name: str = "linux"
