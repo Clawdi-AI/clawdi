@@ -744,11 +744,23 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
 
 
 def _agent_name(env: AgentEnvironment) -> str:
+    return _agent_name_from_fields(
+        env.display_name, env.default_name, env.machine_name, env.agent_type
+    )
+
+
+def _agent_name_from_fields(
+    display_name: str | None,
+    default_name: str | None,
+    machine_name: str | None,
+    agent_type: str | None,
+) -> str:
     return (
-        (env.display_name or "").strip()
-        or (env.default_name or "").strip()
-        or (env.machine_name or "").strip()
-        or env.agent_type
+        (display_name or "").strip()
+        or (default_name or "").strip()
+        or (machine_name or "").strip()
+        or agent_type
+        or "Unknown"
     )
 
 
@@ -1654,6 +1666,8 @@ async def list_sessions(
     base = select(
         Session,
         AgentEnvironment.agent_type,
+        AgentEnvironment.display_name,
+        AgentEnvironment.default_name,
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -1768,7 +1782,15 @@ async def list_sessions(
 
     return Paginated[SessionListItemResponse](
         items=[
-            _session_to_response(s, at, mn, is_shared=bool(shared)) for s, at, mn, shared in rows
+            _session_to_response(
+                s,
+                agent_type=agent_type,
+                agent_display_name=display_name,
+                agent_default_name=default_name,
+                machine_name=machine_name,
+                is_shared=bool(shared),
+            )
+            for s, agent_type, display_name, default_name, machine_name, shared in rows
         ],
         total=total,
         page=page,
@@ -1788,6 +1810,8 @@ async def get_session_detail(
         select(
             Session,
             AgentEnvironment.agent_type,
+            AgentEnvironment.display_name,
+            AgentEnvironment.default_name,
             AgentEnvironment.machine_name,
             is_shared_subq,
         )
@@ -1806,10 +1830,15 @@ async def get_session_detail(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    session, agent_type, machine_name, is_shared = row
+    session, agent_type, display_name, default_name, machine_name, is_shared = row
     return SessionDetailResponse(
         **_session_to_response(
-            session, agent_type, machine_name, is_shared=bool(is_shared)
+            session,
+            agent_type=agent_type,
+            agent_display_name=display_name,
+            agent_default_name=default_name,
+            machine_name=machine_name,
+            is_shared=bool(is_shared),
         ).model_dump(),
         has_content=bool(session.file_key),
     )
@@ -2368,13 +2397,23 @@ async def _find_active_permission(
 def _session_to_response(
     s: Session,
     agent_type: str | None = None,
+    agent_display_name: str | None = None,
+    agent_default_name: str | None = None,
     machine_name: str | None = None,
     is_shared: bool = False,
 ) -> SessionListItemResponse:
+    agent_name = (
+        _agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
+        if any((agent_display_name, agent_default_name, machine_name))
+        else None
+    )
     return SessionListItemResponse(
         id=str(s.id),
         local_session_id=s.local_session_id,
         project_path=s.project_path,
+        agent_name=agent_name,
+        agent_display_name=agent_display_name,
+        agent_default_name=agent_default_name,
         agent_type=agent_type,
         machine_name=machine_name,
         started_at=s.started_at,

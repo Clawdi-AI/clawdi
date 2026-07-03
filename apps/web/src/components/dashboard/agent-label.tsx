@@ -87,6 +87,7 @@ export function AgentInline({
  */
 
 const TYPE_LABEL: Record<string, string> = {
+	"claude-code": "Claude Code",
 	claude_code: "Claude Code",
 	codex: "Codex",
 	hermes: "Hermes",

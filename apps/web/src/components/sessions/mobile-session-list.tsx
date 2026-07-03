@@ -2,8 +2,8 @@
 
 import { Link } from "@tanstack/react-router";
 import { MessageSquare, Zap } from "lucide-react";
-import { AgentLabel } from "@/components/dashboard/agent-label";
 import { Stat } from "@/components/meta/stat";
+import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
@@ -51,11 +51,7 @@ export function MobileSessionList({
 								) : null}
 							</div>
 							<div className="mt-3 flex items-center justify-between gap-3">
-								<AgentLabel
-									machineName={session.machine_name}
-									type={session.agent_type}
-									size="sm"
-								/>
+								<SessionAgentLabel session={session} size="sm" />
 								<span className="shrink-0 text-xs text-muted-foreground">
 									{relativeTime(session.last_activity_at)}
 								</span>

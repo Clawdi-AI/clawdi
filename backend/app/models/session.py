@@ -50,7 +50,7 @@ class AgentEnvironment(Base, TimestampMixin):
     # default Agent name; `display_name` is the user's dashboard override.
     # Runtime registration keeps machine_name/agent_type accurate as
     # observed metadata, but machine_name is no longer the identity label.
-    default_name: Mapped[str | None] = mapped_column(String(120))
+    default_name: Mapped[str | None] = mapped_column(String(200))
     display_name: Mapped[str | None] = mapped_column(String(120))
     avatar_asset_key: Mapped[str | None] = mapped_column(String(512))
     sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)

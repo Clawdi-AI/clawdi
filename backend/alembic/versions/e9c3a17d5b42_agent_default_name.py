@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("agent_environments", sa.Column("default_name", sa.String(length=120)))
+    op.add_column("agent_environments", sa.Column("default_name", sa.String(length=200)))
     op.execute(
         """
         UPDATE agent_environments

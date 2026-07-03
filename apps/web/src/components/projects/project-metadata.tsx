@@ -1,6 +1,6 @@
 import { Bot, FolderKanban, Globe2, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { agentTypeLabel, cleanMachineName } from "@/components/dashboard/agent-label";
+import { agentIdentity } from "@/components/dashboard/agent-label";
 import { Badge } from "@/components/ui/badge";
 import {
 	Select,
@@ -28,6 +28,9 @@ export interface ProjectMetadata {
 
 export interface ProjectAgentMetadata {
 	id: string;
+	name?: string | null;
+	display_name?: string | null;
+	default_name?: string | null;
 	machine_name?: string | null;
 	agent_type?: string | null;
 }
@@ -599,10 +602,17 @@ export function projectKindMeta(kind: string): {
 	};
 }
 
-function projectAgentLabel(agent: ProjectAgentMetadata) {
-	const name = cleanMachineName(agent.machine_name) || "Agent";
-	const type = agent.agent_type ? agentTypeLabel(agent.agent_type) : null;
-	return type && type !== name ? `${name} · ${type}` : name;
+export function projectAgentLabel(agent: ProjectAgentMetadata) {
+	const hasIdentity = Boolean(
+		agent.display_name ||
+			agent.default_name ||
+			agent.name ||
+			agent.machine_name ||
+			agent.agent_type,
+	);
+	if (!hasIdentity) return "Agent";
+	const identity = agentIdentity(agent);
+	return [identity.primaryLabel, identity.secondaryLabel].filter(Boolean).join(" · ");
 }
 
 export function projectAgentFor(

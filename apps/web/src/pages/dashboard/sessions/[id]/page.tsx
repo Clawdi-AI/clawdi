@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { MessageList } from "@/components/sessions/message-list";
+import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
 import { Button } from "@/components/ui/button";
@@ -224,10 +225,14 @@ export function SessionDetailContent({
 	const summaryText = session
 		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
 		: null;
+	const sessionAgentIdentity = session ? sessionAgentIdentityInput(session) : null;
+	const detailAgentIdentity = scopedAgent ?? sessionAgentIdentity;
 	const agentBreadcrumbTitle = session
 		? scopedAgent
 			? agentDisplayName(scopedAgent)
-			: agentDisplayName({ machine_name: session.machine_name, agent_type: session.agent_type })
+			: sessionAgentIdentity
+				? agentDisplayName(sessionAgentIdentity)
+				: null
 		: null;
 	useSetAgentBreadcrumbTitle({
 		agentId,
@@ -261,11 +266,11 @@ export function SessionDetailContent({
 					<DetailTitle>{summaryText}</DetailTitle>
 					<DetailMeta>
 						<AgentInline
-							name={scopedAgent?.name ?? null}
-							displayName={scopedAgent?.display_name ?? null}
-							defaultName={scopedAgent?.default_name ?? null}
-							machineName={scopedAgent?.machine_name ?? session.machine_name}
-							type={scopedAgent?.agent_type ?? session.agent_type}
+							name={detailAgentIdentity?.name ?? null}
+							displayName={detailAgentIdentity?.display_name ?? null}
+							defaultName={detailAgentIdentity?.default_name ?? null}
+							machineName={detailAgentIdentity?.machine_name ?? null}
+							type={detailAgentIdentity?.agent_type ?? null}
 						/>
 						{session.project_path ? (
 							<>

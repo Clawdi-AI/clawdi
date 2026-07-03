@@ -81,6 +81,12 @@ conflict. Explicit-identity rows use `registration_key = NULL`.
   metadata.
 - Public API clients should continue to treat existing `environment_id` fields
   as stable agent ids.
+- Deprecated environment fields `hosted_managed` and `hosted_deployment_id`
+  remain on `EnvironmentResponse`, but their compatibility meaning is now
+  intentionally narrow: they reflect only direct hosted runtime desired state
+  stored by Cloud API. They must not infer ownership from `machine_id`,
+  `machine_name`, or sibling runtime rows. Dashboard and control-plane
+  consumers should use ownership sets for Cloud/legacy/connected chrome.
 - User-facing deletion and disconnect behavior must preserve caller-owned
   explicit identities.
 - The legacy database and wire names remain supported for compatibility.

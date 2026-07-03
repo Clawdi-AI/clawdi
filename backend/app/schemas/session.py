@@ -149,7 +149,7 @@ class SessionBatchRequest(BaseModel):
 class EnvironmentCreate(BaseModel):
     machine_id: str
     machine_name: str
-    default_name: str | None = Field(default=None, max_length=120)
+    default_name: str | None = Field(default=None, max_length=200)
     agent_type: str
     agent_version: str | None = None
     os: str
@@ -203,14 +203,22 @@ class EnvironmentResponse(BaseModel):
     queue_depth_high_water: int = 0
     dropped_count: int = 0
     sync_enabled: bool = False
-    # DEPRECATED: derives from hosted-runtime desired state only. Dashboards
-    # now classify externally-managed agents through their control plane's
-    # ownership surface instead of this proxy; both fields remain for older
-    # API consumers and will be removed in a future schema revision.
-    hosted_managed: bool = False
-    # DEPRECATED: see hosted_managed. Real deployment id when cloud-api has
-    # runtime desired state for this env.
-    hosted_deployment_id: str | None = None
+    hosted_managed: bool = Field(
+        default=False,
+        description=(
+            "Deprecated. True only when this environment has direct hosted runtime "
+            "desired state in Cloud API. This no longer infers hosted ownership "
+            "from machine_id, machine_name, or sibling runtime metadata; dashboard "
+            "consumers should use control-plane ownership sets instead."
+        ),
+    )
+    hosted_deployment_id: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated. Deployment id from direct hosted runtime desired state only. "
+            "This no longer falls back to sibling runtime inference."
+        ),
+    )
     # True when the row was registered with a caller-owned stable identity.
     # These rows have no local registration key and cannot be disconnected
     # through the user-facing dashboard route.
@@ -328,6 +336,9 @@ class SessionListItemResponse(BaseModel):
     id: str
     local_session_id: str
     project_path: str | None
+    agent_name: str | None = None
+    agent_display_name: str | None = None
+    agent_default_name: str | None = None
     agent_type: str | None
     machine_name: str | None = None
     started_at: datetime

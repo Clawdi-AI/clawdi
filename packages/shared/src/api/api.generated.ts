@@ -3824,10 +3824,14 @@ export interface components {
             sync_enabled: boolean;
             /**
              * Hosted Managed
+             * @description Deprecated. True only when this environment has direct hosted runtime desired state in Cloud API. This no longer infers hosted ownership from machine_id, machine_name, or sibling runtime metadata; dashboard consumers should use control-plane ownership sets instead.
              * @default false
              */
             hosted_managed: boolean;
-            /** Hosted Deployment Id */
+            /**
+             * Hosted Deployment Id
+             * @description Deprecated. Deployment id from direct hosted runtime desired state only. This no longer falls back to sibling runtime inference.
+             */
             hosted_deployment_id?: string | null;
             /**
              * Explicit Identity
@@ -4467,6 +4471,12 @@ export interface components {
             local_session_id: string;
             /** Project Path */
             project_path: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Agent Display Name */
+            agent_display_name?: string | null;
+            /** Agent Default Name */
+            agent_default_name?: string | null;
             /** Agent Type */
             agent_type: string | null;
             /** Machine Name */
@@ -4538,6 +4548,12 @@ export interface components {
             local_session_id: string;
             /** Project Path */
             project_path: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Agent Display Name */
+            agent_display_name?: string | null;
+            /** Agent Default Name */
+            agent_default_name?: string | null;
             /** Agent Type */
             agent_type: string | null;
             /** Machine Name */

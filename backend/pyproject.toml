@@ -93,7 +93,6 @@ test = "pytest -q"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

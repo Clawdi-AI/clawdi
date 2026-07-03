@@ -15,15 +15,16 @@ The API path (OpenAI / OpenRouter) is unaffected in principle: the
 `dimensions` parameter still truncates Matryoshka embeddings, we just
 ask for 768 instead of 384 now.
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e81a04e870b4"
-down_revision: Union[str, Sequence[str], None] = "7ac3349475ec"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "7ac3349475ec"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -35,8 +36,7 @@ def upgrade() -> None:
     op.execute("ALTER TABLE memories DROP COLUMN IF EXISTS embedding;")
     op.execute("ALTER TABLE memories ADD COLUMN embedding vector(768);")
     op.execute(
-        "CREATE INDEX ix_memories_embedding "
-        "ON memories USING hnsw (embedding vector_cosine_ops);"
+        "CREATE INDEX ix_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);"
     )
 
 
@@ -45,6 +45,5 @@ def downgrade() -> None:
     op.execute("ALTER TABLE memories DROP COLUMN IF EXISTS embedding;")
     op.execute("ALTER TABLE memories ADD COLUMN embedding vector(384);")
     op.execute(
-        "CREATE INDEX ix_memories_embedding "
-        "ON memories USING hnsw (embedding vector_cosine_ops);"
+        "CREATE INDEX ix_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);"
     )

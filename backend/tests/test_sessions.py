@@ -59,6 +59,37 @@ async def test_environment_register_uses_machine_key_identity(
 
 
 @pytest.mark.asyncio
+async def test_environment_register_falls_back_to_long_machine_name_for_default_name(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    long_machine_name = "agent-" + ("x" * 144)
+    r = await client.post(
+        "/v1/environments",
+        json={
+            "machine_id": f"long-default-{uuid.uuid4().hex}",
+            "machine_name": long_machine_name,
+            "agent_type": "codex",
+            "agent_version": "0.1.0",
+            "os": "linux",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    env = (
+        await db_session.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == r.json()["id"])
+        )
+    ).scalar_one()
+    assert len(long_machine_name) > 120
+    assert len(long_machine_name) <= 200
+    assert env.default_name == long_machine_name
+
+
+@pytest.mark.asyncio
 async def test_register_agent_environment_requires_identity_or_registration_key(
     db_session: AsyncSession, seed_user
 ):
@@ -230,6 +261,11 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
     assert detail.json()["hosted_managed"] is False
     assert detail.json()["hosted_deployment_id"] is None
 
+    runtime_detail = await client.get(f"/v1/environments/{openclaw.id}")
+    assert runtime_detail.status_code == 200, runtime_detail.text
+    assert runtime_detail.json()["hosted_managed"] is True
+    assert runtime_detail.json()["hosted_deployment_id"] == "hdep_test"
+
     agents = await client.get("/v1/agents")
     assert agents.status_code == 200, agents.text
     agent_by_id = {item["id"]: item for item in agents.json()}
@@ -310,6 +346,57 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
     listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 2
     assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
+
+
+@pytest.mark.asyncio
+async def test_session_list_and_detail_include_canonical_agent_identity_fields(
+    client: httpx.AsyncClient, db_session: AsyncSession
+):
+    from sqlalchemy import select
+
+    from app.models.session import AgentEnvironment
+
+    env_id = await _register_env(client, machine_id=f"session-label-{uuid.uuid4().hex}")
+    env = (
+        await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    ).scalar_one()
+    env.display_name = "Launch runner"
+    env.default_name = "Research Agent"
+    env.machine_name = "Shared Hosted Compute"
+    await db_session.commit()
+
+    started = datetime.now(UTC).isoformat()
+    batch = await client.post(
+        "/v1/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": "session-canonical-agent-label",
+                    "started_at": started,
+                    "message_count": 1,
+                }
+            ]
+        },
+    )
+    assert batch.status_code == 200, batch.text
+
+    listing = (await client.get("/v1/sessions")).json()
+    item = next(
+        s for s in listing["items"] if s["local_session_id"] == "session-canonical-agent-label"
+    )
+    assert item["agent_name"] == "Launch runner"
+    assert item["agent_display_name"] == "Launch runner"
+    assert item["agent_default_name"] == "Research Agent"
+    assert item["machine_name"] == "Shared Hosted Compute"
+    assert item["agent_type"] == "claude-code"
+
+    detail = await client.get(f"/v1/sessions/{item['id']}")
+    assert detail.status_code == 200, detail.text
+    detail_body = detail.json()
+    assert detail_body["agent_name"] == "Launch runner"
+    assert detail_body["agent_display_name"] == "Launch runner"
+    assert detail_body["agent_default_name"] == "Research Agent"
 
 
 @pytest.mark.asyncio
@@ -1366,6 +1453,9 @@ async def test_delete_environment_orphans_sessions_via_fk(
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
+    assert item["agent_name"] is None
+    assert item["agent_display_name"] is None
+    assert item["agent_default_name"] is None
     assert item["agent_type"] is None
     assert item["machine_name"] is None
 
