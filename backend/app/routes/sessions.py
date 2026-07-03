@@ -190,10 +190,7 @@ async def register_environment(
                 )
             )
         ).scalar_one_or_none()
-        if (
-            bound_env is None
-            or bound_env.registration_key != registration_key
-        ):
+        if bound_env is None or bound_env.registration_key != registration_key:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 detail={
