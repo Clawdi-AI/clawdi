@@ -280,29 +280,17 @@ function TimezoneCombobox({
 	);
 }
 
-function ComputeStatusLine({
-	compute,
-	freeSlotPending,
-	freeSlotUsed,
-	deploymentsError,
-	freePlan,
-	perfOffer,
-}: {
+interface ComputeStatusInput {
 	compute: Compute;
 	freeSlotPending: boolean;
 	freeSlotUsed: boolean;
 	deploymentsError: unknown;
 	freePlan: Plan | undefined;
 	perfOffer: BillingOffer | null;
-}) {
-	const status = computeStatusLine({
-		compute,
-		freeSlotPending,
-		freeSlotUsed,
-		deploymentsError,
-		freePlan,
-		perfOffer,
-	});
+}
+
+function ComputeStatusLine(input: ComputeStatusInput) {
+	const status = computeStatusLine(input);
 	if (!status) return null;
 	return (
 		<p
@@ -323,14 +311,7 @@ function computeStatusLine({
 	deploymentsError,
 	freePlan,
 	perfOffer,
-}: {
-	compute: Compute;
-	freeSlotPending: boolean;
-	freeSlotUsed: boolean;
-	deploymentsError: unknown;
-	freePlan: Plan | undefined;
-	perfOffer: BillingOffer | null;
-}): { message: string; tone: "destructive" | "muted" } | null {
+}: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
 	if (compute === "free") {
 		if (deploymentsError) {
 			return {

@@ -22,6 +22,15 @@ import { cn } from "@/lib/utils";
 
 export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border p-4";
 
+/** Responsive card grid every entity-card collection shares (providers,
+ * channels, shared bots). */
+export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+
+/** Stretched link that makes a whole card navigate while keeping inner
+ * controls independently clickable — pairs with a `relative z-0` wrapper. */
+export const ENTITY_STRETCHED_LINK_CLASS =
+	"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
 /** Meta line — array items render middot-separated; truncates per item. */
 export function EntityMeta({
 	items,
@@ -168,8 +177,7 @@ export function EntityRow({
 	}
 
 	if (href) {
-		const linkClass =
-			"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+		const linkClass = ENTITY_STRETCHED_LINK_CLASS;
 		return (
 			<div className="group relative z-0 min-w-0">
 				<div

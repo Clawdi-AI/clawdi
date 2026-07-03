@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, Link2, Users } from "lucide-react";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { cn } from "@/lib/utils";
 
-const BOT_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+const BOT_GRID_CLASS = ENTITY_GRID_CLASS;
 
 /**
  * Shared bot pool — public bots the user can link an agent to instantly (no

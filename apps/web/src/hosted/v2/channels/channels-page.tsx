@@ -4,7 +4,12 @@ import { Link } from "@tanstack/react-router";
 import { MessagesSquare, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import {
+	ENTITY_CARD_BASE,
+	ENTITY_GRID_CLASS,
+	ENTITY_STRETCHED_LINK_CLASS,
+	EntityHeader,
+} from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -26,7 +31,7 @@ import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Connect Telegram, Discord, WhatsApp, and iMessage to your agents.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "flex flex-col gap-6 px-4 lg:px-6");
-const CHANNEL_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function ChannelsPage() {
 	const [connectOpen, setConnectOpen] = useState(false);
@@ -189,8 +194,6 @@ function FilterChip({
 
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
 	const meta = providerMeta(channel.provider);
-	const linkClassName =
-		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 	return (
 		<div className="group relative z-0 h-full min-w-0">
@@ -214,7 +217,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 					]}
 				/>
 			</div>
-			<Link to="/channels/$id" params={{ id: channel.id }} className={linkClassName}>
+			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>
 			</Link>
 		</div>

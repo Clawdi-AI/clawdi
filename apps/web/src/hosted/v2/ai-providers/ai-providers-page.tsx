@@ -5,7 +5,7 @@ import { BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "flex flex-col gap-6 px-4 lg:px-6");
-const PROVIDER_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
 	const providers = useAiProviders();
