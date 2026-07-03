@@ -99,6 +99,7 @@ function exactVaultRef(projectId: string, slug: string, section: string, field: 
  */
 export function useSaveApiKeyToVault() {
 	const api = useApi();
+	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async (vars: { providerId: string; apiKey: string }): Promise<string> => {
 			const proj = unwrap(await api.GET("/v1/projects/default"));
@@ -120,6 +121,10 @@ export function useSaveApiKeyToVault() {
 				}),
 			);
 			return exactVaultRef(projectId, slug, section, field);
+		},
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["vault-items"] });
 		},
 		onError: toastApiError("Couldn't save to vault"),
 	});

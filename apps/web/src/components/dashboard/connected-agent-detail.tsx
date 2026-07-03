@@ -78,6 +78,7 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 		description: "Name and avatar used across the dashboard.",
 	},
 };
+const AGENT_DETAIL_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 
 export function ConnectedAgentDetail({
 	environmentId,
@@ -209,7 +210,6 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
-	const contentWidthClass = connectedAgentContentWidthClass(activeTab);
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id, sessionId },
@@ -225,7 +225,7 @@ export function ConnectedAgentDetail({
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (
-		<div className="flex flex-col gap-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{error ? (
 				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
@@ -237,99 +237,102 @@ export function ConnectedAgentDetail({
 				<>
 					<h1 className="sr-only">{agentTitle || agentTypeLabel(agent.agent_type)}</h1>
 
-					<section className={cn("flex flex-col gap-4", contentWidthClass)}>
-						<div className="flex flex-wrap items-start justify-between gap-3">
-							<div>
-								<div className="flex items-center gap-2">
-									{ActiveTabIcon ? (
-										<ActiveTabIcon className="size-4 text-muted-foreground" />
-									) : null}
-									<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-									{showSourceBadge ? (
-										<AgentSourceBadgeForEnvironment
-											env={agent}
-											ownershipKind={ownershipKind}
-											compact
-										/>
+					<section className="flex flex-col gap-4">
+						<div className={cn(AGENT_DETAIL_INNER_WIDTH_CLASS, "flex flex-col gap-4")}>
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<div className="flex items-center gap-2">
+										{ActiveTabIcon ? (
+											<ActiveTabIcon className="size-4 text-muted-foreground" />
+										) : null}
+										<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
+										{showSourceBadge ? (
+											<AgentSourceBadgeForEnvironment
+												env={agent}
+												ownershipKind={ownershipKind}
+												compact
+											/>
+										) : null}
+									</div>
+									{activeTabMeta.description ? (
+										<p className="mt-1 text-sm text-muted-foreground">
+											{activeTabMeta.description}
+										</p>
 									) : null}
 								</div>
-								{activeTabMeta.description ? (
-									<p className="mt-1 text-sm text-muted-foreground">{activeTabMeta.description}</p>
+								{activeTab === "skills" ? (
+									<Button asChild variant="outline" size="sm">
+										<Link to="/skills" search={{ target: id }}>
+											<Plus />
+											Install skills
+										</Link>
+									</Button>
 								) : null}
 							</div>
-							{activeTab === "skills" ? (
-								<Button asChild variant="outline" size="sm">
-									<Link to="/skills" search={{ target: id }}>
-										<Plus />
-										Install skills
-									</Link>
-								</Button>
+
+							{activeTab === "overview" ? (
+								<div className="flex flex-col gap-4">
+									<div className="grid gap-3 sm:grid-cols-3">
+										<AgentStatPanel label="Sessions" value={sessionTotal} />
+										<AgentStatPanel
+											label="Skills"
+											value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
+										/>
+										<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
+									</div>
+									<SessionFeed
+										sessions={(sessionsPage?.items ?? []).slice(0, 5)}
+										isLoading={sessionsLoading}
+										emptyMessage="No sessions synced from this agent yet."
+										showAgent={false}
+										sessionLink={(session) => scopedSessionLink(session.id)}
+									/>
+								</div>
 							) : null}
-						</div>
 
-						{activeTab === "overview" ? (
-							<div className="grid gap-3 sm:grid-cols-3">
-								<AgentStatPanel label="Sessions" value={sessionTotal} />
-								<AgentStatPanel
-									label="Skills"
-									value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
+							{activeTab === "sessions" ? (
+								<SessionFeed
+									sessions={sessionsPage?.items ?? []}
+									isLoading={sessionsLoading}
+									emptyMessage="No sessions synced from this agent yet."
+									showAgent={false}
+									sessionLink={(session) => scopedSessionLink(session.id)}
 								/>
-								<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
-							</div>
-						) : null}
+							) : null}
 
-						{activeTab === "overview" ? (
-							<SessionFeed
-								sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-								isLoading={sessionsLoading}
-								emptyMessage="No sessions synced from this agent yet."
-								showAgent={false}
-								sessionLink={(session) => scopedSessionLink(session.id)}
-							/>
-						) : null}
+							{activeTab === "skills" ? (
+								<SkillCardGrid
+									skills={skillsForThisEnv ?? []}
+									isLoading={skillsLoading}
+									emptyMessage="No skills installed on this agent yet."
+									readOnlySkillCheck={(s) =>
+										!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+									}
+									onUninstall={(skillKey, projectId) =>
+										uninstallSkill.mutate({ skillKey, projectId })
+									}
+									uninstallPending={uninstallSkill.isPending}
+									skillLink={scopedSkillLink}
+								/>
+							) : null}
 
-						{activeTab === "sessions" ? (
-							<SessionFeed
-								sessions={sessionsPage?.items ?? []}
-								isLoading={sessionsLoading}
-								emptyMessage="No sessions synced from this agent yet."
-								showAgent={false}
-								sessionLink={(session) => scopedSessionLink(session.id)}
-							/>
-						) : null}
+							{activeTab === "projects" ? (
+								<AgentProjectsPanel
+									agentId={id}
+									bindings={projectBindings ?? []}
+									projects={projects ?? []}
+									isLoading={projectBindingsLoading}
+									onChanged={() => {
+										queryClient.invalidateQueries({
+											queryKey: ["agent-project-bindings", id],
+										});
+										queryClient.invalidateQueries({ queryKey: ["projects"] });
+									}}
+								/>
+							) : null}
 
-						{activeTab === "skills" ? (
-							<SkillCardGrid
-								skills={skillsForThisEnv ?? []}
-								isLoading={skillsLoading}
-								emptyMessage="No skills installed on this agent yet."
-								readOnlySkillCheck={(s) =>
-									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-								}
-								onUninstall={(skillKey, projectId) =>
-									uninstallSkill.mutate({ skillKey, projectId })
-								}
-								uninstallPending={uninstallSkill.isPending}
-								skillLink={scopedSkillLink}
-							/>
-						) : null}
-
-						{activeTab === "projects" ? (
-							<AgentProjectsPanel
-								agentId={id}
-								bindings={projectBindings ?? []}
-								projects={projects ?? []}
-								isLoading={projectBindingsLoading}
-								onChanged={() => {
-									queryClient.invalidateQueries({
-										queryKey: ["agent-project-bindings", id],
-									});
-									queryClient.invalidateQueries({ queryKey: ["projects"] });
-								}}
-							/>
-						) : null}
-
-						{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
+							{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
+						</div>
 					</section>
 				</>
 			) : null}
@@ -341,12 +344,6 @@ function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
 	if (value === "overview") return "overview";
 	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
-}
-
-function connectedAgentContentWidthClass(tab: AgentTab): string {
-	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
-	if (tab === "skills") return CENTERED_PAGE_WIDTH_CLASS.wide;
-	return CENTERED_PAGE_WIDTH_CLASS.detail;
 }
 
 function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {

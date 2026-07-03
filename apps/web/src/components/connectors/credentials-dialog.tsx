@@ -64,6 +64,7 @@ export function ConnectorCredentialsDialog({
 	const inflightSubmitRef = useRef(false);
 	useEffect(() => {
 		openGenRef.current += 1;
+		if (!open) return;
 		setValues({});
 		setSubmitError(null);
 	}, [open]);

@@ -16,17 +16,17 @@ const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 const RUNTIME_META = {
 	codex: {
 		label: "Codex",
-		blurb: "Default hosted coding runtime.",
+		blurb: "OpenAI's software engineering agent.",
 		canDisable: false,
 	},
 	openclaw: {
 		label: "OpenClaw",
-		blurb: "General-purpose agent runtime.",
+		blurb: "Your own personal AI assistant.",
 		canDisable: true,
 	},
 	hermes: {
 		label: "Hermes",
-		blurb: "Messaging-first agent runtime.",
+		blurb: "The agent that grows with you.",
 		canDisable: true,
 	},
 } as const satisfies Record<HostedRuntime, { label: string; blurb: string; canDisable: boolean }>;

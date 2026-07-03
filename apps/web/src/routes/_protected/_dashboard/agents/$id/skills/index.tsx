@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { agentSectionHref, hasAgentTabQuery } from "@/lib/agent-routes";
+import { routeHeadTitle } from "@/lib/document-title";
 import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 // Explicit index route for the agent Skills tab. Without it the bare
@@ -9,6 +10,7 @@ import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client"
 // the tab rendered the skill DETAIL page with an empty key — which
 // fired `GET /v1/skills/` and 422'd.
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/")({
+	head: () => routeHeadTitle("Skills"),
 	beforeLoad: ({ params, search }) => {
 		// Mirror `$section`'s legacy `?tab=` redirect: this URL no longer
 		// reaches `$section`, so old tab-query links normalize here.

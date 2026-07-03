@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -180,26 +180,20 @@ export function AddKeysDialog({
 						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
 			});
 			setOpen(false);
-			setText("");
-			setNewVaultName("");
-			setUpdateExisting(false);
 		},
 		onError: (e) => toast.error("Couldn't save keys", { description: errorMessage(e) }),
 	});
 
+	useEffect(() => {
+		if (!open) return;
+		setText("");
+		setNewVaultName("");
+		setVaultChoice(vaultSlug ?? "");
+		setUpdateExisting(false);
+	}, [open, vaultSlug]);
+
 	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
-				if (!next) {
-					setText("");
-					setNewVaultName("");
-					setVaultChoice(vaultSlug ?? "");
-					setUpdateExisting(false);
-				}
-			}}
-		>
+		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				{children ?? (
 					<Button size="sm">

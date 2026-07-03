@@ -4,12 +4,14 @@ import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,7 +53,7 @@ export default function ConnectorDetailPage({ name }: { name: string }) {
 
 function DetailSkeletonShell() {
 	return (
-		<div className="flex flex-col gap-4 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 			<DetailSkeleton />
 		</div>
 	);
@@ -233,10 +235,11 @@ function ConnectorDetail({ name }: { name: string }) {
 	const isStarting = connectMutation.isPending;
 	const isConnectDisabled = isStarting || hasUnsupportedAuthType || isSetupBlocked;
 	const isReady = isConnected || usesNoAuth;
+	useSetBreadcrumbTitle(displayName);
 
 	if (isLoading) {
 		return (
-			<div className="flex flex-col gap-4 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 				<DetailSkeleton />
 			</div>
 		);
@@ -248,7 +251,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	// silently-broken connect page.
 	if (appQ.error) {
 		return (
-			<div className="flex flex-col gap-4 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 				<EmptyState
 					icon={Plug}
 					title="Connector unavailable"
@@ -259,7 +262,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	}
 
 	return (
-		<div className="flex flex-col gap-4 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 			{/* Header — matches clawdi ConnectorHeader */}
 			<div className="flex items-start gap-5">
 				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />

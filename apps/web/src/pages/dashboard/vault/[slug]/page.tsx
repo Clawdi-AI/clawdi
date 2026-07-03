@@ -19,6 +19,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { DetailNotFound, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -45,6 +46,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
@@ -247,7 +249,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	if (vaults.isLoading) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-20" />
 				<div className="flex items-start gap-3">
 					<Skeleton className="size-11 rounded-xl" />
@@ -265,7 +267,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	if (!vault) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button asChild variant="ghost" size="sm" className="w-fit">
 					<Link to="/vault">
 						<ArrowLeft className="mr-1.5 size-4" />
@@ -285,7 +287,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		.filter((p): p is ProjectRow => !!p);
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<Button asChild variant="ghost" size="sm" className="w-fit">
 				<Link to="/vault">
 					<ArrowLeft className="mr-1.5 size-4" />
@@ -472,11 +474,16 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 											className="pointer-events-none shrink-0"
 										/>
 									) : null}
-									<span className="min-w-0 flex-1 truncate font-mono text-xs" title={name}>
-										{/* "(default)" is the backend's implicit section — noise, hide it. */}
-										{section && section !== "(default)" ? `${section}/` : ""}
-										{name}
-									</span>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span className="min-w-0 flex-1 truncate font-mono text-xs">
+												{/* "(default)" is the backend's implicit section — noise, hide it. */}
+												{section && section !== "(default)" ? `${section}/` : ""}
+												{name}
+											</span>
+										</TooltipTrigger>
+										<TooltipContent>{name}</TooltipContent>
+									</Tooltip>
 									<span className="shrink-0 font-mono text-[10px] text-muted-foreground select-none">
 										••••••
 									</span>

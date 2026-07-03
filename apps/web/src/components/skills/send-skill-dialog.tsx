@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Send } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	AgentLabel,
@@ -186,24 +186,19 @@ export function SendSkillDialog({
 				},
 			);
 			setOpen(false);
-			setTarget("");
-			setRemoveFromSource(false);
 			onDone?.();
 		},
 		onError: (e) => toast.error("Couldn't send skills", { description: errorMessage(e) }),
 	});
 
+	useEffect(() => {
+		if (!open) return;
+		setTarget("");
+		setRemoveFromSource(false);
+	}, [open]);
+
 	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
-				if (!next) {
-					setTarget("");
-					setRemoveFromSource(false);
-				}
-			}}
-		>
+		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				{children ?? (
 					<Button variant="ghost" size="icon-sm" aria-label={`Send ${batchLabel} to…`}>

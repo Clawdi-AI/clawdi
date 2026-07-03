@@ -1,11 +1,13 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { TimeTooltip } from "@/components/time-tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -13,11 +15,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref } from "@/lib/project-resource-model";
-import { cn, errorMessage, formatAbsoluteTooltip, relativeTime } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const router = useRouter();
 	const api = useApi();
+	const queryClient = useQueryClient();
 
 	const {
 		data: memory,
@@ -50,6 +53,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 			toast.success("Memory Deleted", {
 				description: "Your agents will no longer recall it.",
 			});
+			queryClient.invalidateQueries({ queryKey: ["memories"] });
 			void router.navigate({ href: projectResourceHref("memories") });
 		},
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
@@ -58,7 +62,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const onDelete = () => deleteMemory.mutate();
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			{error ? (
 				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
 			) : isLoading ? (
@@ -89,9 +93,9 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 								{memory.created_at ? (
 									<>
 										<span>·</span>
-										<span title={formatAbsoluteTooltip(memory.created_at)}>
-											Saved {relativeTime(memory.created_at)}
-										</span>
+										<TimeTooltip value={memory.created_at}>
+											<span>Saved {relativeTime(memory.created_at)}</span>
+										</TimeTooltip>
 									</>
 								) : null}
 								{/* Whether agents actually USE a memory is the

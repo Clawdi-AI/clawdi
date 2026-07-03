@@ -6,10 +6,26 @@ import { useEffect, useRef, useState } from "react";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ApiError } from "@/lib/api-errors";
 import { useCurrentUser } from "@/lib/auth-client";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-	const [queryClient] = useState(() => new QueryClient());
+	const [queryClient] = useState(
+		() =>
+			new QueryClient({
+				defaultOptions: {
+					queries: {
+						staleTime: 30_000,
+						retry: (failureCount, error) => {
+							if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+								return false;
+							}
+							return failureCount < 2;
+						},
+					},
+				},
+			}),
+	);
 	return (
 		<ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
 			<NuqsAdapter>

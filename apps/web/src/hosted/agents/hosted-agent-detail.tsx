@@ -171,6 +171,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
+const HOSTED_AGENT_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
 const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
 const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
@@ -197,15 +198,6 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 		HOSTED_AGENT_TABS.has(value as HostedAgentTab)
 		? (value as HostedAgentTab)
 		: null;
-}
-
-function hostedAgentContentWidthClass(tab: HostedAgentTab): string | null {
-	if (tab === "console" || tab === "terminal") return null;
-	if (tab === "settings") return CENTERED_PAGE_WIDTH_CLASS.settings;
-	if (tab === "ai" || tab === "channels") {
-		return CENTERED_PAGE_WIDTH_CLASS.form;
-	}
-	return CENTERED_PAGE_WIDTH_CLASS.detail;
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -294,22 +286,22 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
-	const contentWidthClass = hostedAgentContentWidthClass(activeTab);
 
 	return (
 		<div
 			data-hosted="true"
-			className={
+			className={cn(
+				CENTERED_PAGE_WIDTH_CLASS.page,
 				isLiveToolTab
 					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: "flex flex-col gap-6 px-4 lg:px-6"
-			}
+					: "flex flex-col gap-6 px-4 lg:px-6",
+			)}
 		>
 			<h1 className="sr-only">{agentTitle}</h1>
 			<section
 				className={cn(
-					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4",
-					contentWidthClass,
+					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : HOSTED_AGENT_INNER_WIDTH_CLASS,
+					!isLiveToolTab && "flex flex-col gap-4",
 				)}
 			>
 				{isLiveToolTab ? null : (
@@ -334,47 +326,51 @@ export function HostedAgentDetail({
 						) : null}
 					</div>
 				)}
-				{activeTab === "overview" ? (
-					<OverviewTab
-						deployment={deployment}
-						runtime={runtime}
-						isPerformance={isPerformance}
-						sessions={sessions.data?.items ?? []}
-						sessionsLoading={sessions.isLoading}
-						sessionsError={sessions.error}
-						onRetrySessions={() => sessions.refetch()}
-						sessionLink={(session) => scopedSessionLink(session.id)}
-					/>
-				) : null}
-				{activeTab === "console" ? <ConsoleTab deployment={deployment} runtime={runtime} /> : null}
-				{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
-				{activeTab === "sessions" ? (
-					sessions.error ? (
-						<ChannelError
-							error={sessions.error}
-							onRetry={() => sessions.refetch()}
-							title="Couldn't load sessions"
-						/>
-					) : (
-						<SessionFeed
+				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
+					{activeTab === "overview" ? (
+						<OverviewTab
+							deployment={deployment}
+							runtime={runtime}
+							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
-							isLoading={sessions.isLoading}
-							emptyMessage="No sessions from this agent yet."
-							showAgent={false}
+							sessionsLoading={sessions.isLoading}
+							sessionsError={sessions.error}
+							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
 						/>
-					)
-				) : null}
-				{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
-				{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
-				{activeTab === "settings" ? (
-					<HostedAgentSettingsTab
-						environmentId={environmentId}
-						deployment={deployment}
-						isPerformance={isPerformance}
-						runtime={runtime}
-					/>
-				) : null}
+					) : null}
+					{activeTab === "console" ? (
+						<ConsoleTab deployment={deployment} runtime={runtime} />
+					) : null}
+					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
+					{activeTab === "sessions" ? (
+						sessions.error ? (
+							<ChannelError
+								error={sessions.error}
+								onRetry={() => sessions.refetch()}
+								title="Couldn't load sessions"
+							/>
+						) : (
+							<SessionFeed
+								sessions={sessions.data?.items ?? []}
+								isLoading={sessions.isLoading}
+								emptyMessage="No sessions from this agent yet."
+								showAgent={false}
+								sessionLink={(session) => scopedSessionLink(session.id)}
+							/>
+						)
+					) : null}
+					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
+					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
+					{activeTab === "settings" ? (
+						<HostedAgentSettingsTab
+							environmentId={environmentId}
+							deployment={deployment}
+							isPerformance={isPerformance}
+							runtime={runtime}
+						/>
+					) : null}
+				</div>
 			</section>
 		</div>
 	);
@@ -757,6 +753,22 @@ function selectableCard(active: boolean): string {
 	}`;
 }
 
+function ProviderOptionSkeleton() {
+	return (
+		<div className="flex items-center gap-3 rounded-lg border p-4">
+			<Skeleton className="size-10 shrink-0 rounded-lg" />
+			<div className="min-w-0 flex-1 space-y-2">
+				<div className="flex items-center gap-2">
+					<Skeleton className="h-4 w-32" />
+					<Skeleton className="h-5 w-16 rounded-full" />
+				</div>
+				<Skeleton className="h-3 w-40" />
+			</div>
+			<Skeleton className="h-5 w-14 rounded-full" />
+		</div>
+	);
+}
+
 function AiProviderTab({
 	deployment,
 	runtime,
@@ -876,7 +888,7 @@ function AiProviderTab({
 						Clawdi-managed Claude models, billed from your wallet.
 					</p>
 				</button>
-				{providers.isLoading ? <Skeleton className="h-20 w-full rounded-lg" /> : null}
+				{providers.isLoading ? <ProviderOptionSkeleton /> : null}
 				{providers.error ? (
 					<BillingError
 						error={providers.error}

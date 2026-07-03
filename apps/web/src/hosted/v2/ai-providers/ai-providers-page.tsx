@@ -31,7 +31,7 @@ import { formatModelLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
-const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.wide, "flex flex-col gap-6 px-4 lg:px-6");
+const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {

@@ -6,6 +6,7 @@ import "../../instrumentation-client";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import RootError from "@/components/root-error";
+import { APP_TITLE } from "@/lib/document-title";
 import "@/styles/globals.css";
 
 const DESCRIPTION =
@@ -16,15 +17,15 @@ export const Route = createRootRoute({
 		meta: [
 			{ charSet: "utf-8" },
 			{ name: "viewport", content: "width=device-width, initial-scale=1" },
-			{ title: "Clawdi" },
+			{ title: APP_TITLE },
 			{ name: "description", content: DESCRIPTION },
 			{ name: "robots", content: "noindex,nofollow" },
 			{ property: "og:type", content: "website" },
-			{ property: "og:site_name", content: "Clawdi" },
-			{ property: "og:title", content: "Clawdi" },
+			{ property: "og:site_name", content: APP_TITLE },
+			{ property: "og:title", content: APP_TITLE },
 			{ property: "og:description", content: DESCRIPTION },
 			{ name: "twitter:card", content: "summary" },
-			{ name: "twitter:title", content: "Clawdi" },
+			{ name: "twitter:title", content: APP_TITLE },
 			{ name: "twitter:description", content: DESCRIPTION },
 		],
 		links: [

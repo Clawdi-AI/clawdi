@@ -23,6 +23,7 @@ import {
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
 import { DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -151,7 +152,6 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					),
 				{ pageSize: 200, resourceName: "project skills" },
 			),
-		enabled: !!project,
 	});
 
 	const vaults = useQuery({
@@ -166,7 +166,6 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					),
 				{ pageSize: 200, resourceName: "project vaults" },
 			),
-		enabled: !!project,
 	});
 
 	// People tile/section — members list is owner-only on the API; viewers
@@ -241,7 +240,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	if (projects.isLoading) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-24" />
 				<div className="flex items-start gap-3">
 					<Skeleton className="size-11 rounded-xl" />
@@ -263,7 +262,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	if (projects.error) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button asChild variant="ghost" size="sm" className="w-fit">
 					<Link to="/projects">
 						<ArrowLeft className="mr-1.5 size-4" />
@@ -280,7 +279,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	if (!project) {
 		return (
-			<div className="space-y-5 px-4 lg:px-6">
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button asChild variant="ghost" size="sm" className="w-fit">
 					<Link to="/projects">
 						<ArrowLeft className="mr-1.5 size-4" />
@@ -313,7 +312,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	);
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<Button asChild variant="ghost" size="sm" className="w-fit">
 				<Link to="/projects">
 					<ArrowLeft className="mr-1.5 size-4" />
@@ -846,7 +845,7 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Add Project to Agent</DialogTitle>
+					<DialogTitle>Add project to agent</DialogTitle>
 					<DialogDescription>
 						Add {projectName} as an extra Project for an agent. The agent&apos;s main Project stays
 						the writable default; this Project is read by the agent.

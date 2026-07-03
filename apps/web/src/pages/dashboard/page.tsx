@@ -14,6 +14,7 @@ import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
+import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +23,7 @@ import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
@@ -76,7 +77,10 @@ export default function DashboardPage() {
 	const { data: stats, isLoading: statsLoading } = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: async () => unwrap(await api.GET("/v1/dashboard/stats")),
-		staleTime: DASHBOARD_STALE_MS,
+		// Overview counts are cheap and reflect recent mutations across many
+		// resources, so keep this query fresher than the global 30s default.
+		staleTime: 0,
+		refetchOnMount: "always",
 	});
 
 	const { data: projects, isLoading: projectsLoading } = useQuery({
@@ -138,7 +142,7 @@ export default function DashboardPage() {
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
 
 	return (
-		<div className="space-y-5 px-4 lg:px-6">
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<Greeting
 				activeCount={fleetAgents.filter((env) => isAgentActive(env.last_seen_at)).length}
 				total={fleetAgents.length}
@@ -182,7 +186,7 @@ export default function DashboardPage() {
 						</CardHeader>
 						<CardContent>
 							{statsLoading ? (
-								<Skeleton className="h-28 w-full rounded-md" />
+								<ActivityGraphSkeleton />
 							) : contribution ? (
 								<ContributionGraph data={contribution} />
 							) : null}
@@ -244,6 +248,52 @@ export default function DashboardPage() {
 					/>
 					<ThisWeekCard stats={stats} contribution={contribution} />
 				</div>
+			</div>
+		</div>
+	);
+}
+
+function ActivityGraphSkeleton() {
+	return (
+		<div className="w-full">
+			<div className="flex gap-1.5">
+				<div className="flex w-[22px] shrink-0 flex-col gap-[3px] pt-5">
+					{Array.from({ length: 7 }).map((_, index) => (
+						<Skeleton
+							key={index}
+							className={cn("h-[11px] rounded-sm", index % 2 === 1 ? "w-5" : "w-2")}
+						/>
+					))}
+				</div>
+				<div className="min-w-0 flex-1">
+					<div className="mb-1 flex h-4 items-center gap-10">
+						{Array.from({ length: 6 }).map((_, index) => (
+							<Skeleton key={index} className="h-2.5 w-6" />
+						))}
+					</div>
+					<div className="flex max-h-[95px] overflow-hidden gap-[3px]">
+						{Array.from({ length: 52 }).map((_, weekIndex) => (
+							<div key={weekIndex} className="flex flex-col gap-[3px]">
+								{Array.from({ length: 7 }).map((_, dayIndex) => (
+									<Skeleton
+										key={dayIndex}
+										className={cn(
+											"size-[11px] rounded-sm",
+											(weekIndex + dayIndex) % 5 === 0 && "opacity-50",
+										)}
+									/>
+								))}
+							</div>
+						))}
+					</div>
+				</div>
+			</div>
+			<div className="mt-3 flex justify-end gap-1.5">
+				<Skeleton className="h-3 w-7" />
+				{Array.from({ length: 5 }).map((_, index) => (
+					<Skeleton key={index} className="size-[11px] rounded-sm" />
+				))}
+				<Skeleton className="h-3 w-8" />
 			</div>
 		</div>
 	);

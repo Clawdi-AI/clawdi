@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -202,24 +202,19 @@ export function CopyKeysDialog({
 				},
 			);
 			setOpen(false);
-			setTargetChoice("");
-			setNewVaultName("");
 			onDone?.();
 		},
 		onError: (e) => toast.error(`Couldn't ${mode} keys`, { description: errorMessage(e) }),
 	});
 
+	useEffect(() => {
+		if (!open) return;
+		setTargetChoice("");
+		setNewVaultName("");
+	}, [open]);
+
 	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
-				if (!next) {
-					setTargetChoice("");
-					setNewVaultName("");
-				}
-			}}
-		>
+		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>

@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { agentSectionHref, hasAgentTabQuery, parseAgentSectionSegment } from "@/lib/agent-routes";
+import { routeHeadTitle } from "@/lib/document-title";
 import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 function safeDecodeURIComponent(value: string): string {
@@ -11,6 +12,7 @@ function safeDecodeURIComponent(value: string): string {
 }
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section")({
+	head: () => routeHeadTitle("Agent"),
 	beforeLoad: ({ params, search }) => {
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		if (!section || section === "overview") throw notFound();

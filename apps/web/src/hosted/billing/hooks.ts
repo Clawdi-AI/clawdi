@@ -188,6 +188,7 @@ export function useCreateDeployment() {
 		mutationFn: (body: DeployRequest) => client.createDeployment(body),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: ["agents"] });
 		},
 	});
 }

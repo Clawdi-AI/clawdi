@@ -18,9 +18,9 @@ import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	Command,
 	CommandEmpty,
@@ -38,6 +38,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { BillingError } from "@/hosted/billing/components/state-views";
@@ -55,6 +56,7 @@ import {
 } from "@/hosted/billing/hooks";
 import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -74,7 +76,7 @@ import { cn } from "@/lib/utils";
 type Compute = "free" | "performance";
 type Engine = "openclaw" | "hermes";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
-const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.detail, "flex flex-col gap-6 px-4 lg:px-6");
+const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 
@@ -301,6 +303,24 @@ function ComputeStatusLine(input: ComputeStatusInput) {
 		>
 			{status.message}
 		</p>
+	);
+}
+
+function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
+	return (
+		<section className="flex flex-col gap-4">
+			<Separator />
+			<div className="flex max-w-2xl flex-col gap-2">
+				<Skeleton className="h-4 w-24" />
+				<Skeleton className="h-3.5 w-80 max-w-full" />
+				<Skeleton className="h-3.5 w-56 max-w-full" />
+			</div>
+			<div className={columns === 3 ? THREE_TILE_GRID_CLASS : TWO_TILE_GRID_CLASS}>
+				{Array.from({ length: columns }).map((_, index) => (
+					<Skeleton key={index} className="h-[86px] w-full rounded-lg" />
+				))}
+			</div>
+		</section>
 	);
 }
 
@@ -551,14 +571,10 @@ export function DeployWizard() {
 		aiChoice === "managed"
 			? "Managed AI"
 			: (providerList.find((p) => p.provider_id === aiChoice)?.label ?? "Your provider");
-	const runtimeSummary =
-		enginesSelected.length === 2
-			? "Codex + OpenClaw + Hermes"
-			: enginesSelected[0] === "openclaw"
-				? "Codex + OpenClaw"
-				: enginesSelected[0] === "hermes"
-					? "Codex + Hermes"
-					: "Codex";
+	const runtimeSummary = [
+		runtimeDisplayName("codex"),
+		...enginesSelected.map((engine) => runtimeDisplayName(engine)),
+	].join(" + ");
 	const personalityLabel = PERSONALITY_PRESETS.find((p) => p.id === personality)?.label;
 	const summaryLine = [
 		agentName.trim() || null,
@@ -575,7 +591,7 @@ export function DeployWizard() {
 	if (plans.error) {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-				<PageHeader title="Deploy an agent" />
+				<PageHeader title="Deploy an Agent" />
 				<BillingError error={plans.error} onRetry={() => plans.refetch()} />
 			</div>
 		);
@@ -584,10 +600,12 @@ export function DeployWizard() {
 	if (plans.isLoading) {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-				<PageHeader title="Deploy an agent" description="Preparing your compute options…" />
-				<Skeleton className="h-32 w-full rounded-lg" />
-				<Skeleton className="h-32 w-full rounded-lg" />
-				<Skeleton className="h-40 w-full rounded-lg" />
+				<PageHeader title="Deploy an Agent" description="Preparing your compute options…" />
+				<DeploySectionSkeleton columns={3} />
+				<DeploySectionSkeleton />
+				<DeploySectionSkeleton />
+				<DeploySectionSkeleton />
+				<DeploySectionSkeleton />
 			</div>
 		);
 	}
@@ -595,54 +613,52 @@ export function DeployWizard() {
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 			<PageHeader
-				title="Deploy an agent"
+				title="Deploy an Agent"
 				description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
 			/>
 
-			{/* 1. Runtime */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">1. Hosted runtimes</CardTitle>
-					<CardDescription>
-						{dualAllowed
-							? "Codex stays on. Performance can also run OpenClaw and Hermes together."
-							: "Codex stays on. Free can add one optional runtime."}
-					</CardDescription>
-				</CardHeader>
-				<CardContent className={THREE_TILE_GRID_CLASS}>
+			<SettingsSection
+				title="Runtimes"
+				description={
+					dualAllowed
+						? "Codex stays on. Performance can also run OpenClaw and Hermes together."
+						: "Codex stays on. Free can add one optional runtime."
+				}
+			>
+				<div className={THREE_TILE_GRID_CLASS}>
 					<Tile
 						selected
-						leading={<EntityIcon kind="framework" id="codex" label="Codex" />}
-						title="Codex"
-						subtitle="Default hosted coding runtime."
+						leading={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
+						title={runtimeDisplayName("codex")}
+						subtitle={runtimeBlurb("codex")}
 						badge={<Badge variant="outline">Always on</Badge>}
 					/>
 					<Tile
 						selected={engines.openclaw}
 						onClick={() => toggleEngine("openclaw")}
-						leading={<EntityIcon kind="framework" id="openclaw" label="OpenClaw" />}
-						title="OpenClaw"
-						subtitle="General-purpose agent runtime."
+						leading={
+							<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
+						}
+						title={runtimeDisplayName("openclaw")}
+						subtitle={runtimeBlurb("openclaw")}
 					/>
 					<Tile
 						selected={engines.hermes}
 						onClick={() => toggleEngine("hermes")}
-						leading={<EntityIcon kind="framework" id="hermes" label="Hermes" />}
-						title="Hermes"
-						subtitle="Messaging-first agent runtime."
+						leading={
+							<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
+						}
+						title={runtimeDisplayName("hermes")}
+						subtitle={runtimeBlurb("hermes")}
 					/>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* 2. AI provider — mandatory, reuses /ai-providers */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">2. AI provider</CardTitle>
-					<CardDescription>
-						Managed AI bills your wallet, or route through one of your own providers.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className={TWO_TILE_GRID_CLASS}>
+			<SettingsSection
+				title="AI provider"
+				description="Managed AI bills your wallet, or route through one of your own providers."
+			>
+				<div className={TWO_TILE_GRID_CLASS}>
 					<Tile
 						selected={aiChoice === "managed"}
 						onClick={() => setAiChoice("managed")}
@@ -682,20 +698,18 @@ export function DeployWizard() {
 						description="Connect OpenAI, Anthropic, or another endpoint."
 						onClick={() => setAddProviderOpen(true)}
 					/>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* 3. Channels — optional, reuses Channels */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">
-						3. Channels <span className="font-normal text-muted-foreground">· optional</span>
-					</CardTitle>
-					<CardDescription>
-						Prepare a bot now, then link it from the agent page once deployment finishes.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className={TWO_TILE_GRID_CLASS}>
+			<SettingsSection
+				title={
+					<>
+						Channels <span className="font-normal text-muted-foreground">· optional</span>
+					</>
+				}
+				description="Prepare a bot now, then link it from the agent page once deployment finishes."
+			>
+				<div className={TWO_TILE_GRID_CLASS}>
 					<Tile
 						selected
 						leading={
@@ -716,19 +730,14 @@ export function DeployWizard() {
 						description="Prepare a bot; link it after provisioning."
 						onClick={() => setConnectChannelOpen(true)}
 					/>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* 4. Compute */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">4. Compute</CardTitle>
-					<CardDescription>
-						Free gives one active hosted deployment. Performance is billed per deployment and can
-						run both optional runtimes.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-3">
+			<SettingsSection
+				title="Compute"
+				description="Free gives one active hosted deployment. Performance is billed per deployment and can run both optional runtimes."
+			>
+				<div className="flex flex-col gap-3">
 					<div className="grid gap-2 sm:grid-cols-2">
 						<Tile
 							selected={compute === "free"}
@@ -792,18 +801,18 @@ export function DeployWizard() {
 						freePlan={freePlan}
 						perfOffer={perfOffer}
 					/>
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
-			{/* 5. Personalize — name, personality, language, timezone */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">
-						5. Personalize <span className="font-normal text-muted-foreground">· optional</span>
-					</CardTitle>
-					<CardDescription>Give your agent a name, tone, language, and timezone.</CardDescription>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
+			<SettingsSection
+				title={
+					<>
+						Personalize <span className="font-normal text-muted-foreground">· optional</span>
+					</>
+				}
+				description="Give your agent a name, tone, language, and timezone."
+			>
+				<div className="flex flex-col gap-4">
 					<div className="flex flex-col gap-1.5">
 						<label htmlFor="agent-name" className="text-sm text-muted-foreground">
 							Name
@@ -868,8 +877,8 @@ export function DeployWizard() {
 							<TimezoneCombobox value={timezone} onValueChange={setTimezone} options={tzOptions} />
 						</div>
 					) : null}
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 
 			{/* Sticky action bar */}
 			<div className="sticky bottom-0 -mx-4 border-t bg-background/90 px-4 py-3 backdrop-blur lg:-mx-6 lg:px-6">

@@ -15,14 +15,10 @@ import { ShareHeaderUser } from "@/components/share/header-user";
 import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
+import { TimeTooltip } from "@/components/time-tooltip";
 import { env } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
-import {
-	formatAbsoluteTooltip,
-	formatNumber,
-	formatSessionSummary,
-	relativeTime,
-} from "@/lib/utils";
+import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 /**
  * Public share page for a Clawdi session.
@@ -145,7 +141,7 @@ export default async function PublicSharePage({ id }: { id: string }) {
 			    scroll on narrow screens. `w-full` (`width: 100%`) restores
 			    the "fill body, capped at max-w-4xl, then centered"
 			    behavior that the visual design already assumed. */}
-			<div className={`${CENTERED_PAGE_WIDTH_CLASS.detail} space-y-5 px-4 py-6 lg:px-6`}>
+			<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-5 px-4 py-6 lg:px-6`}>
 				{/* Below `sm` (640px), controls drop under the title block —
 				    a long summary then claims the full row instead of fighting
 				    two icon buttons for ~80px on a 320px screen. Reverts to
@@ -173,15 +169,15 @@ export default async function PublicSharePage({ id }: { id: string }) {
 								</>
 							) : null}
 							<span>·</span>
-							<span title={formatAbsoluteTooltip(share.started_at)}>
-								Started {relativeTime(share.started_at)}
-							</span>
+							<TimeTooltip value={share.started_at}>
+								<span>Started {relativeTime(share.started_at)}</span>
+							</TimeTooltip>
 							{showLastActivity ? (
 								<>
 									<span>·</span>
-									<span title={formatAbsoluteTooltip(share.last_activity_at)}>
-										Last activity {relativeTime(share.last_activity_at)}
-									</span>
+									<TimeTooltip value={share.last_activity_at}>
+										<span>Last activity {relativeTime(share.last_activity_at)}</span>
+									</TimeTooltip>
 								</>
 							) : null}
 						</DetailMeta>

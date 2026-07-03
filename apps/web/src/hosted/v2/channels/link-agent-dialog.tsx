@@ -64,11 +64,10 @@ export function LinkAgentDialog({
 	const [linkedNoToken, setLinkedNoToken] = useState(false);
 
 	useEffect(() => {
-		if (!open) {
-			setAgentId("");
-			setToken(null);
-			setLinkedNoToken(false);
-		}
+		if (!open) return;
+		setAgentId("");
+		setToken(null);
+		setLinkedNoToken(false);
 	}, [open]);
 
 	function submit() {
