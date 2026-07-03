@@ -3828,7 +3828,10 @@ export interface components {
             machine_id: string;
             /** Machine Name */
             machine_name: string;
-            /** Default Name */
+            /**
+             * Default Name
+             * @description Deprecated and ignored; agent default names are assigned by the server.
+             */
             default_name?: string | null;
             /** Agent Type */
             agent_type: string;
