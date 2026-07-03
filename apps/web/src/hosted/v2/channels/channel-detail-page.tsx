@@ -20,7 +20,6 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
 	agentTextLabel,
 } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
@@ -119,12 +118,15 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
-			machineName={agentDisplayName(env, { ownershipKind })}
+			machineName={env.machine_name}
 			displayName={env.display_name}
+			defaultName={env.default_name}
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
+			titleAdornment={
+				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
+			}
 			className="min-w-0"
 		/>
 	);

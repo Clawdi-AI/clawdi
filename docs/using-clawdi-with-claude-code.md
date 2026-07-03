@@ -44,7 +44,7 @@ $ clawdi setup --agent claude_code
 ```
 
 What this does:
-- Creates a row in the backend `AgentEnvironment` table for this machine + Claude Code
+- Creates a stable Agent identity row in the backend `AgentEnvironment` table for Claude Code
 - Runs `claude mcp add-json clawdi '...' --scope user` so Claude Code spawns the Clawdi MCP server on every launch
 - Copies the bundled `clawdi` skill to `~/.claude/skills/clawdi/SKILL.md` so Claude Code can surface memory-retrieval guidance
 
@@ -341,7 +341,7 @@ Quit Claude Code fully (`/exit` or Cmd+Q) and reopen. It caches MCP tool descrip
 Verify Claude actually called the tool — look in your Claude Code transcript for a tool-use entry. If it didn't call: try a more specific phrasing ("what's my X?", "remember Y"). If it did call and still got nothing: the stored phrasing and query may be too far apart in semantic space; check with `clawdi memory search "<same query>"` directly.
 
 **`clawdi push` says "No environment registered"**
-Run `clawdi setup --agent claude_code` first. It creates the `AgentEnvironment` row sync needs.
+Run `clawdi setup --agent claude_code` first. It creates the stable Agent identity row sync needs.
 
 **`/mcp` in Claude Code doesn't list clawdi**
 Check `claude mcp list` at the shell. If clawdi is missing, `clawdi setup --agent claude_code` re-registers it.

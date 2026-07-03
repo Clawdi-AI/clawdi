@@ -550,8 +550,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						{(boundAgents.data ?? []).map(({ env, home }) => (
 							<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
 								<AgentLabel
-									machineName={displayAgentName(env, ownership)}
+									machineName={env.machine_name}
 									displayName={env.display_name}
+									defaultName={env.default_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
 									size="sm"
@@ -872,8 +873,9 @@ function UseProjectWithAgentDialog({
 								>
 									{selectedEnv ? (
 										<AgentLabel
-											machineName={displayAgentName(selectedEnv, ownership)}
+											machineName={selectedEnv.machine_name}
 											displayName={selectedEnv.display_name}
+											defaultName={selectedEnv.default_name}
 											type={selectedEnv.agent_type}
 											avatarUrl={selectedEnv.avatar_url}
 											size="sm"
@@ -893,8 +895,9 @@ function UseProjectWithAgentDialog({
 											className="py-2"
 										>
 											<AgentLabel
-												machineName={displayAgentName(env, ownership)}
+												machineName={env.machine_name}
 												displayName={env.display_name}
+												defaultName={env.default_name}
 												type={env.agent_type}
 												avatarUrl={env.avatar_url}
 												size="sm"

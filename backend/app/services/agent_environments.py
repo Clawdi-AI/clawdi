@@ -42,6 +42,7 @@ async def register_agent_environment(
     user_id: UUID,
     machine_id: str,
     machine_name: str,
+    default_name: str | None,
     agent_type: str,
     agent_version: str | None,
     os_name: str,
@@ -76,6 +77,7 @@ async def register_agent_environment(
                 user_id=user_id,
                 machine_id=machine_id,
                 machine_name=machine_name,
+                default_name=default_name,
                 agent_type=agent_type,
                 agent_version=agent_version,
                 os_name=os_name,
@@ -101,6 +103,7 @@ async def register_agent_environment(
                 user_id=user_id,
                 machine_id=machine_id,
                 machine_name=machine_name,
+                default_name=default_name,
                 agent_type=agent_type,
                 agent_version=agent_version,
                 os_name=os_name,
@@ -111,7 +114,7 @@ async def register_agent_environment(
 
     project = Project(
         user_id=user_id,
-        name=f"{machine_name} ({agent_type})",
+        name=f"{_agent_default_name(default_name, machine_name)} ({agent_type})",
         slug=f"env-{uuid.uuid4().hex[:12]}",
         kind=PROJECT_KIND_ENVIRONMENT,
     )
@@ -123,6 +126,7 @@ async def register_agent_environment(
             user_id=user_id,
             machine_id=machine_id,
             machine_name=machine_name,
+            default_name=_agent_default_name(default_name, machine_name),
             agent_type=agent_type,
             agent_version=agent_version,
             os=os_name,
@@ -159,6 +163,7 @@ async def register_agent_environment(
                 user_id=user_id,
                 machine_id=machine_id,
                 machine_name=machine_name,
+                default_name=default_name,
                 agent_type=agent_type,
                 agent_version=agent_version,
                 os_name=os_name,
@@ -188,6 +193,7 @@ async def _refresh_agent_environment(
     user_id: UUID,
     machine_id: str,
     machine_name: str,
+    default_name: str | None,
     agent_type: str,
     agent_version: str | None,
     os_name: str,
@@ -195,6 +201,8 @@ async def _refresh_agent_environment(
 ) -> None:
     env.machine_id = machine_id
     env.machine_name = machine_name
+    if default_name is not None or registration_key is not None or env.default_name is None:
+        env.default_name = _agent_default_name(default_name, machine_name)
     env.agent_type = agent_type
     env.agent_version = agent_version
     env.os = os_name
@@ -203,7 +211,7 @@ async def _refresh_agent_environment(
     if env.default_project_id is None:
         healing_project = Project(
             user_id=user_id,
-            name=f"{machine_name} ({agent_type})",
+            name=f"{_agent_default_name(default_name, machine_name)} ({agent_type})",
             slug=f"env-{uuid.uuid4().hex[:12]}",
             kind=PROJECT_KIND_ENVIRONMENT,
             origin_environment_id=env.id,
@@ -211,3 +219,7 @@ async def _refresh_agent_environment(
         db.add(healing_project)
         await db.flush()
         env.default_project_id = healing_project.id
+
+
+def _agent_default_name(default_name: str | None, machine_name: str) -> str:
+    return (default_name or "").strip() or machine_name.strip() or "Agent"

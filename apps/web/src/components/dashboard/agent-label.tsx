@@ -50,11 +50,11 @@ export function AgentInline({
  * fits both "many agents on one screen" and "one agent in a hero":
  *
  *   primary="machine"  (default — every list and the detail hero)
- *     [icon] Jings-MacBook-Pro.local
+ *     [icon] Research Agent
  *            Hermes · meta…
- *     The machine name is the H1 because that's the label the
- *     user picked themselves; agent_type drops to the subtitle
- *     where it disambiguates 4 agents on the same laptop.
+ *     The identity label is the H1: display override, default Agent
+ *     name, machine metadata, then runtime fallback. agent_type drops
+ *     to the subtitle where it disambiguates similar names.
  *
  *   primary="type"
  *     [icon] Hermes
@@ -86,18 +86,45 @@ function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind {
 	return kind === "cloud" ? "hosted" : "connected";
 }
 
+export type AgentIdentityInput = {
+	name?: string | null;
+	display_name?: string | null;
+	default_name?: string | null;
+	machine_name?: string | null;
+	agent_type?: string | null;
+};
+
+export type AgentIdentity = {
+	customName: string | null;
+	defaultName: string | null;
+	machineName: string | null;
+	runtimeName: string;
+	primaryLabel: string;
+	secondaryLabel: string | null;
+};
+
+export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
+	const customName = cleanMachineName(env.display_name) || null;
+	const defaultName = cleanMachineName(env.default_name) || cleanMachineName(env.name) || null;
+	const machineName = cleanMachineName(env.machine_name) || null;
+	const runtimeName = agentTypeLabel(env.agent_type);
+	const primaryLabel = customName ?? defaultName ?? machineName ?? runtimeName;
+	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
+	return {
+		customName,
+		defaultName,
+		machineName,
+		runtimeName,
+		primaryLabel,
+		secondaryLabel,
+	};
+}
+
 export function agentDisplayName(
-	env: {
-		display_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-	},
-	{ ownershipKind = "connected" }: { ownershipKind?: AgentOwnershipKind } = {},
+	env: AgentIdentityInput,
+	_options: { ownershipKind?: AgentOwnershipKind } = {},
 ): string {
-	const custom = cleanMachineName(env.display_name);
-	if (custom) return custom;
-	if (ownershipKind !== "connected") return agentTypeLabel(env.agent_type);
-	return cleanMachineName(env.machine_name) || agentTypeLabel(env.agent_type);
+	return agentIdentity(env).primaryLabel;
 }
 
 export function agentSourceLabel(source: AgentSourceKind): string {
@@ -161,7 +188,7 @@ export function LegacyAgentBadge({
 }) {
 	return (
 		<span
-			title="Legacy hosted agent"
+			title="Managed in the legacy hosted dashboard"
 			className={cn(
 				"inline-flex shrink-0 items-center whitespace-nowrap border border-amber-200 bg-background font-medium leading-none text-foreground shadow-sm dark:border-amber-500/35 dark:bg-background/80",
 				compact
@@ -207,24 +234,18 @@ export function AgentSourceBadgeForEnvironment({
 }
 
 export function agentTextLabel(
-	env: {
-		id?: string | null;
-		display_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-	},
+	env: AgentIdentityInput & { id?: string | null },
 	{
 		includeSource = true,
 		ownershipKind = "connected",
 	}: { includeSource?: boolean; ownershipKind?: AgentOwnershipKind } = {},
 ): string {
-	const identity = agentDisplayName(env, { ownershipKind });
-	const runtime = agentTypeLabel(env.agent_type);
+	const identity = agentIdentity(env);
 	const source = sourceFromOwnershipKind(ownershipKind);
 	const parts = [
 		includeSource && source === "hosted" ? agentSourceLabel(source) : null,
-		identity,
-		runtime !== identity ? runtime : null,
+		identity.primaryLabel,
+		identity.secondaryLabel,
 	].filter((part): part is string => Boolean(part));
 	return parts.join(" · ");
 }
@@ -232,14 +253,18 @@ export function agentTextLabel(
 export function compareAgentEnvironments(
 	a: {
 		id?: string | null;
+		name?: string | null;
 		display_name?: string | null;
+		default_name?: string | null;
 		machine_name?: string | null;
 		agent_type?: string | null;
 		sort_order?: number | null;
 	},
 	b: {
 		id?: string | null;
+		name?: string | null;
 		display_name?: string | null;
+		default_name?: string | null;
 		machine_name?: string | null;
 		agent_type?: string | null;
 		sort_order?: number | null;
@@ -305,6 +330,7 @@ const SUBTITLE_GAP: Record<AgentIconSize, string> = {
 export function AgentLabel({
 	machineName,
 	displayName,
+	defaultName,
 	type,
 	avatarUrl,
 	size = "sm",
@@ -315,12 +341,12 @@ export function AgentLabel({
 }: {
 	machineName: string | null | undefined;
 	displayName?: string | null | undefined;
+	defaultName?: string | null | undefined;
 	type: string | null | undefined;
 	avatarUrl?: string | null | undefined;
 	size?: AgentIconSize;
-	/** Which field is the H1 line. Defaults to "machine" — the
-	 * machine name is the user's own label; agent_type drops to
-	 * the subtitle as a disambiguator. */
+	/** Which field is the H1 line. Defaults to "machine": display
+	 * override, then default Agent name, then machine metadata, then runtime. */
 	primary?: "type" | "machine";
 	/** Inline meta items rendered in the subtitle row after the
 	 * primary disambiguator (e.g. last-seen, DaemonStatusBadge).
@@ -337,17 +363,20 @@ export function AgentLabel({
 	className?: string;
 }) {
 	const typeLabel = agentTypeLabel(type);
+	const identity = agentIdentity({
+		display_name: displayName,
+		default_name: defaultName,
+		machine_name: machineName,
+		agent_type: type,
+	});
 	const cleanedMachine = cleanMachineName(machineName);
-	const cleanedDisplayName = cleanMachineName(displayName);
-	const titleText =
-		primary === "type" ? typeLabel : cleanedDisplayName || cleanedMachine || typeLabel;
+	const titleText = primary === "type" ? typeLabel : identity.primaryLabel;
 	// The disambiguator is the OTHER field — when title is the type
 	// we surface the machine name (and vice versa). Suppressed if
 	// it'd duplicate the title (e.g. hosted tiles whose
 	// `machineName` is just the runtime label "Hermes" — disambig
 	// would print "Hermes" again under the title).
-	const rawDisambig =
-		primary === "type" ? cleanedMachine : type && cleanedMachine ? typeLabel : null;
+	const rawDisambig = primary === "type" ? cleanedMachine : identity.secondaryLabel;
 	const disambiguator = rawDisambig && rawDisambig !== titleText ? rawDisambig : null;
 
 	const filteredMeta = (meta ?? []).filter((m) => m !== null && m !== undefined && m !== false);

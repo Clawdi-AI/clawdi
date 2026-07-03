@@ -17,16 +17,17 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses runtime as the default Cloud agent name", () => {
+	test("uses the default Agent name before machine metadata", () => {
 		expect(
 			agentDisplayName(
 				{
+					default_name: "Research Agent",
 					machine_name: "Shared Hosted Compute",
 					agent_type: "openclaw",
 				},
 				{ ownershipKind: "cloud" },
 			),
-		).toBe("OpenClaw");
+		).toBe("Research Agent");
 	});
 
 	test("uses machine name as the default connected agent name", () => {
@@ -40,12 +41,23 @@ describe("agentDisplayName", () => {
 			agentDisplayName(
 				{
 					display_name: "Launch runner",
+					default_name: "Hermes Agent",
 					machine_name: "Shared Hosted Compute",
 					agent_type: "hermes",
 				},
 				{ ownershipKind: "legacy" },
 			),
 		).toBe("Launch runner");
+	});
+
+	test("uses the API name alias before machine metadata when default_name is absent", () => {
+		expect(
+			agentDisplayName({
+				name: "Hosted Codex",
+				machine_name: "Shared Hosted Compute",
+				agent_type: "codex",
+			}),
+		).toBe("Hosted Codex");
 	});
 });
 

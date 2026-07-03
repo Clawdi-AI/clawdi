@@ -3,6 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
@@ -169,19 +170,19 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 		return {
 			id: `${d.id}:${runtime}`,
 			source: "on-clawdi" as const,
-			// Runtime is the primary identifier on hosted tiles since the
-			// AgentIcon already brands it and one deployment fans out to
-			// multiple tiles — using `d.name` here would print
-			// "openclaw-b5451f9c" on a Hermes tile.
-			name: matchedEnv?.display_name?.trim() || runtimeDisplayName(runtime),
+			name: matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime),
 			displayName: matchedEnv?.display_name ?? null,
+			defaultName: matchedEnv
+				? (matchedEnv.default_name ?? matchedEnv.name ?? null)
+				: runtimeDisplayName(runtime),
+			machineName: matchedEnv?.machine_name ?? null,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
 			// Deployment slug as the secondary line lets users disambiguate
 			// when they have more than one hosted deployment. Mode info ("Daemon") is
 			// implied by the "Clawdi" badge — every hosted runtime is daemon.
-			runtimeLabel: slug,
+			contextLabel: slug,
 			statusLabel,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			// `?source=on-clawdi` is the breadcrumb the agent detail page

@@ -149,6 +149,7 @@ class SessionBatchRequest(BaseModel):
 class EnvironmentCreate(BaseModel):
     machine_id: str
     machine_name: str
+    default_name: str | None = Field(default=None, max_length=120)
     agent_type: str
     agent_version: str | None = None
     os: str
@@ -180,6 +181,8 @@ class EnvironmentReorderRequest(BaseModel):
 
 class EnvironmentResponse(BaseModel):
     id: str
+    name: str
+    default_name: str | None = None
     machine_name: str
     display_name: str | None = None
     avatar_url: str | None = None
@@ -215,6 +218,27 @@ class EnvironmentResponse(BaseModel):
     # being present to know which SSE events belong to them.
     # Stringified for JSON (UUIDs serialise as strings via
     # FastAPI default).
+    default_project_id: str
+
+
+class AgentResponse(BaseModel):
+    id: str
+    name: str
+    default_name: str | None = None
+    machine_name: str
+    display_name: str | None = None
+    avatar_url: str | None = None
+    sort_order: int = 0
+    agent_type: str
+    agent_version: str | None
+    os: str
+    last_seen_at: datetime | None
+    last_sync_at: datetime | None = None
+    last_sync_error: str | None = None
+    last_revision_seen: int | None = None
+    queue_depth_high_water: int = 0
+    dropped_count: int = 0
+    sync_enabled: bool = False
     default_project_id: str
 
 

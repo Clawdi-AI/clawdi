@@ -37,6 +37,7 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.session import (
+    AgentResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentReorderRequest,
@@ -87,7 +88,6 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
-_HOSTED_MANAGED_AGENT_TYPES = {"codex", "hermes", "openclaw"}
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -209,6 +209,7 @@ async def register_environment(
             user_id=auth.user_id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
+            default_name=body.default_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
             os_name=body.os,
@@ -274,16 +275,81 @@ async def list_environments(
             .all()
         )
         states_by_env = {state.environment_id: state for state in states}
-    hosted_deployments_by_machine = _hosted_deployments_by_machine(envs, states_by_env)
     payload = [
         _env_to_response(
             e,
             states_by_env.get(e.id),
-            hosted_deployment_id=hosted_deployments_by_machine.get(e.machine_id),
         )
         for e in envs
     ]
     etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return payload
+
+
+@router.get(
+    "/agents",
+    response_model=list[AgentResponse],
+    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
+)
+async def list_agents(
+    request: Request,
+    response: Response,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> list[AgentResponse] | Response:
+    bound_env = _bound_env_id(auth)
+    stmt = (
+        select(AgentEnvironment)
+        .where(AgentEnvironment.user_id == auth.user_id)
+        .order_by(
+            AgentEnvironment.sort_order.asc(),
+            AgentEnvironment.created_at.asc(),
+            AgentEnvironment.id.asc(),
+        )
+    )
+    if bound_env is not None:
+        stmt = stmt.where(AgentEnvironment.id == bound_env)
+    envs = (await db.execute(stmt)).scalars().all()
+    payload = [_agent_to_response(env) for env in envs]
+    etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return payload
+
+
+@router.get(
+    "/agents/{agent_id}",
+    response_model=AgentResponse,
+    responses={status.HTTP_304_NOT_MODIFIED: {"description": "Not Modified"}},
+)
+async def get_agent(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentResponse | Response:
+    bound_env = _bound_env_id(auth)
+    if bound_env is not None and agent_id != bound_env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    payload = _agent_to_response(env)
+    etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
@@ -331,8 +397,6 @@ async def list_environment_runtime_observed(
             .all()
         )
         states_by_env = {state.environment_id: state for state in states}
-    hosted_deployments_by_machine = _hosted_deployments_by_machine(envs, states_by_env)
-
     counts = RuntimeObservedSummaryCountsResponse()
     items: list[RuntimeObservedSummaryItemResponse] = []
     for env in envs:
@@ -344,7 +408,6 @@ async def list_environment_runtime_observed(
                 environment=_env_to_response(
                     env,
                     state,
-                    hosted_deployment_id=hosted_deployments_by_machine.get(env.machine_id),
                 ),
                 desired=_runtime_observed_desired(state) if state is not None else None,
                 health=health,
@@ -404,12 +467,10 @@ async def reorder_environments(
             .all()
         )
         states_by_env = {state.environment_id: state for state in states}
-    hosted_deployments_by_machine = _hosted_deployments_by_machine(ordered, states_by_env)
     return [
         _env_to_response(
             env,
             states_by_env.get(env.id),
-            hosted_deployment_id=hosted_deployments_by_machine.get(env.machine_id),
         )
         for env in ordered
     ]
@@ -450,10 +511,7 @@ async def get_environment(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     env, state = row
-    sibling_deployment_id = (
-        None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
-    )
-    payload = _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    payload = _env_to_response(env, state)
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
@@ -490,8 +548,7 @@ async def update_environment(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
-    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
-    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    return _env_to_response(env, state)
 
 
 @router.delete("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
@@ -522,8 +579,7 @@ async def clear_environment_avatar(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
-    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
-    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    return _env_to_response(env, state)
 
 
 @router.post("/environments/{environment_id}/avatar", response_model=EnvironmentResponse)
@@ -572,8 +628,7 @@ async def upload_environment_avatar(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
-    sibling_deployment_id = await _hosted_deployment_id_for_machine(db, env, state)
-    return _env_to_response(env, state, hosted_deployment_id=sibling_deployment_id)
+    return _env_to_response(env, state)
 
 
 @router.get("/environments/{environment_id}/runtime-observed")
@@ -602,11 +657,8 @@ async def get_environment_runtime_observed(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
-    sibling_deployment_id = (
-        None if bound_env is not None else await _hosted_deployment_id_for_machine(db, env, state)
-    )
     return RuntimeObservedResponse(
-        environment=_env_to_response(env, state, hosted_deployment_id=sibling_deployment_id),
+        environment=_env_to_response(env, state),
         desired=_runtime_observed_desired(state) if state is not None else None,
         observed=state.observed if state is not None else None,
         health=_runtime_observed_health(env, state),
@@ -633,18 +685,16 @@ async def get_public_asset(asset_key: str) -> Response:
 def _env_to_response(
     env: AgentEnvironment,
     hosted_state: HostedRuntimeState | None = None,
-    *,
-    hosted_deployment_id: str | None = None,
 ) -> EnvironmentResponse:
-    resolved_hosted_deployment_id = (
-        hosted_state.deployment_id if hosted_state is not None else hosted_deployment_id
-    )
+    resolved_hosted_deployment_id = hosted_state.deployment_id if hosted_state is not None else None
     # Deprecated signal: dashboards now classify agents through their control
     # plane's ownership surface. Kept (runtime-state-derived only) for older
     # API consumers until the field is removed from EnvironmentResponse.
     hosted_managed = resolved_hosted_deployment_id is not None
     return EnvironmentResponse(
         id=str(env.id),
+        name=_agent_name(env),
+        default_name=env.default_name,
         machine_name=env.machine_name,
         display_name=env.display_name,
         avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
@@ -665,6 +715,38 @@ def _env_to_response(
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
+    )
+
+
+def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
+    return AgentResponse(
+        id=str(env.id),
+        name=_agent_name(env),
+        default_name=env.default_name,
+        machine_name=env.machine_name,
+        display_name=env.display_name,
+        avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
+        sort_order=env.sort_order,
+        agent_type=env.agent_type,
+        agent_version=env.agent_version,
+        os=env.os,
+        last_seen_at=env.last_seen_at,
+        last_sync_at=env.last_sync_at,
+        last_sync_error=env.last_sync_error,
+        last_revision_seen=env.last_revision_seen,
+        queue_depth_high_water=env.queue_depth_high_water_since_start,
+        dropped_count=env.dropped_count_since_start,
+        sync_enabled=env.sync_enabled,
+        default_project_id=str(env.default_project_id),
+    )
+
+
+def _agent_name(env: AgentEnvironment) -> str:
+    return (
+        (env.display_name or "").strip()
+        or (env.default_name or "").strip()
+        or (env.machine_name or "").strip()
+        or env.agent_type
     )
 
 
@@ -700,41 +782,6 @@ async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
         )
     ).scalar_one()
     return int(value)
-
-
-def _hosted_deployments_by_machine(
-    envs: list[AgentEnvironment],
-    states_by_env: dict[UUID, HostedRuntimeState],
-) -> dict[str, str]:
-    deployments: dict[str, str] = {}
-    for env in envs:
-        state = states_by_env.get(env.id)
-        if state is not None:
-            deployments[env.machine_id] = state.deployment_id
-    return deployments
-
-
-async def _hosted_deployment_id_for_machine(
-    db: AsyncSession,
-    env: AgentEnvironment,
-    state: HostedRuntimeState | None,
-) -> str | None:
-    if state is not None:
-        return state.deployment_id
-    return (
-        await db.execute(
-            select(HostedRuntimeState.deployment_id)
-            .join(
-                AgentEnvironment,
-                HostedRuntimeState.environment_id == AgentEnvironment.id,
-            )
-            .where(
-                AgentEnvironment.user_id == env.user_id,
-                AgentEnvironment.machine_id == env.machine_id,
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
 
 
 def _runtime_observed_desired(

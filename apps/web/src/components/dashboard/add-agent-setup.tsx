@@ -176,6 +176,7 @@ export function AddAgentSetup() {
 								<AgentLabel
 									machineName={env.machine_name}
 									displayName={env.display_name}
+									defaultName={env.default_name}
 									type={env.agent_type}
 									avatarUrl={env.avatar_url}
 									size="sm"

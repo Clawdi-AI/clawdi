@@ -628,6 +628,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agents */
+        get: operations["list_agents_v1_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent */
+        get: operations["get_agent_v1_agents__agent_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/environments/runtime-observed": {
         parameters: {
             query?: never;
@@ -2396,6 +2430,57 @@ export interface components {
              */
             created_at: string;
         };
+        /** AgentResponse */
+        AgentResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Default Name */
+            default_name?: string | null;
+            /** Machine Name */
+            machine_name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Avatar Url */
+            avatar_url?: string | null;
+            /**
+             * Sort Order
+             * @default 0
+             */
+            sort_order: number;
+            /** Agent Type */
+            agent_type: string;
+            /** Agent Version */
+            agent_version: string | null;
+            /** Os */
+            os: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Last Sync At */
+            last_sync_at?: string | null;
+            /** Last Sync Error */
+            last_sync_error?: string | null;
+            /** Last Revision Seen */
+            last_revision_seen?: number | null;
+            /**
+             * Queue Depth High Water
+             * @default 0
+             */
+            queue_depth_high_water: number;
+            /**
+             * Dropped Count
+             * @default 0
+             */
+            dropped_count: number;
+            /**
+             * Sync Enabled
+             * @default false
+             */
+            sync_enabled: boolean;
+            /** Default Project Id */
+            default_project_id: string;
+        };
         /** AiProviderAuth */
         AiProviderAuth: {
             /**
@@ -3665,6 +3750,8 @@ export interface components {
             machine_id: string;
             /** Machine Name */
             machine_name: string;
+            /** Default Name */
+            default_name?: string | null;
             /** Agent Type */
             agent_type: string;
             /** Agent Version */
@@ -3686,6 +3773,10 @@ export interface components {
         EnvironmentResponse: {
             /** Id */
             id: string;
+            /** Name */
+            name: string;
+            /** Default Name */
+            default_name?: string | null;
             /** Machine Name */
             machine_name: string;
             /** Display Name */
@@ -6675,6 +6766,71 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EnvironmentCreatedResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agents_v1_agents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"][];
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_agent_v1_agents__agent_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Not Modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

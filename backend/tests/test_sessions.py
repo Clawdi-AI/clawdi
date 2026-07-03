@@ -86,7 +86,45 @@ async def test_environment_detail_supports_conditional_get(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_environments_mark_hosted_runtime_siblings(
+async def test_agents_support_conditional_get(client: httpx.AsyncClient):
+    env_id = await _register_env(client, machine_id=f"agent-etag-{uuid.uuid4().hex}")
+
+    first = await client.get("/v1/agents")
+    assert first.status_code == 200, first.text
+    etag = first.headers.get("ETag")
+    assert etag
+    item = next(agent for agent in first.json() if agent["id"] == env_id)
+    assert item["name"] == "Test Mac"
+    assert item["default_name"] == "Test Mac"
+    assert "hosted_managed" not in item
+    assert "hosted_deployment_id" not in item
+
+    not_modified = await client.get("/v1/agents", headers={"If-None-Match": etag})
+    assert not_modified.status_code == 304, not_modified.text
+    assert not_modified.headers.get("ETag") == etag
+
+    detail = await client.get(f"/v1/agents/{env_id}")
+    assert detail.status_code == 200, detail.text
+    detail_etag = detail.headers.get("ETag")
+    assert detail_etag
+    detail_not_modified = await client.get(
+        f"/v1/agents/{env_id}",
+        headers={"If-None-Match": detail_etag},
+    )
+    assert detail_not_modified.status_code == 304, detail_not_modified.text
+
+    heartbeat = await client.post(f"/v1/agents/{env_id}/sync-heartbeat", json={"queue_depth": 1})
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    changed = await client.get("/v1/agents", headers={"If-None-Match": etag})
+    assert changed.status_code == 200, changed.text
+    assert changed.headers.get("ETag") != etag
+    updated = next(agent for agent in changed.json() if agent["id"] == env_id)
+    assert updated["queue_depth_high_water"] == 1
+
+
+@pytest.mark.asyncio
+async def test_environments_mark_only_agents_with_hosted_runtime_state(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
     from app.models.hosted_runtime import HostedRuntimeState
@@ -131,15 +169,24 @@ async def test_environments_mark_hosted_runtime_siblings(
 
     assert by_id[str(openclaw.id)]["hosted_managed"] is True
     assert by_id[str(openclaw.id)]["hosted_deployment_id"] == "hdep_test"
-    assert by_id[str(codex.id)]["hosted_managed"] is True
-    assert by_id[str(codex.id)]["hosted_deployment_id"] == "hdep_test"
+    assert by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
+    assert by_id[str(openclaw.id)]["default_name"] == "Hosted Runtime"
+    assert by_id[str(codex.id)]["hosted_managed"] is False
+    assert by_id[str(codex.id)]["hosted_deployment_id"] is None
     assert by_id[str(laptop.id)]["hosted_managed"] is False
     assert by_id[str(laptop.id)]["hosted_deployment_id"] is None
 
     detail = await client.get(f"/v1/environments/{codex.id}")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["hosted_managed"] is True
-    assert detail.json()["hosted_deployment_id"] == "hdep_test"
+    assert detail.json()["hosted_managed"] is False
+    assert detail.json()["hosted_deployment_id"] is None
+
+    agents = await client.get("/v1/agents")
+    assert agents.status_code == 200, agents.text
+    agent_by_id = {item["id"]: item for item in agents.json()}
+    assert agent_by_id[str(openclaw.id)]["name"] == "Hosted Runtime"
+    assert "hosted_managed" not in agent_by_id[str(openclaw.id)]
+    assert "hosted_deployment_id" not in agent_by_id[str(openclaw.id)]
 
 
 @pytest.mark.asyncio
@@ -1314,6 +1361,7 @@ async def test_delete_environment_rejects_explicit_agent_identity(
         environment_id=agent_id,
         machine_id="external-agent-machine",
         machine_name="External Agent",
+        default_name="External Agent",
         agent_type="codex",
         agent_version="1.0.0",
         os_name="linux",

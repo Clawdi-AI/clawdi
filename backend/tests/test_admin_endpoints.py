@@ -752,6 +752,7 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
             "environment_id": str(agent_id),
             "machine_id": "hosted-machine-explicit",
             "machine_name": "hosted-pod",
+            "default_name": "Hosted Codex",
             "agent_type": "codex",
         },
     )
@@ -763,6 +764,8 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
     ).scalar_one()
     assert env.user_id == seed_user.id
     assert env.machine_id == "hosted-machine-explicit"
+    assert env.machine_name == "hosted-pod"
+    assert env.default_name == "Hosted Codex"
     assert env.registration_key is None
 
 
@@ -783,6 +786,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
         "environment_id": str(agent_id),
         "machine_id": "hosted-agent-initial",
         "machine_name": "hosted-pod-initial",
+        "default_name": "Initial Hosted Codex",
         "agent_type": "codex",
         "agent_version": "1.0.0",
         "os_name": "linux",
@@ -795,6 +799,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
             **body,
             "machine_id": "hosted-agent-moved",
             "machine_name": "hosted-pod-moved",
+            "default_name": "Moved Hosted Codex",
             "agent_version": "1.1.0",
             "os_name": "darwin",
         },
@@ -814,6 +819,7 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
     env = envs[0]
     assert env.machine_id == "hosted-agent-moved"
     assert env.machine_name == "hosted-pod-moved"
+    assert env.default_name == "Moved Hosted Codex"
     assert env.agent_version == "1.1.0"
     assert env.os == "darwin"
     assert env.registration_key is None

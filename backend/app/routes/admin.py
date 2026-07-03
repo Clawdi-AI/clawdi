@@ -552,6 +552,7 @@ async def admin_register_environment(
             user_id=target.id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,
+            default_name=body.default_name,
             agent_type=body.agent_type,
             agent_version=body.agent_version,
             os_name=body.os_name,

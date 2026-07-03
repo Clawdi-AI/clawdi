@@ -7,6 +7,8 @@ type Env = components["schemas"]["EnvironmentResponse"];
 function env(overrides: Partial<Env> = {}): Env {
 	return {
 		id: "11111111-1111-4111-8111-111111111111",
+		name: "dev-laptop",
+		default_name: "dev-laptop",
 		machine_name: "dev-laptop",
 		agent_type: "openclaw",
 		agent_version: null,
@@ -29,6 +31,8 @@ describe("selfManagedAgentTiles", () => {
 		const first = env();
 		const second = env({
 			id: "33333333-3333-4333-8333-333333333333",
+			name: "workstation-two",
+			default_name: "workstation-two",
 			machine_name: "workstation-two",
 		});
 
@@ -36,5 +40,24 @@ describe("selfManagedAgentTiles", () => {
 			second.id,
 			first.id,
 		]);
+	});
+
+	it("keeps identity labels separate from machine metadata", () => {
+		const [tile] = selfManagedAgentTiles([
+			env({
+				name: "Research Agent",
+				default_name: "Research Agent",
+				display_name: "Launch runner",
+				machine_name: "shared-host",
+			}),
+		]);
+
+		expect(tile).toMatchObject({
+			name: "Launch runner",
+			displayName: "Launch runner",
+			defaultName: "Research Agent",
+			machineName: "shared-host",
+		});
+		expect("runtimeLabel" in tile).toBe(false);
 	});
 });

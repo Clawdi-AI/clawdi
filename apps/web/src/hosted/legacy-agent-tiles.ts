@@ -1,6 +1,6 @@
 import type { components } from "@clawdi/shared/api";
-import { cleanMachineName } from "@/components/dashboard/agent-label";
-import { type AgentTile, formatRuntime, isAgentActive } from "@/components/dashboard/agents-card";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
+import { type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
@@ -39,15 +39,13 @@ export function legacyConnectedAgentTiles(
 		.map((env) => ({
 			id: env.id,
 			source: "legacy-hosted" as const,
-			name:
-				cleanMachineName(env.display_name) ||
-				cleanMachineName(env.machine_name) ||
-				formatRuntime(env.agent_type),
+			name: agentDisplayName(env),
 			displayName: env.display_name,
+			defaultName: env.default_name ?? null,
+			machineName: env.machine_name,
 			avatarUrl: env.avatar_url,
 			sortOrder: env.sort_order,
 			agentType: env.agent_type,
-			runtimeLabel: formatRuntime(env.agent_type),
 			statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 			lastSeenAt: env.last_seen_at,
 			href: agentSectionHref(env.id),
