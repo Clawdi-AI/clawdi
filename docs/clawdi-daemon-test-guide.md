@@ -266,7 +266,7 @@ TLS-terminating reverse proxy.
 `CLAWDI_AUTH_TOKEN` env. Run `clawdi auth login` or set the env.
 
 **`serve.no_environment`** — no `~/.clawdi/environments/<agent>.json`.
-Run `clawdi setup`; in a single-agent container, set both
+Run `clawdi setup`; in a single-agent runtime, set both
 `CLAWDI_AGENT_TYPE` and `CLAWDI_ENVIRONMENT_ID`.
 
 **`watcher.fs_watch_failed` → falls back to poll** — expected
@@ -284,21 +284,21 @@ exist only for released clients built before the `/v1` prefix migration. Test
 them deliberately when changing compatibility behavior; do not use them as the
 default path in new documentation.
 
-## Running `clawdi daemon` inside a hosted agent image
+## Running `clawdi daemon` inside a managed runtime
 
-The daemon was designed for laptops but works inside a hosted agent container
-with three caveats. A hosted agent service can drive the dashboard's
+The daemon was designed for laptops but also works inside a managed runtime
+with three caveats. First-party hosted control planes can drive the dashboard's
 `POST /v1/auth/keys` flow on the user's behalf to mint a deploy key bound to
 the Agent, then inject that key into the runtime environment. No
 backend-to-backend secret is required; the user's Clerk JWT is the conduit.
 
-### Env vars the container must set
+### Env vars the runtime must set
 
 | Var | Role |
 |---|---|
 | `CLAWDI_AUTH_TOKEN` | Deploy key. Bypasses `~/.clawdi/auth.json` so no interactive login is needed. |
 | `CLAWDI_AGENT_TYPE` | Agent adapter to load when the container has no `~/.clawdi/environments/*.json` registry. |
-| `CLAWDI_ENVIRONMENT_ID` | The env this single-agent pod represents. Bypasses `~/.clawdi/environments/*.json`. |
+| `CLAWDI_ENVIRONMENT_ID` | The Agent id this single-agent runtime represents. Bypasses `~/.clawdi/environments/*.json`. |
 | `CLAWDI_API_URL` | Cloud backend (for example, `https://api.example.test`). |
 | `CLAWDI_SERVE_MODE=container` | Forces poll mode (overlay-fs doesn't fire fs.watch reliably). |
 | `CLAWDI_DAEMON_RPC_HOST` | HTTP host for the daemon control RPC. Defaults to `127.0.0.1`. |
@@ -310,20 +310,18 @@ backend-to-backend secret is required; the user's Clerk JWT is the conduit.
 
 | Agent | What you need to set |
 |---|---|
-| Hermes | `HERMES_HOME=<hermes-state-dir>` when the pod does not use Hermes' default HOME path. The adapter reads SQLite via `node:sqlite` (Node 22.5+) or `bun:sqlite` — both are built-in, no native bindings to ship. |
-| OpenClaw | `OPENCLAW_STATE_DIR=<openclaw-state-dir>` when the pod does not use OpenClaw's default HOME path. `OPENCLAW_AGENT_ID=<id>` if the pod runs a single agent personality; omit to sync every agent under `agents/`. |
+| Hermes | `HERMES_HOME=<hermes-state-dir>` when the runtime does not use Hermes' default HOME path. The adapter reads SQLite via `node:sqlite` (Node 22.5+) or `bun:sqlite` — both are built-in, no native bindings to ship. |
+| OpenClaw | `OPENCLAW_STATE_DIR=<openclaw-state-dir>` when the runtime does not use OpenClaw's default HOME path. `OPENCLAW_AGENT_ID=<id>` if the runtime runs a single agent personality; omit to sync every agent under `agents/`. |
 
 ### What NOT to do
 
-- **Don't run `clawdi daemon install`** inside the container. Install
+- **Don't run `clawdi daemon install`** inside the runtime. Install
   is for laptop / VPS users where launchd or systemd will respawn
-  the daemon. The agent image's entrypoint (Docker / k8s) is
-  already supervising; install would write a unit file inside
-  the ephemeral container fs.
-- **Don't expect `~/.clawdi/sessions-lock.json` to survive a pod
-  restart** unless `~/.clawdi/` is on a persistent volume. Without
-  the volume, every restart re-pushes every session. Mount
-  `~/.clawdi/` as a named volume to avoid this.
+  the daemon. The runtime's own process supervisor should own restart behavior;
+  install would write a unit file inside ephemeral runtime storage.
+- **Don't expect `~/.clawdi/sessions-lock.json` to survive a runtime restart**
+  unless `~/.clawdi/` is on durable storage. Without durable storage, every
+  restart re-pushes every session.
 
 ### Entrypoint shape
 
@@ -331,5 +329,5 @@ backend-to-backend secret is required; the user's Clerk JWT is the conduit.
 exec clawdi daemon run
 ```
 
-Set `CLAWDI_AGENT_TYPE` when the image does not contain a
+Set `CLAWDI_AGENT_TYPE` when the runtime does not contain a
 `~/.clawdi/environments/<agent>.json` registry file.

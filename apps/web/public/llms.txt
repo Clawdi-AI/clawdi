@@ -1,0 +1,33 @@
+# Clawdi
+> Open-source cross-agent sync and recall layer for agent sessions, skills,
+> memory, vaults, projects, channels, AI Providers, and local agent adapters.
+
+Use `/v1/*` as the canonical public API prefix. Hosted infrastructure internals
+are outside this OSS repository; public docs refer only to first-party hosted
+control planes when that boundary matters.
+
+## Start Here
+- [README](https://github.com/Clawdi-AI/clawdi/blob/main/README.md): Product overview, user quickstart, CLI examples, and self-hosting entry point.
+- [AGENTS](https://github.com/Clawdi-AI/clawdi/blob/main/AGENTS.md): Command-first contributor index for local stack setup, verification, and repo conventions.
+- [Agent Docs Guide](https://github.com/Clawdi-AI/clawdi/blob/main/docs/agent-docs-guide.md): Rules for keeping agent-facing docs short, verified, and maintainable.
+- [Architecture](https://github.com/Clawdi-AI/clawdi/blob/main/docs/architecture.md): Current system map, storage/auth model, API identity, and module ownership.
+- [API Compatibility](https://github.com/Clawdi-AI/clawdi/blob/main/docs/api-compatibility.md): `/v1/agents` canonical surface, deprecated aliases, generated-client rules, and additive API policy.
+
+## Development
+- [Backend Development](https://github.com/Clawdi-AI/clawdi/blob/main/docs/backend-development.md): FastAPI, Alembic, throwaway Postgres tests, and generated API client workflow.
+- [Frontend Development](https://github.com/Clawdi-AI/clawdi/blob/main/docs/frontend-development.md): TanStack Start dashboard loop, OSS build boundary, and web verification commands.
+- [CLI Development](https://github.com/Clawdi-AI/clawdi/blob/main/docs/cli-development.md): Bun CLI workflows, adapters, daemon testing, packaging, and release notes.
+- [Daemon Test Guide](https://github.com/Clawdi-AI/clawdi/blob/main/docs/clawdi-daemon-test-guide.md): Manual and automated verification for `clawdi daemon`.
+- [Release Runbook](https://github.com/Clawdi-AI/clawdi/blob/main/docs/runbooks/release.md): Release tags, CLI/npm publishing, changelog, and rollback checks.
+
+## Domain Contracts
+- [ADR-0001 Agent Identity](https://github.com/Clawdi-AI/clawdi/blob/main/docs/adr/0001-agent-identity-is-the-stable-domain-object.md): Stable Agent identity model and one-name fallback.
+- [AI Providers](https://github.com/Clawdi-AI/clawdi/blob/main/docs/ai-providers.md): Portable model-provider layer, auth references, target apply behavior, and BYOK boundary.
+- [AI Provider Agent Contract Audit](https://github.com/Clawdi-AI/clawdi/blob/main/docs/ai-provider-agent-contract-audit.md): Verified target contracts for Codex, Hermes, and OpenClaw AI Provider projections.
+- [Managed Runtime](https://github.com/Clawdi-AI/clawdi/blob/main/docs/managed-runtime.md): Public CLI/dashboard runtime contract without deployment-specific internals.
+- [Native Channels Product Model](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/native-channels-product-model.md): Backend-owned channel accounts, bot-agent links, pair codes, bindings, and provider SDK emulation.
+- [Channel Runtime Manifest](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/channel-runtime-manifest.md): `clawdi.runtime.yaml` channel projection contract and backend APIs used by the CLI.
+
+## Optional
+- [Using Clawdi with Claude Code](https://github.com/Clawdi-AI/clawdi/blob/main/docs/using-clawdi-with-claude-code.md): End-to-end Claude Code usage guide for setup, vault, skills, memory, and session sync.
+- [Project Sharing Demo](https://github.com/Clawdi-AI/clawdi/blob/main/docs/scenarios/project-sharing-agent-bindings-demo.md): Ship-state walkthrough for Project sharing and Agent Project bindings.

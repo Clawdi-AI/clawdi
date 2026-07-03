@@ -1,5 +1,9 @@
 # Cloud UI 2.0 — UX redesign: domain map, user journeys, refactor plan
 
+> HISTORICAL - UI redesign plan from the 2026-06 pass. Use
+> [`../frontend-development.md`](../frontend-development.md) for current web
+> verification and `apps/web/src/` for current UI state.
+
 Status: proposal (2026-06-03). Phase A (tokens/primitives/casing) already landed
 on `cloud-ui-redesign`. This doc is the contract for Phase B — the structural,
 user-centric redesign replacing the "CRM" feel.

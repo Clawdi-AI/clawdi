@@ -1,5 +1,9 @@
 # UI 2.0 — simulated journey evaluation (10 goals)
 
+> HISTORICAL - UI journey evaluation from the 2026-06 redesign pass. Use
+> [`../frontend-development.md`](../frontend-development.md) for current web
+> verification and `apps/web/src/` for current UI state.
+
 Driven live in a real browser against the full prod-mirrored dataset
 (2026-06-03, post-vivid-identity build). Each journey lists steps actually
 taken, the felt experience, and negative feelings found. Severity:

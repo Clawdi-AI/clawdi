@@ -1,5 +1,10 @@
 # Scenario 6: Skills — Portable Agent Instructions
 
+> HISTORICAL - early 2026-04 skills registry scenario. Current commands use
+> `clawdi skill ...`, `clawdi push`, and `clawdi pull`; see
+> [`../using-clawdi-with-claude-code.md#c-skills-portable-instructions-that-all-your-agents-share`](../using-clawdi-with-claude-code.md#c-skills-portable-instructions-that-all-your-agents-share)
+> and [`../cli-development.md`](../cli-development.md).
+
 **Date:** 2026-04-15
 **Context:** Skills are static config (markdown files), not MCP tools. Loaded at session start, synced via CLI.
 

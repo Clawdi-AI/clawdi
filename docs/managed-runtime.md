@@ -22,11 +22,10 @@ Related public docs:
 The open-source CLI owns local runtime convergence, explicit `clawdi run`
 env-injection, runtime UI bridging, and diagnostics. It does not own
 OpenClaw/Hermes binaries, native update flows, or runtime process behavior.
-The web app owns the
-hosted deployment dashboard surfaces, including Control UI and Terminal tabs. A
-separate control plane may provide desired state, credentials, terminal
-authorization, rollout policy, and deployment lifecycle, but that
-platform-specific implementation is outside this repository.
+The web app owns the hosted deployment dashboard surfaces, including Control UI
+and Terminal tabs. First-party hosted control planes may provide desired state,
+credentials, terminal authorization, rollout policy, and deployment lifecycle,
+but those platform-specific implementations are outside this repository.
 
 The public contract covers:
 

@@ -1,5 +1,9 @@
 # Cloud UI 2.0 — Baseline survey (Phase 0)
 
+> HISTORICAL - UI redesign survey from the 2026-06 pass. Use
+> [`../frontend-development.md`](../frontend-development.md) for current web
+> verification and `apps/web/src/` for current UI state.
+
 Surveyed on branch `cloud-ui-redesign` (off main @ b54b7d0), local dev at
 `http://localhost:3001` (web) + `:8001` (backend, DB clone `clawdi_cloud_ui2`).
 Screenshots: `/tmp/ui2b/{light,dark}-{desktop,mobile}/*.png` (15 pages × 4 combos).
