@@ -143,10 +143,21 @@ change so both web and CLI callers see the same types.
 
 ## Local database inspection
 
+If Alembic cannot locate a revision on the persistent dev database, the Docker
+volume was likely stamped by another branch; reset it with
+`docker compose down -v`, then restart Postgres and rerun `pdm migrate`.
+
 For the default dev database:
 
 ```bash
 psql postgresql://clawdi:clawdi_dev@localhost:5433/clawdi
+```
+
+That command requires the `psql` client on your host. If it is not installed,
+use the repo's compose service instead:
+
+```bash
+docker compose exec postgres psql -U clawdi -d clawdi
 ```
 
 For a custom async SQLAlchemy URL, strip the `+asyncpg` driver when invoking
