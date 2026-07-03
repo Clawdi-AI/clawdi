@@ -55,8 +55,13 @@ async def register_agent_environment(
     Explicit `environment_id` callers own the agent identity and bypass machine
     idempotency. Implicit callers must pass `registration_key`; concurrent
     retries converge through the database unique constraint on
-    `(user_id, registration_key)`.
+    `(user_id, registration_key)`. At least one of `environment_id` or
+    `registration_key` must be supplied so every create path has a stable
+    identity or an idempotency key.
     """
+
+    if environment_id is None and registration_key is None:
+        raise ValueError("register_agent_environment requires environment_id or registration_key")
 
     if environment_id is not None:
         existing = (

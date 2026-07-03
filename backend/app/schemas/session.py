@@ -209,9 +209,12 @@ class EnvironmentResponse(BaseModel):
     # API consumers and will be removed in a future schema revision.
     hosted_managed: bool = False
     # DEPRECATED: see hosted_managed. Real deployment id when cloud-api has
-    # runtime desired state for this env or a sibling env in the same
-    # hosted compute.
+    # runtime desired state for this env.
     hosted_deployment_id: str | None = None
+    # True when the row was registered with a caller-owned stable identity.
+    # These rows have no local registration key and cannot be disconnected
+    # through the user-facing dashboard route.
+    explicit_identity: bool = False
     # Schema-enforced NOT NULL on agent_environments — every env
     # has a default project after register_environment runs (which
     # heals legacy rows that lost their value). Daemons rely on this
@@ -239,6 +242,7 @@ class AgentResponse(BaseModel):
     queue_depth_high_water: int = 0
     dropped_count: int = 0
     sync_enabled: bool = False
+    explicit_identity: bool = False
     default_project_id: str
 
 

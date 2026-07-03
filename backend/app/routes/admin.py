@@ -592,7 +592,8 @@ async def admin_delete_environment(
     """Delete an AgentEnvironment row on behalf of first-party hosted infra.
 
     Sessions keep their history via ON DELETE SET NULL, matching the
-    dashboard-only `/api/environments/{id}` semantics.
+    user-facing `/v1/environments/{id}` semantics. Unlike the dashboard route,
+    first-party cleanup may delete explicit-identity rows.
     """
     env = (
         await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))

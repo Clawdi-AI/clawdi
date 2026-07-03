@@ -711,6 +711,7 @@ def _env_to_response(
         sync_enabled=env.sync_enabled,
         hosted_managed=hosted_managed,
         hosted_deployment_id=resolved_hosted_deployment_id,
+        explicit_identity=env.registration_key is None,
         # NOT NULL per schema; the heal path in register_environment
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
@@ -737,6 +738,7 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
         queue_depth_high_water=env.queue_depth_high_water_since_start,
         dropped_count=env.dropped_count_since_start,
         sync_enabled=env.sync_enabled,
+        explicit_identity=env.registration_key is None,
         default_project_id=str(env.default_project_id),
     )
 

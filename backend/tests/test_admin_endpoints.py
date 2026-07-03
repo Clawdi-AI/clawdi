@@ -703,7 +703,7 @@ async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_register_env_creates_with_project(admin_client, db_session, seed_user):
+async def test_admin_register_env_creates_with_project(admin_client, client, db_session, seed_user):
     """Admin env registration creates an AgentEnvironment AND a
     default project, matching the user-facing register_environment
     contract. Migration tooling depends on default_project_id being
@@ -733,15 +733,36 @@ async def test_admin_register_env_creates_with_project(admin_client, db_session,
     assert env.registration_key == "machine:migrate-machine-1:agent:openclaw"
     assert env.default_project_id is not None  # heal logic ran
 
+    detail = await client.get(f"/v1/environments/{env_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is False
+    assert "registration_key" not in body
+
 
 @pytest.mark.asyncio
-async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_session, seed_user):
+async def test_admin_register_env_accepts_explicit_agent_id(
+    admin_client, client, db_session, seed_user
+):
     """Hosted registration owns the stable agent id. Machine fields are metadata."""
     import uuid
 
     from sqlalchemy import select
 
     from app.models.session import AgentEnvironment
+
+    machine_key = await admin_client.post(
+        "/v1/admin/environments",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "machine_id": "machine-key-before-explicit",
+            "machine_name": "machine-key-pod",
+            "agent_type": "openclaw",
+        },
+    )
+    assert machine_key.status_code == 200, machine_key.text
+    machine_key_env_id = machine_key.json()["id"]
 
     agent_id = uuid.uuid4()
     r = await admin_client.post(
@@ -767,6 +788,24 @@ async def test_admin_register_env_accepts_explicit_agent_id(admin_client, db_ses
     assert env.machine_name == "hosted-pod"
     assert env.default_name == "Hosted Codex"
     assert env.registration_key is None
+
+    detail = await client.get(f"/v1/environments/{agent_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["explicit_identity"] is True
+    assert "registration_key" not in body
+
+    agent_detail = await client.get(f"/v1/agents/{agent_id}")
+    assert agent_detail.status_code == 200, agent_detail.text
+    assert agent_detail.json()["explicit_identity"] is True
+
+    listing = await client.get("/v1/environments")
+    assert listing.status_code == 200, listing.text
+    by_id = {item["id"]: item for item in listing.json()}
+    assert {
+        machine_key_env_id: by_id[machine_key_env_id]["explicit_identity"],
+        str(agent_id): by_id[str(agent_id)]["explicit_identity"],
+    } == {machine_key_env_id: False, str(agent_id): True}
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
+import {
+	agentDisconnectUnavailable,
+	agentOwnershipKindFromId,
+	useAgentOwnership,
+} from "@/lib/agent-ownership";
 import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
@@ -184,7 +188,11 @@ export function AgentSettingsPanel({
 	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
-	const disconnectUnavailable = ownership === null || ownershipKind !== "connected";
+	const disconnectUnavailable = agentDisconnectUnavailable({
+		envId: agent.id,
+		explicitIdentity: agent.explicit_identity,
+		ownership,
+	});
 	const isBusy =
 		updateIdentity.isPending ||
 		uploadMutation.isPending ||
