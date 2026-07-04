@@ -7,12 +7,15 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
+	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
+	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
@@ -28,6 +31,75 @@ export const billingKeys = {
 	me: ["billing", "me"] as const,
 	usage: ["billing", "usage"] as const,
 };
+
+type CheckoutMutationVariables = {
+	body: CheckoutRequest;
+	idempotencyKey: string;
+};
+
+type CreateDeploymentMutationVariables = {
+	body: DeployRequest;
+	idempotencyKey: string;
+};
+
+const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
+const CHECKOUT_RETURN_MARKER_PARAMS = [
+	"session_id",
+	"checkout_session_id",
+	...CHECKOUT_RETURN_DEPLOYMENT_PARAMS,
+	"mockCheckout",
+] as const;
+
+export function checkoutReturnMarker(searchStr: string): string | null {
+	const params = new URLSearchParams(searchStr);
+	const values = CHECKOUT_RETURN_MARKER_PARAMS.flatMap((key) => {
+		const value = params.get(key);
+		return value ? [`${key}=${value}`] : [];
+	});
+	return values.length > 0 ? values.join("&") : null;
+}
+
+export function checkoutReturnDeploymentId(searchStr: string): string | null {
+	const params = new URLSearchParams(searchStr);
+	for (const key of CHECKOUT_RETURN_DEPLOYMENT_PARAMS) {
+		const value = params.get(key);
+		if (value) return value;
+	}
+	return null;
+}
+
+function subscriptionFromAction(
+	previous: HostedDeployment["compute_subscription"] | null | undefined,
+	next: ComputeSubscriptionActionResult,
+): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		...(previous ?? {}),
+		status: next.status,
+		billing_term_months: next.billing_term_months,
+		currency: previous?.currency ?? "usd",
+		cancel_at_period_end: next.cancel_at_period_end,
+		current_period_end: next.current_period_end ?? previous?.current_period_end ?? null,
+		cancel_at: next.cancel_at ?? null,
+	};
+}
+
+function patchDeploymentSubscription(
+	deployments: HostedDeployment[] | undefined,
+	deploymentId: string,
+	next: ComputeSubscriptionActionResult,
+): HostedDeployment[] | undefined {
+	if (!deployments) return deployments;
+	let patched = false;
+	const updated = deployments.map((deployment) => {
+		if (deployment.id !== deploymentId) return deployment;
+		patched = true;
+		return {
+			...deployment,
+			compute_subscription: subscriptionFromAction(deployment.compute_subscription, next),
+		};
+	});
+	return patched ? updated : deployments;
+}
 
 /**
  * Shared billing read: gates fetches on `isDeployApiConfigured()` and applies
@@ -119,8 +191,14 @@ export function usePlans() {
 
 export function useCheckout() {
 	const client = useBillingClient();
+	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (body: CheckoutRequest) => client.checkout(body),
+		mutationFn: ({ body, idempotencyKey }: CheckoutMutationVariables) =>
+			client.checkout(body, idempotencyKey),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+		},
 	});
 }
 
@@ -129,7 +207,10 @@ export function useCancelSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
-		onSuccess: () => {
+		onSuccess: (next, body) => {
+			qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+				patchDeploymentSubscription(deployments, body.deployment_id, next),
+			);
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 		},
 	});
@@ -147,10 +228,27 @@ export function useResumeSubscription() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
-		onSuccess: () => {
+		onSuccess: (next, body) => {
+			qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+				patchDeploymentSubscription(deployments, body.deployment_id, next),
+			);
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 		},
 	});
+}
+
+export function useCheckoutReturnRefresh() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useCallback(async () => {
+		const [deploymentsResult] = await Promise.allSettled([
+			qc.fetchQuery({ queryKey: billingKeys.deployments, queryFn: () => client.listDeployments() }),
+			qc.fetchQuery({ queryKey: billingKeys.wallet, queryFn: () => client.getWallet() }),
+			qc.invalidateQueries({ queryKey: billingKeys.plans }),
+			qc.invalidateQueries({ queryKey: ["agents"] }),
+		]);
+		return deploymentsResult.status === "fulfilled" ? deploymentsResult.value : undefined;
+	}, [client, qc]);
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────
@@ -185,7 +283,8 @@ export function useCreateDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (body: DeployRequest) => client.createDeployment(body),
+		mutationFn: ({ body, idempotencyKey }: CreateDeploymentMutationVariables) =>
+			client.createDeployment(body, idempotencyKey),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: ["agents"] });

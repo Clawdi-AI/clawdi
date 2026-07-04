@@ -65,20 +65,33 @@ import {
 } from "@/hosted/agents/hosted-terminal-panel";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
+	CheckoutRequest,
 	HostedDeployment,
-	Plan,
 	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
+	checkoutReturnDeploymentId,
+	checkoutReturnMarker,
 	useCancelSubscription,
 	useCheckout,
+	useCheckoutReturnRefresh,
 	usePlans,
 	usePortal,
 	useResumeSubscription,
 } from "@/hosted/billing/hooks";
-import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import {
+	type IdempotencyAttempt,
+	idempotencyAttemptFor,
+	idempotencyFingerprint,
+	newIdempotencyKey,
+} from "@/hosted/billing/idempotency";
+import {
+	planOffers,
+	resolvePerformancePlan,
+	selectOfferForTerm,
+} from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	HOSTED_RUNTIMES,
@@ -206,12 +219,6 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 			<Info className="size-3.5 shrink-0" />
 			{children}
 		</p>
-	);
-}
-
-function performancePlan(plans: Plan[] | undefined): Plan | undefined {
-	return (
-		plans?.find((p) => p.slug === "compute_performance") ?? plans?.find((p) => p.price_cents > 0)
 	);
 }
 
@@ -1236,16 +1243,20 @@ function ComputeSettingsSections({
 	runtime: Runtime;
 }) {
 	const router = useRouter();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const lifecycle = useDeploymentLifecycle();
 	const del = useDeleteDeployment();
 	const setEnabled = useSetAgentEnabled();
 	const onboard = useOnboardAgent();
 	const plans = usePlans();
 	const checkout = useCheckout();
+	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const portal = usePortal();
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
+	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const checkoutReturnRef = useRef<string | null>(null);
 	const ci = deployment.config_info;
 	const canStop = STOPPABLE_STATUSES.has(deployment.status);
 	const canStart = STARTABLE_STATUSES.has(deployment.status);
@@ -1260,16 +1271,26 @@ function ComputeSettingsSections({
 		runtimeIsEnabled(ci, runtimeId),
 	).length;
 	const runtimePending = setEnabled.isPending || onboard.isPending;
-	const perfPlan = useMemo(() => performancePlan(plans.data), [plans.data]);
+	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
-	const perfOffer = useMemo(
+	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
-	const currentOffer = useMemo(
+	const perfOffer = perfOfferSelection?.offer ?? null;
+	const selectedBillingTerm = perfOfferSelection?.billingTermMonths ?? term;
+	const currentOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, currentBillingTerm) : null),
 		[perfPlan, currentBillingTerm],
 	);
+	const currentOffer =
+		currentOfferSelection?.billingTermMonths === currentBillingTerm
+			? currentOfferSelection.offer
+			: null;
+	const currentPriceCents =
+		typeof currentSubscription?.price_cents === "number"
+			? currentSubscription.price_cents
+			: (currentOffer?.price_cents ?? null);
 	const subscriptionEndsAt =
 		currentSubscription?.cancel_at ?? currentSubscription?.current_period_end ?? null;
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
@@ -1277,9 +1298,10 @@ function ComputeSettingsSections({
 	const canChangeBillingTerm =
 		isPerformance &&
 		!!perfPlan &&
+		!!perfOfferSelection &&
 		!!currentSubscription &&
 		!subscriptionCancelPending &&
-		term !== currentBillingTerm;
+		selectedBillingTerm !== currentBillingTerm;
 	const canUpgrade = !isPerformance && deployment.upgrade_available;
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability..."
@@ -1297,9 +1319,27 @@ function ComputeSettingsSections({
 	useEffect(() => {
 		setTerm(currentBillingTerm);
 	}, [deployment.id, currentBillingTerm]);
+	useEffect(() => {
+		const marker = checkoutReturnMarker(searchStr);
+		if (!marker || checkoutReturnRef.current === marker) return;
+		checkoutReturnRef.current = marker;
+		void refreshCheckoutReturn().then(() => {
+			const deploymentId = checkoutReturnDeploymentId(searchStr);
+			if (deploymentId && deploymentId !== deployment.id) {
+				void router.navigate({
+					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+					replace: true,
+				});
+				return;
+			}
+			toast.message("Checkout status refreshed", {
+				description: "We checked your deployments, subscription, and wallet.",
+			});
+		});
+	}, [deployment.id, refreshCheckoutReturn, router, searchStr]);
 
 	async function startPerformanceUpgrade() {
-		if (!perfPlan) {
+		if (!perfPlan || !perfOfferSelection) {
 			toast.error("Performance unavailable", {
 				description: "No Performance compute plan is available right now.",
 			});
@@ -1312,11 +1352,21 @@ function ComputeSettingsSections({
 			return;
 		}
 		try {
-			const result = await checkout.mutateAsync({
+			const body: CheckoutRequest = {
 				plan_slug: perfPlan.slug,
-				billing_term_months: term,
+				billing_term_months: perfOfferSelection.billingTermMonths,
 				ui_mode: "hosted",
 				upgrade_deployment_id: deployment.id,
+			};
+			checkoutAttemptRef.current = idempotencyAttemptFor(
+				checkoutAttemptRef.current,
+				"subscription-upgrade",
+				idempotencyFingerprint(body),
+				newIdempotencyKey,
+			);
+			const result = await checkout.mutateAsync({
+				body,
+				idempotencyKey: checkoutAttemptRef.current.key,
 			});
 			if (redirectToCheckout(result.action_url || result.checkout_url)) {
 				return;
@@ -1335,7 +1385,7 @@ function ComputeSettingsSections({
 			const res = await portal.mutateAsync({
 				deployment_id: deployment.id,
 				flow: "subscription_update_confirm",
-				billing_term_months: term,
+				billing_term_months: selectedBillingTerm,
 			});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
@@ -1477,10 +1527,10 @@ function ComputeSettingsSections({
 						{isPerformance && currentSubscription ? (
 							<p className="mt-2 text-xs text-muted-foreground">
 								{billingTermLabel(currentBillingTerm)}
-								{currentOffer ? (
+								{currentPriceCents !== null ? (
 									<>
 										{" "}
-										· {formatCentsCompact(currentOffer.price_cents)}
+										· {formatCentsCompact(currentPriceCents)}
 										{billingTermSuffix(currentBillingTerm)}
 									</>
 								) : null}
@@ -1509,10 +1559,16 @@ function ComputeSettingsSections({
 						) : null}
 						{!isPerformance ? (
 							<div className="flex w-full flex-col gap-2 lg:w-64">
-								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
+								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
 								<Button
 									size="sm"
-									disabled={plans.isLoading || checkout.isPending || !canUpgrade || !perfPlan}
+									disabled={
+										plans.isLoading ||
+										checkout.isPending ||
+										!canUpgrade ||
+										!perfPlan ||
+										!perfOfferSelection
+									}
 									onClick={() => runAction(startPerformanceUpgrade)}
 								>
 									{checkout.isPending ? (
@@ -1528,7 +1584,7 @@ function ComputeSettingsSections({
 							</div>
 						) : (
 							<div className="flex w-full flex-col gap-2 lg:w-72">
-								<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
+								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
 								<Button
 									type="button"
 									variant="outline"

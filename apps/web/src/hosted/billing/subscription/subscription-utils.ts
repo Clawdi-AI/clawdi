@@ -1,5 +1,27 @@
 import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
 
+export const COMPUTE_FREE_SLUG = "compute_free";
+export const COMPUTE_PERFORMANCE_SLUG = "compute_performance";
+
+export type ResolvedBillingOffer = {
+	offer: BillingOffer;
+	billingTermMonths: number;
+};
+
+export function resolveFreePlan(plans: Plan[] | undefined): Plan | undefined {
+	return (
+		plans?.find((plan) => plan.slug === COMPUTE_FREE_SLUG) ??
+		plans?.find((plan) => plan.price_cents === 0)
+	);
+}
+
+export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefined {
+	return (
+		plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG) ??
+		plans?.find((plan) => plan.price_cents > 0)
+	);
+}
+
 /**
  * The plan's offer for a billing term, with a synthetic monthly offer when the
  * backend returns no offers — so callers always have a price to show.
@@ -17,7 +39,8 @@ export function planOffers(plan: Plan): BillingOffer[] {
 			];
 }
 
-export function selectOfferForTerm(plan: Plan, term: number): BillingOffer {
+export function selectOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer {
 	const offers = planOffers(plan);
-	return offers.find((o) => o.billing_term_months === term) ?? offers[0];
+	const offer = offers.find((o) => o.billing_term_months === term) ?? offers[0];
+	return { offer, billingTermMonths: offer.billing_term_months };
 }
