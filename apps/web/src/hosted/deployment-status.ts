@@ -118,11 +118,16 @@ export function canStart(status: DeploymentStatus): boolean {
 }
 
 export function canStop(status: DeploymentStatus): boolean {
-	return isRunningStatus(status);
+	return isRunningStatus(status) || status.kind === "starting";
 }
 
 export function canRestart(status: DeploymentStatus): boolean {
-	return isRunningStatus(status) || status.kind === "failed" || status.kind === "error";
+	return (
+		isRunningStatus(status) ||
+		status.kind === "starting" ||
+		status.kind === "failed" ||
+		status.kind === "error"
+	);
 }
 
 export function shouldPollDeployments(

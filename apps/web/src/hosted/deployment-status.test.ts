@@ -59,15 +59,17 @@ describe("DeploymentStatus", () => {
 		}
 	});
 
-	test("drives lifecycle gates from settled statuses only", () => {
+	test("drives lifecycle gates from recoverable statuses", () => {
 		expect(isRunningStatus(parseDeploymentStatus("running"))).toBe(true);
 		expect(isRunningStatus(parseDeploymentStatus("ready"))).toBe(true);
 		expect(canStop(parseDeploymentStatus("running"))).toBe(true);
-		expect(canStop(parseDeploymentStatus("starting"))).toBe(false);
+		expect(canStop(parseDeploymentStatus("starting"))).toBe(true);
 		expect(canStart(parseDeploymentStatus("stopped"))).toBe(true);
 		expect(canStart(parseDeploymentStatus("failed"))).toBe(true);
 		expect(canStart(parseDeploymentStatus("error"))).toBe(true);
+		expect(canStart(parseDeploymentStatus("starting"))).toBe(false);
 		expect(canRestart(parseDeploymentStatus("ready"))).toBe(true);
+		expect(canRestart(parseDeploymentStatus("starting"))).toBe(true);
 		expect(canRestart(parseDeploymentStatus("failed"))).toBe(true);
 		expect(canRestart(parseDeploymentStatus("restarting"))).toBe(false);
 		expect(canRestart(parseDeploymentStatus("future_status"))).toBe(false);

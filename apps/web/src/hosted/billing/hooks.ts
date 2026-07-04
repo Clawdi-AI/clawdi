@@ -2,6 +2,7 @@
 
 import {
 	keepPreviousData,
+	type QueryClient,
 	type UseQueryOptions,
 	useMutation,
 	useQuery,
@@ -100,6 +101,16 @@ function patchDeploymentSubscription(
 		};
 	});
 	return patched ? updated : deployments;
+}
+
+export function applyDeploymentSubscriptionResult(
+	qc: QueryClient,
+	deploymentId: string,
+	next: ComputeSubscriptionActionResult,
+): void {
+	qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+		patchDeploymentSubscription(deployments, deploymentId, next),
+	);
 }
 
 /**
@@ -209,10 +220,7 @@ export function useCancelSubscription() {
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionCancelRequest) => client.cancelSubscription(body),
 		onSuccess: (next, body) => {
-			qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
-				patchDeploymentSubscription(deployments, body.deployment_id, next),
-			);
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 		},
 	});
 }
@@ -230,10 +238,7 @@ export function useResumeSubscription() {
 	return useMutation({
 		mutationFn: (body: ComputeSubscriptionResumeRequest) => client.resumeSubscription(body),
 		onSuccess: (next, body) => {
-			qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
-				patchDeploymentSubscription(deployments, body.deployment_id, next),
-			);
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 		},
 	});
 }
