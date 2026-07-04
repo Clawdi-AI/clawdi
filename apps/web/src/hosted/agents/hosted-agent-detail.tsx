@@ -172,7 +172,6 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
-const HOSTED_AGENT_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
 const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
 const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
@@ -307,12 +306,7 @@ export function HostedAgentDetail({
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
-			<section
-				className={cn(
-					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : HOSTED_AGENT_INNER_WIDTH_CLASS,
-					!isLiveToolTab && "flex flex-col gap-4",
-				)}
-			>
+			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4"}>
 				{isLiveToolTab ? null : (
 					<PageHeader
 						title={activeTabLabel}
@@ -1222,7 +1216,7 @@ function HostedAgentSettingsTab({
 }) {
 	return (
 		<div className="flex flex-col gap-10">
-			<AgentSettingsPanel environmentId={environmentId} contained={false} />
+			<AgentSettingsPanel environmentId={environmentId} />
 			<ComputeSettingsSections
 				deployment={deployment}
 				isPerformance={isPerformance}
