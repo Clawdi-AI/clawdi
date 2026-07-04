@@ -1,6 +1,8 @@
 "use client";
 
 import { useLocation } from "@tanstack/react-router";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	ConnectedAgentDetail,
@@ -8,12 +10,16 @@ import {
 } from "@/components/dashboard/connected-agent-detail";
 import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { Button } from "@/components/ui/button";
 import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import type { AgentSectionId } from "@/lib/agent-routes";
+
+const UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS = 5_000;
+const UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS = 24;
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
@@ -42,6 +48,37 @@ export function AgentHome({
 	} = useAgentDeployment(environmentId);
 	const requestedHostedAgent =
 		searchParams.get("source") === "on-clawdi" || !isCloudEnvId(environmentId);
+	const unresolvedHostedAgent = requestedHostedAgent && !deployment && !error && !isLoading;
+	const isFetchingRef = useRef(isFetching);
+
+	useEffect(() => {
+		isFetchingRef.current = isFetching;
+	}, [isFetching]);
+
+	useEffect(() => {
+		if (!unresolvedHostedAgent || typeof window === "undefined") return;
+
+		let attempts = 0;
+		const intervalId = window.setInterval(() => {
+			if (isFetchingRef.current) return;
+
+			attempts += 1;
+			void refetch();
+
+			if (attempts >= UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS) {
+				window.clearInterval(intervalId);
+			}
+		}, UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS);
+
+		return () => {
+			window.clearInterval(intervalId);
+		};
+	}, [refetch, unresolvedHostedAgent]);
+
+	const handleCheckAgain = () => {
+		if (isFetchingRef.current) return;
+		void refetch();
+	};
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
@@ -93,6 +130,11 @@ export function AgentHome({
 				<EmptyState
 					title="Clawdi Cloud agent not found"
 					description="This Clawdi Cloud agent may still be provisioning or may have been removed."
+					action={
+						<Button type="button" variant="outline" size="sm" onClick={handleCheckAgain}>
+							<RefreshCw /> Check again
+						</Button>
+					}
 				/>
 			</div>
 		);
