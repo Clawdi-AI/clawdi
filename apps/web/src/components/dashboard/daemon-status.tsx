@@ -121,14 +121,14 @@ const DOT_TONE: Record<DaemonStatusKind, string> = {
 	live: "bg-success ring-2 ring-success/20",
 	"set-up": "border-dashed border border-muted-foreground/50 bg-transparent",
 	errored: "bg-destructive ring-2 ring-destructive/20",
-	paused: "bg-destructive ring-2 ring-destructive/20",
+	paused: "bg-warning ring-2 ring-warning/20",
 };
 
 const TEXT_TONE: Record<DaemonStatusKind, string> = {
 	live: "text-muted-foreground",
 	"set-up": "text-muted-foreground",
 	errored: "text-destructive-muted-foreground font-medium",
-	paused: "text-destructive-muted-foreground font-medium",
+	paused: "text-warning-muted-foreground font-medium",
 };
 
 /** Inline meta item — sits in the SAME meta/sub-line as
