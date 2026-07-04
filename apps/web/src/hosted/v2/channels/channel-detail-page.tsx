@@ -16,7 +16,7 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -255,7 +255,9 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						confirmLabel="Remove channel"
 						destructive
 						onConfirm={() =>
-							del.mutate(id, { onSuccess: () => void router.navigate({ href: "/channels" }) })
+							del.mutateAsync(id, {
+								onSuccess: () => void router.navigate({ href: "/channels" }),
+							})
 						}
 					>
 						<Button variant="outline" className="text-muted-foreground hover:text-destructive">
@@ -398,7 +400,7 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 										description={<p>It stops sending and receiving on {accountName}.</p>}
 										confirmLabel="Unlink"
 										destructive
-										onConfirm={() => unlink.mutate(link.id)}
+										onConfirm={() => unlink.mutateAsync(link.id)}
 									>
 										<Button
 											variant="ghost"
@@ -555,7 +557,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 								description={<p>The WhatsApp credential is revoked. This can't be undone.</p>}
 								confirmLabel="Unlink"
 								destructive
-								onConfirm={() => revoke.mutate(d.credential_id)}
+								onConfirm={() => revoke.mutateAsync(d.credential_id)}
 							>
 								<Button
 									variant="ghost"
@@ -592,12 +594,22 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const [agentId, setAgentId] = useState("");
 	const [ttl, setTtl] = useState("900");
 	const [result, setResult] = useState<{ code: string; expires_at: string } | null>(null);
+	const generateLocked = useRef(false);
 	const meta = providerMeta(provider);
+	const isGenerating = create.isPending || generateLocked.current;
 
 	function generate() {
+		if (generateLocked.current) return;
+		generateLocked.current = true;
+		setResult(null);
 		create.mutate(
 			{ agent_id: agentId || undefined, ttl_seconds: Number(ttl) },
-			{ onSuccess: (data) => setResult({ code: data.code, expires_at: data.expires_at }) },
+			{
+				onSuccess: (data) => setResult({ code: data.code, expires_at: data.expires_at }),
+				onSettled: () => {
+					generateLocked.current = false;
+				},
+			},
 		);
 	}
 
@@ -614,7 +626,11 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					{envs.isLoading ? (
 						<Skeleton className="h-10 w-full rounded-md" />
 					) : (
-						<Select value={agentId} onValueChange={setAgentId} disabled={!!envs.error}>
+						<Select
+							value={agentId}
+							onValueChange={setAgentId}
+							disabled={!!envs.error || isGenerating}
+						>
 							<SelectTrigger id="pair-agent">
 								<SelectValue placeholder="Use linked agent" />
 							</SelectTrigger>
@@ -634,7 +650,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 				</div>
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-ttl">Expires in</Label>
-					<Select value={ttl} onValueChange={setTtl}>
+					<Select value={ttl} onValueChange={setTtl} disabled={isGenerating}>
 						<SelectTrigger id="pair-ttl">
 							<SelectValue />
 						</SelectTrigger>
@@ -657,9 +673,9 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 				/>
 			) : null}
 
-			<Button onClick={generate} disabled={create.isPending}>
+			<Button onClick={generate} disabled={isGenerating}>
 				<QrCode className="size-4" />
-				{create.isPending ? "Generating…" : "Generate pairing code"}
+				{isGenerating ? "Generating…" : "Generate pairing code"}
 			</Button>
 
 			{result ? (

@@ -2,7 +2,7 @@
 
 import type { components } from "@clawdi/shared/api";
 import { CircleCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	AgentLabel,
@@ -63,6 +63,7 @@ export function LinkAgentDialog({
 	const [agentId, setAgentId] = useState("");
 	const [token, setToken] = useState<string | null>(null);
 	const [linkedNoToken, setLinkedNoToken] = useState(false);
+	const submitLocked = useRef(false);
 
 	useEffect(() => {
 		if (!open) return;
@@ -72,11 +73,15 @@ export function LinkAgentDialog({
 	}, [open]);
 
 	function submit() {
-		if (!agentId) return;
+		if (!agentId || submitLocked.current) return;
+		submitLocked.current = true;
 		link.mutate(agentId, {
 			onSuccess: (data) => {
 				if (data.agent_token) setToken(data.agent_token);
 				else setLinkedNoToken(true);
+			},
+			onSettled: () => {
+				submitLocked.current = false;
 			},
 		});
 	}
@@ -150,7 +155,10 @@ export function LinkAgentDialog({
 							<Button variant="outline" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button onClick={submit} disabled={!agentId || link.isPending}>
+							<Button
+								onClick={submit}
+								disabled={!agentId || link.isPending || submitLocked.current}
+							>
 								{link.isPending ? "Linking…" : "Link agent"}
 							</Button>
 						</>

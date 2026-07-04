@@ -1,7 +1,7 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,7 @@ export function ConnectBotDialog({
 	const [serverUrl, setServerUrl] = useState("");
 	const [authMode, setAuthMode] = useState<string>("password_query");
 	const [created, setCreated] = useState<ChannelCreated | null>(null);
+	const submitLocked = useRef(false);
 
 	useEffect(() => {
 		if (!open) return;
@@ -122,8 +123,14 @@ export function ConnectBotDialog({
 	}
 
 	function submit() {
-		if (!canSubmit) return;
-		create.mutate(buildBody(), { onSuccess: (data) => setCreated(data) });
+		if (!canSubmit || submitLocked.current) return;
+		submitLocked.current = true;
+		create.mutate(buildBody(), {
+			onSuccess: (data) => setCreated(data),
+			onSettled: () => {
+				submitLocked.current = false;
+			},
+		});
 	}
 
 	return (
@@ -317,7 +324,10 @@ export function ConnectBotDialog({
 							<Button variant="outline" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button onClick={submit} disabled={!canSubmit || create.isPending}>
+							<Button
+								onClick={submit}
+								disabled={!canSubmit || create.isPending || submitLocked.current}
+							>
 								{create.isPending ? "Connecting…" : "Connect"}
 							</Button>
 						</DialogFooter>
