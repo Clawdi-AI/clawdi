@@ -1357,7 +1357,7 @@ export function withRuntimeConvergeLock<T>(
 	}
 }
 
-function runtimeProgramRevision(
+export function runtimeProgramRevision(
 	manifest: RuntimeManifest,
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
@@ -1472,7 +1472,7 @@ function buildRuntimeSystemdUserProgram(input: {
 	};
 }
 
-function runtimeSecretValue(secrets: Record<string, string>, ref: string): string | null {
+export function runtimeSecretValue(secrets: Record<string, string>, ref: string): string | null {
 	const normalized = normalizeSecretRef(ref);
 	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
 	const candidates = [ref, normalized, raw].filter(
@@ -1490,7 +1490,7 @@ function hashToUInt16(input: string): number {
 	return createHash("sha256").update(input).digest().readUInt16BE(0);
 }
 
-function runtimeSidecarProgramRevision(
+export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 ): string {

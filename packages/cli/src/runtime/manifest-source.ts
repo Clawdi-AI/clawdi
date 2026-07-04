@@ -161,7 +161,7 @@ function parseManifestSafe(value: unknown): RuntimeManifest | null {
 	return result.success ? result.data : null;
 }
 
-function normalizeManifestPayload(value: unknown): {
+export function normalizeManifestPayload(value: unknown): {
 	manifest: RuntimeManifest;
 	secretValues?: Record<string, string>;
 } {
@@ -472,7 +472,7 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
-function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
+export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
 	const home = hosted.system?.home || "/home/clawdi";
 	const workspaceRoot = hosted.system?.workspace || join(home, "clawdi");
 	return {
