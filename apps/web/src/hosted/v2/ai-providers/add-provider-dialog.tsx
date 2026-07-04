@@ -94,10 +94,12 @@ export function AddProviderDialog({
 	open,
 	onOpenChange,
 	editing,
+	onCreated,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	editing?: AiProvider | null;
+	onCreated?: (providerId: string) => void;
 }) {
 	const providers = useAiProviders();
 	const upsert = useUpsertProvider();
@@ -321,6 +323,7 @@ export function AddProviderDialog({
 		} else {
 			toast.success(saved);
 		}
+		if (!isEdit) onCreated?.(created.provider_id);
 		onOpenChange(false);
 	}
 
@@ -424,6 +427,7 @@ export function AddProviderDialog({
 			.catch(() => null);
 		if (done) {
 			toast.success("Signed in with ChatGPT");
+			if (!isEdit) onCreated?.(oauth.providerId);
 			onOpenChange(false);
 		} else {
 			completedRef.current = false; // allow retry
