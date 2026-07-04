@@ -22,6 +22,7 @@ import {
 	agentDisplayName,
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
@@ -34,7 +35,6 @@ import {
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
 import { SessionFeed } from "@/components/sessions/session-feed";
-import { SkillCardGrid } from "@/components/skills/skill-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -49,12 +49,10 @@ import {
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
 
-type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type AgentTab = "overview" | "sessions" | "skills" | "projects" | "settings";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -165,69 +163,12 @@ export function ConnectedAgentDetail({
 		enabled: !!agent,
 	});
 
-	// Skills section: fetch ONLY this env's project. The earlier
-	// shape loaded the first 200 account-wide rows and filtered
-	// client-side, which on a multi-agent account with >200
-	// skills could miss this agent's rows entirely if they fell
-	// past page 1 in the global sort. The `project_id` query
-	// pushes the filter into the database so the per-page cap
-	// applies within the agent's own inventory.
-	//
-	// Walk every page server-side: a single agent with >200
-	// skills (rare but possible — power users with sprawling
-	// skill libraries) would otherwise lose rows past the
-	// page-1 cap. Same loop pattern the cross-agent /skills
-	// page uses; hard cap at 50 pages = 10k skills as a
-	// runaway-listing guard.
 	const agentProjectId = agent?.default_project_id;
 	const {
-		data: skillsData,
-		isLoading: skillsLoading,
+		skills: skillsForThisEnv,
 		error: skillsError,
 		refetch: refetchSkills,
-	} = useQuery({
-		queryKey: ["skills", agentProjectId, "all-pages"],
-		queryFn: async () =>
-			fetchAllPages<SkillSummary>(
-				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/v1/skills", {
-							params: {
-								query: {
-									page,
-									page_size: pageSize,
-									project_id: agentProjectId,
-								},
-							},
-						}),
-					),
-				{ pageSize: 200, resourceName: "agent skills" },
-			),
-		enabled: !!agentProjectId,
-	});
-	const skillsForThisEnv = useMemo(() => {
-		// `?project_id=<agentProjectId>` narrows the listing to the
-		// selected project. Row actions still resolve writability from
-		// the shared project ownership map in `skill-columns`.
-		if (!skillsData?.items || !agentProjectId) return undefined;
-		return skillsData.items;
-	}, [skillsData, agentProjectId]);
-
-	const uninstallSkill = useMutation({
-		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
-			unwrap(
-				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-					params: { path: { project_id: projectId, skill_key: skillKey } },
-				}),
-			),
-		onSuccess: (_data, vars) => {
-			toast.success("Skill uninstalled", {
-				description: `${vars.skillKey} was removed from this agent. Other agents keep their copies.`,
-			});
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
-		},
-		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
-	});
+	} = useAgentProjectSkills(agentProjectId);
 
 	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
@@ -253,12 +194,6 @@ export function ConnectedAgentDetail({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id, sessionId },
 	});
-	const scopedSkillLink = (skill: SkillSummary) => ({
-		to: "/agents/$id/skills/$" as const,
-		params: { id, _splat: skill.skill_key },
-		search: skill.project_id ? { project: skill.project_id } : undefined,
-	});
-
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{error ? (
@@ -358,29 +293,11 @@ export function ConnectedAgentDetail({
 					) : null}
 
 					{activeTab === "skills" ? (
-						skillsError ? (
-							<ApiErrorPanel
-								error={skillsError}
-								onRetry={() => {
-									void refetchSkills();
-								}}
-								title="Couldn't load agent skills"
-							/>
-						) : (
-							<SkillCardGrid
-								skills={skillsForThisEnv ?? []}
-								isLoading={skillsLoading}
-								emptyMessage="No skills installed on this agent yet."
-								readOnlySkillCheck={(s) =>
-									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-								}
-								onUninstall={(skillKey, projectId) =>
-									uninstallSkill.mutate({ skillKey, projectId })
-								}
-								uninstallPending={uninstallSkill.isPending}
-								skillLink={scopedSkillLink}
-							/>
-						)
+						<AgentSkillsTab
+							agentId={id}
+							agentProjectId={agentProjectId}
+							writableProjectIds={writableProjectIds}
+						/>
 					) : null}
 
 					{activeTab === "projects" ? (

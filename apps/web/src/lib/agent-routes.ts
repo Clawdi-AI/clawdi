@@ -25,6 +25,7 @@ export const HOSTED_AGENT_SECTION_IDS = [
 	"console",
 	"terminal",
 	"sessions",
+	"skills",
 	"ai",
 	"channels",
 	"settings",
