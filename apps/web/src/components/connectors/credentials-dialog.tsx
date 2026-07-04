@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -114,9 +115,13 @@ export function ConnectorCredentialsDialog({
 							<Spinner className="size-5 text-muted-foreground" />
 						</div>
 					) : fields.error ? (
-						<p role="alert" className="text-sm text-destructive">
-							{errorMessage(fields.error)}
-						</p>
+						<ApiErrorPanel
+							error={fields.error}
+							onRetry={() => {
+								void fields.refetch();
+							}}
+							title="Couldn't load credential fields"
+						/>
 					) : visibleFields.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							This connector doesn't need any credentials configured here. Try OAuth from the

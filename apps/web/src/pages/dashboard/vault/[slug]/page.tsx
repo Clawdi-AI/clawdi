@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { DetailNotFound, DetailTitle } from "@/components/detail/layout";
@@ -51,6 +52,7 @@ import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
 import { unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { cn, errorMessage } from "@/lib/utils";
@@ -265,6 +267,33 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		);
 	}
 
+	if (vaults.error) {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<Button asChild variant="ghost" size="sm" className="w-fit">
+					<Link to="/vault">
+						<ArrowLeft className="mr-1.5 size-4" />
+						Vaults
+					</Link>
+				</Button>
+				{isApiNotFoundError(vaults.error) ? (
+					<DetailNotFound
+						title="Vault not found"
+						message="This vault may have been removed, or your account no longer has access."
+					/>
+				) : (
+					<ApiErrorPanel
+						error={vaults.error}
+						onRetry={() => {
+							void vaults.refetch();
+						}}
+						title="Couldn't load vault"
+					/>
+				)}
+			</div>
+		);
+	}
+
 	if (!vault) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -354,7 +383,11 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<div>
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">Keys</h2>
-							{keys.data ? (
+							{keys.error ? (
+								<Badge variant="secondary" className="tabular-nums">
+									—
+								</Badge>
+							) : keys.data ? (
 								<Badge variant="secondary" className="tabular-nums">
 									{keyNames.length}
 								</Badge>
@@ -436,6 +469,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 				{keys.isLoading ? (
 					<Skeleton className="h-32 w-full rounded-lg" />
+				) : keys.error ? (
+					<ApiErrorPanel
+						error={keys.error}
+						onRetry={() => {
+							void keys.refetch();
+						}}
+						title="Couldn't load vault keys"
+					/>
 				) : keyNames.length === 0 ? (
 					<EmptyState
 						variant="inset"
@@ -567,16 +608,18 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<div>
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">Projects</h2>
-							<Badge variant="secondary" className="tabular-nums">
-								{attachedProjects.length}
-							</Badge>
+							{projects.isLoading ? null : (
+								<Badge variant="secondary" className="tabular-nums">
+									{projects.error ? "—" : attachedProjects.length}
+								</Badge>
+							)}
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							Same vault everywhere — key changes apply to every Project here. Agents bound to these
 							Projects resolve the keys at runtime.
 						</p>
 					</div>
-					{isOwner ? (
+					{isOwner && !projects.error ? (
 						<AttachProjectPicker
 							projects={(projects.data ?? []).filter(
 								(p) => p.is_owner !== false && !(vault.project_ids ?? []).includes(p.id),
@@ -586,7 +629,17 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 						/>
 					) : null}
 				</div>
-				{attachedProjects.length === 0 ? (
+				{projects.isLoading ? (
+					<Skeleton className="h-16 w-full" />
+				) : projects.error ? (
+					<ApiErrorPanel
+						error={projects.error}
+						onRetry={() => {
+							void projects.refetch();
+						}}
+						title="Couldn't load attached Projects"
+					/>
+				) : attachedProjects.length === 0 ? (
 					<EmptyState
 						variant="inset"
 						title="Not added to any Project yet"

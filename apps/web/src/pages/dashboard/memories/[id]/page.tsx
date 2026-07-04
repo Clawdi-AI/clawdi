@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -26,6 +28,7 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 		data: memory,
 		isLoading,
 		error,
+		refetch,
 	} = useQuery({
 		queryKey: ["memory", memoryId],
 		queryFn: async () =>
@@ -63,8 +66,16 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{error ? (
+			{error && isApiNotFoundError(error) ? (
 				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
+			) : error ? (
+				<ApiErrorPanel
+					error={error}
+					onRetry={() => {
+						void refetch();
+					}}
+					title="Couldn't load memory"
+				/>
 			) : isLoading ? (
 				<div className="space-y-4 py-2">
 					<Skeleton className="h-5 w-24" />

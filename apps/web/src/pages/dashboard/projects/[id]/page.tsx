@@ -73,7 +73,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
-import { formatApiError } from "@/lib/api-errors";
+import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
@@ -88,6 +88,7 @@ type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type Member = components["schemas"]["MemberResponse"];
+type CountValue = number | "unavailable";
 
 export default function ProjectDetailPage({ projectId }: { projectId: string }) {
 	const api = useApi();
@@ -193,18 +194,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			const results = await Promise.all(
 				envs.map(async (env) => {
 					if (env.default_project_id === projectId) return { env, home: true };
-					try {
-						const bindings = unwrap(
-							await api.GET("/v1/agents/{agent_id}/project-bindings", {
-								params: { path: { agent_id: env.id } },
-							}),
-						);
-						return bindings.some((b: AgentProjectBinding) => b.project_id === projectId)
-							? { env, home: false }
-							: null;
-					} catch {
-						return null;
-					}
+					const bindings = unwrap(
+						await api.GET("/v1/agents/{agent_id}/project-bindings", {
+							params: { path: { agent_id: env.id } },
+						}),
+					);
+					return bindings.some((b: AgentProjectBinding) => b.project_id === projectId)
+						? { env, home: false }
+						: null;
 				}),
 			);
 			return results.filter((r): r is { env: Env; home: boolean } => r !== null);
@@ -271,13 +268,20 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						Projects
 					</Link>
 				</Button>
-				<ApiErrorPanel
-					error={projects.error}
-					onRetry={() => {
-						void projects.refetch();
-					}}
-					title="Couldn't load project"
-				/>
+				{isApiNotFoundError(projects.error) ? (
+					<DetailNotFound
+						title="Project not found"
+						message="This Project may have been removed, or your account no longer has access."
+					/>
+				) : (
+					<ApiErrorPanel
+						error={projects.error}
+						onRetry={() => {
+							void projects.refetch();
+						}}
+						title="Couldn't load project"
+					/>
+				)}
 			</div>
 		);
 	}
@@ -299,10 +303,19 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		);
 	}
 
-	const skillCount = skills.data?.items.length;
-	const vaultCount = vaults.data?.items.length;
-	const peopleCount = members.data ? members.data.length + 1 : undefined; // +1 = owner
-	const agentCount = boundAgents.data?.length;
+	const skillCount: CountValue | undefined = skills.error
+		? "unavailable"
+		: skills.data?.items.length;
+	const vaultCount: CountValue | undefined = vaults.error
+		? "unavailable"
+		: vaults.data?.items.length;
+	const peopleCount: CountValue | undefined = members.error
+		? "unavailable"
+		: members.data
+			? members.data.length + 1
+			: undefined; // +1 = owner
+	const agentCount: CountValue | undefined =
+		environments.error || boundAgents.error ? "unavailable" : boundAgents.data?.length;
 
 	const addToAgentDialog = (trigger: ReactNode) => (
 		<UseProjectWithAgentDialog
@@ -423,7 +436,13 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 				) : null}
 				{skills.error ? (
-					<ErrorLine message={errorMessage(skills.error)} />
+					<ApiErrorPanel
+						error={skills.error}
+						onRetry={() => {
+							void skills.refetch();
+						}}
+						title="Couldn't load Project skills"
+					/>
 				) : (
 					<SkillCardGrid
 						skills={skills.data?.items ?? []}
@@ -463,7 +482,13 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				{vaults.isLoading ? (
 					<Skeleton className="h-24 w-full" />
 				) : vaults.error ? (
-					<ErrorLine message={errorMessage(vaults.error)} />
+					<ApiErrorPanel
+						error={vaults.error}
+						onRetry={() => {
+							void vaults.refetch();
+						}}
+						title="Couldn't load Project vaults"
+					/>
 				) : vaults.data?.items.length ? (
 					<div className="divide-y overflow-hidden rounded-lg border bg-card">
 						{vaults.data.items.map((vault) => (
@@ -496,6 +521,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				>
 					{members.isLoading ? (
 						<Skeleton className="h-16 w-full" />
+					) : members.error ? (
+						<ApiErrorPanel
+							error={members.error}
+							onRetry={() => {
+								void members.refetch();
+							}}
+							title="Couldn't load Project members"
+						/>
 					) : (members.data?.length ?? 0) === 0 ? (
 						<EmptyLine message="Only you so far. Share this Project to give a teammate viewer access." />
 					) : (
@@ -551,6 +584,22 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			>
 				{boundAgents.isLoading || environments.isLoading ? (
 					<Skeleton className="h-16 w-full" />
+				) : environments.error ? (
+					<ApiErrorPanel
+						error={environments.error}
+						onRetry={() => {
+							void environments.refetch();
+						}}
+						title="Couldn't load agents"
+					/>
+				) : boundAgents.error ? (
+					<ApiErrorPanel
+						error={boundAgents.error}
+						onRetry={() => {
+							void boundAgents.refetch();
+						}}
+						title="Couldn't load Project agent bindings"
+					/>
 				) : (boundAgents.data?.length ?? 0) === 0 ? (
 					<EmptyLine message="No agents use this Project yet. Add it to an agent to sync its skills and keys." />
 				) : (
@@ -601,7 +650,7 @@ const STAT_TILE_TINTS: Record<string, string> = {
 	Agents: "bg-identity-5-bg/50",
 };
 
-function StatTile({ label, value, href }: { label: string; value?: number; href: string }) {
+function StatTile({ label, value, href }: { label: string; value?: CountValue; href: string }) {
 	return (
 		<a
 			href={href}
@@ -611,7 +660,7 @@ function StatTile({ label, value, href }: { label: string; value?: number; href:
 			)}
 		>
 			<div className="text-2xl font-semibold tabular-nums">
-				{value === undefined ? <Skeleton className="h-8 w-8" /> : value}
+				{value === undefined ? <Skeleton className="h-8 w-8" /> : formatCountValue(value)}
 			</div>
 			<div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
 				{label}
@@ -631,7 +680,7 @@ function HubSection({
 }: {
 	id: string;
 	title: string;
-	count?: number;
+	count?: CountValue;
 	description: string;
 	action?: ReactNode;
 	children: ReactNode;
@@ -644,7 +693,7 @@ function HubSection({
 						<h2 className="text-sm font-semibold">{title}</h2>
 						{count !== undefined ? (
 							<Badge variant="secondary" className="tabular-nums">
-								{count}
+								{formatCountValue(count)}
 							</Badge>
 						) : null}
 					</div>
@@ -960,7 +1009,13 @@ function UseProjectWithAgentDialog({
 						</div>
 
 						{selectedBindings.error ? (
-							<ErrorLine message="Couldn’t check this agent’s project list. Refresh and retry." />
+							<ApiErrorPanel
+								error={selectedBindings.error}
+								onRetry={() => {
+									void selectedBindings.refetch();
+								}}
+								title="Couldn't check this agent's Project list"
+							/>
 						) : null}
 
 						<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -1185,10 +1240,6 @@ function EmptyLine({ message }: { message: string }) {
 	return <EmptyState variant="inset" description={message} />;
 }
 
-function ErrorLine({ message }: { message: string }) {
-	return (
-		<div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-			<span className="font-medium">Section unavailable.</span> {message}
-		</div>
-	);
+function formatCountValue(value: CountValue) {
+	return value === "unavailable" ? "—" : value;
 }

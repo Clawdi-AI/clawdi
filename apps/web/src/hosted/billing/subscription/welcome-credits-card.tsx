@@ -2,10 +2,12 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { Gift, PartyPopper, Rocket } from "lucide-react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import type { Plan } from "@/hosted/billing/contracts";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { creditsToUsd } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 
@@ -31,7 +33,26 @@ export function WelcomeCreditsCard() {
 	// Past onboarding — they already have at least one agent.
 	if ((deployments.data?.length ?? 0) > 0) return null;
 	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) return null;
-	if (wallet.error || ledger.error || deployments.error || !wallet.data) return null;
+	const loadError = wallet.error ?? ledger.error ?? deployments.error;
+	if (loadError) {
+		return (
+			<Card data-hosted="true">
+				<CardContent>
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={loadError}
+						onRetry={() => {
+							if (wallet.error) void wallet.refetch();
+							if (ledger.error) void ledger.refetch();
+							if (deployments.error) void deployments.refetch();
+						}}
+						title="Couldn't load welcome credits"
+					/>
+				</CardContent>
+			</Card>
+		);
+	}
+	if (!wallet.data) return null;
 
 	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
 	const grantApplied = grant?.status === "applied";

@@ -45,6 +45,7 @@ type Env = components["schemas"]["AgentResponse"];
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
+type CountValue = number | "unavailable";
 
 const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
@@ -298,8 +299,8 @@ export default function ProjectsPage() {
 							key={project.id}
 							project={project}
 							shared={shared}
-							skillCount={skillCounts.get(project.id) ?? 0}
-							vaultCount={vaultCounts.get(project.id) ?? 0}
+							skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
+							vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
 						/>
 					))}
 				</div>
@@ -333,8 +334,8 @@ export default function ProjectsPage() {
 									key={project.id}
 									project={project}
 									agent={projectAgentFor(project, agentsById)}
-									skillCount={skillCounts.get(project.id) ?? 0}
-									vaultCount={vaultCounts.get(project.id) ?? 0}
+									skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
+									vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
 								/>
 							))}
 						</div>
@@ -353,8 +354,8 @@ function ProjectCard({
 }: {
 	project: ProjectRow;
 	shared: boolean;
-	skillCount: number;
-	vaultCount: number;
+	skillCount: CountValue;
+	vaultCount: CountValue;
 }) {
 	const projectName = displayProjectName(project);
 	return (
@@ -368,8 +369,8 @@ function ProjectCard({
 			badges={shared ? <StatusChip>Shared with you</StatusChip> : null}
 			description={<span className="font-mono">{project.slug}</span>}
 			footer={[
-				`${skillCount} ${skillCount === 1 ? "skill" : "skills"}`,
-				`${vaultCount} ${vaultCount === 1 ? "vault" : "vaults"}`,
+				formatCountLabel(skillCount, "skill"),
+				formatCountLabel(vaultCount, "vault"),
 				shared && project.owner_display ? `by ${project.owner_display}` : null,
 			]}
 			actions={
@@ -425,8 +426,8 @@ function SystemProjectRow({
 }: {
 	project: ProjectRow;
 	agent?: ProjectAgentMetadata | null;
-	skillCount: number;
-	vaultCount: number;
+	skillCount: CountValue;
+	vaultCount: CountValue;
 }) {
 	const isGlobal = project.kind === "personal";
 	return (
@@ -449,7 +450,7 @@ function SystemProjectRow({
 				/>
 			</div>
 			<span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums sm:inline">
-				{skillCount} skills · {vaultCount} vaults
+				{formatCountLabel(skillCount, "skill")} · {formatCountLabel(vaultCount, "vault")}
 			</span>
 			<Link
 				to="/projects/$id"
@@ -464,6 +465,11 @@ function SystemProjectRow({
 
 function normalizeSlugInput(value: string) {
 	return normalizeSlugDraft(value).replace(/-+$/, "");
+}
+
+function formatCountLabel(value: CountValue, noun: string) {
+	if (value === "unavailable") return `— ${noun}s`;
+	return `${value} ${value === 1 ? noun : `${noun}s`}`;
 }
 
 function normalizeSlugDraft(value: string) {

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -98,9 +99,13 @@ export function CopyKeysDialog({
 		creatingNewVault &&
 		!projectsQuery.isLoading &&
 		!vaultsQuery.isLoading &&
+		!projectsQuery.error &&
+		!vaultsQuery.error &&
 		writableProject === undefined;
+	const destinationLoadError = vaultsQuery.error ?? (creatingNewVault ? projectsQuery.error : null);
 	const canRun =
 		keys.length > 0 &&
+		!destinationLoadError &&
 		!runIsBlockedForNewVault(
 			creatingNewVault,
 			newVaultName,
@@ -279,6 +284,16 @@ export function CopyKeysDialog({
 							</div>
 						) : null}
 					</div>
+					{destinationLoadError ? (
+						<ApiErrorPanel
+							error={destinationLoadError}
+							onRetry={() => {
+								if (vaultsQuery.error) void vaultsQuery.refetch();
+								if (creatingNewVault && projectsQuery.error) void projectsQuery.refetch();
+							}}
+							title="Couldn't load destinations"
+						/>
+					) : null}
 					{mode === "move" && attachedCount > 1 ? (
 						<p className="text-xs font-medium text-warning-muted-foreground">
 							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from

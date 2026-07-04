@@ -11,9 +11,16 @@ import {
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline, agentDisplayName } from "@/components/dashboard/agent-label";
-import { DetailMeta, DetailPanel, DetailStats, DetailTitle } from "@/components/detail/layout";
+import {
+	DetailMeta,
+	DetailNotFound,
+	DetailPanel,
+	DetailStats,
+	DetailTitle,
+} from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
@@ -27,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
@@ -52,7 +60,12 @@ export function SessionDetailContent({
 	const api = useApi();
 	const { user } = useCurrentUser();
 
-	const { data: session, isLoading: isSessionLoading } = useQuery({
+	const {
+		data: session,
+		isLoading: isSessionLoading,
+		error: sessionError,
+		refetch: refetchSession,
+	} = useQuery({
 		queryKey: ["session", sessionId],
 		queryFn: async () =>
 			unwrap(
@@ -138,6 +151,8 @@ export function SessionDetailContent({
 		data: pagesData,
 		isLoading: isContentLoading,
 		isError: isContentError,
+		error: contentError,
+		refetch: refetchContent,
 		fetchNextPage,
 		hasNextPage,
 		isFetchingNextPage,
@@ -245,10 +260,28 @@ export function SessionDetailContent({
 		);
 	}
 
+	if (sessionError) {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				{isApiNotFoundError(sessionError) ? (
+					<DetailNotFound title="Session not found" message="This session doesn't exist." />
+				) : (
+					<ApiErrorPanel
+						error={sessionError}
+						onRetry={() => {
+							void refetchSession();
+						}}
+						title="Couldn't load session"
+					/>
+				)}
+			</div>
+		);
+	}
+
 	if (!session || !summaryText) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<p className="text-muted-foreground">Session not found.</p>
+				<DetailNotFound title="Session not found" message="This session doesn't exist." />
 			</div>
 		);
 	}
@@ -354,7 +387,13 @@ export function SessionDetailContent({
 				isContentLoading ? (
 					<MessagesSkeleton />
 				) : isContentError ? (
-					<ContentFetchError />
+					<ApiErrorPanel
+						error={contentError}
+						onRetry={() => {
+							void refetchContent();
+						}}
+						title="Couldn't load messages"
+					/>
 				) : messages?.length ? (
 					// Spacing comes from MessageBlock's `pt-4` on
 					// group-start rows; continuation rows render flush
@@ -578,13 +617,4 @@ function MessagesSkeleton() {
 
 function EmptyContent() {
 	return <EmptyState variant="inset" description="No messages in this session." />;
-}
-
-function ContentFetchError() {
-	return (
-		<EmptyState
-			variant="inset"
-			description="Session content is unavailable. Check your connection and refresh this page."
-		/>
-	);
 }

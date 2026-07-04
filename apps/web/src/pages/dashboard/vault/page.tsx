@@ -6,6 +6,7 @@ import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { EmptyState } from "@/components/empty-state";
 import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
 import { IconChip } from "@/components/icon-chip";
@@ -67,6 +68,7 @@ export default function VaultPage() {
 	);
 
 	const items = vaults.data?.items ?? [];
+	const hasActiveFilter = search.trim().length > 0 || projectFilter !== "all";
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		let rows = items;
@@ -155,8 +157,38 @@ export default function VaultPage() {
 						<VaultCardSkeleton key={i} />
 					))}
 				</div>
+			) : filtered.length === 0 ? (
+				<EmptyState
+					title={hasActiveFilter ? "No vaults match these filters" : "No vaults yet"}
+					description={
+						hasActiveFilter
+							? "Try a different search or Project filter."
+							: "Create a vault to group API keys for your agents."
+					}
+					action={
+						hasActiveFilter ? null : (
+							<NewVaultDialog
+								trigger={
+									<Button size="sm">
+										<Plus className="size-3.5" />
+										New vault
+									</Button>
+								}
+							/>
+						)
+					}
+				/>
 			) : (
 				<>
+					{projects.error ? (
+						<ApiErrorPanel
+							error={projects.error}
+							onRetry={() => {
+								void projects.refetch();
+							}}
+							title="Couldn't load Project names"
+						/>
+					) : null}
 					<div
 						className={cn(
 							HERO_GRID_CLASS,
@@ -165,7 +197,12 @@ export default function VaultPage() {
 						)}
 					>
 						{mine.map((vault) => (
-							<VaultCard key={vault.id} vault={vault} projectNameById={projectNameById} />
+							<VaultCard
+								key={vault.id}
+								vault={vault}
+								projectNameById={projectNameById}
+								projectNamesUnavailable={!!projects.error}
+							/>
 						))}
 					</div>
 					{shared.length > 0 ? (
@@ -180,16 +217,12 @@ export default function VaultPage() {
 										key={vault.id}
 										vault={vault}
 										projectNameById={projectNameById}
+										projectNamesUnavailable={!!projects.error}
 										shared
 									/>
 								))}
 							</div>
 						</section>
-					) : null}
-					{filtered.length === 0 && search.trim() ? (
-						<p className="py-12 text-center text-sm text-muted-foreground">
-							No vaults match “{search.trim()}”.
-						</p>
 					) : null}
 				</>
 			)}
@@ -200,10 +233,12 @@ export default function VaultPage() {
 function VaultCard({
 	vault,
 	projectNameById,
+	projectNamesUnavailable,
 	shared = false,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
+	projectNamesUnavailable: boolean;
 	shared?: boolean;
 }) {
 	const api = useApi();
@@ -259,6 +294,8 @@ function VaultCard({
 						</TooltipTrigger>
 						<TooltipContent>{usedBy.join(", ")}</TooltipContent>
 					</Tooltip>
+				) : projectNamesUnavailable && (vault.project_ids?.length ?? 0) > 0 ? (
+					"Project details unavailable"
 				) : (
 					"not in any Project yet"
 				),

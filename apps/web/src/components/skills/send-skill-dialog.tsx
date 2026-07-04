@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
@@ -69,16 +70,19 @@ export function SendSkillDialog({
 	const single = skills.length === 1 ? skills[0] : null;
 	const batchLabel = single ? single.name : `${skills.length} skills`;
 
-	const { data: projects } = useQuery({
+	const projectsQuery = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
-	const { data: envs } = useQuery({
+	const envsQuery = useQuery({
 		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		enabled: open,
 	});
+	const projects = projectsQuery.data;
+	const envs = envsQuery.data;
+	const destinationLoadError = projectsQuery.error ?? envsQuery.error;
 
 	// Target value encodes the destination project id. Agents are listed
 	// first (that's how users think) and resolve to their own project.
@@ -253,6 +257,16 @@ export function SendSkillDialog({
 							</SelectContent>
 						</Select>
 					</div>
+					{destinationLoadError ? (
+						<ApiErrorPanel
+							error={destinationLoadError}
+							onRetry={() => {
+								if (projectsQuery.error) void projectsQuery.refetch();
+								if (envsQuery.error) void envsQuery.refetch();
+							}}
+							title="Couldn't load destinations"
+						/>
+					) : null}
 					<div className="flex items-center gap-2">
 						<Checkbox
 							id="send-skill-move"
@@ -265,7 +279,7 @@ export function SendSkillDialog({
 					</div>
 					<Button
 						className="w-full"
-						disabled={!target || send.isPending}
+						disabled={!target || send.isPending || !!destinationLoadError}
 						onClick={() => send.mutate()}
 					>
 						{send.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
