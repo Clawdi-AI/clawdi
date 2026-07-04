@@ -52,14 +52,18 @@ function env(overrides: Partial<Env> = {}): Env {
 }
 
 describe("hostedAgentTileStatus", () => {
-	test("marks running and ready deployments active", () => {
+	test("marks running deployments active and normalizes the ready alias", () => {
 		expect(hostedAgentTileStatus("running")).toEqual({ label: "Running", active: true });
-		expect(hostedAgentTileStatus("ready")).toEqual({ label: "Ready", active: true });
+		expect(hostedAgentTileStatus("ready")).toEqual({ label: "Running", active: true });
 	});
 
 	test("keeps transitional and failed deployments inactive with readable labels", () => {
-		expect(hostedAgentTileStatus("restarting")).toEqual({
-			label: "Restarting",
+		expect(hostedAgentTileStatus("creating")).toEqual({
+			label: "Provisioning",
+			active: false,
+		});
+		expect(hostedAgentTileStatus("starting")).toEqual({
+			label: "Starting",
 			active: false,
 		});
 		expect(hostedAgentTileStatus("failed")).toEqual({ label: "Failed", active: false });
@@ -116,10 +120,10 @@ describe("hostedRuntimeStatusView", () => {
 
 	test("shows pending sync only when running without a registered environment", () => {
 		const running = hostedRuntimeStatusView("running", null);
-		const provisioning = hostedRuntimeStatusView("provisioning", null);
+		const creating = hostedRuntimeStatusView("creating", null);
 
 		expect(running.secondary?.label).toBe("Sync pending");
-		expect(provisioning.primary.label).toBe("Provisioning");
-		expect(provisioning.secondary).toBeNull();
+		expect(creating.primary.label).toBe("Provisioning");
+		expect(creating.secondary).toBeNull();
 	});
 });
