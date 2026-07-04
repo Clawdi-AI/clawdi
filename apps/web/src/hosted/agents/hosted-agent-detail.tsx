@@ -144,6 +144,7 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
+type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type HostedAgentTab =
 	| "overview"
 	| "console"
@@ -217,6 +218,68 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 			<Info className="size-3.5 shrink-0" />
 			{children}
 		</p>
+	);
+}
+
+function isProvisioningStatus(status: DeploymentStatus): boolean {
+	return status.kind === "creating" || status.kind === "starting";
+}
+
+function provisioningTitle(status: DeploymentStatus): string {
+	return status.kind === "starting" ? "Starting your agent..." : "Setting up your agent...";
+}
+
+function RestartComputeAction({ deployment }: { deployment: HostedDeployment }) {
+	const lifecycle = useDeploymentLifecycle();
+	const runAction = useActionLock();
+	const status = parseDeploymentStatus(deployment.status);
+	const canRestart = canRestartDeployment(status);
+	return (
+		<ConfirmAction
+			title="Restart shared compute?"
+			description={<p>This restarts every enabled runtime on this compute.</p>}
+			confirmLabel="Restart compute"
+			onConfirm={() =>
+				runAction(async () => {
+					await lifecycle.mutateAsync({ id: deployment.id, action: "restart" });
+				})
+			}
+		>
+			<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
+				{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+					<Spinner className="size-3.5" />
+				) : (
+					<RefreshCw className="size-3.5" />
+				)}
+				Restart compute
+			</Button>
+		</ConfirmAction>
+	);
+}
+
+function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
+	const lifecycle = useDeploymentLifecycle();
+	const runAction = useActionLock();
+	const status = parseDeploymentStatus(deployment.status);
+	const canStart = canStartDeployment(status);
+	return (
+		<Button
+			type="button"
+			size="sm"
+			disabled={lifecycle.isPending || !canStart}
+			onClick={() =>
+				void runAction(async () => {
+					await lifecycle.mutateAsync({ id: deployment.id, action: "start" });
+				}).catch(() => undefined)
+			}
+		>
+			{lifecycle.isPending && lifecycle.variables?.action === "start" ? (
+				<Spinner className="size-3.5" />
+			) : (
+				<RefreshCw className="size-3.5" />
+			)}
+			Start compute
+		</Button>
 	);
 }
 
@@ -415,6 +478,50 @@ function RuntimeStatusValue({
 	);
 }
 
+function OverviewProvisioningPanel({ status }: { status: DeploymentStatus }) {
+	return (
+		<div className="rounded-xl border border-info-muted bg-info-muted p-5 text-info-muted-foreground">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-info-muted bg-background">
+					<Spinner className="size-5" />
+				</div>
+				<div className="min-w-0">
+					<h2 className="text-sm font-semibold text-foreground">{provisioningTitle(status)}</h2>
+					<p className="mt-1 text-sm">
+						Hosted compute is being prepared. This usually takes a couple of minutes, and this page
+						updates automatically.
+					</p>
+					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(status)}.</p>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function OverviewFailedPanel({ deployment }: { deployment: HostedDeployment }) {
+	const status = parseDeploymentStatus(deployment.status);
+	return (
+		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
+			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+				<div className="flex min-w-0 gap-3">
+					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
+						<RefreshCw className="size-5" />
+					</div>
+					<div className="min-w-0">
+						<h2 className="text-sm font-semibold text-foreground">Agent setup failed</h2>
+						<p className="mt-1 text-sm">
+							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
+						</p>
+					</div>
+				</div>
+				<div className="shrink-0">
+					<RestartComputeAction deployment={deployment} />
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function OverviewTab({
 	deployment,
 	agent,
@@ -442,8 +549,17 @@ function OverviewTab({
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
+	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const sessionsEmptyMessage = deploymentRunning
+		? "No sessions from this agent yet."
+		: "Sessions appear once your agent is running.";
 	return (
 		<div className="flex flex-col gap-5">
+			{isProvisioningStatus(deploymentStatus) ? (
+				<OverviewProvisioningPanel status={deploymentStatus} />
+			) : null}
+			{deploymentStatus.kind === "failed" ? <OverviewFailedPanel deployment={deployment} /> : null}
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 				<StatCard
 					label="Status"
@@ -468,7 +584,7 @@ function OverviewTab({
 					<SessionFeed
 						sessions={sessions}
 						isLoading={sessionsLoading}
-						emptyMessage="No sessions from this agent yet."
+						emptyMessage={sessionsEmptyMessage}
 						emptyVariant="inset"
 						showAgent={false}
 						sessionLink={sessionLink}
@@ -490,6 +606,7 @@ function OverviewTab({
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const status = parseDeploymentStatus(deployment.status);
 	const isRunning = isRunningStatus(status);
+	const isProvisioning = isProvisioningStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
@@ -499,8 +616,13 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title="Runtime UI available once running"
-				description={`The live ${browserUiLabel} opens here as soon as the agent is running — currently ${deploymentStatusLabel(status).toLowerCase()}.`}
+				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
+				description={
+					isProvisioning
+						? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+						: `Start the compute to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
 		);
 	}
@@ -629,6 +751,7 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const status = parseDeploymentStatus(deployment.status);
 	const isRunning = isRunningStatus(status);
+	const isProvisioning = isProvisioningStatus(status);
 	const label = deploymentDisplayName(deployment.name);
 	const terminal = useCreateTerminalSession();
 	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
@@ -696,8 +819,13 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		return (
 			<EmptyState
 				icon={TerminalSquare}
-				title="Terminal available once running"
-				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`}
+				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
+				description={
+					isProvisioning
+						? "The browser terminal opens once your agent is running. This page updates automatically."
+						: `Start the compute to open a deployment shell. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
 		);
 	}
