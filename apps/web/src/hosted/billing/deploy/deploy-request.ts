@@ -6,8 +6,6 @@ type EngineSelection = {
 };
 
 type DeployPersona = {
-	assistantName: string;
-	personality: string;
 	language: string;
 	timezone: string;
 };
@@ -26,8 +24,6 @@ export function buildHostedDeployRequest({
 	aiFields: Partial<DeployRequest>;
 }): DeployRequest {
 	const personaFields = {
-		assistant_name: persona.assistantName.trim() || null,
-		personality: persona.personality || null,
 		language: persona.language || null,
 		timezone: persona.timezone || null,
 	};
