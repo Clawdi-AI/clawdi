@@ -13,10 +13,10 @@ import type { WalletState } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { useSetAutoReload } from "@/hosted/billing/hooks";
 import { AutoReloadActionConfirm } from "@/hosted/billing/wallet/auto-reload-action";
+import { autoReloadFormState } from "@/hosted/billing/wallet/auto-reload-card.logic";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
-	AUTORELOAD_THRESHOLD_MIN_CREDITS,
 } from "@/hosted/billing/wallet/wallet-constants";
 
 function dollars(n: number): string {
@@ -51,16 +51,20 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 		pointsPerUsd,
 	]);
 
-	const amountCents = Math.round(Number(amount) * 100);
-	const thresholdCredits = Math.round(Number(threshold) * pointsPerUsd);
-	const capCents = Math.round(Number(cap) * 100);
-
-	const amountValid =
-		amountCents >= AUTORELOAD_AMOUNT_MIN_CENTS && amountCents <= AUTORELOAD_AMOUNT_MAX_CENTS;
-	const thresholdValid = thresholdCredits >= AUTORELOAD_THRESHOLD_MIN_CREDITS;
-	// 0 = no cap; any positive value is a cap. Negative / non-numeric is invalid.
-	const capValid = Number.isFinite(capCents) && capCents >= 0;
-	const formValid = amountValid && thresholdValid && capValid;
+	const {
+		amountCents,
+		thresholdCredits,
+		capCents,
+		amountValid,
+		thresholdValid,
+		capValid,
+		formValid,
+	} = autoReloadFormState({
+		amount,
+		threshold,
+		cap,
+		pointsPerUsd,
+	});
 
 	async function persist(nextEnabled: boolean) {
 		// Belt-and-braces against a double-fire while the switch/button repaint.
@@ -169,13 +173,15 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 							value={cap}
 							onChange={(e) => setCap(e.target.value)}
 							aria-invalid={!capValid}
-							aria-describedby={capValid ? undefined : "ar-cap-err"}
+							aria-describedby={capValid ? "ar-cap-help" : "ar-cap-err"}
 						/>
 						{capValid ? (
-							<p className="text-xs text-muted-foreground">0 = no cap.</p>
+							<p id="ar-cap-help" className="text-xs text-muted-foreground">
+								Enter 0 only if you want no monthly cap.
+							</p>
 						) : (
 							<p id="ar-cap-err" className="text-xs text-destructive">
-								Enter 0 (no cap) or a positive amount.
+								Enter a monthly cap, or enter 0 for no cap.
 							</p>
 						)}
 					</div>
