@@ -25,7 +25,12 @@ export function GeneralPanel() {
 						Light, dark, or follow the system preference.
 					</p>
 				</div>
-				<Select value={theme ?? "system"} onValueChange={setTheme}>
+				<Select
+					value={theme ?? "system"}
+					onValueChange={(value) => {
+						if (value !== null) setTheme(value);
+					}}
+				>
 					<SelectTrigger id="settings-theme" className="w-[160px]">
 						<SelectValue />
 					</SelectTrigger>

@@ -324,11 +324,22 @@ export function AgentSettingsPanel({
 						<p className="max-w-md text-sm text-muted-foreground">
 							This agent uses the legacy management surface for runtime actions.
 						</p>
-						<Button variant="outline" size="sm" asChild>
-							<a href={legacyDashboardUrl} target="_blank" rel="noopener noreferrer">
-								<ExternalLink data-icon="inline-start" />
-								Open legacy dashboard
-							</a>
+						<Button
+							variant="outline"
+							size="sm"
+							render={
+								// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
+								<a
+									href={legacyDashboardUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									aria-label="Open legacy dashboard"
+								/>
+							}
+							nativeButton={false}
+						>
+							<ExternalLink data-icon="inline-start" />
+							Open legacy dashboard
 						</Button>
 					</div>
 				</SettingsSection>

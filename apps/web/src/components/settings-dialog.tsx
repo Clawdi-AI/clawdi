@@ -135,10 +135,7 @@ export function SettingsDialog({
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
-				onOpenAutoFocus={(event) => {
-					event.preventDefault();
-					activeButtonRef.current?.focus({ preventScroll: true });
-				}}
+				initialFocus={() => activeButtonRef.current}
 				className="h-[min(820px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl"
 			>
 				<DialogHeader className="sr-only">

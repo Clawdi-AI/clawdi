@@ -247,27 +247,29 @@ export function DaemonStatusBadge({
 	return (
 		<>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						onClick={(e) => {
-							// Some callers sit next to stretched links; keep
-							// the status dialog click local to the badge.
-							e.preventDefault();
-							e.stopPropagation();
-							setOpen(true);
-						}}
-						// `appearance-none` strips the native button chrome
-						// for visual fit in the meta line; pair it with an
-						// explicit focus-visible ring so keyboard users
-						// still see where they are.
-						className={cn(
-							"appearance-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-							compact && "shrink-0 whitespace-nowrap",
-						)}
-					>
-						{inner}
-					</button>
+				<TooltipTrigger
+					render={
+						<button
+							type="button"
+							onClick={(e) => {
+								// Some callers sit next to stretched links; keep
+								// the status dialog click local to the badge.
+								e.preventDefault();
+								e.stopPropagation();
+								setOpen(true);
+							}}
+							// `appearance-none` strips the native button chrome
+							// for visual fit in the meta line; pair it with an
+							// explicit focus-visible ring so keyboard users
+							// still see where they are.
+							className={cn(
+								"appearance-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+								compact && "shrink-0 whitespace-nowrap",
+							)}
+						/>
+					}
+				>
+					{inner}
 				</TooltipTrigger>
 				<TooltipContent side="bottom" className="text-xs">
 					<div className="flex flex-col gap-0.5">

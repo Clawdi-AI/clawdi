@@ -60,16 +60,18 @@ function ExportMenu({ url }: { url: string }) {
 	const { copy: copyJson } = useCopyToClipboard(jsonUrl, "JSON URL");
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button
-					variant="outline"
-					size="icon"
-					className="size-9 sm:size-8"
-					aria-label="More options"
-					title="More options"
-				>
-					<MoreHorizontal className="size-3.5" />
-				</Button>
+			<DropdownMenuTrigger
+				render={
+					<Button
+						variant="outline"
+						size="icon"
+						className="size-9 sm:size-8"
+						aria-label="More options"
+						title="More options"
+					/>
+				}
+			>
+				<MoreHorizontal className="size-3.5" />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-52">
 				<DropdownMenuItem onClick={copyMd}>

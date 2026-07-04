@@ -135,7 +135,12 @@ export function LedgerTable({
 				<h2 id={headingId} className="text-base font-semibold">
 					Activity
 				</h2>
-				<Select value={filter} onValueChange={handleFilterChange}>
+				<Select
+					value={filter}
+					onValueChange={(value) => {
+						if (value !== null) handleFilterChange(value);
+					}}
+				>
 					<SelectTrigger size="sm" className="w-40" aria-label="Filter activity">
 						<SelectValue />
 					</SelectTrigger>

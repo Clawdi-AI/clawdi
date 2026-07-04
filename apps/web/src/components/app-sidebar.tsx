@@ -306,33 +306,36 @@ function SidebarNavSection({
 						const Icon = item.icon;
 						return (
 							<SidebarMenuItem key={item.id}>
-								<SidebarMenuButton asChild isActive={item.active} tooltip={item.tooltip}>
+								<SidebarMenuButton
+									render={
+										item.external ? (
+											// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from SidebarMenuButton.
+											<a
+												href={item.href}
+												target="_blank"
+												rel="noopener noreferrer"
+												aria-label={`Open ${item.label}`}
+												onClick={onNavigate}
+											/>
+										) : (
+											<Link
+												to={item.href}
+												onClick={onNavigate}
+												onMouseEnter={item.prefetch}
+												onFocus={item.prefetch}
+											/>
+										)
+									}
+									isActive={item.active}
+									tooltip={item.tooltip}
+								>
+									<IconChip size="xs" tint={item.tint}>
+										<Icon />
+									</IconChip>
+									<span>{item.label}</span>
 									{item.external ? (
-										<a
-											href={item.href}
-											target="_blank"
-											rel="noopener noreferrer"
-											onClick={onNavigate}
-										>
-											<IconChip size="xs" tint={item.tint}>
-												<Icon />
-											</IconChip>
-											<span>{item.label}</span>
-											<ExternalLink className="ml-auto size-3 text-muted-foreground" />
-										</a>
-									) : (
-										<Link
-											to={item.href}
-											onClick={onNavigate}
-											onMouseEnter={item.prefetch}
-											onFocus={item.prefetch}
-										>
-											<IconChip size="xs" tint={item.tint}>
-												<Icon />
-											</IconChip>
-											<span>{item.label}</span>
-										</Link>
-									)}
+										<ExternalLink className="ml-auto size-3 text-muted-foreground" />
+									) : null}
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						);
@@ -724,7 +727,19 @@ function RailFocusButton({
 	const hasCaption = Boolean(caption);
 	const button = (
 		<SidebarMenuButton
-			asChild
+			render={
+				<Link
+					to={href}
+					draggable={false}
+					onClickCapture={onClickCapture}
+					onClick={onNavigate}
+					onPointerDownCapture={onPointerDownCapture}
+					onPointerDown={onPointerDown}
+					onTouchStartCapture={onTouchStartCapture}
+					onTouchStart={onTouchStart}
+					className="cursor-default"
+				/>
+			}
 			size="lg"
 			isActive={active}
 			aria-label={label}
@@ -734,31 +749,19 @@ function RailFocusButton({
 					: "size-11 justify-center rounded-lg p-0",
 			)}
 		>
-			<Link
-				to={href}
-				draggable={false}
-				onClickCapture={onClickCapture}
-				onClick={onNavigate}
-				onPointerDownCapture={onPointerDownCapture}
-				onPointerDown={onPointerDown}
-				onTouchStartCapture={onTouchStartCapture}
-				onTouchStart={onTouchStart}
-				className="cursor-default"
-			>
-				{children}
-				{caption ? (
-					<span
-						className={cn(
-							"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-2xs font-medium break-words",
-							active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
-						)}
-						title={label}
-					>
-						{caption}
-					</span>
-				) : null}
-				<span className="sr-only">{label}</span>
-			</Link>
+			{children}
+			{caption ? (
+				<span
+					className={cn(
+						"line-clamp-2 block h-[26px] max-w-16 overflow-hidden text-center text-2xs font-medium break-words",
+						active ? "text-sidebar-accent-foreground" : "text-muted-foreground",
+					)}
+					title={label}
+				>
+					{caption}
+				</span>
+			) : null}
+			<span className="sr-only">{label}</span>
 		</SidebarMenuButton>
 	);
 	return (
@@ -781,7 +784,7 @@ function RailFocusButton({
 			/>
 			{showTooltip ? (
 				<Tooltip>
-					<TooltipTrigger asChild>{button}</TooltipTrigger>
+					<TooltipTrigger render={button} />
 					<TooltipContent side="right" align="center">
 						{label}
 					</TooltipContent>
@@ -1290,31 +1293,58 @@ function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 function HelpMenuItems() {
 	return (
 		<>
-			<DropdownMenuItem asChild>
-				<a href="https://deepwiki.com/Clawdi-AI/clawdi" target="_blank" rel="noopener noreferrer">
-					<BookOpen />
-					Docs
-					<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-				</a>
+			<DropdownMenuItem
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
+					<a
+						href="https://deepwiki.com/Clawdi-AI/clawdi"
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Open Docs"
+					/>
+				}
+			>
+				<BookOpen />
+				Docs
+				<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
 			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href="https://github.com/Clawdi-AI/clawdi" target="_blank" rel="noopener noreferrer">
-					<GitHubIcon />
-					GitHub
-					<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
-				</a>
+			<DropdownMenuItem
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
+					<a
+						href="https://github.com/Clawdi-AI/clawdi"
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Open GitHub"
+					/>
+				}
+			>
+				<GitHubIcon />
+				GitHub
+				<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
 			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href="mailto:support@clawdi.ai">
-					<Mail />
-					support@clawdi.ai
-				</a>
+			<DropdownMenuItem
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
+					<a href="mailto:support@clawdi.ai" aria-label="Email support" />
+				}
+			>
+				<Mail />
+				support@clawdi.ai
 			</DropdownMenuItem>
-			<DropdownMenuItem asChild>
-				<a href="https://t.me/clawdiofficial" target="_blank" rel="noopener noreferrer">
-					<MessageCircle />
-					Telegram @clawdiofficial
-				</a>
+			<DropdownMenuItem
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
+					<a
+						href="https://t.me/clawdiofficial"
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Open Telegram"
+					/>
+				}
+			>
+				<MessageCircle />
+				Telegram @clawdiofficial
 			</DropdownMenuItem>
 		</>
 	);
@@ -1351,7 +1381,7 @@ function GlobalControlButton({
 	if (!showTooltip) return button;
 	return (
 		<Tooltip>
-			<TooltipTrigger asChild>{button}</TooltipTrigger>
+			<TooltipTrigger render={button} />
 			<TooltipContent side={tooltipSide}>{label}</TooltipContent>
 		</Tooltip>
 	);
@@ -1359,17 +1389,25 @@ function GlobalControlButton({
 
 function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 	const trigger = (
-		<DropdownMenuTrigger asChild>
-			<Button type="button" variant="ghost" size="icon-lg" aria-label="Help" className="rounded-lg">
-				<CircleHelp />
-			</Button>
+		<DropdownMenuTrigger
+			render={
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-lg"
+					aria-label="Help"
+					className="rounded-lg"
+				/>
+			}
+		>
+			<CircleHelp />
 		</DropdownMenuTrigger>
 	);
 	return (
 		<DropdownMenu>
 			{showTooltip ? (
 				<Tooltip>
-					<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+					<TooltipTrigger render={trigger} />
 					<TooltipContent side="top">Help</TooltipContent>
 				</Tooltip>
 			) : (
@@ -1391,26 +1429,28 @@ function UserControl({
 }) {
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 	const trigger = (
-		<DropdownMenuTrigger asChild>
-			<Button
-				type="button"
-				variant="ghost"
-				size="icon-lg"
-				className="rounded-lg"
-				aria-label="User menu"
-			>
-				<Avatar className="size-8 rounded-md">
-					{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-					<AvatarFallback className="rounded-md">{initial}</AvatarFallback>
-				</Avatar>
-			</Button>
+		<DropdownMenuTrigger
+			render={
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-lg"
+					className="rounded-lg"
+					aria-label="User menu"
+				/>
+			}
+		>
+			<Avatar className="size-8 rounded-md">
+				{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
+				<AvatarFallback className="rounded-md">{initial}</AvatarFallback>
+			</Avatar>
 		</DropdownMenuTrigger>
 	);
 	return (
 		<DropdownMenu>
 			{showTooltip ? (
 				<Tooltip>
-					<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+					<TooltipTrigger render={trigger} />
 					<TooltipContent side="top">User menu</TooltipContent>
 				</Tooltip>
 			) : (

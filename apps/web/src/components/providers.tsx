@@ -32,7 +32,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 				<QueryClientProvider client={queryClient}>
 					<QueryCacheAuthBoundary queryClient={queryClient}>
 						<AnalyticsProvider>
-							<TooltipProvider delayDuration={200}>{children}</TooltipProvider>
+							<TooltipProvider delay={200}>{children}</TooltipProvider>
 						</AnalyticsProvider>
 					</QueryCacheAuthBoundary>
 				</QueryClientProvider>
