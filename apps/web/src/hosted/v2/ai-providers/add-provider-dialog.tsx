@@ -29,7 +29,6 @@ import {
 	useDeleteProviderQuiet,
 	useOAuthComplete,
 	useOAuthStart,
-	useSaveApiKeyToVault,
 	useSetApiKey,
 	useUpsertProvider,
 	useUpsertProviderQuiet,
@@ -55,12 +54,11 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 
-type AuthMethod = "api_key" | "vault" | "oauth" | "none";
+type AuthMethod = "api_key" | "oauth" | "none";
 
 function authFor(method: AuthMethod): AiProviderAuth {
 	if (method === "api_key") return { type: "api_key", source: "managed" };
 	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
-	// `vault` builds its `secret_ref` after the key is stored (see submit()).
 	return { type: "none" };
 }
 
@@ -106,7 +104,6 @@ export function AddProviderDialog({
 	const upsertQuiet = useUpsertProviderQuiet();
 	const deleteProviderQuiet = useDeleteProviderQuiet();
 	const setKey = useSetApiKey();
-	const saveToVault = useSaveApiKeyToVault();
 	const validate = useValidateProvider();
 	const oauthStart = useOAuthStart();
 	const oauthComplete = useOAuthComplete();
@@ -171,11 +168,9 @@ export function AddProviderDialog({
 			setAuthMethod(
 				editing.auth.type === "none"
 					? "none"
-					: editing.auth.type === "api_key"
+					: editing.auth.type === "api_key" || editing.auth.type === "secret_ref"
 						? "api_key"
-						: editing.auth.type === "secret_ref"
-							? "vault"
-							: "oauth",
+						: "oauth",
 			);
 		} else {
 			const m = providerTypeMeta("openai");
@@ -207,16 +202,14 @@ export function AddProviderDialog({
 	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
 	const canKeepManagedApiKey =
 		authMethod === "api_key" && isEdit && editing?.auth.type === "api_key";
-	const existingVaultAuth =
+	const existingSecretRefAuth =
 		isEdit && editing?.auth.type === "secret_ref" && editing.auth.ref ? editing.auth : null;
-	const canKeepVaultSecretRef = authMethod === "vault" && Boolean(existingVaultAuth);
-	const canKeepExistingKey = canKeepManagedApiKey || canKeepVaultSecretRef;
+	const canKeepLegacySecretRef = authMethod === "api_key" && Boolean(existingSecretRefAuth);
+	const canKeepExistingKey = canKeepManagedApiKey || canKeepLegacySecretRef;
 	// A key is required for api_key unless this provider is already using a
-	// managed API key. Vault edits can keep an existing secret_ref; creates and
-	// auth-method switches still need a key so a new ref can be built.
-	const keyRequired =
-		(authMethod === "api_key" && !canKeepManagedApiKey) ||
-		(authMethod === "vault" && !canKeepVaultSecretRef);
+	// managed API key. Legacy secret_ref edits can keep the existing ref, but
+	// new providers and auth-method switches still need a managed key.
+	const keyRequired = authMethod === "api_key" && !canKeepExistingKey;
 	const canSubmit =
 		Boolean(providerId) &&
 		Boolean(baseUrl.trim()) &&
@@ -289,23 +282,12 @@ export function AddProviderDialog({
 			return;
 		}
 
-		// `vault`: store the key in the project vault first → secret_ref.
 		let auth = authFor(authMethod);
-		if (authMethod === "vault") {
-			if (apiKey.trim()) {
-				const ref = await saveToVault
-					.mutateAsync({ providerId, apiKey: apiKey.trim() })
-					.catch(() => null);
-				if (!ref) return; // saveToVault.onError already toasts
-				auth = { type: "secret_ref", ref };
-			} else if (existingVaultAuth) {
-				auth = existingVaultAuth;
-			} else {
-				return;
-			}
-		}
+		const isApiKeySubmit = authMethod === "api_key";
+		const hasNewManagedKey = isApiKeySubmit && Boolean(apiKey.trim());
+		if (isApiKeySubmit && existingSecretRefAuth) auth = existingSecretRefAuth;
 
-		const keyBacked = authMethod === "api_key" || authMethod === "vault";
+		const keyBacked = auth.type === "api_key" || auth.type === "secret_ref";
 		const body = {
 			provider_id: providerId,
 			type,
@@ -320,7 +302,7 @@ export function AddProviderDialog({
 		const created = await upsert.mutateAsync(body).catch(() => null);
 		if (!created) return;
 
-		if (authMethod === "api_key" && apiKey.trim()) {
+		if (hasNewManagedKey) {
 			// Don't claim success on a key that didn't store — `/validate` only
 			// re-checks config shape, not that the key landed. setKey's onError
 			// already toasts; keep the dialog open so the user can retry.
@@ -545,7 +527,6 @@ export function AddProviderDialog({
 		upsertQuiet.isPending ||
 		deleteProviderQuiet.isPending ||
 		setKey.isPending ||
-		saveToVault.isPending ||
 		validate.isPending ||
 		oauthStart.isPending;
 
@@ -703,8 +684,7 @@ export function AddProviderDialog({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										<SelectItem value="api_key">API key (managed runtime env)</SelectItem>
-										<SelectItem value="vault">Store key in project vault</SelectItem>
+										<SelectItem value="api_key">API key</SelectItem>
 										{meta.oauth ? (
 											<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
 										) : null}
@@ -713,7 +693,7 @@ export function AddProviderDialog({
 								</Select>
 							</div>
 
-							{authMethod === "api_key" || authMethod === "vault" ? (
+							{authMethod === "api_key" ? (
 								<>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-key">
@@ -730,11 +710,11 @@ export function AddProviderDialog({
 											spellCheck={false}
 										/>
 										<p className="text-xs text-muted-foreground">
-											{authMethod === "vault"
-												? "Stored in your project vault; the runtime resolves it by secret reference — never shown to the dashboard again."
-												: "Stored encrypted in your vault — never shown to the dashboard again."}
+											{canKeepLegacySecretRef
+												? "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth."
+												: "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again."}
 										</p>
-										{authMethod === "api_key" && keyRequired && isEdit && !apiKey.trim() ? (
+										{keyRequired && isEdit && !apiKey.trim() ? (
 											<p className="text-xs text-destructive">
 												Enter a key to switch this provider to managed API-key auth.
 											</p>
