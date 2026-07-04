@@ -21,6 +21,7 @@ import type {
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
+import { shouldPollDeployments } from "@/hosted/deployment-status";
 
 export const billingKeys = {
 	wallet: ["billing", "wallet"] as const,
@@ -263,19 +264,13 @@ export function useUsage() {
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
-function hasTransientDeployment(items: { status: string }[] | undefined): boolean {
-	return (items ?? []).some(
-		(d) => d.status === "pending" || d.status === "provisioning" || d.status === "starting",
-	);
-}
-
 export function useHostedDeployments({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.deployments,
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
-		refetchInterval: (q) => (hasTransientDeployment(q.state.data) ? 10_000 : false),
+		refetchInterval: (q) => (shouldPollDeployments(q.state.data) ? 10_000 : false),
 	});
 }
 

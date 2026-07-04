@@ -1,12 +1,84 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type { RebindAgentAiProviderRequest } from "@/hosted/billing/contracts";
-import { toastBillingError } from "@/hosted/billing/errors";
+import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
+
+const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
+
+type AiProviderRebindFailure = {
+	agentType: string;
+	error: unknown;
+};
+
+class AiProviderRebindError extends Error {
+	constructor(
+		readonly succeeded: string[],
+		readonly failures: AiProviderRebindFailure[],
+	) {
+		super("AI provider rebind failed for one or more runtimes");
+		this.name = "AiProviderRebindError";
+	}
+}
+
+function invalidateDeploymentSnapshots(qc: QueryClient) {
+	qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	qc.invalidateQueries({ queryKey: ["agents"] });
+}
+
+function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
+	for (const delay of SETTLING_REFRESH_DELAYS_MS) {
+		globalThis.setTimeout(() => {
+			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			void qc.invalidateQueries({ queryKey: ["agents"] });
+		}, delay);
+	}
+}
+
+function runtimeLabel(agentType: string): string {
+	if (agentType === "codex") return "Codex";
+	if (agentType === "openclaw") return "OpenClaw";
+	if (agentType === "hermes") return "Hermes";
+	return agentType;
+}
+
+function listRuntimeLabels(agentTypes: readonly string[]): string {
+	return agentTypes.map(runtimeLabel).join(", ");
+}
+
+function isLifecycleStateConflict(error: unknown): boolean {
+	if (!(error instanceof BillingApiError)) return false;
+	return (
+		error.status === 409 ||
+		/invalid[_\s-]?state|state conflict|conflict|not (running|stopped|ready)|already/i.test(
+			error.detail,
+		)
+	);
+}
+
+function toastAiProviderRebindError(error: unknown) {
+	if (!(error instanceof AiProviderRebindError)) {
+		toastBillingError("Couldn't update provider")(error);
+		return;
+	}
+
+	const failed = listRuntimeLabels(error.failures.map((failure) => failure.agentType));
+	const reason = normalizeBillingError(error.failures[0]?.error);
+	if (error.succeeded.length > 0) {
+		toast.error("Provider updated for some runtimes", {
+			description: `Couldn't update ${failed}. ${reason}`,
+		});
+		return;
+	}
+
+	toast.error("Couldn't update provider", {
+		description: `Couldn't update ${failed}. ${reason}`,
+	});
+}
 
 /**
  * Resolve the hosted deployment that backs a cloud-api environment, joined via
@@ -57,8 +129,8 @@ export function useSetAgentEnabled() {
 		mutationFn: (vars: { id: string; agentType: string; enabled: boolean }) =>
 			client.setAgentEnabled(vars.id, vars.agentType, vars.enabled),
 		onSuccess: (_d, vars) => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+			invalidateDeploymentSnapshots(qc);
+			scheduleDeploymentSettlingRefresh(qc);
 			toast.success(vars.enabled ? "Runtime enabled" : "Runtime disabled");
 		},
 		onError: toastBillingError("Couldn't update runtime"),
@@ -75,17 +147,29 @@ export function useSetAgentAiProvider() {
 			agentTypes: string[];
 			body: RebindAgentAiProviderRequest;
 		}) => {
+			const succeeded: string[] = [];
+			const failures: AiProviderRebindFailure[] = [];
 			let last: Awaited<ReturnType<typeof client.setAgentAiProvider>> | undefined;
 			for (const agentType of vars.agentTypes) {
-				last = await client.setAgentAiProvider(vars.id, agentType, vars.body);
+				try {
+					last = await client.setAgentAiProvider(vars.id, agentType, vars.body);
+					succeeded.push(agentType);
+				} catch (error) {
+					failures.push({ agentType, error });
+				}
+			}
+			if (failures.length > 0) {
+				throw new AiProviderRebindError(succeeded, failures);
 			}
 			return last;
 		},
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+			invalidateDeploymentSnapshots(qc);
 		},
-		onError: toastBillingError("Couldn't update provider"),
+		onError: (error) => {
+			invalidateDeploymentSnapshots(qc);
+			toastAiProviderRebindError(error);
+		},
 	});
 }
 
@@ -96,8 +180,8 @@ export function useOnboardAgent() {
 		mutationFn: (vars: { id: string; agentType: string }) =>
 			client.onboardAgent(vars.id, vars.agentType),
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+			invalidateDeploymentSnapshots(qc);
+			scheduleDeploymentSettlingRefresh(qc);
 			toast.success("Runtime added");
 		},
 		onError: toastBillingError("Couldn't add runtime"),
@@ -122,17 +206,27 @@ export function useDeploymentLifecycle() {
 			return client.startDeployment(vars.id);
 		},
 		onSuccess: (_d, vars) => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+			invalidateDeploymentSnapshots(qc);
+			scheduleDeploymentSettlingRefresh(qc);
 			const msg =
 				vars.action === "restart"
 					? "Restarting agent…"
 					: vars.action === "stop"
-						? "Agent stopped"
-						: "Agent started";
+						? "Stopping agent…"
+						: "Starting agent…";
 			toast.success(msg);
 		},
-		onError: toastBillingError("Action failed"),
+		onError: (error) => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			if (isLifecycleStateConflict(error)) {
+				toast.error("Agent state changed", {
+					description:
+						"The deployment state changed before the action ran. We refreshed the controls.",
+				});
+				return;
+			}
+			toast.error("Couldn't update lifecycle", { description: normalizeBillingError(error) });
+		},
 	});
 }
 
@@ -142,8 +236,8 @@ export function useDeleteDeployment() {
 	return useMutation({
 		mutationFn: (id: string) => client.deleteDeployment(id),
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+			invalidateDeploymentSnapshots(qc);
+			scheduleDeploymentSettlingRefresh(qc);
 		},
 		onError: toastBillingError("Couldn't delete agent"),
 	});
