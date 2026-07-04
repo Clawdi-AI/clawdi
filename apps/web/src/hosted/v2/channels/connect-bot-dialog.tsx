@@ -16,18 +16,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
-import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
-	IMESSAGE_AUTH_MODES,
 	PROVIDER_META,
-	providerMeta,
 } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
@@ -36,10 +27,9 @@ import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
  * cloud-api): Telegram = bot token; Discord = bot token + application_id +
- * public_key (+ guild_id); iMessage = BlueBubbles server_url + password
- * (+ auth_mode); WhatsApp = no token (device is linked afterwards via the
- * Baileys tenant-creds flow on the channel page). On success the webhook
- * secret is revealed once.
+ * public_key (+ guild_id); WhatsApp = no token (device is linked afterwards
+ * via the Baileys tenant-creds flow on the channel page). On success the
+ * webhook secret is revealed once.
  */
 export function ConnectBotDialog({
 	open,
@@ -51,14 +41,11 @@ export function ConnectBotDialog({
 	const create = useCreateChannel();
 	const [provider, setProvider] = useState<ChannelProviderId>("telegram");
 	const [name, setName] = useState("");
-	const [token, setToken] = useState(""); // bot token / BlueBubbles password
+	const [token, setToken] = useState(""); // Telegram / Discord bot token
 	// Discord
 	const [applicationId, setApplicationId] = useState("");
 	const [publicKey, setPublicKey] = useState("");
 	const [guildId, setGuildId] = useState("");
-	// iMessage
-	const [serverUrl, setServerUrl] = useState("");
-	const [authMode, setAuthMode] = useState<string>("password_query");
 	const [created, setCreated] = useState<ChannelCreated | null>(null);
 	const submitLocked = useRef(false);
 
@@ -70,12 +57,10 @@ export function ConnectBotDialog({
 		setApplicationId("");
 		setPublicKey("");
 		setGuildId("");
-		setServerUrl("");
-		setAuthMode("password_query");
 		setCreated(null);
 	}, [open]);
 
-	const meta = providerMeta(provider);
+	const meta = PROVIDER_META[provider];
 
 	function changeProvider(next: ChannelProviderId) {
 		setProvider(next);
@@ -83,8 +68,6 @@ export function ConnectBotDialog({
 		setApplicationId("");
 		setPublicKey("");
 		setGuildId("");
-		setServerUrl("");
-		setAuthMode("password_query");
 	}
 
 	const canSubmit =
@@ -95,9 +78,7 @@ export function ConnectBotDialog({
 				? token.trim().length > 0
 				: meta.connect === "discord"
 					? token.trim().length > 0 && applicationId.trim().length > 0
-					: meta.connect === "imessage"
-						? token.trim().length > 0 && serverUrl.trim().length > 0
-						: false);
+					: false);
 
 	function buildBody(): ChannelCreate {
 		const trimmedName = name.trim();
@@ -106,14 +87,6 @@ export function ConnectBotDialog({
 			if (publicKey.trim()) config.public_key = publicKey.trim();
 			if (guildId.trim()) config.guild_id = guildId.trim();
 			return { provider, name: trimmedName, provider_token: token.trim(), config };
-		}
-		if (meta.connect === "imessage") {
-			return {
-				provider,
-				name: trimmedName,
-				provider_token: token.trim(),
-				config: { server_url: serverUrl.trim(), auth_mode: authMode },
-			};
 		}
 		if (meta.connect === "token") {
 			return { provider, name: trimmedName, provider_token: token.trim() };
@@ -222,7 +195,7 @@ export function ConnectBotDialog({
 								/>
 							</div>
 
-							{/* Telegram / Discord bot token, or iMessage BlueBubbles password. */}
+							{/* Telegram / Discord bot token. */}
 							{meta.connect !== "whatsapp" ? (
 								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="connect-token">{meta.tokenLabel}</Label>
@@ -283,38 +256,6 @@ export function ConnectBotDialog({
 											autoComplete="off"
 											spellCheck={false}
 										/>
-									</div>
-								</>
-							) : null}
-
-							{/* iMessage: BlueBubbles server URL + auth mode. */}
-							{meta.connect === "imessage" ? (
-								<>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-server-url">BlueBubbles server URL</Label>
-										<Input
-											id="connect-server-url"
-											value={serverUrl}
-											onChange={(e) => setServerUrl(e.target.value)}
-											placeholder="https://your-bluebubbles.example.com"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-auth-mode">Auth mode</Label>
-										<Select value={authMode} onValueChange={setAuthMode}>
-											<SelectTrigger id="connect-auth-mode">
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{IMESSAGE_AUTH_MODES.map((m) => (
-													<SelectItem key={m.value} value={m.value}>
-														{m.label}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
 									</div>
 								</>
 							) : null}

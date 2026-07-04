@@ -29,8 +29,6 @@ const CHANNEL_PNG: Record<string, string> = {
 	telegram: `${ICON_BASE}/telegram.png`,
 	discord: `${ICON_BASE}/discord.png`,
 	whatsapp: `${ICON_BASE}/whatsapp.png`,
-	imessage: `${ICON_BASE}/imessage.png`,
-	bluebubbles: `${ICON_BASE}/bluebubbles.png`,
 	slack: `${ICON_BASE}/slack.png`,
 };
 

@@ -1,32 +1,37 @@
 /**
- * The four native channel providers (backend `CHANNEL_PROVIDERS`). Each takes
- * DIFFERENT real connect inputs — grounded in cloud-api:
+ * Native channel providers that can be created from the v2 channels UI. Each
+ * takes different real connect inputs:
  *   - telegram:  bot token (BotFather)                → provider_token
  *   - discord:   bot token + application_id + public_key (+ optional guild_id)
  *                                                       → provider_token + config
  *   - whatsapp:  NO token — Baileys device link via the tenant-creds flow
- *   - imessage:  BlueBubbles server_url + password (+ auth_mode)
- *                                                       → provider_token + config
  * Tints reuse the app identity palette so channel chips match the chrome.
  */
-export const CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp", "imessage"] as const;
+export const CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
 export type ChannelProviderId = (typeof CHANNEL_PROVIDERS)[number];
 
 /** How the connect form behaves for this provider. */
-export type ChannelConnectMode = "token" | "discord" | "whatsapp" | "imessage";
+export type ChannelConnectMode = "token" | "discord" | "whatsapp";
 
 export interface ChannelProviderMeta {
-	id: ChannelProviderId;
+	id: string;
 	label: string;
 	tint: string;
-	connect: ChannelConnectMode;
+	connect?: ChannelConnectMode;
 	/** Label/placeholder for the single credential field (token / password). */
 	tokenLabel?: string;
 	tokenPlaceholder?: string;
 	hint: string;
+	unavailable?: boolean;
 }
 
-export const PROVIDER_META: Record<ChannelProviderId, ChannelProviderMeta> = {
+export type SupportedChannelProviderMeta = ChannelProviderMeta & {
+	id: ChannelProviderId;
+	connect: ChannelConnectMode;
+	unavailable?: false;
+};
+
+export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMeta> = {
 	telegram: {
 		id: "telegram",
 		label: "Telegram",
@@ -52,36 +57,48 @@ export const PROVIDER_META: Record<ChannelProviderId, ChannelProviderMeta> = {
 		connect: "whatsapp",
 		hint: "No bot token — connect, then link your WhatsApp number by scanning a code (Linked devices).",
 	},
+};
+
+const LEGACY_PROVIDER_META: Record<string, ChannelProviderMeta> = {
 	imessage: {
 		id: "imessage",
-		label: "iMessage",
-		tint: "bg-identity-6-bg text-identity-6-fg",
-		connect: "imessage",
-		tokenLabel: "BlueBubbles password",
-		tokenPlaceholder: "Server password",
-		hint: "Connect your BlueBubbles server — its URL and password.",
+		label: "iMessage (unavailable)",
+		tint: "bg-muted text-muted-foreground",
+		hint: "iMessage native channels are no longer available in this surface.",
+		unavailable: true,
 	},
 };
 
-/** BlueBubbles auth modes the backend understands (channels.py `_send_imessage`). */
-export const IMESSAGE_AUTH_MODES = [
-	{ value: "password_query", label: "Password (query)" },
-	{ value: "x_api_key", label: "API key header" },
-	{ value: "bearer", label: "Bearer token" },
-] as const;
-
-const DEFAULT_PROVIDER_META: ChannelProviderMeta = {
-	id: "telegram",
-	label: "Channel",
-	tint: "bg-muted text-muted-foreground",
-	connect: "token",
-	hint: "",
-};
+function unknownProviderMeta(id: string): ChannelProviderMeta {
+	return {
+		id,
+		label: id || "Channel",
+		tint: "bg-muted text-muted-foreground",
+		hint: "This channel provider is no longer available in this surface.",
+		unavailable: true,
+	};
+}
 
 export function providerMeta(id: string): ChannelProviderMeta {
-	return PROVIDER_META[id as ChannelProviderId] ?? { ...DEFAULT_PROVIDER_META, label: id };
+	return (
+		PROVIDER_META[id as ChannelProviderId] ?? LEGACY_PROVIDER_META[id] ?? unknownProviderMeta(id)
+	);
 }
 
 export function isChannelProvider(id: string): id is ChannelProviderId {
 	return (CHANNEL_PROVIDERS as readonly string[]).includes(id);
+}
+
+export function orderedProviderIds(providers: Iterable<string>): string[] {
+	const providerList = Array.from(providers);
+	const present = new Set(providerList);
+	const ordered: string[] = CHANNEL_PROVIDERS.filter((provider) => present.has(provider));
+
+	for (const provider of providerList) {
+		if (!isChannelProvider(provider) && !ordered.includes(provider)) {
+			ordered.push(provider);
+		}
+	}
+
+	return ordered;
 }
