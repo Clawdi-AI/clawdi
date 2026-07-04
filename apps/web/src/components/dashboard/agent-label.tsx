@@ -196,9 +196,11 @@ export function AgentSourceBadge({
 
 export function LegacyAgentBadge({
 	compact = false,
+	iconOnly = false,
 	className,
 }: {
 	compact?: boolean;
+	iconOnly?: boolean;
 	className?: string;
 }) {
 	return (
@@ -207,14 +209,18 @@ export function LegacyAgentBadge({
 			title="Managed in the legacy hosted dashboard"
 			className={cn(
 				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
-				compact
-					? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-					: "h-5 gap-1.5 rounded-full px-2 text-2xs",
+				iconOnly
+					? "size-4 justify-center rounded-full p-0"
+					: compact
+						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
+						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
 				className,
 			)}
 		>
-			<History className="size-3.5 text-warning-muted-foreground" />
-			Legacy
+			<History
+				className={cn(iconOnly ? "size-2.5" : "size-3.5", "text-warning-muted-foreground")}
+			/>
+			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
 		</StatusBadge>
 	);
 }
