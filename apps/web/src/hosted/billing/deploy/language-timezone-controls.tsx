@@ -62,22 +62,24 @@ export function TimezoneCombobox({
 	return (
 		<div data-hosted="true" className="contents">
 			<Popover open={open} onOpenChange={setOpen}>
-				<PopoverTrigger asChild>
-					<Button
-						id={id}
-						type="button"
-						variant="outline"
-						role="combobox"
-						aria-expanded={open}
-						className="w-full justify-between"
-					>
-						<span className={cn("truncate", !value && "text-muted-foreground")}>
-							{value ? timezoneLabel(value) : "Select a timezone"}
-						</span>
-						<ChevronsUpDown className="opacity-50" />
-					</Button>
+				<PopoverTrigger
+					render={
+						<Button
+							id={id}
+							type="button"
+							variant="outline"
+							role="combobox"
+							aria-expanded={open}
+							className="w-full justify-between"
+						/>
+					}
+				>
+					<span className={cn("truncate", !value && "text-muted-foreground")}>
+						{value ? timezoneLabel(value) : "Select a timezone"}
+					</span>
+					<ChevronsUpDown className="opacity-50" />
 				</PopoverTrigger>
-				<PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+				<PopoverContent align="start" className="w-(--anchor-width) p-0">
 					<Command>
 						<CommandInput placeholder="Search timezones…" />
 						<CommandList className="max-h-72">

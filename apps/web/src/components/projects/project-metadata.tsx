@@ -266,7 +266,13 @@ export function ProjectScopePicker({
 					{label}
 				</span>
 			) : null}
-			<Select value={value} onValueChange={onValueChange} disabled={disabled}>
+			<Select
+				value={value}
+				onValueChange={(nextValue) => {
+					if (nextValue !== null) onValueChange(nextValue);
+				}}
+				disabled={disabled}
+			>
 				<SelectTrigger
 					aria-label={label}
 					className={cn(
@@ -284,9 +290,9 @@ export function ProjectScopePicker({
 					)}
 				</SelectTrigger>
 				<SelectContent
-					position="popper"
 					align="start"
-					className="w-[var(--radix-select-trigger-width)] min-w-[min(420px,calc(100vw-2rem))]"
+					alignItemWithTrigger={false}
+					className="w-(--anchor-width) min-w-[min(420px,calc(100vw-2rem))]"
 				>
 					{allowAll ? (
 						<SelectItem value="all" className="py-2">
@@ -346,7 +352,13 @@ export function ProjectCompactPicker({
 	const selectedProject = projects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	return (
-		<Select value={value} onValueChange={onValueChange} disabled={disabled}>
+		<Select
+			value={value}
+			onValueChange={(nextValue) => {
+				if (nextValue !== null) onValueChange(nextValue);
+			}}
+			disabled={disabled}
+		>
 			<SelectTrigger
 				aria-label={ariaLabel}
 				className={cn(
@@ -376,9 +388,9 @@ export function ProjectCompactPicker({
 				)}
 			</SelectTrigger>
 			<SelectContent
-				position="popper"
 				align="start"
-				className="w-[var(--radix-select-trigger-width)] min-w-[min(420px,calc(100vw-2rem))]"
+				alignItemWithTrigger={false}
+				className="w-(--anchor-width) min-w-[min(420px,calc(100vw-2rem))]"
 			>
 				{allowAll ? (
 					<SelectItem value="all" className="py-2">

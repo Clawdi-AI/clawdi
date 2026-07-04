@@ -114,22 +114,24 @@ export function NotificationCenter() {
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon-sm"
-					className={cn("relative", count > 0 && "text-foreground")}
-					aria-label={triggerLabel}
-					title={triggerLabel}
-				>
-					<InboxIcon className="size-4" />
-					{count > 0 ? (
-						<Badge className="-right-1 -top-1 absolute h-4 min-w-4 rounded-full px-1 text-3xs leading-none">
-							{count > 99 ? "99+" : count}
-						</Badge>
-					) : null}
-				</Button>
+			<PopoverTrigger
+				render={
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-sm"
+						className={cn("relative", count > 0 && "text-foreground")}
+						aria-label={triggerLabel}
+						title={triggerLabel}
+					/>
+				}
+			>
+				<InboxIcon className="size-4" />
+				{count > 0 ? (
+					<Badge className="-right-1 -top-1 absolute h-4 min-w-4 rounded-full px-1 text-3xs leading-none">
+						{count > 99 ? "99+" : count}
+					</Badge>
+				) : null}
 			</PopoverTrigger>
 			<PopoverContent align="end" className="w-[min(calc(100vw-2rem),26rem)] p-0">
 				<PopoverHeader className="px-4 py-3">
@@ -157,8 +159,14 @@ export function NotificationCenter() {
 					<p className="text-xs text-muted-foreground">
 						Accepted invites appear under Shared Projects.
 					</p>
-					<Button asChild variant="ghost" size="sm" onClick={() => setOpen(false)}>
-						<Link to="/projects">View Accepted Invites</Link>
+					<Button
+						render={<Link to="/projects" />}
+						nativeButton={false}
+						variant="ghost"
+						size="sm"
+						onClick={() => setOpen(false)}
+					>
+						View Accepted Invites
 					</Button>
 				</div>
 			</PopoverContent>

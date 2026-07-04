@@ -148,14 +148,12 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5">
-					<Share2
-						className={cn("size-3.5", sharedNow ? "text-success" : "text-muted-foreground")}
-					/>
-					Share
-					<ChevronDown className="size-3 text-muted-foreground" />
-				</Button>
+			<PopoverTrigger
+				render={<Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5" />}
+			>
+				<Share2 className={cn("size-3.5", sharedNow ? "text-success" : "text-muted-foreground")} />
+				Share
+				<ChevronDown className="size-3 text-muted-foreground" />
 			</PopoverTrigger>
 			<PopoverContent align="end" className="w-96 p-0">
 				<div className="flex items-start justify-between gap-3 px-3 py-3">

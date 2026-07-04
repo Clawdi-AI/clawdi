@@ -15,6 +15,7 @@ import {
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
+	Command,
 	CommandDialog,
 	CommandEmpty,
 	CommandGroup,
@@ -254,87 +255,86 @@ function CommandPalette({
 			onOpenChange={onOpenChange}
 			title="Search"
 			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
-			// cmdk does its own filtering by default — we do server-side, so
-			// disable client filter and trust the API's ranking.
-			shouldFilter={false}
 		>
-			<div className="relative">
-				<CommandInput
-					value={query}
-					onValueChange={setQuery}
-					placeholder="Search sessions, memories, skills, vaults…"
-				/>
-				{hasQuery && isFetching ? (
-					<Spinner className="pointer-events-none absolute top-3.5 right-4 size-4 text-muted-foreground" />
-				) : null}
-			</div>
-			{/* Fixed min-height: stops the dialog from jumping as the user types
-			    (switching between 6 nav shortcuts → N result rows → empty). */}
-			<CommandList className="min-h-[320px]">
-				{showEmpty ? <CommandEmpty>No results for "{debounced}".</CommandEmpty> : null}
+			<Command shouldFilter={false}>
+				<div className="relative">
+					<CommandInput
+						value={query}
+						onValueChange={setQuery}
+						placeholder="Search sessions, memories, skills, vaults…"
+					/>
+					{hasQuery && isFetching ? (
+						<Spinner className="pointer-events-none absolute top-3.5 right-4 size-4 text-muted-foreground" />
+					) : null}
+				</div>
+				{/* Fixed min-height: stops the dialog from jumping as the user types
+				    (switching between 6 nav shortcuts → N result rows → empty). */}
+				<CommandList className="min-h-[320px]">
+					{showEmpty ? <CommandEmpty>No results for "{debounced}".</CommandEmpty> : null}
 
-				{/* First-fetch state: query typed but no prior data yet — show a
-				    neutral loading row inside the list so the dialog isn't
-				    just an empty box while the debounce + network settles. */}
-				{hasQuery && isFetching && !hasStaleResults ? (
-					<div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-						<Spinner />
-						Searching…
-					</div>
-				) : null}
+					{/* First-fetch state: query typed but no prior data yet — show a
+					    neutral loading row inside the list so the dialog isn't
+					    just an empty box while the debounce + network settles. */}
+					{hasQuery && isFetching && !hasStaleResults ? (
+						<div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+							<Spinner />
+							Searching…
+						</div>
+					) : null}
 
-				{navMatches.length > 0 ? (
-					<CommandGroup heading="Open a Page">
-						{navMatches.map((s) => (
-							<CommandItem
-								key={s.href}
-								value={s.searchText}
-								onSelect={() => jump(s.href)}
-								className="gap-2"
-							>
-								<s.icon className="size-4 shrink-0" />
-								<div className="flex min-w-0 flex-col">
-									<span className="truncate">{s.label}</span>
-									<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
-								</div>
-							</CommandItem>
-						))}
-					</CommandGroup>
-				) : null}
+					{navMatches.length > 0 ? (
+						<CommandGroup heading="Open a Page">
+							{navMatches.map((s) => (
+								<CommandItem
+									key={s.href}
+									value={s.searchText}
+									onSelect={() => jump(s.href)}
+									className="gap-2"
+								>
+									<s.icon className="size-4 shrink-0" />
+									<div className="flex min-w-0 flex-col">
+										<span className="truncate">{s.label}</span>
+										<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
+									</div>
+								</CommandItem>
+							))}
+						</CommandGroup>
+					) : null}
 
-				{hasQuery
-					? (["session", "memory", "skill", "vault"] as const).map((type, i) => {
-							const hits = grouped[type];
-							if (!hits?.length) return null;
-							const Icon = TYPE_ICON[type];
-							return (
-								<div key={type}>
-									{i > 0 ? <CommandSeparator /> : null}
-									<CommandGroup heading={TYPE_LABEL[type]}>
-										{hits.map((hit) => (
-											<CommandItem
-												key={`${hit.type}-${hit.id}`}
-												value={`${hit.type}-${hit.id}`}
-												onSelect={() => jump(hit.href)}
-												className="gap-2"
-											>
-												<Icon className="size-4 shrink-0 text-muted-foreground" />
-												<div className="flex min-w-0 flex-col">
-													<span className="truncate">{hit.title}</span>
-													{hit.subtitle ? (
-														<span className="truncate text-xs text-muted-foreground">
-															{hit.subtitle}
-														</span>
-													) : null}
-												</div>
-											</CommandItem>
-										))}
-									</CommandGroup>
-								</div>
-							);
-						})
-					: null}
-			</CommandList>
+					{hasQuery
+						? (["session", "memory", "skill", "vault"] as const).map((type, i) => {
+								const hits = grouped[type];
+								if (!hits?.length) return null;
+								const Icon = TYPE_ICON[type];
+								return (
+									<div key={type}>
+										{i > 0 ? <CommandSeparator /> : null}
+										<CommandGroup heading={TYPE_LABEL[type]}>
+											{hits.map((hit) => (
+												<CommandItem
+													key={`${hit.type}-${hit.id}`}
+													value={`${hit.type}-${hit.id}`}
+													onSelect={() => jump(hit.href)}
+													className="gap-2"
+												>
+													<Icon className="size-4 shrink-0 text-muted-foreground" />
+													<div className="flex min-w-0 flex-col">
+														<span className="truncate">{hit.title}</span>
+														{hit.subtitle ? (
+															<span className="truncate text-xs text-muted-foreground">
+																{hit.subtitle}
+															</span>
+														) : null}
+													</div>
+												</CommandItem>
+											))}
+										</CommandGroup>
+									</div>
+								);
+							})
+						: null}
+				</CommandList>
+			</Command>
 		</CommandDialog>
 	);
 }

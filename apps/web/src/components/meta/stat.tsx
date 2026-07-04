@@ -34,7 +34,7 @@ export function Stat({
 	if (!title) return stat;
 	return (
 		<Tooltip>
-			<TooltipTrigger asChild>{stat}</TooltipTrigger>
+			<TooltipTrigger render={stat} />
 			<TooltipContent>{title}</TooltipContent>
 		</Tooltip>
 	);

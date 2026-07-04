@@ -4,6 +4,7 @@ import { LogOut, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
+	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuRadioGroup,
@@ -38,48 +39,56 @@ export function UserMenuItems() {
 
 	return (
 		<>
-			<DropdownMenuLabel className="p-0 font-normal">
-				<div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-					<Avatar className="h-8 w-8 rounded-lg">
-						{user?.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-						<AvatarFallback className="rounded-lg">{user?.fullName?.[0] ?? "U"}</AvatarFallback>
-					</Avatar>
-					<div className="grid flex-1 text-left text-sm leading-tight">
-						<span className="truncate font-medium">{user?.fullName}</span>
-						<span className="truncate text-xs text-muted-foreground">
-							{user?.primaryEmailAddress?.emailAddress}
-						</span>
+			<DropdownMenuGroup>
+				<DropdownMenuLabel className="p-0 font-normal">
+					<div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+						<Avatar className="h-8 w-8 rounded-lg">
+							{user?.imageUrl ? (
+								<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
+							) : null}
+							<AvatarFallback className="rounded-lg">{user?.fullName?.[0] ?? "U"}</AvatarFallback>
+						</Avatar>
+						<div className="grid flex-1 text-left text-sm leading-tight">
+							<span className="truncate font-medium">{user?.fullName}</span>
+							<span className="truncate text-xs text-muted-foreground">
+								{user?.primaryEmailAddress?.emailAddress}
+							</span>
+						</div>
 					</div>
-				</div>
-			</DropdownMenuLabel>
+				</DropdownMenuLabel>
+			</DropdownMenuGroup>
 			<DropdownMenuSeparator />
-			<DropdownMenuSub>
-				<DropdownMenuSubTrigger>
-					{theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
-					Theme
-				</DropdownMenuSubTrigger>
-				<DropdownMenuSubContent>
-					<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setThemeFromMenu}>
-						<DropdownMenuRadioItem value="light">
-							<Sun />
-							Light
-						</DropdownMenuRadioItem>
-						<DropdownMenuRadioItem value="dark">
-							<Moon />
-							Dark
-						</DropdownMenuRadioItem>
-						<DropdownMenuRadioItem value="system">
-							<Monitor />
-							System
-						</DropdownMenuRadioItem>
-					</DropdownMenuRadioGroup>
-				</DropdownMenuSubContent>
-			</DropdownMenuSub>
+			<DropdownMenuGroup>
+				<DropdownMenuSub>
+					<DropdownMenuSubTrigger>
+						{theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
+						Theme
+					</DropdownMenuSubTrigger>
+					<DropdownMenuSubContent>
+						<DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setThemeFromMenu}>
+							<DropdownMenuRadioItem value="light">
+								<Sun />
+								Light
+							</DropdownMenuRadioItem>
+							<DropdownMenuRadioItem value="dark">
+								<Moon />
+								Dark
+							</DropdownMenuRadioItem>
+							<DropdownMenuRadioItem value="system">
+								<Monitor />
+								System
+							</DropdownMenuRadioItem>
+						</DropdownMenuRadioGroup>
+					</DropdownMenuSubContent>
+				</DropdownMenuSub>
+			</DropdownMenuGroup>
 			<DropdownMenuSeparator />
-			<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
-				<LogOut />
-				Sign out
-			</DropdownMenuItem>
+			<DropdownMenuGroup>
+				<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
+					<LogOut />
+					Sign out
+				</DropdownMenuItem>
+			</DropdownMenuGroup>
 		</>
 	);
 }

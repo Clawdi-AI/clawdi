@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useRef, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -25,7 +25,7 @@ export function ConfirmAction({
 	destructive = false,
 	onConfirm,
 }: {
-	children: ReactNode;
+	children: ReactElement;
 	title: string;
 	description: ReactNode;
 	confirmLabel?: string;
@@ -59,20 +59,19 @@ export function ConfirmAction({
 
 	return (
 		<AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
-			<AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
+			<AlertDialogTrigger render={children} />
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>{title}</AlertDialogTitle>
-					<AlertDialogDescription asChild>
-						<div className="space-y-2">{description}</div>
+					<AlertDialogDescription render={<div className="space-y-2" />}>
+						{description}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
 					<AlertDialogAction
-						// Keep the dialog open until the action settles — Radix's Dialog.Close
-						// composes its close with `checkForDefaultPrevented`, so preventDefault
-						// suppresses the auto-close while we run.
+						// Keep the dialog open until the action settles; the success path closes
+						// explicitly after the mutation finishes.
 						onClick={(event) => {
 							event.preventDefault();
 							// runConfirm rejects when onConfirm does; the dialog already stays open

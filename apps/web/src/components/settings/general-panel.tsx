@@ -11,6 +11,18 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 
+const THEME_ITEMS = [
+	{ label: "Light", value: "light" },
+	{ label: "Dark", value: "dark" },
+	{ label: "System", value: "system" },
+] as const;
+
+type ThemeItemValue = (typeof THEME_ITEMS)[number]["value"];
+
+function isThemeItemValue(value: string | null): value is ThemeItemValue {
+	return value === "light" || value === "dark" || value === "system";
+}
+
 /** General settings — appearance + app-wide preferences. */
 export function GeneralPanel() {
 	const { theme, setTheme } = useTheme();
@@ -25,14 +37,26 @@ export function GeneralPanel() {
 						Light, dark, or follow the system preference.
 					</p>
 				</div>
-				<Select value={theme ?? "system"} onValueChange={setTheme}>
-					<SelectTrigger id="settings-theme" className="w-[160px]">
+				<Select
+					items={THEME_ITEMS}
+					value={theme ?? "system"}
+					onValueChange={(value) => {
+						if (isThemeItemValue(value)) setTheme(value);
+					}}
+				>
+					<SelectTrigger
+						id="settings-theme"
+						data-testid="settings-theme-select"
+						className="w-[160px]"
+					>
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="light">Light</SelectItem>
-						<SelectItem value="dark">Dark</SelectItem>
-						<SelectItem value="system">System</SelectItem>
+						{THEME_ITEMS.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
 					</SelectContent>
 				</Select>
 			</div>

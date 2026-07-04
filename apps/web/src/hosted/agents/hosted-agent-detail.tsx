@@ -387,18 +387,32 @@ export function HostedAgentDetail({
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	const headerActions =
 		activeTab === "skills" ? (
-			<Button asChild variant="outline" size="sm">
-				<Link to="/skills" search={{ target: environmentId }}>
-					<Plus />
-					Install skills
-				</Link>
+			<Button
+				render={<Link to="/skills" search={{ target: environmentId }} />}
+				nativeButton={false}
+				variant="outline"
+				size="sm"
+			>
+				<Plus />
+				Install skills
 			</Button>
 		) : consoleUrl ? (
-			<Button asChild variant="outline" size="sm">
-				<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-					Open {runtimeBrowserUiLabel(runtime)}
-					<ExternalLink className="size-3.5" />
-				</a>
+			<Button
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
+					<a
+						href={consoleUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label={`Open ${runtimeBrowserUiLabel(runtime)}`}
+					/>
+				}
+				nativeButton={false}
+				variant="outline"
+				size="sm"
+			>
+				Open {runtimeBrowserUiLabel(runtime)}
+				<ExternalLink className="size-3.5" />
 			</Button>
 		) : null;
 
@@ -759,11 +773,18 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			icon={MonitorPlay}
 			title={browserUiLabel}
 			action={
-				<Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
-					<a href={url} target="_blank" rel="noopener noreferrer">
-						Open full screen
-						<Maximize2 className="size-3.5" />
-					</a>
+				<Button
+					render={
+						// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
+						<a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open full screen" />
+					}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+					className="hidden sm:inline-flex"
+				>
+					Open full screen
+					<Maximize2 className="size-3.5" />
 				</Button>
 			}
 		>
@@ -780,11 +801,22 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 				<p className="text-sm text-muted-foreground">
 					This runtime UI is best viewed full screen on a small screen.
 				</p>
-				<Button asChild variant="outline" size="sm">
-					<a href={url} target="_blank" rel="noopener noreferrer">
-						Open {browserUiLabel}
-						<Maximize2 className="size-3.5" />
-					</a>
+				<Button
+					render={
+						// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
+						<a
+							href={url}
+							target="_blank"
+							rel="noopener noreferrer"
+							aria-label={`Open ${browserUiLabel}`}
+						/>
+					}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					Open {browserUiLabel}
+					<Maximize2 className="size-3.5" />
 				</Button>
 			</div>
 		</LiveToolFrame>
@@ -1196,11 +1228,15 @@ function AiProviderTab({
 						{p.provider_id === inUseSlug ? <Badge variant="secondary">In use</Badge> : null}
 					</button>
 				))}
-				<Button asChild variant="ghost" size="sm" className="justify-start text-muted-foreground">
-					<Link to="/ai-providers">
-						<Plus className="size-3.5" />
-						Add a provider
-					</Link>
+				<Button
+					render={<Link to="/ai-providers" />}
+					nativeButton={false}
+					variant="ghost"
+					size="sm"
+					className="justify-start text-muted-foreground"
+				>
+					<Plus className="size-3.5" />
+					Add a provider
 				</Button>
 			</div>
 
@@ -1369,7 +1405,12 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 					Connect this agent to one of your channels or a shared-pool bot.
 				</p>
 				<div className="flex flex-col gap-2 sm:flex-row">
-					<Select value={accountId} onValueChange={setAccountId}>
+					<Select
+						value={accountId}
+						onValueChange={(value) => {
+							if (value !== null) setAccountId(value);
+						}}
+					>
 						<SelectTrigger className="flex-1">
 							<SelectValue placeholder="Choose a channel…" />
 						</SelectTrigger>
@@ -1584,7 +1625,9 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 						<Label htmlFor="settings-agent-language">Language</Label>
 						<Select
 							value={language || "default"}
-							onValueChange={(value) => setLanguage(value === "default" ? "" : value)}
+							onValueChange={(value) => {
+								setLanguage(value === null || value === "default" ? "" : value);
+							}}
 						>
 							<SelectTrigger id="settings-agent-language">
 								<SelectValue />
@@ -1933,15 +1976,20 @@ function ComputeSettingsSections({
 										</div>
 										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
 											{!isCurrent && enabled && siblingEnv ? (
-												<Button asChild variant="ghost" size="sm">
-													<Link
-														to="/agents/$id"
-														params={{ id: siblingEnv }}
-														search={{ source: "on-clawdi" }}
-													>
-														Open
-														<ArrowUpRight className="size-3.5" />
-													</Link>
+												<Button
+													render={
+														<Link
+															to="/agents/$id"
+															params={{ id: siblingEnv }}
+															search={{ source: "on-clawdi" }}
+														/>
+													}
+													nativeButton={false}
+													variant="ghost"
+													size="sm"
+												>
+													Open
+													<ArrowUpRight className="size-3.5" />
 												</Button>
 											) : null}
 											{!canDisable ? null : isConfigured ? (
