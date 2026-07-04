@@ -22,6 +22,7 @@ import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { agentIdentity } from "@/components/dashboard/agent-label";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
@@ -682,9 +683,9 @@ function SkillsPageInner() {
 				</div>
 				{duplicatesView ? (
 					duplicateGroups.length === 0 ? (
-						<div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
-							No duplicated skills{search.trim() ? " match that search" : ""}.
-						</div>
+						<EmptyState
+							description={`No duplicated skills${search.trim() ? " match that search" : ""}.`}
+						/>
 					) : (
 						<div className="space-y-6">
 							{duplicateGroups.map((group) => {
@@ -768,11 +769,13 @@ function SkillsPageInner() {
 					skillsLoading || isResolvingTarget ? (
 						<SkillCardGrid skills={[]} isLoading emptyMessage={null} />
 					) : allGroups.length === 0 ? (
-						<div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
-							{search.trim()
-								? "No skills match that search."
-								: "No skills installed anywhere yet. Pick a Project tab to install one."}
-						</div>
+						<EmptyState
+							description={
+								search.trim()
+									? "No skills match that search."
+									: "No skills installed anywhere yet. Pick a Project tab to install one."
+							}
+						/>
 					) : (
 						<div className="space-y-6">
 							{allGroups.map((group) => {

@@ -27,6 +27,7 @@ import {
 	DetailStats,
 	DetailTitle,
 } from "@/components/detail/layout";
+import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -487,9 +488,10 @@ export function SkillDetailContent({
 								</p>
 							</div>
 						) : (
-							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-								No Project information is available for this Skill.
-							</p>
+							<EmptyState
+								variant="inset"
+								description="No Project information is available for this Skill."
+							/>
 						)}
 					</DetailPanel>
 
@@ -535,9 +537,10 @@ export function SkillDetailContent({
 									<Markdown content={skillBody} />
 								</div>
 							) : (
-								<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-									No additional instruction body is stored for this Skill.
-								</p>
+								<EmptyState
+									variant="inset"
+									description="No additional instruction body is stored for this Skill."
+								/>
 							)}
 						</DetailPanel>
 					) : (
@@ -557,10 +560,10 @@ export function SkillDetailContent({
 									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
 								</Badge>
 							</div>
-							<p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-								When the agent uploads the Skill file content, the preview and editor will appear
-								here.
-							</p>
+							<EmptyState
+								variant="inset"
+								description="When the agent uploads the Skill file content, the preview and editor will appear here."
+							/>
 						</DetailPanel>
 					)}
 				</>

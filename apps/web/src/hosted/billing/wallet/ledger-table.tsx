@@ -146,10 +146,8 @@ export function LedgerTable({
 				</div>
 			) : filtered.length === 0 ? (
 				<EmptyState
-					bordered
-					fillHeight={false}
+					variant="inset"
 					icon={Receipt}
-					iconVariant="icon"
 					title={entries.length === 0 ? "No activity yet" : "No matching activity"}
 					description={
 						entries.length === 0

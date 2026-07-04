@@ -114,9 +114,9 @@ export function LinkAgentDialog({
 					/>
 				) : agents.length === 0 ? (
 					<EmptyState
+						variant="inset"
 						title="No agents yet"
 						description="Connect an agent first, then link it to this channel."
-						fillHeight={false}
 					/>
 				) : (
 					<div className="flex flex-col gap-2">

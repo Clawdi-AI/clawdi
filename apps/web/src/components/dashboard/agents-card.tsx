@@ -153,7 +153,7 @@ export function AgentsCard({
 					// When the hosted fetch failed, the error banner below carries
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
-						fillHeight={false}
+						variant="inset"
 						title="No agents yet"
 						description="Connect an agent to see it here."
 					/>

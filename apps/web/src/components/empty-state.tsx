@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { isValidElement, type ReactNode } from "react";
 import {
 	Empty,
@@ -10,58 +10,45 @@ import {
 } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 
+export type EmptyStateVariant = "page" | "inset";
+
 interface EmptyStateProps {
 	icon?: LucideIcon | ReactNode;
 	title?: string;
 	description?: ReactNode;
 	action?: ReactNode;
-	/** Use `icon` for the shadcn icon tile used by standalone empty panels. */
-	iconVariant?: "default" | "icon";
-	/** When set, wraps in a rounded muted tile. Default is flat — just centered text. */
-	bordered?: boolean;
-	/**
-	 * When true (default), reserve vertical space so the hint sits mid-pane
-	 * instead of floating near the top. Set false inside cards / sub-regions
-	 * where surrounding chrome already sets the visual weight.
-	 */
-	fillHeight?: boolean;
+	variant?: EmptyStateVariant;
 	className?: string;
 }
 
 /**
- * Centered empty-state message. Thin wrapper around shadcn's `<Empty>`
- * primitives so call sites get a single prop-driven API while everything
- * styling / aria comes from upstream.
- *
- * If a page needs unusual composition (multiple actions, custom media,
- * nested sections), import the `<Empty>` parts from `@/components/ui/empty`
- * directly instead of expanding this component's props.
+ * Canonical empty placeholder.
+ * Page: flat centered panel with generous height and an icon tile.
+ * Inset: compact muted tile inside existing page/card chrome.
  */
 export function EmptyState({
 	icon: Icon,
 	title,
 	description,
 	action,
-	iconVariant = "default",
-	bordered = false,
-	fillHeight = true,
+	variant = "page",
 	className,
 }: EmptyStateProps) {
-	const icon = renderEmptyIcon(Icon, iconVariant);
+	const icon = variant === "page" ? renderEmptyIcon(Icon === undefined ? Inbox : Icon) : null;
 	return (
 		<Empty
 			className={cn(
-				// shadcn's default already includes `rounded-lg border-dashed p-6
-				// md:p-12`. The flat variant (default) strips the border + padding
-				// because most of our usages live inside existing card chrome.
-				bordered ? "border bg-muted/30" : "border-none p-0 md:p-0",
-				fillHeight ? "min-h-[320px]" : "py-8 md:py-8",
+				variant === "page"
+					? "min-h-[320px] border-none bg-transparent p-0 md:p-0"
+					: "min-h-0 flex-none gap-3 border border-solid bg-muted/30 px-4 py-6 md:p-6",
 				className,
 			)}
 		>
-			<EmptyHeader>
-				{icon ? <EmptyMedia variant={iconVariant}>{icon}</EmptyMedia> : null}
-				{title ? <EmptyTitle className="text-sm">{title}</EmptyTitle> : null}
+			<EmptyHeader className={cn(variant === "inset" && "gap-1")}>
+				{icon ? <EmptyMedia variant="icon">{icon}</EmptyMedia> : null}
+				{title ? (
+					<EmptyTitle className="text-sm font-medium tracking-normal">{title}</EmptyTitle>
+				) : null}
 				{description ? <EmptyDescription>{description}</EmptyDescription> : null}
 			</EmptyHeader>
 			{action ? <EmptyContent>{action}</EmptyContent> : null}
@@ -69,14 +56,9 @@ export function EmptyState({
 	);
 }
 
-function renderEmptyIcon(icon: EmptyStateProps["icon"], variant: EmptyStateProps["iconVariant"]) {
+function renderEmptyIcon(icon: EmptyStateProps["icon"]) {
 	if (!icon) return null;
 	if (isValidElement(icon) || typeof icon === "string" || typeof icon === "number") return icon;
 	const Icon = icon as LucideIcon;
-	return (
-		<Icon
-			className={variant === "icon" ? "size-5" : "size-8 text-muted-foreground/60"}
-			aria-hidden
-		/>
-	);
+	return <Icon className="size-5" aria-hidden />;
 }

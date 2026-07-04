@@ -81,8 +81,6 @@ export function AiProvidersPage() {
 					<EmptyState
 						title="No custom providers"
 						description="Add your own OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or a custom OpenAI-compatible endpoint."
-						fillHeight={false}
-						bordered
 					/>
 				) : (
 					<div className={PROVIDER_GRID_CLASS}>

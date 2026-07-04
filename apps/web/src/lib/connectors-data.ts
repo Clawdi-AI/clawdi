@@ -26,6 +26,39 @@ import { unwrap, useApi } from "@/lib/api";
 // ─────────────────────────────────────────────────────────────────────
 // Reads
 
+export const CONNECTOR_CATALOG_PAGE_SIZE = 24;
+export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
+export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
+
+type ApiClient = ReturnType<typeof useApi>;
+
+export type AvailableAppsQueryArgs = {
+	page: number;
+	pageSize: number;
+	search?: string;
+};
+
+export function availableAppsQueryKey({ page, pageSize, search }: AvailableAppsQueryArgs) {
+	return ["available-apps", { page, pageSize, search }] as const;
+}
+
+export function availableAppsQueryOptions(api: ApiClient, args: AvailableAppsQueryArgs) {
+	const { page, pageSize, search } = args;
+	return {
+		queryKey: availableAppsQueryKey(args),
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/connectors/available", {
+					params: {
+						query: { page, page_size: pageSize, ...(search ? { search } : {}) },
+					},
+				}),
+			),
+		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+	};
+}
+
 export function useConnections() {
 	const api = useApi();
 	return useQuery({
@@ -47,26 +80,10 @@ export function useAvailableApp(appName: string) {
 	});
 }
 
-export function useAvailableApps({
-	page,
-	pageSize,
-	search,
-}: {
-	page: number;
-	pageSize: number;
-	search?: string;
-}) {
+export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
 	const api = useApi();
 	return useQuery({
-		queryKey: ["available-apps", { page, pageSize, search }] as const,
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/available", {
-					params: {
-						query: { page, page_size: pageSize, ...(search ? { search } : {}) },
-					},
-				}),
-			),
+		...availableAppsQueryOptions(api, { page, pageSize, search }),
 		placeholderData: keepPreviousData,
 	});
 }

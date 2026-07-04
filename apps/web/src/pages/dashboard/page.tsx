@@ -213,6 +213,7 @@ export default function DashboardPage() {
 							isLoading={sessionsLoading}
 							grouped={false}
 							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
+							emptyVariant="inset"
 						/>
 					</section>
 				</div>

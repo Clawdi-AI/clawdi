@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -101,6 +101,7 @@ import {
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
+import { availableAppsQueryOptions, CONNECTOR_CATALOG_PAGE_SIZE } from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
@@ -225,6 +226,7 @@ type SidebarNavItem = {
 	tooltip: string;
 	active: boolean;
 	external?: boolean;
+	prefetch?: () => void;
 };
 
 type AgentSectionDefinition = {
@@ -303,7 +305,12 @@ function SidebarNavSection({
 											<ExternalLink className="ml-auto size-3 text-muted-foreground" />
 										</a>
 									) : (
-										<Link to={item.href} onClick={onNavigate}>
+										<Link
+											to={item.href}
+											onClick={onNavigate}
+											onMouseEnter={item.prefetch}
+											onFocus={item.prefetch}
+										>
 											<IconChip size="xs" tint={item.tint}>
 												<Icon />
 											</IconChip>
@@ -360,6 +367,16 @@ function ConsoleResourcesSection({
 	showCloudFeatures: boolean;
 	onNavigate?: () => void;
 }) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const prefetchConnectorsCatalog = useCallback(() => {
+		void queryClient.prefetchQuery(
+			availableAppsQueryOptions(api, {
+				page: 1,
+				pageSize: CONNECTOR_CATALOG_PAGE_SIZE,
+			}),
+		);
+	}, [api, queryClient]);
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
 		projectResourceDefinitionsForGroup(group.id).map((definition) => {
 			const Icon = PROJECT_RESOURCE_ICONS[definition.id];
@@ -371,6 +388,7 @@ function ConsoleResourcesSection({
 				tint: RESOURCE_TINT_CLASSES[definition.id],
 				tooltip: `${definition.navLabel} - ${projectResourceScopeLabel(definition.projectScope)}`,
 				active: pathname === definition.href || pathname.startsWith(`${definition.href}/`),
+				prefetch: definition.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 			};
 		}),
 	);

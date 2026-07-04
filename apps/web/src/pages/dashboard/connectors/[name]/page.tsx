@@ -318,11 +318,7 @@ function ConnectorDetail({ name }: { name: string }) {
 							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
 						</Alert>
 					) : usesNoAuth ? (
-						<EmptyState
-							fillHeight={false}
-							bordered
-							description="No account connection is required."
-						/>
+						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (
 						<Alert variant="destructive">
 							<AlertCircle />
@@ -340,8 +336,7 @@ function ConnectorDetail({ name }: { name: string }) {
 							</Alert>
 						) : (
 							<EmptyState
-								fillHeight={false}
-								bordered
+								variant="inset"
 								description="No connected accounts yet."
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
@@ -534,7 +529,7 @@ function ConnectorToolsList({
 							: "Tools this connector exposes."
 					}
 				/>
-				<EmptyState fillHeight={false} description="No tools are available for this connector." />
+				<EmptyState variant="inset" description="No tools are available for this connector." />
 			</DashboardSection>
 		);
 	}

@@ -2,33 +2,33 @@
 
 import { AlertCircle, ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { createParser, parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useMemo } from "react";
+import { type ReactNode, Suspense, useEffect, useMemo } from "react";
 import {
 	CONNECTOR_GRID_CLASS,
 	ConnectorCard,
 	ConnectorCardSkeleton,
 } from "@/components/connectors/connector-card";
-import {
-	DashboardSection,
-	DashboardSectionHeader,
-	DashboardSectionToolbar,
-} from "@/components/dashboard/section";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SectionLabel } from "@/components/section-label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
+import {
+	CONNECTOR_CATALOG_PAGE_SIZE,
+	useAvailableApps,
+	useConnectedAppCards,
+} from "@/lib/connectors-data";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
 // always full at every viewport — no orphan cards on the bottom.
-const PAGE_SIZE = 24;
+const PAGE_SIZE = CONNECTOR_CATALOG_PAGE_SIZE;
 const CONNECTORS_RESOURCE = getProjectResourceDefinition("connectors");
 
 // 1-indexed page parser. Rejects non-integer / 0 / negative URL values
@@ -61,12 +61,23 @@ function ConnectorsListSkeleton() {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
-			<Skeleton className="h-10 w-full" />
-			<div className={CONNECTOR_GRID_CLASS}>
-				{Array.from({ length: 16 }).map((_, i) => (
-					<ConnectorCardSkeleton key={i} />
-				))}
-			</div>
+			<Skeleton className="h-10 w-full max-w-xl" />
+			<section className="space-y-3">
+				<SectionLabel>Connected</SectionLabel>
+				<div className={CONNECTOR_GRID_CLASS}>
+					{Array.from({ length: 4 }).map((_, i) => (
+						<ConnectorCardSkeleton key={i} />
+					))}
+				</div>
+			</section>
+			<section className="space-y-3">
+				<SectionLabel>All Connectors</SectionLabel>
+				<div className={CONNECTOR_GRID_CLASS}>
+					{Array.from({ length: 16 }).map((_, i) => (
+						<ConnectorCardSkeleton key={i} />
+					))}
+				</div>
+			</section>
 		</div>
 	);
 }
@@ -136,56 +147,52 @@ function ConnectorsList() {
 	// otherwise a connections-fetch failure makes the section silently
 	// disappear and the user has no signal anything went wrong.
 	const showConnectedRail =
-		!debouncedQuery && (connected.activeConnections.length > 0 || !!connected.error);
+		!debouncedQuery &&
+		(connected.isLoading || connected.activeConnections.length > 0 || !!connected.error);
+	const headerStatus =
+		total > 0 || connected.activeConnections.length > 0 ? (
+			<div className="flex flex-wrap items-center gap-2">
+				{total > 0 ? <Badge variant="secondary">{total.toLocaleString()} available</Badge> : null}
+				{connected.activeConnections.length > 0 ? (
+					<Badge>{connected.activeConnections.length} active</Badge>
+				) : null}
+			</div>
+		) : null;
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
+			<PageHeader
+				title="Connectors"
+				description={CONNECTORS_RESOURCE.managementDescription}
+				status={headerStatus}
+			/>
 
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Plug}
-					title="Connector catalog"
-					count={total > 0 ? `${total.toLocaleString()} available` : undefined}
-					description="Connectors let agents use outside apps after you approve access. They are account-level, not tied to one Project."
-					actions={
-						connected.activeConnections.length > 0 ? (
-							<Badge>{connected.activeConnections.length} active</Badge>
-						) : null
-					}
+			<div className="max-w-xl">
+				<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
+			</div>
+
+			{showConnectedRail ? (
+				<ConnectedRail
+					apps={connected.data}
+					activeCount={connected.activeConnections.length}
+					isLoading={connected.isLoading}
+					error={connected.error}
 				/>
-				<DashboardSectionToolbar>
-					<SearchInput
-						value={query}
-						onChange={handleQueryChange}
-						placeholder="Search connectors…"
-					/>
-				</DashboardSectionToolbar>
-				<div className="space-y-5 p-4">
-					{showConnectedRail ? (
-						<ConnectedRail
-							apps={connected.data}
-							isLoading={connected.isLoading}
-							error={connected.error}
-						/>
-					) : null}
+			) : null}
 
-					<CatalogSection
-						items={items}
-						total={total}
-						page={page}
-						totalPages={totalPages}
-						connectedNames={connectedNames}
-						isLoading={isCatalogLoading}
-						isFetching={isCatalogFetching}
-						error={catalogError}
-						query={query}
-						labelled={showConnectedRail}
-						onPrev={() => setPage((p) => Math.max(1, p - 1))}
-						onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-					/>
-				</div>
-			</DashboardSection>
+			<CatalogSection
+				items={items}
+				total={total}
+				page={page}
+				totalPages={totalPages}
+				connectedNames={connectedNames}
+				isLoading={isCatalogLoading}
+				isFetching={isCatalogFetching}
+				error={catalogError}
+				query={query}
+				onPrev={() => setPage((p) => Math.max(1, p - 1))}
+				onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+			/>
 		</div>
 	);
 }
@@ -197,16 +204,20 @@ function ConnectorsList() {
  */
 function ConnectedRail({
 	apps,
+	activeCount,
 	isLoading,
 	error,
 }: {
 	apps: { name: string; display_name: string; description: string; logo: string }[];
+	activeCount: number;
 	isLoading: boolean;
 	error: Error | null;
 }) {
 	return (
-		<section>
-			<h2 className="mb-3 text-sm font-semibold">Connected</h2>
+		<section className="space-y-3">
+			<SectionLabel count={activeCount > 0 ? `${activeCount} active` : undefined}>
+				Connected
+			</SectionLabel>
 			{error ? (
 				// Without this, a connections-fetch failure makes the rail
 				// silently disappear and the user only sees "X active" in
@@ -243,7 +254,6 @@ function CatalogSection({
 	isFetching,
 	error,
 	query,
-	labelled,
 	onPrev,
 	onNext,
 }: {
@@ -256,30 +266,29 @@ function CatalogSection({
 	isFetching: boolean;
 	error: Error | null;
 	query: string;
-	labelled: boolean;
 	onPrev: () => void;
 	onNext: () => void;
 }) {
+	const count = !isLoading && total > 0 ? `${total.toLocaleString()} available` : undefined;
+	let content: ReactNode;
 	if (error) {
-		return (
+		content = (
 			<Alert variant="destructive">
 				<AlertCircle />
 				<AlertTitle>Couldn't load connectors</AlertTitle>
 				<AlertDescription>{errorMessage(error)}</AlertDescription>
 			</Alert>
 		);
-	}
-	if (isLoading) {
-		return (
+	} else if (isLoading) {
+		content = (
 			<div className={CONNECTOR_GRID_CLASS}>
 				{Array.from({ length: 16 }).map((_, i) => (
 					<ConnectorCardSkeleton key={i} />
 				))}
 			</div>
 		);
-	}
-	if (items.length === 0) {
-		return (
+	} else if (items.length === 0) {
+		content = (
 			<EmptyState
 				icon={Plug}
 				title={query ? "No matches" : "No connectors available"}
@@ -290,41 +299,47 @@ function CatalogSection({
 				}
 			/>
 		);
+	} else {
+		content = (
+			<>
+				<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>
+					{items.map((app) => (
+						<ConnectorCard key={app.name} app={app} isConnected={connectedNames.has(app.name)} />
+					))}
+				</div>
+				{totalPages > 1 ? (
+					<div className="flex items-center justify-center gap-2 pt-3">
+						<Button
+							variant="outline"
+							size="icon-sm"
+							onClick={onPrev}
+							disabled={page <= 1}
+							aria-label="Previous page"
+						>
+							<ChevronLeft className="size-4" />
+						</Button>
+						<span className="px-3 text-xs tabular-nums text-muted-foreground">
+							{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
+							{total.toLocaleString()}
+						</span>
+						<Button
+							variant="outline"
+							size="icon-sm"
+							onClick={onNext}
+							disabled={page >= totalPages}
+							aria-label="Next page"
+						>
+							<ChevronRight className="size-4" />
+						</Button>
+					</div>
+				) : null}
+			</>
+		);
 	}
 	return (
-		<section>
-			{labelled ? <h2 className="mb-3 text-sm font-semibold">All Connectors</h2> : null}
-			<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>
-				{items.map((app) => (
-					<ConnectorCard key={app.name} app={app} isConnected={connectedNames.has(app.name)} />
-				))}
-			</div>
-			{totalPages > 1 ? (
-				<div className="flex items-center justify-center gap-2 pt-3">
-					<Button
-						variant="outline"
-						size="icon-sm"
-						onClick={onPrev}
-						disabled={page <= 1}
-						aria-label="Previous page"
-					>
-						<ChevronLeft className="size-4" />
-					</Button>
-					<span className="px-3 text-xs tabular-nums text-muted-foreground">
-						{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
-						{total.toLocaleString()}
-					</span>
-					<Button
-						variant="outline"
-						size="icon-sm"
-						onClick={onNext}
-						disabled={page >= totalPages}
-						aria-label="Next page"
-					>
-						<ChevronRight className="size-4" />
-					</Button>
-				</div>
-			) : null}
+		<section className="space-y-3">
+			<SectionLabel count={count}>All Connectors</SectionLabel>
+			{content}
 		</section>
 	);
 }

@@ -50,10 +50,7 @@ export function UsagePage() {
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
-					bordered
-					fillHeight={false}
 					icon={Activity}
-					iconVariant="icon"
 					title="No usage yet"
 					description="Once your agents start running, credit consumption shows up here."
 				/>
