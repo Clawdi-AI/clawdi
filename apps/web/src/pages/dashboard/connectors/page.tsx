@@ -1,18 +1,19 @@
 "use client";
 
-import { AlertCircle, ChevronLeft, ChevronRight, Plug } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { createParser, parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useEffect, useMemo } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	CONNECTOR_GRID_CLASS,
 	ConnectorCard,
 	ConnectorCardSkeleton,
 } from "@/components/connectors/connector-card";
 import { EmptyState } from "@/components/empty-state";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/connectors-data";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // Multiple of 12 (LCM of 1/2/3/4 col grid breakpoints) so the last row is
 // always full at every viewport — no orphan cards on the bottom.
@@ -167,9 +168,15 @@ function ConnectorsList() {
 				status={headerStatus}
 			/>
 
-			<div className="max-w-xl">
-				<SearchInput value={query} onChange={handleQueryChange} placeholder="Search connectors…" />
-			</div>
+			<ListToolbar
+				search={
+					<SearchInput
+						value={query}
+						onChange={handleQueryChange}
+						placeholder="Search connectors…"
+					/>
+				}
+			/>
 
 			{showConnectedRail ? (
 				<ConnectedRail
@@ -177,6 +184,7 @@ function ConnectorsList() {
 					activeCount={connected.activeConnections.length}
 					isLoading={connected.isLoading}
 					error={connected.error}
+					onRetry={connected.refetch}
 				/>
 			) : null}
 
@@ -190,6 +198,9 @@ function ConnectorsList() {
 				isFetching={isCatalogFetching}
 				error={catalogError}
 				query={query}
+				onRetry={() => {
+					void catalogQ.refetch();
+				}}
 				onPrev={() => setPage((p) => Math.max(1, p - 1))}
 				onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
 			/>
@@ -207,11 +218,13 @@ function ConnectedRail({
 	activeCount,
 	isLoading,
 	error,
+	onRetry,
 }: {
 	apps: { name: string; display_name: string; description: string; logo: string }[];
 	activeCount: number;
 	isLoading: boolean;
 	error: Error | null;
+	onRetry: () => void;
 }) {
 	return (
 		<section className="space-y-3">
@@ -222,11 +235,7 @@ function ConnectedRail({
 				// Without this, a connections-fetch failure makes the rail
 				// silently disappear and the user only sees "X active" in
 				// the header with no way to find their connections.
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Couldn't load connections</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load connections" />
 			) : isLoading && apps.length === 0 ? (
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 4 }).map((_, i) => (
@@ -254,6 +263,7 @@ function CatalogSection({
 	isFetching,
 	error,
 	query,
+	onRetry,
 	onPrev,
 	onNext,
 }: {
@@ -266,19 +276,14 @@ function CatalogSection({
 	isFetching: boolean;
 	error: Error | null;
 	query: string;
+	onRetry: () => void;
 	onPrev: () => void;
 	onNext: () => void;
 }) {
 	const count = !isLoading && total > 0 ? `${total.toLocaleString()} available` : undefined;
 	let content: ReactNode;
 	if (error) {
-		content = (
-			<Alert variant="destructive">
-				<AlertCircle />
-				<AlertTitle>Couldn't load connectors</AlertTitle>
-				<AlertDescription>{errorMessage(error)}</AlertDescription>
-			</Alert>
-		);
+		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load connectors" />;
 	} else if (isLoading) {
 		content = (
 			<div className={CONNECTOR_GRID_CLASS}>

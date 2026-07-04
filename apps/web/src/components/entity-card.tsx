@@ -1,6 +1,6 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { Check, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,9 @@ export const ENTITY_CARD_BASE = "min-w-0 rounded-lg border bg-card p-4";
 /** Top-level resource card tier: projects, vaults, skills, memories. */
 export const HERO_CARD_BASE = "min-w-0 rounded-xl border bg-card p-5";
 
+/** Responsive grid every top-level hero-card collection shares. */
+export const HERO_GRID_CLASS = "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
+
 /** Responsive card grid every entity-card collection shares (providers,
  * channels, shared bots). */
 export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
@@ -34,6 +37,9 @@ export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
  * controls independently clickable — pairs with a `relative z-0` wrapper. */
 export const ENTITY_STRETCHED_LINK_CLASS =
 	"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+export const HERO_STRETCHED_LINK_CLASS =
+	"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /** Focus ring for whole-card buttons matching the stretched-link treatment. */
 export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
@@ -108,6 +114,97 @@ export function EntityHeader({
 				</div>
 				{meta !== undefined ? <EntityMeta items={meta} /> : null}
 			</div>
+		</div>
+	);
+}
+
+type HeroCardLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
+
+/**
+ * Top-level resource card — `[icon tile] / [title + badges] / [description] /
+ * [middot meta footer]`. Projects, vaults, skills, and memories share this
+ * tier so their grids read as one collection language.
+ */
+export function HeroCard({
+	icon,
+	title,
+	badges,
+	description,
+	footer,
+	actions,
+	link,
+	ariaLabel,
+	selected,
+	interactive = true,
+	className,
+	titleClassName,
+	descriptionClassName,
+	footerClassName,
+	children,
+}: {
+	icon?: ReactNode;
+	title: ReactNode;
+	badges?: ReactNode;
+	description?: ReactNode;
+	footer?: ReactNode | ReactNode[];
+	actions?: ReactNode;
+	link?: HeroCardLinkOptions;
+	ariaLabel?: string;
+	selected?: boolean;
+	interactive?: boolean;
+	className?: string;
+	titleClassName?: string;
+	descriptionClassName?: string;
+	footerClassName?: string;
+	children?: ReactNode;
+}) {
+	return (
+		<div
+			className={cn(
+				HERO_CARD_BASE,
+				"group relative z-0 flex min-h-36 flex-col gap-3 transition-all duration-150",
+				selected
+					? "border-foreground/40 bg-accent/50"
+					: interactive && "hover:-translate-y-px hover:border-foreground/20",
+				className,
+			)}
+		>
+			{icon || actions ? (
+				<div className="flex items-start justify-between gap-2">
+					{icon ? <div className="shrink-0">{icon}</div> : <span aria-hidden />}
+					{actions ? <div className="relative z-10 shrink-0">{actions}</div> : null}
+				</div>
+			) : null}
+			<div className="min-w-0">
+				<div className="flex min-w-0 items-center gap-1.5">
+					<h3 className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}>
+						{title}
+					</h3>
+					{badges ? <div className="flex shrink-0 items-center gap-1.5">{badges}</div> : null}
+				</div>
+				{description ? (
+					<p
+						className={cn(
+							"mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground",
+							descriptionClassName,
+						)}
+					>
+						{description}
+					</p>
+				) : null}
+			</div>
+			{children}
+			{footer !== undefined ? (
+				<EntityMeta
+					items={footer}
+					className={cn("mt-auto text-xs text-muted-foreground tabular-nums", footerClassName)}
+				/>
+			) : null}
+			{link ? (
+				<Link {...link} className={HERO_STRETCHED_LINK_CLASS}>
+					<span className="sr-only">{ariaLabel ?? "Open"}</span>
+				</Link>
+			) : null}
 		</div>
 	);
 }

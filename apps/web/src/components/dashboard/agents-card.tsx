@@ -4,16 +4,23 @@ import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
-	AgentLabel,
 	AgentSourceBadge,
 	agentDisplayName,
+	agentIdentity,
 	compareAgentEnvironments,
+	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE } from "@/components/entity-card";
+import {
+	ENTITY_CARD_BASE,
+	ENTITY_GRID_CLASS,
+	ENTITY_STRETCHED_LINK_CLASS,
+	EntityHeader,
+} from "@/components/entity-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
@@ -126,14 +133,14 @@ export function AgentsCard({
 		<section className="space-y-3">
 			<div className="space-y-3">
 				{isLoading ? (
-					<div className="grid gap-2 sm:grid-cols-2">
+					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
 							<TileSkeleton key={i} />
 						))}
 					</div>
 				) : agents.length || hostedStatus?.isLoading ? (
 					<>
-						<div className="grid gap-2 sm:grid-cols-2">
+						<div className={ENTITY_GRID_CLASS}>
 							{visible.map((tile) => (
 								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 							))}
@@ -186,7 +193,7 @@ export function HostedUnavailableBanner() {
  * supply their own section headers. */
 export function AgentTileGrid({ tiles }: { tiles: AgentTile[] }) {
 	return (
-		<div className="grid gap-2 sm:grid-cols-2">
+		<div className={ENTITY_GRID_CLASS}>
 			{tiles.map((tile) => (
 				<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 			))}
@@ -209,6 +216,11 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	) : legacyHosted ? (
 		<LegacyAgentBadge />
 	) : null;
+	const identity = agentIdentity({
+		name: tile.name,
+		machine_name: tile.name,
+		agent_type: tile.agentType,
+	});
 	// `tile.env` adds a sync badge that renders a `<button>`
 	// (clicks open a status dialog). It MUST live in the meta
 	// line under the agent name — same row as `statusLabel` so
@@ -227,6 +239,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	// "sync state under the agent name" — pre-fix-attempt the
 	// badge was floated to the trailing edge.
 	const meta: ReactNode[] = [];
+	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
 	if (tile.contextLabel) meta.push(tile.contextLabel);
 	if (tile.statusLabel) meta.push(tile.statusLabel);
 	if (tile.env) {
@@ -256,12 +269,9 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				"flex h-full items-center gap-3 transition-colors group-hover:bg-muted/50",
 			)}
 		>
-			<AgentLabel
-				name={tile.name}
-				machineName={tile.name}
-				type={tile.agentType}
-				avatarUrl={tile.avatarUrl}
-				size="lg"
+			<EntityHeader
+				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
+				title={<span title={tile.name}>{displayMachineName(tile.name)}</span>}
 				meta={meta}
 				titleAdornment={sourcePill}
 				className="min-w-0 flex-1"
@@ -269,9 +279,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 			{trailing}
 		</div>
 	);
-
-	const linkClassName =
-		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 	return (
 		// `z-0` is load-bearing: without an explicit z-index on this
@@ -290,11 +297,16 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		<div className="group relative z-0 h-full">
 			{card}
 			{tile.external ? (
-				<a href={tile.href} target="_blank" rel="noopener noreferrer" className={linkClassName}>
+				<a
+					href={tile.href}
+					target="_blank"
+					rel="noopener noreferrer"
+					className={ENTITY_STRETCHED_LINK_CLASS}
+				>
 					<span className="sr-only">{tile.name}</span>
 				</a>
 			) : (
-				<Link to={tile.href} className={linkClassName}>
+				<Link to={tile.href} className={ENTITY_STRETCHED_LINK_CLASS}>
 					<span className="sr-only">{tile.name}</span>
 				</Link>
 			)}

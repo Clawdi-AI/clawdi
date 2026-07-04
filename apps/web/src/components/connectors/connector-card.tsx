@@ -2,7 +2,7 @@
 
 import { Check } from "lucide-react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ENTITY_CARD_BASE, EntityRow } from "@/components/entity-card";
+import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityRow } from "@/components/entity-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { connectorDetailHref } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
@@ -48,5 +48,4 @@ export function ConnectorCardSkeleton() {
 	);
 }
 
-/** Two-column rows on wide screens — dense but readable for a directory. */
-export const CONNECTOR_GRID_CLASS = "grid grid-cols-1 gap-2 lg:grid-cols-2";
+export const CONNECTOR_GRID_CLASS = ENTITY_GRID_CLASS;

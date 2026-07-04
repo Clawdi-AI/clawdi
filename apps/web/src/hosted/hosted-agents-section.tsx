@@ -9,6 +9,7 @@ import {
 	HostedUnavailableBanner,
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
+import { SectionLabel } from "@/components/section-label";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
@@ -282,22 +283,19 @@ export function HostedAgentsByCompute({
 		<div data-hosted="true" className="space-y-6">
 			{groups.map((group) => (
 				<section key={group.key} className="space-y-2">
-					<div className="flex items-center gap-2 px-0.5">
-						<span className="text-sm font-medium">{group.name}</span>
-						<AgentSourceBadge source="hosted" compact />
-						<span className="text-xs text-muted-foreground">
-							{`${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
-						</span>
-					</div>
+					<SectionLabel
+						leading={<AgentSourceBadge source="hosted" compact />}
+						count={`${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
+					>
+						{group.name}
+					</SectionLabel>
 					<AgentTileGrid tiles={group.tiles} />
 				</section>
 			))}
 
 			{connectedTiles.length > 0 ? (
 				<section className="space-y-2">
-					<div className="flex items-center gap-2 px-0.5">
-						<span className="text-sm font-medium">Other agents</span>
-					</div>
+					<SectionLabel>Other agents</SectionLabel>
 					<AgentTileGrid tiles={connectedTiles} />
 				</section>
 			) : null}

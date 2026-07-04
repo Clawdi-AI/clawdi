@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
-import { AlertCircle, LayoutList, Table2 } from "lucide-react";
+import { LayoutList, Table2 } from "lucide-react";
 import {
 	createParser,
 	parseAsBoolean,
@@ -11,25 +11,26 @@ import {
 	useQueryStates,
 } from "nuqs";
 import { Suspense, useEffect, useMemo, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { sessionColumns } from "@/components/sessions/session-columns";
 import { SessionFeed } from "@/components/sessions/session-feed";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
-import { DataTableToolbar } from "@/components/ui/data-table-toolbar";
+import { SearchInput } from "@/components/ui/search-input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { cn, errorMessage, recencyBucketFor } from "@/lib/utils";
+import { cn, recencyBucketFor } from "@/lib/utils";
 
 // `relevance` (trgm similarity) joins the legacy date/count sorts.
 // Relevance is special-cased server-side: it's only meaningful when q
@@ -141,7 +142,7 @@ function SessionsListInner() {
 		],
 	);
 
-	const { data, isLoading, isFetching, error } = useQuery({
+	const { data, isLoading, isFetching, error, refetch } = useQuery({
 		...sessionListQueryOptions(api, sessionQuery),
 		// Keep previous results visible during refetch; the
 		// `isFetching && !isLoading` opacity transition below is
@@ -218,101 +219,90 @@ function SessionsListInner() {
 		? "No sessions match your filters."
 		: "No sessions yet. Once your agent has a conversation, it'll show up here.";
 	const sessionToolbar = (
-		<DataTableToolbar
-			value={params.q}
-			onChange={(v) => {
-				// Switch sort to relevance the moment the user
-				// starts typing — mirrors Amp's "type and rank by
-				// match quality" UX. Restore the date sort if the
-				// box is cleared so the empty-search default goes
-				// back to the activity timeline.
-				void setParams({
-					q: v,
-					page: 1,
-					sort:
-						v && params.sort === "last_activity_at"
-							? "relevance"
-							: !v && params.sort === "relevance"
-								? "last_activity_at"
-								: params.sort,
-				});
-			}}
-			placeholder="Search summary, folder, or session ID…"
-		>
-			{agentOptions.length > 0 ? (
-				<DataTableFacetedFilter
-					title="Agent"
-					options={agentOptions}
-					selected={params.agent ? [params.agent] : []}
-					onChange={(arr) => {
-						void setParams({ agent: arr[0] ?? "", page: 1 });
-					}}
-				/>
-			) : null}
-			<DataTableFacetedFilter
-				title="Type"
-				options={typeFilterOptions}
-				selected={
-					params.automated === true ? ["true"] : params.automated === false ? ["false"] : []
-				}
-				onChange={(arr) => {
-					const v = arr[0];
-					void setParams({
-						automated: v === "true" ? true : v === "false" ? false : null,
-						page: 1,
-					});
-				}}
-			/>
-			<DataTableFacetedFilter
-				title="PR links"
-				options={prFilterOptions}
-				selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
-				onChange={(arr) => {
-					const v = arr[0];
-					void setParams({
-						has_pr: v === "true" ? true : v === "false" ? false : null,
-						page: 1,
-					});
-				}}
-			/>
-			{isFiltered ? (
-				<Button
-					variant="ghost"
-					size="sm"
-					className="h-8 px-2"
-					onClick={() =>
+		<ListToolbar
+			search={
+				<SearchInput
+					value={params.q}
+					onChange={(v) => {
+						// Switch sort to relevance the moment the user
+						// starts typing — mirrors Amp's "type and rank by
+						// match quality" UX. Restore the date sort if the
+						// box is cleared so the empty-search default goes
+						// back to the activity timeline.
 						void setParams({
-							q: "",
-							agent: "",
-							has_pr: null,
-							automated: null,
+							q: v,
 							page: 1,
-						})
-					}
-				>
-					Reset
-				</Button>
-			) : null}
-		</DataTableToolbar>
-	);
-	const sessionFooter = (
-		<div>
-			<DataTablePagination
-				page={params.page}
-				pageSize={params.pageSize}
-				total={total}
-				onPageChange={(p) => void setParams({ page: p })}
-				onPageSizeChange={(size) => void setParams({ pageSize: size, page: 1 })}
-			/>
-		</div>
-	);
-
-	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<PageHeader
-				title="Sessions"
-				description={SESSIONS_RESOURCE.managementDescription}
-				actions={
+							sort:
+								v && params.sort === "last_activity_at"
+									? "relevance"
+									: !v && params.sort === "relevance"
+										? "last_activity_at"
+										: params.sort,
+						});
+					}}
+					placeholder="Search summary, folder, or session ID…"
+				/>
+			}
+			filters={
+				<>
+					{agentOptions.length > 0 ? (
+						<DataTableFacetedFilter
+							title="Agent"
+							options={agentOptions}
+							selected={params.agent ? [params.agent] : []}
+							onChange={(arr) => {
+								void setParams({ agent: arr[0] ?? "", page: 1 });
+							}}
+						/>
+					) : null}
+					<DataTableFacetedFilter
+						title="Type"
+						options={typeFilterOptions}
+						selected={
+							params.automated === true ? ["true"] : params.automated === false ? ["false"] : []
+						}
+						onChange={(arr) => {
+							const v = arr[0];
+							void setParams({
+								automated: v === "true" ? true : v === "false" ? false : null,
+								page: 1,
+							});
+						}}
+					/>
+					<DataTableFacetedFilter
+						title="PR links"
+						options={prFilterOptions}
+						selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
+						onChange={(arr) => {
+							const v = arr[0];
+							void setParams({
+								has_pr: v === "true" ? true : v === "false" ? false : null,
+								page: 1,
+							});
+						}}
+					/>
+				</>
+			}
+			actions={
+				<>
+					{isFiltered ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-8 px-2"
+							onClick={() =>
+								void setParams({
+									q: "",
+									agent: "",
+									has_pr: null,
+									automated: null,
+									page: 1,
+								})
+							}
+						>
+							Reset
+						</Button>
+					) : null}
 					<ToggleGroup
 						type="single"
 						value={params.view}
@@ -329,15 +319,34 @@ function SessionsListInner() {
 							<Table2 />
 						</ToggleGroupItem>
 					</ToggleGroup>
-				}
+				</>
+			}
+		/>
+	);
+	const sessionFooter = (
+		<div>
+			<DataTablePagination
+				page={params.page}
+				pageSize={params.pageSize}
+				total={total}
+				onPageChange={(p) => void setParams({ page: p })}
+				onPageSizeChange={(size) => void setParams({ pageSize: size, page: 1 })}
 			/>
+		</div>
+	);
+
+	return (
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
 
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Couldn't load sessions</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={error}
+					onRetry={() => {
+						void refetch();
+					}}
+					title="Couldn't load sessions"
+				/>
 			) : (
 				<div
 					className={cn(

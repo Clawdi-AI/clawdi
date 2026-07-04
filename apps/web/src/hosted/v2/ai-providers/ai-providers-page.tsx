@@ -8,6 +8,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -45,11 +46,12 @@ export function AiProvidersPage() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<PageHeader
-				title="Model Providers"
-				description={DESCRIPTION}
+			<PageHeader title="Model Providers" description={DESCRIPTION} />
+
+			<ListToolbar
 				actions={
 					<Button
+						size="sm"
 						onClick={() => {
 							setEditing(null);
 							setAddOpen(true);
@@ -61,7 +63,10 @@ export function AiProvidersPage() {
 				}
 			/>
 
-			<ManagedProviderCard />
+			<div className="flex flex-col gap-2">
+				<SectionLabel>Managed default</SectionLabel>
+				<ManagedProviderCard />
+			</div>
 
 			<div className="flex flex-col gap-2">
 				<SectionLabel>Your providers</SectionLabel>

@@ -2,11 +2,13 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { ChevronDown, Key, Plus, Share2, Sparkles } from "lucide-react";
+import { ChevronDown, Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { HERO_CARD_BASE } from "@/components/entity-card";
+import { ApiErrorPanel } from "@/components/api-error-panel";
+import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
@@ -17,9 +19,8 @@ import {
 	projectAgentFor,
 	projectKindSortRank,
 } from "@/components/projects/project-metadata";
+import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -177,7 +178,7 @@ export default function ProjectsPage() {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
-				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 6 }).map((_, i) => (
 						<ProjectCardSkeleton key={i} />
 					))}
@@ -188,30 +189,26 @@ export default function ProjectsPage() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader
-				title="Projects"
-				description={PROJECTS_RESOURCE.managementDescription}
+			<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
+
+			<ListToolbar
+				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
 				actions={
-					<>
-						<SearchInput
-							value={search}
-							onChange={setSearch}
-							placeholder="Search projects…"
-							className="w-full sm:w-56"
-						/>
-						<Button size="sm" onClick={openCreateDialog}>
-							<Plus className="size-3.5" />
-							New project
-						</Button>
-					</>
+					<Button size="sm" onClick={openCreateDialog}>
+						<Plus className="size-3.5" />
+						New project
+					</Button>
 				}
 			/>
 
 			{projects.error ? (
-				<Alert variant="destructive">
-					<AlertTitle>Couldn&apos;t load projects</AlertTitle>
-					<AlertDescription>{errorMessage(projects.error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={projects.error}
+					onRetry={() => {
+						void projects.refetch();
+					}}
+					title="Couldn't load projects"
+				/>
 			) : null}
 
 			<Dialog
@@ -291,7 +288,8 @@ export default function ProjectsPage() {
 			) : (
 				<div
 					className={cn(
-						"grid gap-4 transition-opacity sm:grid-cols-2 xl:grid-cols-3",
+						HERO_GRID_CLASS,
+						"transition-opacity",
 						projects.isFetching && !projects.isLoading ? "opacity-60" : "opacity-100",
 					)}
 				>
@@ -304,7 +302,6 @@ export default function ProjectsPage() {
 							vaultCount={vaultCounts.get(project.id) ?? 0}
 						/>
 					))}
-					{!search.trim() ? <NewProjectCard onClick={openCreateDialog} /> : null}
 				</div>
 			)}
 
@@ -313,7 +310,7 @@ export default function ProjectsPage() {
 					<button
 						type="button"
 						onClick={() => setSystemOpen((v) => !v)}
-						className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+						className="flex flex-wrap items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
 						aria-expanded={systemOpen}
 					>
 						<ChevronDown
@@ -322,11 +319,10 @@ export default function ProjectsPage() {
 								!systemOpen && "-rotate-90",
 							)}
 						/>
-						System projects
-						<Badge variant="secondary" className="tabular-nums">
-							{systemProjects.length}
-						</Badge>
-						<span className="ml-1 font-normal text-xs">
+						<SectionLabel className="px-0" count={systemProjects.length}>
+							System projects
+						</SectionLabel>
+						<span className="ml-1 text-xs">
 							account default and one per connected agent — managed automatically
 						</span>
 					</button>
@@ -362,18 +358,23 @@ function ProjectCard({
 }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div
-			className={cn(
-				HERO_CARD_BASE,
-				"group relative z-0 flex min-h-36 flex-col gap-3 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
-			)}
-		>
-			<div className="flex items-start justify-between gap-2">
+		<HeroCard
+			icon={
 				<IconChip tint={identityFor(projectName).colorClasses} className="text-xl">
 					{identityFor(projectName).emoji}
 				</IconChip>
-				{!shared && isCustomProject(project) ? (
-					<span className="relative z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+			}
+			title={projectName}
+			badges={shared ? <StatusChip>Shared with you</StatusChip> : null}
+			description={<span className="font-mono">{project.slug}</span>}
+			footer={[
+				`${skillCount} ${skillCount === 1 ? "skill" : "skills"}`,
+				`${vaultCount} ${vaultCount === 1 ? "vault" : "vaults"}`,
+				shared && project.owner_display ? `by ${project.owner_display}` : null,
+			]}
+			actions={
+				!shared && isCustomProject(project) ? (
+					<div className="opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ShareProjectDialog
 							projectId={project.id}
 							projectName={projectName}
@@ -383,37 +384,12 @@ function ProjectCard({
 								<Share2 className="size-3.5" />
 							</Button>
 						</ShareProjectDialog>
-					</span>
-				) : null}
-			</div>
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-center gap-2">
-					<h3 className="truncate text-base font-semibold tracking-tight">{projectName}</h3>
-					{shared ? <StatusChip>Shared with you</StatusChip> : null}
-				</div>
-				<p className="truncate font-mono text-xs text-muted-foreground">{project.slug}</p>
-			</div>
-			<div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-				<span className="inline-flex items-center gap-1">
-					<Sparkles className="size-3" />
-					{skillCount} {skillCount === 1 ? "skill" : "skills"}
-				</span>
-				<span className="inline-flex items-center gap-1">
-					<Key className="size-3" />
-					{vaultCount} {vaultCount === 1 ? "vault" : "vaults"}
-				</span>
-				{shared && project.owner_display ? (
-					<span className="truncate">by {project.owner_display}</span>
-				) : null}
-			</div>
-			<Link
-				to="/projects/$id"
-				params={{ id: project.id }}
-				className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-			>
-				<span className="sr-only">Open {projectName}</span>
-			</Link>
-		</div>
+					</div>
+				) : null
+			}
+			link={{ to: "/projects/$id", params: { id: project.id } }}
+			ariaLabel={`Open ${projectName}`}
+		/>
 	);
 }
 
@@ -438,21 +414,6 @@ function StatusChip({ children }: { children: React.ReactNode }) {
 		<span className="shrink-0 rounded-sm bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info-muted-foreground">
 			{children}
 		</span>
-	);
-}
-
-function NewProjectCard({ onClick }: { onClick: () => void }) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-		>
-			<IconChip size="sm" tint="bg-muted text-muted-foreground" className="size-9 rounded-lg">
-				<Plus className="size-4" />
-			</IconChip>
-			<span className="text-sm font-medium">New project</span>
-		</button>
 	);
 }
 
