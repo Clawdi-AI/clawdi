@@ -1,9 +1,9 @@
 "use client";
 
-import { Link, type LinkProps } from "@tanstack/react-router";
+import type { LinkProps } from "@tanstack/react-router";
 import { Sparkles, Trash2 } from "lucide-react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
-import { HERO_CARD_BASE } from "@/components/entity-card";
+import { HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import { cn, relativeTime } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type SkillLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
@@ -59,20 +59,48 @@ export function SkillCard({
 		search: skill.project_id ? { project: skill.project_id } : undefined,
 	};
 	return (
-		<div
-			className={cn(
-				HERO_CARD_BASE,
-				"group relative z-0 flex min-h-28 flex-col gap-2 transition-all duration-150",
-				selectMode && selected
-					? "border-foreground/40 bg-accent/50"
-					: "hover:-translate-y-px hover:border-foreground/20",
-			)}
-		>
-			<div className="flex items-start justify-between gap-2">
+		<HeroCard
+			className="min-h-28 gap-2"
+			selected={selectMode && selected}
+			interactive={!selectMode}
+			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
 				</IconChip>
-				{selectMode ? (
+			}
+			title={skill.name}
+			badges={
+				<>
+					<Badge variant="outline" className="shrink-0">
+						v{skill.version}
+					</Badge>
+					{readOnly ? (
+						<Badge variant="secondary" className="shrink-0">
+							Shared
+						</Badge>
+					) : null}
+				</>
+			}
+			description={skill.description}
+			footer={[
+				sourceLabel ? (
+					<span
+						key="source-label"
+						className="inline-flex max-w-44 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5"
+					>
+						<span aria-hidden className="select-none">
+							{sourceLabel.emoji}
+						</span>
+						<span className="truncate">{sourceLabel.name}</span>
+					</span>
+				) : null,
+				<span key="source" className="font-mono" translate="no">
+					{skill.source_repo ?? skill.source}
+				</span>,
+				skill.updated_at ? relativeTime(skill.updated_at) : null,
+			]}
+			actions={
+				selectMode ? (
 					<Checkbox
 						checked={selected}
 						tabIndex={-1}
@@ -80,7 +108,7 @@ export function SkillCard({
 						className="pointer-events-none shrink-0"
 					/>
 				) : (
-					<span className="relative z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						{skill.project_id ? <SendSkillDialog skills={[skill]} /> : null}
 						{canUninstall ? (
 							<ConfirmAction
@@ -103,43 +131,12 @@ export function SkillCard({
 								</Button>
 							</ConfirmAction>
 						) : null}
-					</span>
-				)}
-			</div>
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-center gap-1.5">
-					<h3 className="truncate text-sm font-semibold tracking-tight">{skill.name}</h3>
-					<Badge variant="outline" className="shrink-0">
-						v{skill.version}
-					</Badge>
-					{readOnly ? (
-						<Badge variant="secondary" className="shrink-0">
-							Shared
-						</Badge>
-					) : null}
-				</div>
-				{skill.description ? (
-					<p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-						{skill.description}
-					</p>
-				) : null}
-			</div>
-			<div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-				{sourceLabel ? (
-					<span className="inline-flex max-w-44 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5">
-						<span aria-hidden className="select-none">
-							{sourceLabel.emoji}
-						</span>
-						<span className="truncate">{sourceLabel.name}</span>
-					</span>
-				) : null}
-				<span className="truncate font-mono" translate="no">
-					{skill.source_repo ?? skill.source}
-				</span>
-				{skill.updated_at ? (
-					<span className="shrink-0">{relativeTime(skill.updated_at)}</span>
-				) : null}
-			</div>
+					</div>
+				)
+			}
+			link={selectMode ? undefined : detailLink}
+			ariaLabel={`Open ${skill.name}`}
+		>
 			{selectMode ? (
 				<button
 					type="button"
@@ -151,15 +148,8 @@ export function SkillCard({
 						{selected ? "Deselect" : "Select"} {skill.name}
 					</span>
 				</button>
-			) : (
-				<Link
-					{...detailLink}
-					className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				>
-					<span className="sr-only">Open {skill.name}</span>
-				</Link>
-			)}
-		</div>
+			) : null}
+		</HeroCard>
 	);
 }
 
@@ -195,7 +185,7 @@ export function SkillCardGrid({
 }) {
 	if (isLoading) {
 		return (
-			<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+			<div className={HERO_GRID_CLASS}>
 				{Array.from({ length: 6 }).map((_, i) => (
 					<Skeleton key={i} className="h-28 w-full rounded-xl" />
 				))}
@@ -206,7 +196,7 @@ export function SkillCardGrid({
 		return <EmptyState variant={emptyVariant} icon={Sparkles} description={emptyMessage} />;
 	}
 	return (
-		<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+		<div className={HERO_GRID_CLASS}>
 			{skills.map((skill) => (
 				<SkillCard
 					key={skillSelectionKey(skill)}

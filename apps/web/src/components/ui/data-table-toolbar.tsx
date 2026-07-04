@@ -1,7 +1,7 @@
 "use client";
 
+import { ListToolbar } from "@/components/list-toolbar";
 import { SearchInput } from "@/components/ui/search-input";
-import { cn } from "@/lib/utils";
 
 interface Props {
 	value: string;
@@ -19,14 +19,10 @@ export function DataTableToolbar({
 	children,
 }: Props) {
 	return (
-		<div className={cn("flex flex-wrap items-center gap-2", className)}>
-			<SearchInput
-				value={value}
-				onChange={onChange}
-				placeholder={placeholder}
-				className="w-full flex-1 basis-full sm:max-w-sm sm:basis-auto"
-			/>
-			{children}
-		</div>
+		<ListToolbar
+			className={className}
+			search={<SearchInput value={value} onChange={onChange} placeholder={placeholder} />}
+			filters={children}
+		/>
 	);
 }

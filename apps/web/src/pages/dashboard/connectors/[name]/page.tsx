@@ -4,6 +4,7 @@ import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -312,21 +313,23 @@ function ConnectorDetail({ name }: { name: string }) {
 						// the "No connected accounts yet" empty state — the user
 						// would think they have nothing connected when really we
 						// just couldn't load the list.
-						<Alert variant="destructive">
-							<AlertCircle />
-							<AlertTitle>Couldn't load connections</AlertTitle>
-							<AlertDescription>{errorMessage(connectionsQ.error)}</AlertDescription>
-						</Alert>
+						<ApiErrorPanel
+							error={connectionsQ.error}
+							onRetry={() => {
+								void connectionsQ.refetch();
+							}}
+							title="Couldn't load connections"
+						/>
 					) : usesNoAuth ? (
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (
-						<Alert variant="destructive">
-							<AlertCircle />
-							<AlertTitle>Connector metadata error</AlertTitle>
-							<AlertDescription>
-								This connector did not return a supported auth type. Refresh the page and try again.
-							</AlertDescription>
-						</Alert>
+						<ApiErrorPanel
+							error="This connector did not return a supported auth type. Refresh the page and try again."
+							onRetry={() => {
+								void appQ.refetch();
+							}}
+							title="Connector metadata error"
+						/>
 					) : activeConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
@@ -398,6 +401,9 @@ function ConnectorDetail({ name }: { name: string }) {
 				tools={tools ?? []}
 				isLoading={isToolsLoading}
 				error={toolsQ.error}
+				onRetry={() => {
+					void toolsQ.refetch();
+				}}
 				requiresConnection={!usesNoAuth}
 			/>
 
@@ -454,11 +460,13 @@ function ConnectorToolsList({
 	tools,
 	isLoading,
 	error,
+	onRetry,
 	requiresConnection,
 }: {
 	tools: ConnectorTool[];
 	isLoading: boolean;
 	error: Error | null;
+	onRetry: () => void;
 	requiresConnection: boolean;
 }) {
 	const [search, setSearch] = useState("");
@@ -506,11 +514,7 @@ function ConnectorToolsList({
 					}
 				/>
 				<div className="p-4">
-					<Alert variant="destructive">
-						<AlertCircle />
-						<AlertTitle>Couldn't load tools</AlertTitle>
-						<AlertDescription>{errorMessage(error)}</AlertDescription>
-					</Alert>
+					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load tools" />
 				</div>
 			</DashboardSection>
 		);

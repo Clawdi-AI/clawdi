@@ -123,6 +123,52 @@ Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
 `active:scale-[0.98]` + visible `focus-visible` ring. Respect
 `prefers-reduced-motion` (tw-animate-css handles this for its presets).
 
+## Collections
+
+Collection surfaces use one framework. Page-specific content can vary; the
+toolbar chassis, group headers, error surface, card tier, and grid rhythm do
+not.
+
+### Item anatomies
+
+- **Entity item** (`ENTITY_CARD_BASE`, `rounded-lg p-4`): `[leading icon] [title
+  + titleAdornment] / [meta line]` with optional trailing status or actions.
+  Use for operational objects: agents, channels, providers, connectors,
+  session rows, linked agents, and devices.
+- **Hero item** (`HERO_CARD_BASE`, `rounded-xl p-5`): `[top icon tile] / [title
+  + badges] / [description] / [stats footer meta row]`. Use for top-level
+  resource grids: projects, vaults, skills, and memories. The footer is always
+  an `EntityMeta`-style middot row; keep page-specific facts, not page-specific
+  footer layouts.
+
+### Grid rhythm
+
+- Entity grids use `ENTITY_GRID_CLASS`: `grid gap-2 sm:grid-cols-2
+  xl:grid-cols-3`.
+- Hero grids use `HERO_GRID_CLASS`: `grid gap-4 sm:grid-cols-2
+  xl:grid-cols-3`.
+- Masonry content can keep masonry columns, but each card still follows the
+  hero tier padding, radius, hover, and footer conventions.
+
+### Toolbar
+
+Use `ListToolbar` for collection controls. Slot order is always:
+
+1. `search` — `SearchInput`.
+2. `filters` — `FilterChip` rows, selects, or `ToggleGroup`s.
+3. `actions` — view switchers, selects, and command buttons.
+
+The toolbar is a single flex row that wraps on small screens. Do not place list
+search, filters, or view switches in `PageHeader.actions`.
+
+### Group Headers And Errors
+
+- `SectionLabel` is the only group header inside lists. Use its `leading` slot
+  for identity icons and `count` for totals.
+- `ApiErrorPanel` is the only API error surface on collection list/detail
+  pages. Wire `onRetry` to the failing query's `refetch` when a query produced
+  the error.
+
 ### Identity palette
 
 `--identity-1..8` (bg+fg pairs, light and dark): vivid flat hues assigned by

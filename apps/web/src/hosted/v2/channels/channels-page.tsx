@@ -2,17 +2,18 @@
 
 import { Link } from "@tanstack/react-router";
 import { MessagesSquare, Plus } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
-	ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	ENTITY_GRID_CLASS,
 	ENTITY_STRETCHED_LINK_CLASS,
 	EntityHeader,
 } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
+import { FilterChip } from "@/components/filter-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -40,16 +41,7 @@ export function ChannelsPage() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<PageHeader
-				title="Channels"
-				description={DESCRIPTION}
-				actions={
-					<Button onClick={() => setConnectOpen(true)}>
-						<Plus />
-						Connect a bot
-					</Button>
-				}
-			/>
+			<PageHeader title="Channels" description={DESCRIPTION} />
 
 			<Tabs defaultValue="mine">
 				<TabsList>
@@ -132,19 +124,28 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 					title="Couldn't load channel health"
 				/>
 			) : null}
-			{/* Provider filter */}
-			<div className="flex flex-wrap gap-1.5">
-				<FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
-					All
-					<span className="ml-1 text-muted-foreground">{all.length}</span>
-				</FilterChip>
-				{CHANNEL_PROVIDERS.filter((p) => counts.has(p)).map((p) => (
-					<FilterChip key={p} active={filter === p} onClick={() => setFilter(p)}>
-						{providerMeta(p).label}
-						<span className="ml-1 text-muted-foreground">{counts.get(p)}</span>
-					</FilterChip>
-				))}
-			</div>
+			<ListToolbar
+				filters={
+					<>
+						<FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
+							All
+							<span className="text-muted-foreground tabular-nums">{all.length}</span>
+						</FilterChip>
+						{CHANNEL_PROVIDERS.filter((p) => counts.has(p)).map((p) => (
+							<FilterChip key={p} active={filter === p} onClick={() => setFilter(p)}>
+								{providerMeta(p).label}
+								<span className="text-muted-foreground tabular-nums">{counts.get(p)}</span>
+							</FilterChip>
+						))}
+					</>
+				}
+				actions={
+					<Button size="sm" onClick={onConnect}>
+						<Plus />
+						Connect a bot
+					</Button>
+				}
+			/>
 
 			<div className="flex flex-col gap-5">
 				{groups.map((group) => (
@@ -165,33 +166,6 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 				))}
 			</div>
 		</div>
-	);
-}
-
-function FilterChip({
-	active,
-	onClick,
-	children,
-}: {
-	active: boolean;
-	onClick: () => void;
-	children: ReactNode;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			aria-pressed={active}
-			className={cn(
-				"rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-				ENTITY_CARD_BUTTON_FOCUS_CLASS,
-				active
-					? "border-primary bg-primary/10 text-primary"
-					: "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-			)}
-		>
-			{children}
-		</button>
 	);
 }
 

@@ -1,10 +1,13 @@
 "use client";
 
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { MessageSquare, Zap } from "lucide-react";
+import { MessageSquare } from "lucide-react";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
-import { Stat } from "@/components/meta/stat";
-import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
+import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import { SectionLabel } from "@/components/section-label";
+import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import {
@@ -50,9 +53,9 @@ export function SessionFeed({
 }) {
 	if (isLoading) {
 		return (
-			<div className="space-y-3">
+			<div className="flex flex-col gap-2">
 				{Array.from({ length: 5 }).map((_, index) => (
-					<div key={index} className="rounded-lg border bg-card p-4">
+					<div key={index} className={ENTITY_CARD_BASE}>
 						<Skeleton className="h-4 w-4/5" />
 						<Skeleton className="mt-3 h-3 w-1/2" />
 					</div>
@@ -67,7 +70,7 @@ export function SessionFeed({
 
 	if (!grouped) {
 		return (
-			<div className="space-y-3">
+			<div className="flex flex-col gap-2">
 				{sessions.map((session) => (
 					<SessionFeedCard
 						key={session.id}
@@ -92,13 +95,11 @@ export function SessionFeed({
 	}
 
 	return (
-		<div className="space-y-5">
+		<div className="flex flex-col gap-5">
 			{groups.map((group) => (
-				<section key={group.key} className="space-y-2">
-					<h3 className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
-						{group.label}
-					</h3>
-					<div className="space-y-2">
+				<section key={group.key} className="flex flex-col gap-2">
+					<SectionLabel>{group.label}</SectionLabel>
+					<div className="flex flex-col gap-2">
 						{group.items.map((session) => (
 							<SessionFeedCard
 								key={session.id}
@@ -129,48 +130,44 @@ function SessionFeedCard({
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
 	const totalTokens = session.input_tokens + session.output_tokens;
+	const agent = agentIdentity(sessionAgentIdentityInput(session)).primaryLabel;
 	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
 	// timeline but visually quieter than human work (taste audit round 2).
 	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
 	return (
-		<article
-			className={cn(
-				"group relative z-0 rounded-lg border bg-card transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
-				isAutomated ? "border-transparent bg-muted/30 p-3" : "p-4",
-			)}
-		>
+		<article className="group relative z-0">
+			<div
+				className={cn(
+					ENTITY_CARD_BASE,
+					"transition-colors group-hover:bg-muted/50",
+					isAutomated && "bg-muted/30",
+				)}
+			>
+				<EntityHeader
+					align="start"
+					icon={<AgentIcon agent={session.agent_type} size="lg" />}
+					title={title}
+					meta={[
+						showAgent ? agent : null,
+						projectFolder ? (
+							<span key="folder" className="font-mono" title={session.project_path ?? undefined}>
+								{projectFolder}
+							</span>
+						) : null,
+						`${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
+						`${formatNumber(totalTokens)} tokens`,
+						<span key="time" title={formatAbsoluteTooltip(session.last_activity_at)}>
+							{relativeTime(session.last_activity_at)}
+						</span>,
+					]}
+				/>
+			</div>
 			<Link
 				{...link}
-				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 			>
 				<span className="sr-only">Open session {session.local_session_id}</span>
 			</Link>
-			<div className="flex items-start justify-between gap-3">
-				<h4
-					className={cn(
-						"min-w-0 truncate text-sm",
-						isAutomated ? "font-normal text-muted-foreground" : "font-medium",
-					)}
-				>
-					{title}
-				</h4>
-				<span
-					className="shrink-0 text-xs text-muted-foreground"
-					title={formatAbsoluteTooltip(session.last_activity_at)}
-				>
-					{relativeTime(session.last_activity_at)}
-				</span>
-			</div>
-			<div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-				{showAgent ? <SessionAgentLabel session={session} size="sm" /> : null}
-				{projectFolder ? (
-					<span className="truncate font-mono" title={session.project_path ?? undefined}>
-						{projectFolder}
-					</span>
-				) : null}
-				<Stat icon={MessageSquare} label={`${session.message_count}`} />
-				<Stat icon={Zap} label={formatNumber(totalTokens)} />
-			</div>
 		</article>
 	);
 }

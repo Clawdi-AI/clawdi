@@ -20,9 +20,12 @@ import {
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
+import { FilterChip, filterChipClass } from "@/components/filter-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
@@ -31,7 +34,7 @@ import {
 	isCustomProject,
 	isProjectOwner,
 } from "@/components/projects/project-metadata";
-import { ProjectTab } from "@/components/projects/project-tab";
+import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillCardGrid, skillSelectionKey } from "@/components/skills/skill-card";
@@ -47,6 +50,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
 import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
@@ -96,7 +100,11 @@ function SkillsPageInner() {
 	const [customRepo, setCustomRepo] = useState("");
 	const [customRepoError, setCustomRepoError] = useState<string | null>(null);
 
-	const { data: projects, error: projectsError } = useQuery({
+	const {
+		data: projects,
+		error: projectsError,
+		refetch: refetchProjects,
+	} = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 	});
@@ -159,6 +167,7 @@ function SkillsPageInner() {
 		isLoading: skillsLoading,
 		isFetching: skillsFetching,
 		error: skillsError,
+		refetch: refetchSkills,
 	} = useQuery({
 		queryKey: ["skills", "all-projects"],
 		queryFn: async () =>
@@ -478,6 +487,10 @@ function SkillsPageInner() {
 		if (ok) setCustomRepo("");
 	};
 
+	const retryCustomInstall = () => {
+		void handleCustom();
+	};
+
 	const installedSkillsEmptyMessage = isStaleProject
 		? "This link points to a Project that is no longer available. Pick another Project."
 		: isStaleTarget
@@ -500,157 +513,90 @@ function SkillsPageInner() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader
-				title="Skills"
-				description={SKILLS_RESOURCE.managementDescription}
-				actions={orderedProjects.length > 0 ? renderShareProjectAction() : null}
-			/>
+			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
 
-			{/* Project scope as visible tabs, mirroring the vault page: custom
-			    projects + Global up front, the long tail of per-agent projects
-			    behind one overflow menu. */}
-			{orderedProjects.length > 0 ? (
-				<div
-					className="flex flex-wrap items-center gap-1.5"
-					role="tablist"
-					aria-label="Project scope for skills"
-				>
-					<ProjectTab
-						active={isAllScope}
-						onClick={() => {
-							void setProjectParam("");
-							void setTargetEnvId("");
-						}}
-						label="All projects"
-						count={skillsData?.items.length}
-					/>
-					{tabProjects.map((p) => (
-						<ProjectTab
-							key={p.id}
-							active={targetProjectId === p.id}
-							onClick={() => {
-								void setProjectParam(p.id);
-								void setTargetEnvId("");
-							}}
-							label={displayProjectName(p)}
-							emoji={identityFor(displayProjectName(p)).emoji}
-							count={skillCountByProject.get(p.id) ?? 0}
-						/>
-					))}
-					{overflowProjects.length > 0 ? (
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<button
-									type="button"
-									className={cn(
-										"inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-sm transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
-										overflowActive
-											? "border-foreground/20 bg-accent font-medium text-foreground"
-											: "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-									)}
+			<ListToolbar
+				search={<SearchInput value={search} onChange={setSearch} placeholder="Search skills…" />}
+				filters={
+					orderedProjects.length > 0 ? (
+						<>
+							<FilterChip
+								active={isAllScope}
+								onClick={() => {
+									void setProjectParam("");
+									void setTargetEnvId("");
+								}}
+							>
+								All projects
+								<span className="text-muted-foreground tabular-nums">
+									{skillsData?.items.length ?? 0}
+								</span>
+							</FilterChip>
+							{tabProjects.map((p) => (
+								<FilterChip
+									key={p.id}
+									active={targetProjectId === p.id}
+									onClick={() => {
+										void setProjectParam(p.id);
+										void setTargetEnvId("");
+									}}
 								>
-									{overflowActive && targetProject
-										? `${identityFor(displayProjectName(targetProject)).emoji} ${displayProjectName(targetProject)}`
-										: `Agent projects (${overflowProjects.length})`}
-									<ChevronDown className="size-3.5" />
-								</button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-								{overflowProjects.map((p) => (
-									<DropdownMenuItem
-										key={p.id}
-										onSelect={() => {
-											void setProjectParam(p.id);
-											void setTargetEnvId("");
-										}}
-									>
-										<span aria-hidden className="select-none">
-											{identityFor(displayProjectName(p)).emoji}
-										</span>
-										<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
-										<span className="text-xs text-muted-foreground tabular-nums">
-											{skillCountByProject.get(p.id) ?? 0}
-										</span>
-									</DropdownMenuItem>
-								))}
-							</DropdownMenuContent>
-						</DropdownMenu>
-					) : null}
-				</div>
-			) : null}
-
-			{projectsError ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Couldn&apos;t load Projects</AlertTitle>
-					<AlertDescription>
-						Project-scoped install and uninstall are temporarily disabled.{" "}
-						{errorMessage(projectsError)}
-					</AlertDescription>
-				</Alert>
-			) : null}
-
-			{/* Skills inventory failure: a load error must not look
-			    like an empty inventory — pre-fix the page swallowed
-			    `skillsError` and fell through to the empty-state copy
-			    'No skills installed on this agent yet,' which is
-			    indistinguishable from a real /api/skills outage from
-			    the user's perspective. */}
-			{skillsError ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Couldn&apos;t load skills</AlertTitle>
-					<AlertDescription>
-						Your installed skills aren&apos;t showing because of an API error. Refresh to retry.{" "}
-						{errorMessage(skillsError)}
-					</AlertDescription>
-				</Alert>
-			) : null}
-
-			{!canWriteTargetProject && targetProject ? (
-				<Alert>
-					<AlertCircle />
-					<AlertTitle>Read-only Project</AlertTitle>
-					<AlertDescription>
-						You can view skills in {displayProjectName(targetProject)}, but only the owner can
-						install or remove them.
-					</AlertDescription>
-				</Alert>
-			) : null}
-
-			<section
-				className={cn(
-					"space-y-3 transition-opacity",
-					skillsFetching && !skillsLoading ? "opacity-60" : "opacity-100",
-				)}
-			>
-				<div className="flex flex-wrap items-center gap-2">
-					<div className="flex items-center gap-2">
-						<h2 className="text-sm font-semibold">Installed</h2>
-						{skillsForTarget ? (
-							<Badge variant="secondary" className="tabular-nums">
-								{skillsForTarget.length}
-							</Badge>
-						) : null}
-						{targetProject ? (
-							<span className="text-xs text-muted-foreground">
-								in {displayProjectName(targetProject)}
-							</span>
-						) : isAllScope ? (
-							<span className="text-xs text-muted-foreground">across every Project</span>
-						) : null}
-					</div>
-					<div className="ml-auto flex items-center gap-2">
-						<div className="relative">
-							<Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-							<Input
-								value={search}
-								onChange={(e) => setSearch(e.target.value)}
-								placeholder="Search skills…"
-								aria-label="Search skills"
-								className="h-8 w-44 pl-8 text-sm sm:w-56"
-							/>
-						</div>
+									<span aria-hidden className="select-none">
+										{identityFor(displayProjectName(p)).emoji}
+									</span>
+									{displayProjectName(p)}
+									<span className="text-muted-foreground tabular-nums">
+										{skillCountByProject.get(p.id) ?? 0}
+									</span>
+								</FilterChip>
+							))}
+							{overflowProjects.length > 0 ? (
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<button type="button" className={filterChipClass(overflowActive)}>
+											{overflowActive && targetProject ? (
+												<>
+													<span aria-hidden className="select-none">
+														{identityFor(displayProjectName(targetProject)).emoji}
+													</span>
+													{displayProjectName(targetProject)}
+												</>
+											) : (
+												<>Agent projects</>
+											)}
+											<span className="text-muted-foreground tabular-nums">
+												{overflowProjects.length}
+											</span>
+											<ChevronDown className="size-3.5" />
+										</button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+										{overflowProjects.map((p) => (
+											<DropdownMenuItem
+												key={p.id}
+												onSelect={() => {
+													void setProjectParam(p.id);
+													void setTargetEnvId("");
+												}}
+											>
+												<span aria-hidden className="select-none">
+													{identityFor(displayProjectName(p)).emoji}
+												</span>
+												<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
+												<span className="text-xs text-muted-foreground tabular-nums">
+													{skillCountByProject.get(p.id) ?? 0}
+												</span>
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							) : null}
+						</>
+					) : null
+				}
+				actions={
+					<>
+						{orderedProjects.length > 0 ? renderShareProjectAction() : null}
 						{isAllScope && duplicateGroups.length > 0 ? (
 							<Button
 								variant={showDuplicates ? "secondary" : "outline"}
@@ -679,8 +625,68 @@ function SkillsPageInner() {
 							<ListChecks className="size-3.5" />
 							{selectMode ? "Done" : "Select"}
 						</Button>
-					</div>
-				</div>
+					</>
+				}
+			/>
+
+			{projectsError ? (
+				<ApiErrorPanel
+					error={projectsError}
+					onRetry={() => {
+						void refetchProjects();
+					}}
+					title="Couldn't load Projects"
+				/>
+			) : null}
+
+			{/* Skills inventory failure: a load error must not look
+			    like an empty inventory — pre-fix the page swallowed
+			    `skillsError` and fell through to the empty-state copy
+			    'No skills installed on this agent yet,' which is
+			    indistinguishable from a real /api/skills outage from
+			    the user's perspective. */}
+			{skillsError ? (
+				<ApiErrorPanel
+					error={skillsError}
+					onRetry={() => {
+						void refetchSkills();
+					}}
+					title="Couldn't load skills"
+				/>
+			) : null}
+
+			{!canWriteTargetProject && targetProject ? (
+				<Alert>
+					<AlertCircle />
+					<AlertTitle>Read-only Project</AlertTitle>
+					<AlertDescription>
+						You can view skills in {displayProjectName(targetProject)}, but only the owner can
+						install or remove them.
+					</AlertDescription>
+				</Alert>
+			) : null}
+
+			<section
+				className={cn(
+					"space-y-3 transition-opacity",
+					skillsFetching && !skillsLoading ? "opacity-60" : "opacity-100",
+				)}
+			>
+				<SectionLabel
+					count={
+						skillsForTarget
+							? `${skillsForTarget.length}${
+									targetProject
+										? ` in ${displayProjectName(targetProject)}`
+										: isAllScope
+											? " across every Project"
+											: ""
+								}`
+							: undefined
+					}
+				>
+					Installed
+				</SectionLabel>
 				{duplicatesView ? (
 					duplicateGroups.length === 0 ? (
 						<EmptyState
@@ -698,13 +704,16 @@ function SkillsPageInner() {
 								return (
 									<div key={group.key} className="space-y-2">
 										<div className="flex flex-wrap items-center gap-2">
-											<span aria-hidden className="select-none text-sm leading-none">
-												{identityFor(group.newest.name || group.key).emoji}
-											</span>
-											<span className="text-sm font-medium">{group.newest.name}</span>
-											<span className="text-xs text-muted-foreground tabular-nums">
-												in {group.copies.length} projects
-											</span>
+											<SectionLabel
+												leading={
+													<span aria-hidden className="select-none">
+														{identityFor(group.newest.name || group.key).emoji}
+													</span>
+												}
+												count={`in ${group.copies.length} projects`}
+											>
+												{group.newest.name}
+											</SectionLabel>
 											{group.drift ? (
 												<Badge
 													variant="secondary"
@@ -785,23 +794,26 @@ function SkillsPageInner() {
 								return (
 									<div key={group.pid || "other"} className="space-y-2">
 										<div className="flex items-center gap-2">
-											<span aria-hidden className="select-none text-sm leading-none">
-												{identityFor(group.label).emoji}
-											</span>
-											{group.project ? (
-												<button
-													type="button"
-													onClick={() => void setProjectParam(group.pid)}
-													className="text-sm font-medium hover:underline"
-												>
-													{group.label}
-												</button>
-											) : (
-												<span className="text-sm font-medium">{group.label}</span>
-											)}
-											<span className="text-xs text-muted-foreground tabular-nums">
-												{group.skills.length}
-											</span>
+											<SectionLabel
+												leading={
+													<span aria-hidden className="select-none">
+														{identityFor(group.label).emoji}
+													</span>
+												}
+												count={group.skills.length}
+											>
+												{group.project ? (
+													<button
+														type="button"
+														onClick={() => void setProjectParam(group.pid)}
+														className="hover:underline"
+													>
+														{group.label}
+													</button>
+												) : (
+													group.label
+												)}
+											</SectionLabel>
 											{selectMode ? (
 												<Button
 													variant="ghost"
@@ -942,15 +954,14 @@ function SkillsPageInner() {
 					</div>
 					{customRepoError ? <p className="text-xs text-destructive">{customRepoError}</p> : null}
 					{installError ? (
-						<Alert variant="destructive">
-							<AlertTitle>Install failed</AlertTitle>
-							<AlertDescription>{installError}</AlertDescription>
-						</Alert>
+						<ApiErrorPanel
+							error={installError}
+							onRetry={customRepo.trim() ? retryCustomInstall : undefined}
+							title="Install failed"
+						/>
 					) : null}
 
-					<p className="pt-2 text-2xs font-medium uppercase tracking-wider text-muted-foreground">
-						Suggested
-					</p>
+					<SectionLabel className="pt-2">Suggested</SectionLabel>
 					<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 						{FEATURED_SKILLS.map((skill) => {
 							const key = `${skill.repo}/${skill.path ?? ""}`;

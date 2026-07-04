@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
@@ -270,10 +271,13 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						Projects
 					</Link>
 				</Button>
-				<Alert variant="destructive">
-					<AlertTitle>Couldn&apos;t load project</AlertTitle>
-					<AlertDescription>{errorMessage(projects.error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={projects.error}
+					onRetry={() => {
+						void projects.refetch();
+					}}
+					title="Couldn't load project"
+				/>
 			</div>
 		);
 	}

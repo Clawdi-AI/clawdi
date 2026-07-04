@@ -3,15 +3,16 @@
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
+import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { HERO_CARD_BASE } from "@/components/entity-card";
+import { EntityMeta, HERO_CARD_BASE } from "@/components/entity-card";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,7 +92,7 @@ export default function MemoriesPage() {
 		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
 	});
 
-	const { data, isLoading, isFetching, error } = useQuery({
+	const { data, isLoading, isFetching, error, refetch } = useQuery({
 		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
 		queryFn: async () =>
 			unwrap(
@@ -140,9 +141,47 @@ export default function MemoriesPage() {
 	);
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader
-				title="Memories"
-				description={MEMORIES_RESOURCE.managementDescription}
+			<PageHeader title="Memories" description={MEMORIES_RESOURCE.managementDescription} />
+
+			{provider === "mem0" && !hasMem0Key ? (
+				<Mem0KeyForm
+					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
+					isPending={updateSettings.isPending}
+				/>
+			) : null}
+
+			<ListToolbar
+				search={
+					<SearchInput
+						value={search}
+						onChange={(v) => {
+							setSearch(v);
+							setPagination((p) => ({ ...p, pageIndex: 0 }));
+						}}
+						placeholder="Search memories…"
+					/>
+				}
+				filters={
+					<ToggleGroup
+						type="single"
+						value={category}
+						onValueChange={(v) => {
+							if (!v) return;
+							setCategory(v);
+							setPagination((p) => ({ ...p, pageIndex: 0 }));
+						}}
+						variant="outline"
+						size="sm"
+						spacing={1}
+						className="flex-wrap justify-start"
+					>
+						{CATEGORIES.map((c) => (
+							<ToggleGroupItem key={c.value} value={c.value}>
+								{c.label}
+							</ToggleGroupItem>
+						))}
+					</ToggleGroup>
+				}
 				actions={
 					<>
 						<ToggleGroup
@@ -167,51 +206,14 @@ export default function MemoriesPage() {
 				}
 			/>
 
-			{provider === "mem0" && !hasMem0Key ? (
-				<Mem0KeyForm
-					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
-					isPending={updateSettings.isPending}
-				/>
-			) : null}
-
-			{/* Notes toolbar — search front and center, category chips beside. */}
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-				<SearchInput
-					value={search}
-					onChange={(v) => {
-						setSearch(v);
-						setPagination((p) => ({ ...p, pageIndex: 0 }));
-					}}
-					placeholder="Search memories…"
-					className="w-full sm:max-w-md"
-				/>
-				<ToggleGroup
-					type="single"
-					value={category}
-					onValueChange={(v) => {
-						if (!v) return;
-						setCategory(v);
-						setPagination((p) => ({ ...p, pageIndex: 0 }));
-					}}
-					variant="outline"
-					size="sm"
-					spacing={1}
-					className="w-full flex-wrap justify-start sm:w-fit"
-				>
-					{CATEGORIES.map((c) => (
-						<ToggleGroupItem key={c.value} value={c.value}>
-							{c.label}
-						</ToggleGroupItem>
-					))}
-				</ToggleGroup>
-			</div>
-
 			{error ? (
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Couldn't load memories</AlertTitle>
-					<AlertDescription>{errorMessage(error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={error}
+					onRetry={() => {
+						void refetch();
+					}}
+					title="Couldn't load memories"
+				/>
 			) : (
 				<div
 					className={cn(
@@ -289,23 +291,24 @@ function MemoryNotesGrid({
 						className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					/>
 					<p className="line-clamp-[8] break-words text-sm leading-relaxed">{memory.content}</p>
-					<div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-						<Badge variant="secondary" className={cn(MEMORY_CATEGORY_COLORS[memory.category])}>
-							{memory.category}
-						</Badge>
-						{memory.tags?.slice(0, 3).map((tag) => (
-							<span key={tag} className="text-xs text-muted-foreground">
-								#{tag}
-							</span>
-						))}
-						<span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
-							{memory.created_at ? (
-								<TimeTooltip value={memory.created_at}>
+					<EntityMeta
+						className="mt-3 text-xs"
+						items={[
+							<Badge
+								key="category"
+								variant="secondary"
+								className={cn(MEMORY_CATEGORY_COLORS[memory.category])}
+							>
+								{memory.category}
+							</Badge>,
+							...(memory.tags?.slice(0, 3).map((tag) => `#${tag}`) ?? []),
+							memory.created_at ? (
+								<TimeTooltip key="created" value={memory.created_at}>
 									<span>{relativeTime(memory.created_at)}</span>
 								</TimeTooltip>
-							) : null}
-							{memory.source_machine_name ? (
-								<Tooltip>
+							) : null,
+							memory.source_machine_name ? (
+								<Tooltip key="machine">
 									<TooltipTrigger asChild>
 										<span className="inline-flex min-w-0 items-center gap-1">
 											<Laptop className="size-3 shrink-0" />
@@ -314,9 +317,9 @@ function MemoryNotesGrid({
 									</TooltipTrigger>
 									<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
 								</Tooltip>
-							) : null}
-						</span>
-					</div>
+							) : null,
+						]}
+					/>
 					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
@@ -444,11 +447,10 @@ function AddMemoryForm() {
 						/>
 					</div>
 					{secretFinding ? (
-						<Alert variant="destructive">
-							<AlertCircle />
-							<AlertTitle>Use Vault for secrets</AlertTitle>
-							<AlertDescription>{formatSecretMemoryWarning(secretFinding)}</AlertDescription>
-						</Alert>
+						<ApiErrorPanel
+							error={formatSecretMemoryWarning(secretFinding)}
+							title="Use Vault for secrets"
+						/>
 					) : null}
 					<div className="flex items-center justify-between gap-2">
 						<div className="flex items-center gap-2">

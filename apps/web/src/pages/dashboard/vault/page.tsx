@@ -1,16 +1,18 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { HERO_CARD_BASE } from "@/components/entity-card";
+import { ApiErrorPanel } from "@/components/api-error-panel";
+import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
+import { FilterChip } from "@/components/filter-chip";
 import { IconChip } from "@/components/icon-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { ProjectTab } from "@/components/projects/project-tab";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -102,57 +104,53 @@ export default function VaultPage() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader
-				title="Vaults"
-				description={VAULTS_RESOURCE.managementDescription}
+			<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
+
+			<ListToolbar
+				search={<SearchInput value={search} onChange={setSearch} placeholder="Search vaults…" />}
+				filters={
+					filterableProjects.length > 1 ? (
+						<>
+							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
+								All projects
+								<span className="text-muted-foreground tabular-nums">{items.length}</span>
+							</FilterChip>
+							{filterableProjects.map((p) => (
+								<FilterChip
+									key={p.id}
+									active={projectFilter === p.id}
+									onClick={() => setProjectFilter(p.id)}
+								>
+									<span aria-hidden className="select-none">
+										{identityFor(p.name).emoji}
+									</span>
+									{p.name}
+									<span className="text-muted-foreground tabular-nums">
+										{vaultCountByProject.get(p.id) ?? 0}
+									</span>
+								</FilterChip>
+							))}
+						</>
+					) : null
+				}
 				actions={
 					<>
-						<SearchInput
-							value={search}
-							onChange={setSearch}
-							placeholder="Search vaults…"
-							className="w-full sm:w-56"
-						/>
 						<AddKeysDialog />
 						<NewVaultDialog />
 					</>
 				}
 			/>
 
-			{/* Project tabs, not a dropdown — a visible row teaches that vaults
-			    are scoped through Projects (Marvin: dropdowns get ignored). */}
-			{filterableProjects.length > 1 ? (
-				<div
-					className="flex flex-wrap items-center gap-1.5"
-					role="tablist"
-					aria-label="Filter vaults by Project"
-				>
-					<ProjectTab
-						active={projectFilter === "all"}
-						onClick={() => setProjectFilter("all")}
-						label="All projects"
-						count={items.length}
-					/>
-					{filterableProjects.map((p) => (
-						<ProjectTab
-							key={p.id}
-							active={projectFilter === p.id}
-							onClick={() => setProjectFilter(p.id)}
-							label={p.name}
-							emoji={identityFor(p.name).emoji}
-							count={vaultCountByProject.get(p.id) ?? 0}
-						/>
-					))}
-				</div>
-			) : null}
-
 			{vaults.error ? (
-				<Alert variant="destructive">
-					<AlertTitle>Couldn&apos;t load vaults</AlertTitle>
-					<AlertDescription>{errorMessage(vaults.error)}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={vaults.error}
+					onRetry={() => {
+						void vaults.refetch();
+					}}
+					title="Couldn't load vaults"
+				/>
 			) : vaults.isLoading ? (
-				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 3 }).map((_, i) => (
 						<VaultCardSkeleton key={i} />
 					))}
@@ -161,22 +159,22 @@ export default function VaultPage() {
 				<>
 					<div
 						className={cn(
-							"grid gap-4 transition-opacity sm:grid-cols-2 xl:grid-cols-3",
+							HERO_GRID_CLASS,
+							"transition-opacity",
 							vaults.isFetching && !vaults.isLoading ? "opacity-60" : "opacity-100",
 						)}
 					>
 						{mine.map((vault) => (
 							<VaultCard key={vault.id} vault={vault} projectNameById={projectNameById} />
 						))}
-						{!search.trim() ? <NewVaultCard /> : null}
 					</div>
 					{shared.length > 0 ? (
 						<section className="space-y-2">
-							<h2 className="text-sm font-semibold">Shared with you</h2>
+							<SectionLabel count={shared.length}>Shared with you</SectionLabel>
 							<p className="text-xs text-muted-foreground">
 								Read-only — your agents can use these keys; only the owner can edit them.
 							</p>
-							<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+							<div className={HERO_GRID_CLASS}>
 								{shared.map((vault) => (
 									<VaultCard
 										key={vault.id}
@@ -236,27 +234,22 @@ function VaultCard({
 		.filter((n): n is string => !!n);
 
 	return (
-		<div
-			className={cn(
-				HERO_CARD_BASE,
-				"group relative z-0 flex min-h-36 flex-col gap-3 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20",
-			)}
-		>
-			<IconChip tint={identityFor(vault.name).colorClasses} className="relative text-xl">
-				{identityFor(vault.name).emoji}
-				{shared ? (
-					<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
-						<Lock className="size-2.5 text-muted-foreground" />
-					</span>
-				) : null}
-			</IconChip>
-			<div className="min-w-0">
-				<h3 className="truncate text-base font-semibold tracking-tight">{vault.name}</h3>
-				<p className="truncate font-mono text-xs text-muted-foreground">{vault.slug}</p>
-			</div>
-			<div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-				<span>{keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`}</span>
-				{usedBy.length > 0 ? (
+		<HeroCard
+			icon={
+				<IconChip tint={identityFor(vault.name).colorClasses} className="relative text-xl">
+					{identityFor(vault.name).emoji}
+					{shared ? (
+						<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
+							<Lock className="size-2.5 text-muted-foreground" />
+						</span>
+					) : null}
+				</IconChip>
+			}
+			title={vault.name}
+			description={<span className="font-mono">{vault.slug}</span>}
+			footer={[
+				keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`,
+				usedBy.length > 0 ? (
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<span className="truncate">
@@ -267,17 +260,12 @@ function VaultCard({
 						<TooltipContent>{usedBy.join(", ")}</TooltipContent>
 					</Tooltip>
 				) : (
-					<span>not in any Project yet</span>
-				)}
-			</div>
-			<Link
-				to="/vault/$slug"
-				params={{ slug: vault.slug }}
-				className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-			>
-				<span className="sr-only">Open vault {vault.name}</span>
-			</Link>
-		</div>
+					"not in any Project yet"
+				),
+			]}
+			link={{ to: "/vault/$slug", params: { slug: vault.slug } }}
+			ariaLabel={`Open vault ${vault.name}`}
+		/>
 	);
 }
 
@@ -294,24 +282,6 @@ function VaultCardSkeleton() {
 				<Skeleton className="h-3 w-32" />
 			</div>
 		</div>
-	);
-}
-
-function NewVaultCard() {
-	return (
-		<NewVaultDialog
-			trigger={
-				<button
-					type="button"
-					className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-muted-foreground transition-colors duration-150 hover:border-foreground/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus:outline-none"
-				>
-					<IconChip size="sm" tint="bg-muted text-muted-foreground" className="size-9 rounded-lg">
-						<Plus className="size-4" />
-					</IconChip>
-					<span className="text-sm font-medium">New vault</span>
-				</button>
-			}
-		/>
 	);
 }
 
