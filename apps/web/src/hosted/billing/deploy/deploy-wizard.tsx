@@ -8,13 +8,14 @@ import {
 	ChevronsUpDown,
 	Cpu,
 	Plus,
+	RefreshCw,
 	Rocket,
 	Sparkles,
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ApiErrorPanel } from "@/components/api-error-panel";
+import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
@@ -93,6 +94,7 @@ import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { agentSectionHref } from "@/lib/agent-routes";
+import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
@@ -104,6 +106,11 @@ const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 /** Sentinel for the managed-AI choice. Underscores keep it outside the
  * provider-id charset so no user provider_id can ever collide with it. */
 const MANAGED_AI_CHOICE = "__managed__";
+
+const aiProviderErrorNormalizer: ApiErrorNormalizer = {
+	isAuthError: isApiAuthError,
+	normalizeError: (error) => `${normalizeApiError(error)} Managed AI still works.`,
+};
 
 /** Personality presets accepted by hosted deployment onboarding. */
 const PERSONALITY_PRESETS = [
@@ -366,6 +373,9 @@ export function DeployWizard() {
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
+	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
+		null,
+	);
 
 	const [engines, setEngines] = useState<Record<Engine, boolean>>({
 		openclaw: true,
@@ -422,6 +432,14 @@ export function DeployWizard() {
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit = planReady && !submitting;
 
+	function selectCreatedProvider(providerId: string) {
+		createdProviderGuardRef.current = {
+			providerId,
+			dataUpdatedAt: aiProviders.dataUpdatedAt,
+		};
+		setAiChoice(providerId);
+	}
+
 	useEffect(() => {
 		const marker = checkoutReturnMarker(searchStr);
 		if (!marker || checkoutReturnRef.current === marker) return;
@@ -462,14 +480,30 @@ export function DeployWizard() {
 	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
 	// reset to managed so the UI and the deploy request agree.
 	useEffect(() => {
-		if (
-			aiChoice !== MANAGED_AI_CHOICE &&
-			aiProviders.isSuccess &&
-			!providerList.some((p) => p.provider_id === aiChoice)
-		) {
+		if (aiChoice === MANAGED_AI_CHOICE) return;
+		const providerExists = providerList.some((p) => p.provider_id === aiChoice);
+		const createdGuard = createdProviderGuardRef.current;
+
+		if (providerExists) {
+			if (createdGuard?.providerId === aiChoice) createdProviderGuardRef.current = null;
+			return;
+		}
+
+		if (createdGuard?.providerId === aiChoice) {
+			if (aiProviders.dataUpdatedAt <= createdGuard.dataUpdatedAt) return;
+			createdProviderGuardRef.current = null;
+		}
+
+		if (aiProviders.isSuccess && !aiProviders.isFetching) {
 			setAiChoice(MANAGED_AI_CHOICE);
 		}
-	}, [aiChoice, aiProviders.isSuccess, providerList]);
+	}, [
+		aiChoice,
+		aiProviders.dataUpdatedAt,
+		aiProviders.isFetching,
+		aiProviders.isSuccess,
+		providerList,
+	]);
 
 	useEffect(() => {
 		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
@@ -707,13 +741,14 @@ export function DeployWizard() {
 					{aiProviders.isLoading ? (
 						<Skeleton className="h-[74px] w-full rounded-lg" />
 					) : aiProviders.error ? (
-						<button
-							type="button"
-							onClick={() => aiProviders.refetch()}
-							className="min-h-[74px] rounded-lg border border-dashed px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 sm:col-span-2"
-						>
-							Couldn’t load your providers — tap to retry. Managed AI still works.
-						</button>
+						<div className="sm:col-span-2">
+							<ApiErrorPanel
+								title="Couldn't load providers"
+								error={aiProviders.error}
+								onRetry={() => aiProviders.refetch()}
+								normalizer={aiProviderErrorNormalizer}
+							/>
+						</div>
 					) : null}
 					{providerList.map((provider) => (
 						<EntityChoiceCard
@@ -755,9 +790,16 @@ export function DeployWizard() {
 						badge={<Badge variant="secondary">Default</Badge>}
 					/>
 					{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
-					{channels.error
-						? null
-						: channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)}
+					{channels.error ? (
+						<div className="flex min-h-[74px] flex-col items-start justify-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:col-span-2">
+							<p>Couldn’t load your channels. You can still deploy and link later.</p>
+							<Button size="sm" variant="outline" onClick={() => channels.refetch()}>
+								<RefreshCw /> Retry
+							</Button>
+						</div>
+					) : (
+						channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)
+					)}
 					<AddTile
 						title="Connect a channel"
 						description="Prepare a bot; link it after provisioning."
@@ -852,9 +894,11 @@ export function DeployWizard() {
 						</label>
 						<Input
 							id="agent-name"
+							name="agent-name"
 							value={agentName}
 							onChange={(e) => setAgentName(e.target.value)}
 							placeholder="My assistant"
+							autoComplete="off"
 							maxLength={60}
 						/>
 					</div>
@@ -914,7 +958,7 @@ export function DeployWizard() {
 			</SettingsSection>
 
 			{/* Sticky action bar */}
-			<div className="sticky bottom-0 -mx-4 border-t bg-background/90 px-4 py-3 backdrop-blur lg:-mx-6 lg:px-6">
+			<div className="sticky bottom-0 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(theme(spacing.3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6">
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 					<p className="min-w-0 truncate text-sm text-muted-foreground">{summaryLine}</p>
 					<Button
@@ -931,7 +975,11 @@ export function DeployWizard() {
 
 			{/* Create a provider / channel WITHOUT leaving the wizard — the lists
 			    refetch on success so the new one appears as a choice above. */}
-			<AddProviderDialog open={addProviderOpen} onOpenChange={setAddProviderOpen} />
+			<AddProviderDialog
+				open={addProviderOpen}
+				onOpenChange={setAddProviderOpen}
+				onCreated={selectCreatedProvider}
+			/>
 			<ConnectBotDialog open={connectChannelOpen} onOpenChange={setConnectChannelOpen} />
 		</div>
 	);
