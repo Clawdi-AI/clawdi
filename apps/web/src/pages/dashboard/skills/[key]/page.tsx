@@ -18,6 +18,7 @@ import {
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import {
@@ -40,6 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
@@ -97,6 +99,7 @@ export function SkillDetailContent({
 		data: skill,
 		isLoading,
 		error,
+		refetch,
 	} = useQuery({
 		queryKey: ["skill", skillKey, selectedProjectId],
 		// An empty key would interpolate to `GET /v1/skills/`, which the
@@ -309,8 +312,16 @@ export function SkillDetailContent({
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			{!skillKey ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
-			) : error ? (
+			) : error && isApiNotFoundError(error) ? (
 				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
+			) : error ? (
+				<ApiErrorPanel
+					error={error}
+					onRetry={() => {
+						void refetch();
+					}}
+					title="Couldn't load skill"
+				/>
 			) : isLoading ? (
 				<div className="space-y-3 py-2">
 					<Skeleton className="h-6 w-48" />

@@ -20,6 +20,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
 	isActiveConnection,
@@ -253,11 +254,21 @@ function ConnectorDetail({ name }: { name: string }) {
 	if (appQ.error) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-				<EmptyState
-					icon={Plug}
-					title="Connector unavailable"
-					description={errorMessage(appQ.error)}
-				/>
+				{isApiNotFoundError(appQ.error) ? (
+					<EmptyState
+						icon={Plug}
+						title="Connector unavailable"
+						description={errorMessage(appQ.error)}
+					/>
+				) : (
+					<ApiErrorPanel
+						error={appQ.error}
+						onRetry={() => {
+							void appQ.refetch();
+						}}
+						title="Couldn't load connector"
+					/>
+				)}
 			</div>
 		);
 	}

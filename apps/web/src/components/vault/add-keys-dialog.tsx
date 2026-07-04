@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,6 +96,8 @@ export function AddKeysDialog({
 		!vaultSlug &&
 		!vaultsQuery.isLoading &&
 		!projectsQuery.isLoading &&
+		!vaultsQuery.error &&
+		!projectsQuery.error &&
 		writableProject === undefined;
 	const existingItems = useQuery({
 		queryKey: ["vault-items", effectiveChoice, selectedVaultProjectId],
@@ -123,6 +126,8 @@ export function AddKeysDialog({
 		open &&
 		effectiveChoice !== NEW_VAULT &&
 		(vaultsQuery.isLoading || selectedVault === undefined || existingItems.isLoading);
+	const destinationLoadError =
+		vaultsQuery.error ?? (effectiveChoice === NEW_VAULT ? projectsQuery.error : null);
 	const canSave =
 		importPlan.parsed.errors.length === 0 &&
 		importableCount > 0 &&
@@ -131,6 +136,7 @@ export function AddKeysDialog({
 		!newVaultPending &&
 		!newVaultUnavailable &&
 		!destinationPending &&
+		!destinationLoadError &&
 		!existingItems.error;
 
 	const save = useMutation({
@@ -266,6 +272,18 @@ export function AddKeysDialog({
 							) : null}
 						</div>
 					) : null}
+					{destinationLoadError ? (
+						<ApiErrorPanel
+							error={destinationLoadError}
+							onRetry={() => {
+								if (vaultsQuery.error) void vaultsQuery.refetch();
+								if (effectiveChoice === NEW_VAULT && projectsQuery.error) {
+									void projectsQuery.refetch();
+								}
+							}}
+							title="Couldn't load destinations"
+						/>
+					) : null}
 					{importPlan.parsed.errors.length > 0 ? (
 						<Alert variant="destructive">
 							<AlertCircle className="size-4" />
@@ -280,11 +298,13 @@ export function AddKeysDialog({
 						</Alert>
 					) : null}
 					{existingItems.error ? (
-						<Alert variant="destructive">
-							<AlertCircle className="size-4" />
-							<AlertTitle>Couldn't check existing keys</AlertTitle>
-							<AlertDescription>{errorMessage(existingItems.error)}</AlertDescription>
-						</Alert>
+						<ApiErrorPanel
+							error={existingItems.error}
+							onRetry={() => {
+								void existingItems.refetch();
+							}}
+							title="Couldn't check existing keys"
+						/>
 					) : null}
 					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (
 						<div className="flex items-start gap-3 rounded-md border bg-muted/30 p-3">

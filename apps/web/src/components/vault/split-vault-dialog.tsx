@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -80,11 +81,12 @@ export function SplitVaultDialog({
 	const selected = useMemo(() => groups.filter((g) => !excluded.has(g.slug)), [groups, excluded]);
 	const selectedKeyCount = selected.reduce((n, g) => n + g.keys.length, 0);
 
-	const { data: projects } = useQuery({
+	const projectsQuery = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
+	const projects = projectsQuery.data;
 
 	const run = useMutation({
 		mutationFn: async () => {
@@ -243,9 +245,23 @@ export function SplitVaultDialog({
 							them. Add the new vaults to those Projects afterwards.
 						</p>
 					) : null}
+					{projectsQuery.error ? (
+						<ApiErrorPanel
+							error={projectsQuery.error}
+							onRetry={() => {
+								void projectsQuery.refetch();
+							}}
+							title="Couldn't load destinations"
+						/>
+					) : null}
 					<Button
 						className="w-full"
-						disabled={selected.length === 0 || run.isPending}
+						disabled={
+							selected.length === 0 ||
+							run.isPending ||
+							projectsQuery.isLoading ||
+							!!projectsQuery.error
+						}
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <Scissors className="size-3.5" />}
