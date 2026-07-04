@@ -46,9 +46,12 @@ export function AgentHome({
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId);
-	const requestedHostedAgent =
-		searchParams.get("source") === "on-clawdi" || !isCloudEnvId(environmentId);
+	const isCloudEnvironmentId = isCloudEnvId(environmentId);
+	const requestedFromCloudRedirect = searchParams.get("source") === "on-clawdi";
+	const requestedHostedAgent = requestedFromCloudRedirect || !isCloudEnvironmentId;
 	const unresolvedHostedAgent = requestedHostedAgent && !deployment && !error && !isLoading;
+	const shouldAutoRefetchUnresolvedHostedAgent =
+		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
 
 	useEffect(() => {
@@ -56,7 +59,7 @@ export function AgentHome({
 	}, [isFetching]);
 
 	useEffect(() => {
-		if (!unresolvedHostedAgent || typeof window === "undefined") return;
+		if (!shouldAutoRefetchUnresolvedHostedAgent || typeof window === "undefined") return;
 
 		let attempts = 0;
 		const intervalId = window.setInterval(() => {
@@ -73,7 +76,7 @@ export function AgentHome({
 		return () => {
 			window.clearInterval(intervalId);
 		};
-	}, [refetch, unresolvedHostedAgent]);
+	}, [refetch, shouldAutoRefetchUnresolvedHostedAgent]);
 
 	const handleCheckAgain = () => {
 		if (isFetchingRef.current) return;
