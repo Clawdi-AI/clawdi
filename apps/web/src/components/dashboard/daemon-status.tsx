@@ -1,13 +1,9 @@
 /**
  * Live-sync indicator for agents on the dashboard.
  *
- * One badge component used everywhere an agent renders — overview
- * tile, agent detail hero meta line, picker. Four states (live /
- * set-up / errored / paused) each get a colored dot + short label
- * in muted tone so the badge reads as one more meta item next to
- * "darwin · last seen 16m ago". Clicking opens `<SyncHelpDialog>`
- * with the install command, last error, restart instructions —
- * whatever's relevant to the current state.
+ * One badge component for compact status surfaces such as the sidebar.
+ * The visual status mapping is exported so non-interactive surfaces can
+ * render the same dot without drifting from this badge.
  */
 
 "use client";
@@ -25,7 +21,18 @@ type Env = components["schemas"]["AgentResponse"];
 
 const FRESH_WINDOW_MS = 90_000;
 
-type Status = "live" | "set-up" | "errored" | "paused";
+export type DaemonStatusKind = "live" | "set-up" | "errored" | "paused";
+export type DaemonStatusSource = "self-managed" | "on-clawdi";
+
+export type DaemonStatusVisual = {
+	kind: DaemonStatusKind;
+	label: string;
+	badgeLabel: string;
+	compactLabel: string;
+	tooltip: string;
+	dotClass: string;
+	textClass: string;
+};
 
 // Tolerate small clock skew between server and browser (server
 // timestamps can land 1-2s ahead of `Date.now()` on a fast NTP
@@ -77,7 +84,8 @@ function isRetryExhaustedError(raw: string | null | undefined): boolean {
 	return typeof raw === "string" && raw.startsWith("retry_exhausted: ");
 }
 
-function classify(env: Env): Status {
+function classify(env: Env | null | undefined): DaemonStatusKind {
+	if (!env) return "set-up";
 	// Treat "never heartbeated" the same as "sync disabled" from
 	// the user's POV — both mean the daemon isn't running on this
 	// machine, both have the same fix (install + run it).
@@ -102,25 +110,25 @@ function classify(env: Env): Status {
 	return "live";
 }
 
-const STATUS_TOOLTIP: Record<Status, string> = {
+const STATUS_TOOLTIP: Record<DaemonStatusKind, string> = {
 	live: "Sync is live.",
 	"set-up": "Run setup to enable sync.",
 	errored: "Last sync failed.",
 	paused: "Daemon isn't checking in.",
 };
 
-const DOT_TONE: Record<Status, string> = {
+const DOT_TONE: Record<DaemonStatusKind, string> = {
 	live: "bg-success ring-2 ring-success/20",
 	"set-up": "border-dashed border border-muted-foreground/50 bg-transparent",
-	errored: "bg-warning ring-2 ring-warning/20",
-	paused: "bg-destructive ring-2 ring-destructive/20",
+	errored: "bg-destructive ring-2 ring-destructive/20",
+	paused: "bg-warning ring-2 ring-warning/20",
 };
 
-const TEXT_TONE: Record<Status, string> = {
-	live: "text-foreground",
+const TEXT_TONE: Record<DaemonStatusKind, string> = {
+	live: "text-muted-foreground",
 	"set-up": "text-muted-foreground",
-	errored: "text-warning-muted-foreground font-medium",
-	paused: "text-destructive-muted-foreground font-medium",
+	errored: "text-destructive-muted-foreground font-medium",
+	paused: "text-warning-muted-foreground font-medium",
 };
 
 /** Inline meta item — sits in the SAME meta/sub-line as
@@ -132,19 +140,55 @@ const TEXT_TONE: Record<Status, string> = {
  *
  * Click on a non-live state opens the help dialog with the right
  * fix command. Click on `live` is a no-op (informational only). */
-const SHORT_LABEL: Record<Status, string> = {
+const SHORT_LABEL: Record<DaemonStatusKind, string> = {
 	live: "Live sync",
 	"set-up": "Set up live sync",
 	errored: "Sync error",
 	paused: "Sync paused",
 };
 
-const COMPACT_LABEL: Record<Status, string> = {
+const COMPACT_LABEL: Record<DaemonStatusKind, string> = {
 	live: "Live",
 	"set-up": "Setup",
 	errored: "Error",
 	paused: "Paused",
 };
+
+const DOT_LABEL: Record<DaemonStatusKind, string> = {
+	live: "Live",
+	"set-up": "Setup",
+	errored: "Sync error",
+	paused: "Sync paused",
+};
+
+export function daemonStatusVisual(
+	env: Env | null | undefined,
+	source: DaemonStatusSource = "self-managed",
+): DaemonStatusVisual {
+	const kind = classify(env);
+	const isHosted = source === "on-clawdi";
+	const setupLabel = isHosted ? "Sync pending" : DOT_LABEL[kind];
+	const label = kind === "set-up" ? setupLabel : DOT_LABEL[kind];
+	const badgeLabel = isHosted && kind === "set-up" ? "Sync pending" : SHORT_LABEL[kind];
+	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
+	const tooltip = isHosted
+		? kind === "set-up"
+			? "Sync activates on the next image rollout."
+			: kind === "paused"
+				? "Pod isn't checking in. Manage it from agent settings."
+				: STATUS_TOOLTIP[kind]
+		: STATUS_TOOLTIP[kind];
+
+	return {
+		kind,
+		label,
+		badgeLabel,
+		compactLabel,
+		tooltip,
+		dotClass: DOT_TONE[kind],
+		textClass: TEXT_TONE[kind],
+	};
+}
 
 export function DaemonStatusBadge({
 	env,
@@ -161,7 +205,7 @@ export function DaemonStatusBadge({
 	 * remediation copy points back at hosted agent settings
 	 * (`manageHref`) instead. Self-managed installs see the
 	 * existing CLI instructions across every state. */
-	source?: "self-managed" | "on-clawdi";
+	source?: DaemonStatusSource;
 	/** When provided on a hosted (`source="on-clawdi"`) tile, errored /
 	 * paused dialog branches render a link to this URL (the hosted
 	 * agent settings page) so the dead-end
@@ -175,41 +219,22 @@ export function DaemonStatusBadge({
 	/** Extra context shown only in the tooltip for crowded layouts. */
 	tooltipDetail?: string;
 }) {
-	const status = classify(env);
-	const isHosted = source === "on-clawdi";
+	const visual = daemonStatusVisual(env, source);
 	const [open, setOpen] = useState(false);
-	const label =
-		isHosted && status === "set-up"
-			? compact
-				? "Pending"
-				: "Sync pending"
-			: compact
-				? COMPACT_LABEL[status]
-				: SHORT_LABEL[status];
+	const label = compact ? visual.compactLabel : visual.badgeLabel;
 	const inner = (
 		<span
 			className={cn(
 				"inline-flex items-center gap-1.5 whitespace-nowrap",
 				compact && "gap-1",
-				status === "live" ? "text-muted-foreground" : TEXT_TONE[status],
+				visual.textClass,
 				"cursor-pointer hover:text-foreground",
 			)}
 		>
-			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", DOT_TONE[status])} />
+			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", visual.dotClass)} />
 			<span className="whitespace-nowrap">{label}</span>
 		</span>
 	);
-	// Hosted users see a tooltip that doesn't promise a CLI fix.
-	// "Run setup" is meaningless when there's nothing to install;
-	// "Daemon isn't checking in" is true but the actionable next
-	// step lives in agent settings, not the user's terminal.
-	const tooltip = isHosted
-		? status === "set-up"
-			? "Sync activates on the next image rollout."
-			: status === "paused"
-				? "Pod isn't checking in. Manage it from agent settings."
-				: STATUS_TOOLTIP[status]
-		: STATUS_TOOLTIP[status];
 	return (
 		<>
 			<Tooltip>
@@ -217,9 +242,8 @@ export function DaemonStatusBadge({
 					<button
 						type="button"
 						onClick={(e) => {
-							// Tile is wrapped in <Link>/<a>; without these
-							// the badge click both navigates AND opens the
-							// dialog over the next page.
+							// Some callers sit next to stretched links; keep
+							// the status dialog click local to the badge.
 							e.preventDefault();
 							e.stopPropagation();
 							setOpen(true);
@@ -238,7 +262,7 @@ export function DaemonStatusBadge({
 				</TooltipTrigger>
 				<TooltipContent side="bottom" className="text-xs">
 					<div className="flex flex-col gap-0.5">
-						<span>{tooltip}</span>
+						<span>{visual.tooltip}</span>
 						{tooltipDetail ? (
 							<span className="font-normal text-muted-foreground">{tooltipDetail}</span>
 						) : null}
@@ -246,21 +270,17 @@ export function DaemonStatusBadge({
 				</TooltipContent>
 			</Tooltip>
 			{/* Dialog content portals into document.body, but React events
-			    bubble through the COMPONENT tree, not the DOM tree — so a
-			    click on the X / backdrop / inside-content still bubbles
-			    up to the wrapping <Link> and navigates. The wrapper here
-			    catches everything before the Link sees it. Without this,
-			    closing the help dialog would silently send the user to
-			    the agent detail page they thought they were dismissing. */}
+				    bubble through the COMPONENT tree, not the DOM tree. The
+				    wrapper here catches propagated dialog clicks before a
+				    nearby stretched link can see them. */}
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: this div
-			    intentionally swallows bubbled events from the portaled
-			    Dialog so the wrapping <Link> doesn't navigate when the
-			    user closes the help modal. It's a propagation barrier,
-			    not a real interactive control. */}
+				    intentionally swallows bubbled events from the portaled
+				    Dialog. It's a propagation barrier, not a real interactive
+				    control. */}
 			<div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
 				<SyncHelpDialog
 					env={env}
-					status={status}
+					status={visual.kind}
 					source={source}
 					manageHref={manageHref}
 					open={open}
@@ -296,8 +316,8 @@ function SyncHelpDialog({
 	onOpenChange,
 }: {
 	env: Env;
-	status: Status;
-	source: "self-managed" | "on-clawdi";
+	status: DaemonStatusKind;
+	source: DaemonStatusSource;
 	manageHref?: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;

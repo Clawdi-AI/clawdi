@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadge,
@@ -13,15 +13,14 @@ import {
 	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
-import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
+import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
+	ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	ENTITY_GRID_CLASS,
-	ENTITY_STRETCHED_LINK_CLASS,
 	EntityHeader,
 } from "@/components/entity-card";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
@@ -70,9 +69,9 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Optional deployment/source context shown after the runtime disambiguator. */
+	/** Optional deployment/source context for callers that group or label hosted tiles. */
 	contextLabel?: string | null;
-	/** "Synced 2m ago", "Running", "Provisioning…" — already humanized. */
+	/** Humanized fallback when there is no last-seen timestamp ("Running", "Never seen"). */
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
@@ -84,10 +83,8 @@ export interface AgentTile {
 	 * been registered yet. `external` reflects whichever applies. */
 	href: string;
 	external?: boolean;
-	/** Optional hosted remediation target passed into DaemonStatusBadge.
-	 * Points at the in-app hosted agent settings page, where lifecycle ops
-	 * (Restart / Stop / Delete) live. Self-managed tiles leave this
-	 * undefined. */
+	/** Optional hosted remediation target retained for surfaces that open
+	 * status dialogs. Tiles render daemon status as a non-interactive dot. */
 	manageHref?: string;
 	/** Counted in the "N active now" header line; no per-tile indicator rendered. */
 	active?: boolean;
@@ -206,112 +203,98 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	const legacyHosted = tile.source === "legacy-hosted";
 	// Source pill is an identity adornment, not metadata — it sits
 	// next to the title so it stays glued to the agent name no matter
-	// how the meta wraps. Hosted agents get the same live-sync badge
-	// as self-managed ones; the platform will wire up sync automatically
-	// in a future release, so the surface stays consistent today and
-	// the data reflects reality once that lands.
+	// how the meta wraps. Status is a separate leading dot so the title
+	// and meta keep their width in the narrow overview grid.
 	const source = onClawdi ? "hosted" : "connected";
 	const sourcePill = onClawdi ? (
-		<AgentSourceBadge source={source} />
+		<AgentSourceBadge source={source} iconOnly />
 	) : legacyHosted ? (
-		<LegacyAgentBadge />
+		<LegacyAgentBadge iconOnly />
 	) : null;
 	const identity = agentIdentity({
 		name: tile.name,
 		machine_name: tile.name,
 		agent_type: tile.agentType,
 	});
-	// `tile.env` adds a sync badge that renders a `<button>`
-	// (clicks open a status dialog). It MUST live in the meta
-	// line under the agent name — same row as `statusLabel` so
-	// the user sees one tidy "agent + state" stack per tile.
-	// But putting that button as a descendant of a wrapping
-	// <Link>/<a> is invalid HTML (nested interactive), trips a
-	// React hydration warning, and on some browsers swallows the
-	// dialog click entirely.
-	//
-	// Stretched-link pattern fixes both: the link sits as an
-	// absolute overlay (`inset-0`) covering the whole tile but
-	// is NOT an ancestor of the meta. The badge wrapper has
-	// `relative z-10` so it stacks above the absolute link and
-	// captures its own clicks; clicks anywhere else hit the
-	// link and navigate. Visual layout matches the original
-	// "sync state under the agent name" — pre-fix-attempt the
-	// badge was floated to the trailing edge.
-	const meta: ReactNode[] = [];
+	const meta: string[] = [];
 	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
-	if (tile.contextLabel) meta.push(tile.contextLabel);
-	if (tile.statusLabel) meta.push(tile.statusLabel);
-	if (tile.env) {
-		meta.push(
-			<span className="relative z-10">
-				{/* Legacy hosted envs run a supervised daemon in the v1 runtime
-				 * image — same story as on-clawdi, so they share the hosted copy
-				 * variant. The self-managed copy would tell the user to run CLI
-				 * commands they have no shell for. */}
-				<DaemonStatusBadge
-					env={tile.env}
-					source={onClawdi || legacyHosted ? "on-clawdi" : "self-managed"}
-					manageHref={tile.manageHref}
-				/>
-			</span>,
-		);
-	}
-
-	const trailing = tile.external ? (
-		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-	) : null;
+	const activityLabel = agentTileActivityLabel(tile);
+	if (activityLabel) meta.push(activityLabel);
+	const metaLabel = meta.join(" · ");
+	const statusVisual = daemonStatusVisual(
+		tile.env,
+		onClawdi || legacyHosted ? "on-clawdi" : "self-managed",
+	);
 
 	const card = (
 		<div
 			className={cn(
 				ENTITY_CARD_BASE,
-				"flex h-full items-center gap-3 transition-colors group-hover:bg-muted/50",
+				"relative flex h-full items-start gap-3 transition-colors group-hover:bg-muted/50",
 			)}
 		>
 			<EntityHeader
+				align="start"
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
-				title={<span title={tile.name}>{displayMachineName(tile.name)}</span>}
-				meta={meta}
+				title={
+					<span className="flex min-w-0 items-center gap-1.5">
+						<AgentStatusDot visual={statusVisual} />
+						<span className="min-w-0 truncate" title={tile.name}>
+							{displayMachineName(tile.name)}
+						</span>
+					</span>
+				}
+				meta={metaLabel || undefined}
 				titleAdornment={sourcePill}
 				className="min-w-0 flex-1"
 			/>
-			{trailing}
+			{tile.external ? (
+				<ArrowUpRight
+					aria-hidden
+					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
+				/>
+			) : null}
 		</div>
 	);
+	const linkClassName = cn(
+		"group block h-full rounded-lg text-inherit no-underline",
+		ENTITY_CARD_BUTTON_FOCUS_CLASS,
+	);
+	const linkLabel = `Open ${tile.name}. Status: ${statusVisual.label}`;
+
+	if (tile.external) {
+		return (
+			<a
+				href={tile.href}
+				target="_blank"
+				rel="noopener noreferrer"
+				className={linkClassName}
+				aria-label={linkLabel}
+			>
+				{card}
+			</a>
+		);
+	}
 
 	return (
-		// `z-0` is load-bearing: without an explicit z-index on this
-		// `relative` wrapper the browser doesn't create a new stacking
-		// context, so the `relative z-10` children inside `card`
-		// (DaemonStatusBadge button) and the absolute `linkClassName`
-		// overlay all compete in the
-		// PARENT stacking context. Paint order then depends on DOM
-		// sibling order: the overlay link is rendered AFTER the card,
-		// so in the parent context it paints on top of the card's
-		// interactive children — clicks on the badge silently go to
-		// the primary link instead. Adding `z-0`
-		// promotes this wrapper to its own stacking context, isolating
-		// the link overlay (z-auto inside this context) below the
-		// `z-10` children. Standard stretched-link defense.
-		<div className="group relative z-0 h-full">
+		<Link to={tile.href} className={linkClassName} aria-label={linkLabel}>
 			{card}
-			{tile.external ? (
-				<a
-					href={tile.href}
-					target="_blank"
-					rel="noopener noreferrer"
-					className={ENTITY_STRETCHED_LINK_CLASS}
-				>
-					<span className="sr-only">{tile.name}</span>
-				</a>
-			) : (
-				<Link to={tile.href} className={ENTITY_STRETCHED_LINK_CLASS}>
-					<span className="sr-only">{tile.name}</span>
-				</Link>
-			)}
-		</div>
+		</Link>
 	);
+}
+
+function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
+	return (
+		<span title={visual.label} className="inline-flex shrink-0 items-center">
+			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
+			<span className="sr-only">{visual.label}</span>
+		</span>
+	);
+}
+
+function agentTileActivityLabel(tile: AgentTile): string | null {
+	if (tile.lastSeenAt) return relativeTime(tile.lastSeenAt);
+	return null;
 }
 
 function compareAgentTiles(a: AgentTile, b: AgentTile): number {
@@ -326,14 +309,16 @@ function compareAgentTiles(a: AgentTile, b: AgentTile): number {
 
 function TileSkeleton() {
 	return (
-		<Card className="py-0">
-			<CardContent className="flex items-center gap-3 p-4">
-				<Skeleton className="size-8 shrink-0 rounded-md" />
-				<div className="min-w-0 flex-1 space-y-1.5">
-					<Skeleton className="h-4 w-24" />
-					<Skeleton className="h-3 w-32" />
+		<div className={cn(ENTITY_CARD_BASE, "flex h-full items-start gap-3")}>
+			<Skeleton className="size-8 shrink-0 rounded-md" />
+			<div className="min-w-0 flex-1">
+				<div className="flex min-w-0 items-center gap-1.5">
+					<Skeleton className="size-1.5 shrink-0 rounded-full" />
+					<Skeleton className="h-4 min-w-16 flex-1 max-w-28" />
+					<Skeleton className="ml-0.5 size-4 shrink-0 rounded-full" />
 				</div>
-			</CardContent>
-		</Card>
+				<Skeleton className="mt-1 h-3 w-28 max-w-[80%]" />
+			</div>
+		</div>
 	);
 }

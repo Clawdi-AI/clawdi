@@ -2,10 +2,12 @@
 
 import { useLocation } from "@tanstack/react-router";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
+import {
+	ConnectedAgentDetail,
+	ConnectedAgentDetailSkeleton,
+} from "@/components/dashboard/connected-agent-detail";
 import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Skeleton } from "@/components/ui/skeleton";
 import { isCloudEnvId } from "@/hosted/agent-identity";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
@@ -43,16 +45,7 @@ export function AgentHome({
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading || (requestedHostedAgent && !deployment && isFetching)) {
-		return (
-			<div
-				data-hosted="true"
-				className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
-			>
-				<Skeleton className="h-10 w-64" />
-				<Skeleton className="h-9 w-full max-w-md" />
-				<Skeleton className="h-48 w-full" />
-			</div>
-		);
+		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
 	if (error && requestedHostedAgent) {
