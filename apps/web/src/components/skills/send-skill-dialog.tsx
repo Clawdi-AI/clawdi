@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Send } from "lucide-react";
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -55,7 +55,7 @@ export function SendSkillDialog({
 	onDone,
 }: {
 	skills: SkillSummary[];
-	children?: ReactElement;
+	children?: React.ReactNode;
 	/** Called after a successful send (bulk mode clears its selection). */
 	onDone?: () => void;
 }) {
@@ -201,15 +201,15 @@ export function SendSkillDialog({
 		setRemoveFromSource(false);
 	}, [open]);
 
-	const trigger = children ?? (
-		<Button variant="ghost" size="icon-sm" aria-label={`Send ${batchLabel} to…`}>
-			<Send className="size-3.5" />
-		</Button>
-	);
-
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger render={trigger} />
+			<DialogTrigger asChild>
+				{children ?? (
+					<Button variant="ghost" size="icon-sm" aria-label={`Send ${batchLabel} to…`}>
+						<Send className="size-3.5" />
+					</Button>
+				)}
+			</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Send {batchLabel} to…</DialogTitle>
@@ -226,12 +226,7 @@ export function SendSkillDialog({
 				<div className="space-y-4">
 					<div className="space-y-1.5">
 						<Label htmlFor="send-skill-target">Destination</Label>
-						<Select
-							value={target}
-							onValueChange={(value) => {
-								if (value !== null) setTarget(value);
-							}}
-						>
+						<Select value={target} onValueChange={setTarget}>
 							<SelectTrigger id="send-skill-target" className="w-full">
 								<SelectValue placeholder="Choose an agent or Project…" />
 							</SelectTrigger>
@@ -240,7 +235,7 @@ export function SendSkillDialog({
 									<SelectGroup>
 										<SelectLabel>Agents</SelectLabel>
 										{agentTargets.map((t) => (
-											<SelectItem key={`a-${t.value}`} value={t.value} label={t.label}>
+											<SelectItem key={`a-${t.value}`} value={t.value} textValue={t.label}>
 												<AgentTargetOption env={t.env} />
 											</SelectItem>
 										))}
@@ -250,7 +245,7 @@ export function SendSkillDialog({
 									<SelectGroup>
 										<SelectLabel>Projects</SelectLabel>
 										{projectTargets.map((t) => (
-											<SelectItem key={`p-${t.value}`} value={t.value} label={t.label}>
+											<SelectItem key={`p-${t.value}`} value={t.value} textValue={t.label}>
 												<span aria-hidden className="select-none">
 													{t.emoji}
 												</span>

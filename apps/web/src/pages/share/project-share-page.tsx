@@ -213,14 +213,11 @@ export default function SharePage({ token }: { token: string }) {
 						</div>
 					) : (
 						<div className="space-y-4">
-							<Button
-								render={<Link to="/sign-in" search={{ redirect_url: `/share/${token}` }} />}
-								nativeButton={false}
-								className="w-full"
-								size="lg"
-							>
-								<LogIn className="mr-2 size-4" />
-								Continue in Browser
+							<Button asChild className="w-full" size="lg">
+								<Link to="/sign-in" search={{ redirect_url: `/share/${token}` }}>
+									<LogIn className="mr-2 size-4" />
+									Continue in Browser
+								</Link>
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								Sign in or create a free account. After signing in, click Accept here to join the

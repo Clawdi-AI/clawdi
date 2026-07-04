@@ -298,7 +298,7 @@ function ResourceRow({
 			</div>
 			{isProjectRow && projectTypeCounts ? (
 				<Tooltip>
-					<TooltipTrigger render={countCluster} />
+					<TooltipTrigger asChild>{countCluster}</TooltipTrigger>
 					<TooltipContent side="left">{scopeLabel}</TooltipContent>
 				</Tooltip>
 			) : (

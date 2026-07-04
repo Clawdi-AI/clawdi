@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactElement } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatAbsoluteTooltip } from "@/lib/utils";
 
@@ -9,11 +8,11 @@ export function TimeTooltip({
 	children,
 }: {
 	value: string | null | undefined;
-	children: ReactElement;
+	children: React.ReactNode;
 }) {
 	return (
 		<Tooltip>
-			<TooltipTrigger render={children} />
+			<TooltipTrigger asChild>{children}</TooltipTrigger>
 			<TooltipContent>{formatAbsoluteTooltip(value)}</TooltipContent>
 		</Tooltip>
 	);

@@ -15,7 +15,6 @@
 		"generate-deploy-api": "curl -sf http://localhost:50021/openapi.json | python3 ../../scripts/filter-deploy-openapi.py | bun x openapi-typescript /dev/stdin -o ../../packages/shared/src/api/deploy.generated.ts"
 	},
 	"dependencies": {
-		"@base-ui/react": "^1.6.0",
 		"@clawdi/shared": "workspace:*",
 		"@clerk/tanstack-react-start": "^1.4.10",
 		"@clerk/themes": "^2.4.57",
@@ -38,11 +37,11 @@
 		"clsx": "catalog:",
 		"cmdk": "^1.1.1",
 		"lucide-react": "catalog:",
-		"next-themes": "^0.4.6",
 		"nitro": "^3.0.260610-beta",
 		"nuqs": "^2.8.9",
 		"openapi-fetch": "^0.17.0",
 		"posthog-js": "^1.360.1",
+		"radix-ui": "^1.4.3",
 		"react": "catalog:",
 		"react-dom": "catalog:",
 		"react-markdown": "^10.1.0",

@@ -23,10 +23,10 @@ export function TermSwitcher({
 	return (
 		<ToggleGroup
 			data-hosted="true"
-			value={[String(value)]}
+			type="single"
+			value={String(value)}
 			onValueChange={(next) => {
-				const selected = next[0];
-				if (selected) onChange(Number(selected));
+				if (next) onChange(Number(next));
 			}}
 			variant="outline"
 			size="sm"

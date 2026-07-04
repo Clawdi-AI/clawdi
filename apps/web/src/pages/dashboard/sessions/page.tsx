@@ -304,13 +304,9 @@ function SessionsListInner() {
 						</Button>
 					) : null}
 					<ToggleGroup
-						value={[params.view]}
-						onValueChange={(v) => {
-							const selected = v[0];
-							if (selected === "feed" || selected === "table") {
-								void setParams({ view: selected });
-							}
-						}}
+						type="single"
+						value={params.view}
+						onValueChange={(v) => v && void setParams({ view: v as "feed" | "table" })}
 						variant="outline"
 						size="sm"
 						className="hidden md:flex"

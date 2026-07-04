@@ -129,12 +129,7 @@ export function LinkAgentDialog({
 						<Label htmlFor="link-agent-select" className="sr-only">
 							Agent
 						</Label>
-						<Select
-							value={agentId}
-							onValueChange={(value) => {
-								if (value !== null) setAgentId(value);
-							}}
-						>
+						<Select value={agentId} onValueChange={setAgentId}>
 							<SelectTrigger id="link-agent-select">
 								<SelectValue placeholder="Choose an agent" />
 							</SelectTrigger>
@@ -145,7 +140,7 @@ export function LinkAgentDialog({
 										<SelectItem
 											key={env.id}
 											value={env.id}
-											label={agentOptionLabel(env, ownershipKind)}
+											textValue={agentOptionLabel(env, ownershipKind)}
 										>
 											<AgentOption env={env} ownershipKind={ownershipKind} />
 										</SelectItem>

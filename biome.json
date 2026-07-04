@@ -50,51 +50,6 @@
 	},
 	"overrides": [
 		{
-			"includes": [
-				"apps/web/src/components/ui/alert-dialog.tsx",
-				"apps/web/src/components/ui/alert.tsx",
-				"apps/web/src/components/ui/avatar.tsx",
-				"apps/web/src/components/ui/badge.tsx",
-				"apps/web/src/components/ui/breadcrumb.tsx",
-				"apps/web/src/components/ui/button.tsx",
-				"apps/web/src/components/ui/card.tsx",
-				"apps/web/src/components/ui/checkbox.tsx",
-				"apps/web/src/components/ui/command.tsx",
-				"apps/web/src/components/ui/dialog.tsx",
-				"apps/web/src/components/ui/dropdown-menu.tsx",
-				"apps/web/src/components/ui/empty.tsx",
-				"apps/web/src/components/ui/input-group.tsx",
-				"apps/web/src/components/ui/input.tsx",
-				"apps/web/src/components/ui/kbd.tsx",
-				"apps/web/src/components/ui/label.tsx",
-				"apps/web/src/components/ui/popover.tsx",
-				"apps/web/src/components/ui/select.tsx",
-				"apps/web/src/components/ui/separator.tsx",
-				"apps/web/src/components/ui/sheet.tsx",
-				"apps/web/src/components/ui/sidebar.tsx",
-				"apps/web/src/components/ui/skeleton.tsx",
-				"apps/web/src/components/ui/sonner.tsx",
-				"apps/web/src/components/ui/spinner.tsx",
-				"apps/web/src/components/ui/switch.tsx",
-				"apps/web/src/components/ui/table.tsx",
-				"apps/web/src/components/ui/tabs.tsx",
-				"apps/web/src/components/ui/textarea.tsx",
-				"apps/web/src/components/ui/toggle-group.tsx",
-				"apps/web/src/components/ui/toggle.tsx",
-				"apps/web/src/components/ui/tooltip.tsx",
-				"apps/web/src/hooks/use-mobile.ts"
-			],
-			"formatter": {
-				"enabled": false
-			},
-			"linter": {
-				"enabled": false
-			},
-			"assist": {
-				"enabled": false
-			}
-		},
-		{
 			"includes": ["**/components/ui/**"],
 			"linter": {
 				"rules": {

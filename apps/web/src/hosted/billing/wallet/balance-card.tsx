@@ -25,16 +25,14 @@ export function BalanceCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp:
 						<Coins className="size-4" aria-hidden />
 						AI Credits balance
 						<Tooltip>
-							<TooltipTrigger
-								render={
-									<button
-										type="button"
-										aria-label="About this balance"
-										className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-									/>
-								}
-							>
-								<Info className="size-3.5" />
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									aria-label="About this balance"
+									className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+								>
+									<Info className="size-3.5" />
+								</button>
 							</TooltipTrigger>
 							<TooltipContent className="max-w-xs">
 								A snapshot of your managed-AI balance. It can lag actual usage by a few seconds.

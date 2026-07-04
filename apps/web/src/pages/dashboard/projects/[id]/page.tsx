@@ -13,7 +13,7 @@ import {
 	Plus,
 	Share2,
 } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -262,15 +262,11 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	if (projects.error) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to="/projects" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					Projects
+				<Button asChild variant="ghost" size="sm" className="w-fit">
+					<Link to="/projects">
+						<ArrowLeft className="mr-1.5 size-4" />
+						Projects
+					</Link>
 				</Button>
 				{isApiNotFoundError(projects.error) ? (
 					<DetailNotFound
@@ -293,15 +289,11 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	if (!project) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to="/projects" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					Projects
+				<Button asChild variant="ghost" size="sm" className="w-fit">
+					<Link to="/projects">
+						<ArrowLeft className="mr-1.5 size-4" />
+						Projects
+					</Link>
 				</Button>
 				<DetailNotFound
 					title="Project not found"
@@ -325,7 +317,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const agentCount: CountValue | undefined =
 		environments.error || boundAgents.error ? "unavailable" : boundAgents.data?.length;
 
-	const addToAgentDialog = (trigger: ReactElement) => (
+	const addToAgentDialog = (trigger: ReactNode) => (
 		<UseProjectWithAgentDialog
 			project={project}
 			environments={environments.data ?? []}
@@ -339,15 +331,11 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<Button
-				render={<Link to="/projects" />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="mr-1.5 size-4" />
-				Projects
+			<Button asChild variant="ghost" size="sm" className="w-fit">
+				<Link to="/projects">
+					<ArrowLeft className="mr-1.5 size-4" />
+					Projects
+				</Link>
 			</Button>
 
 			{/* Hub identity header — who this project is, in one glance. */}
@@ -757,14 +745,8 @@ function ManagedProjectPanel({
 			<div className="rounded-md border bg-background/60 p-3">
 				<ProjectIdentity project={project} agent={agent} showKind={false} />
 			</div>
-			<Button
-				render={<Link to="/projects" />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-				className="w-full"
-			>
-				Back to Projects
+			<Button asChild variant="outline" size="sm" className="w-full">
+				<Link to="/projects">Back to Projects</Link>
 			</Button>
 		</DetailPanel>
 	);
@@ -801,18 +783,16 @@ function SharedAccessPanel({
 			</div>
 			{useWithAgentControl}
 			<AlertDialog>
-				<AlertDialogTrigger
-					render={
-						<Button
-							variant="ghost"
-							size="sm"
-							disabled={isLeaving}
-							className="w-full text-muted-foreground hover:text-destructive"
-						/>
-					}
-				>
-					<LogOut className="mr-1.5 size-3.5" />
-					{isLeaving ? "Leaving…" : "Leave Project"}
+				<AlertDialogTrigger asChild>
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={isLeaving}
+						className="w-full text-muted-foreground hover:text-destructive"
+					>
+						<LogOut className="mr-1.5 size-3.5" />
+						{isLeaving ? "Leaving…" : "Leave Project"}
+					</Button>
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -850,7 +830,7 @@ function UseProjectWithAgentDialog({
 	isLoadingEnvironments: boolean;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	children: ReactElement;
+	children: ReactNode;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
@@ -917,7 +897,7 @@ function UseProjectWithAgentDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogTrigger render={children} />
+			<DialogTrigger asChild>{children}</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Add project to agent</DialogTitle>
@@ -942,12 +922,7 @@ function UseProjectWithAgentDialog({
 					<div className="space-y-4">
 						<div className="space-y-2">
 							<div className="text-sm font-medium">Agent</div>
-							<Select
-								value={selectedAgentId}
-								onValueChange={(value) => {
-									if (value !== null) setSelectedAgentId(value);
-								}}
-							>
+							<Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
 								<SelectTrigger
 									aria-label="Agent to add this Project to"
 									className="h-auto min-h-9 w-full justify-between py-2"
@@ -967,12 +942,12 @@ function UseProjectWithAgentDialog({
 										<SelectValue placeholder="Choose an agent…" />
 									)}
 								</SelectTrigger>
-								<SelectContent align="start" alignItemWithTrigger={false}>
+								<SelectContent position="popper" align="start">
 									{orderedEnvironments.map((env) => (
 										<SelectItem
 											key={env.id}
 											value={env.id}
-											label={displayAgentName(env)}
+											textValue={displayAgentName(env)}
 											className="py-2"
 										>
 											<AgentLabel
@@ -1048,16 +1023,13 @@ function UseProjectWithAgentDialog({
 								Cancel
 							</Button>
 							{projectIsAlreadyAvailable && selectedEnv ? (
-								<Button
-									render={
-										<Link
-											to="/agents/$id/$section"
-											params={{ id: selectedEnv.id, section: "project-access" }}
-										/>
-									}
-									nativeButton={false}
-								>
-									Open Agent Projects
+								<Button asChild>
+									<Link
+										to="/agents/$id/$section"
+										params={{ id: selectedEnv.id, section: "project-access" }}
+									>
+										Open Agent Projects
+									</Link>
 								</Button>
 							) : (
 								<Button

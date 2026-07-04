@@ -56,19 +56,6 @@ import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types"
 
 type AuthMethod = "api_key" | "oauth" | "none";
 
-function isAuthMethod(value: string | null): value is AuthMethod {
-	return value === "api_key" || value === "oauth" || value === "none";
-}
-
-function isApiMode(value: string | null): value is ApiMode {
-	return (
-		value === "openai_chat" ||
-		value === "openai_responses" ||
-		value === "anthropic_messages" ||
-		value === "google_generate_content"
-	);
-}
-
 function authFor(method: AuthMethod): AiProviderAuth {
 	if (method === "api_key") return { type: "api_key", source: "managed" };
 	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
@@ -692,12 +679,7 @@ export function AddProviderDialog({
 							{/* Auth method */}
 							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="provider-auth">Authentication</Label>
-								<Select
-									value={authMethod}
-									onValueChange={(value) => {
-										if (isAuthMethod(value)) setAuthMethod(value);
-									}}
-								>
+								<Select value={authMethod} onValueChange={(v) => setAuthMethod(v as AuthMethod)}>
 									<SelectTrigger id="provider-auth">
 										<SelectValue />
 									</SelectTrigger>
@@ -787,12 +769,7 @@ export function AddProviderDialog({
 								</div>
 								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="provider-mode">API mode</Label>
-									<Select
-										value={apiMode}
-										onValueChange={(value) => {
-											if (isApiMode(value)) setApiMode(value);
-										}}
-									>
+									<Select value={apiMode} onValueChange={(v) => setApiMode(v as ApiMode)}>
 										<SelectTrigger id="provider-mode">
 											<SelectValue />
 										</SelectTrigger>

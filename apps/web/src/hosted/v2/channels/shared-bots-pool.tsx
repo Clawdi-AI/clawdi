@@ -128,15 +128,11 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 			/>
 
 			{owner ? (
-				<Button
-					render={<Link to="/channels/$id" params={{ id: item.id }} />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-					className="w-full"
-				>
-					Manage
-					<ArrowUpRight className="size-3.5" />
+				<Button asChild variant="outline" size="sm" className="w-full">
+					<Link to="/channels/$id" params={{ id: item.id }}>
+						Manage
+						<ArrowUpRight className="size-3.5" />
+					</Link>
 				</Button>
 			) : linkable ? (
 				<Button size="sm" className="w-full" onClick={onLink}>

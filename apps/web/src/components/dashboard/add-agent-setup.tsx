@@ -183,13 +183,10 @@ export function AddAgentSetup() {
 									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
 									className="min-w-0 flex-1"
 								/>
-								<Button
-									render={<Link to="/agents/$id" params={{ id: env.id }} />}
-									nativeButton={false}
-									size="sm"
-									variant="outline"
-								>
-									Open agent
+								<Button asChild size="sm" variant="outline">
+									<Link to="/agents/$id" params={{ id: env.id }}>
+										Open agent
+									</Link>
 								</Button>
 							</div>
 						))}
