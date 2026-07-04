@@ -63,6 +63,11 @@ export function isApiAuthError(error: unknown): boolean {
 	return error instanceof ApiError && error.status === 401;
 }
 
+/** True not-found from the API. Transport failures must not collapse to 404 UI. */
+export function isApiNotFoundError(error: unknown): boolean {
+	return error instanceof ApiError && error.status === 404;
+}
+
 /** Backend fault (5xx) or rate-limit (429) — transient; safe to retry. */
 export function isApiServerError(error: unknown): boolean {
 	return error instanceof ApiError && (error.status >= 500 || error.status === 429);

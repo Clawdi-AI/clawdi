@@ -2,8 +2,9 @@
 
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useState } from "react";
+import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadge,
@@ -139,16 +140,25 @@ export function fleetSummaryFromTiles(agents: readonly AgentTile[]): AgentFleetS
 export function AgentsCard({
 	agents,
 	isLoading,
+	error,
+	onRetry,
 	hostedStatus,
 }: {
 	agents: AgentTile[];
 	isLoading: boolean;
+	error?: unknown;
+	onRetry?: () => void;
 	/**
 	 * Optional secondary loading/error slice for hosted deployments.
 	 * Lets the card show "fetching hosted agents" or surface a network
 	 * problem inline without blocking the self-managed list.
 	 */
-	hostedStatus?: { isLoading: boolean; error?: Error | null };
+	hostedStatus?: {
+		isLoading: boolean;
+		error?: unknown;
+		onRetry?: () => void;
+		normalizer?: ApiErrorNormalizer;
+	};
 }) {
 	const [showAll, setShowAll] = useState(false);
 	const total = agents.length;
@@ -164,7 +174,9 @@ export function AgentsCard({
 	return (
 		<section className="space-y-3">
 			<div className="space-y-3">
-				{isLoading ? (
+				{error ? (
+					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load agents" />
+				) : isLoading ? (
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
 							<TileSkeleton key={i} />
@@ -197,7 +209,13 @@ export function AgentsCard({
 						description="Connect an agent to see it here."
 					/>
 				)}
-				{hostedStatus?.error ? <HostedUnavailableBanner /> : null}
+				{hostedStatus?.error ? (
+					<HostedUnavailableBanner
+						error={hostedStatus.error}
+						onRetry={hostedStatus.onRetry}
+						normalizer={hostedStatus.normalizer}
+					/>
+				) : null}
 			</div>
 		</section>
 	);
@@ -209,14 +227,22 @@ export function AgentsCard({
  * /agents view so the copy + chrome match. Self-managed and connected agents
  * are the same thing here, so the copy stays neutral.
  */
-export function HostedUnavailableBanner() {
+export function HostedUnavailableBanner({
+	error,
+	onRetry,
+	normalizer,
+}: {
+	error: unknown;
+	onRetry?: () => void;
+	normalizer?: ApiErrorNormalizer;
+}) {
 	return (
-		<div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-			<AlertCircle className="size-3.5 shrink-0 text-destructive" />
-			<span>
-				Clawdi Cloud agents are unavailable right now. Other agents can still appear here.
-			</span>
-		</div>
+		<ApiErrorPanel
+			error={error}
+			onRetry={onRetry}
+			normalizer={normalizer}
+			title="Couldn't load Clawdi Cloud agents"
+		/>
 	);
 }
 

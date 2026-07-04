@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import {
 	type AgentFleetSummary,
@@ -82,7 +83,12 @@ export default function DashboardPage() {
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
 
-	const { data: stats, isLoading: statsLoading } = useQuery({
+	const {
+		data: stats,
+		isLoading: statsLoading,
+		error: statsError,
+		refetch: refetchStats,
+	} = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: async () => unwrap(await api.GET("/v1/dashboard/stats")),
 		// Overview counts are cheap and reflect recent mutations across many
@@ -91,13 +97,23 @@ export default function DashboardPage() {
 		refetchOnMount: "always",
 	});
 
-	const { data: projects, isLoading: projectsLoading } = useQuery({
+	const {
+		data: projects,
+		isLoading: projectsLoading,
+		error: projectsError,
+		refetch: refetchProjects,
+	} = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		staleTime: DASHBOARD_STALE_MS,
 	});
 
-	const { data: environments, isLoading: envsLoading } = useQuery({
+	const {
+		data: environments,
+		isLoading: envsLoading,
+		error: envsError,
+		refetch: refetchEnvs,
+	} = useQuery({
 		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		// Daemon-status badge classification is time-sensitive — a
@@ -110,7 +126,12 @@ export default function DashboardPage() {
 	// Manual sessions only: on a working fleet ~3/4 of sessions are
 	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
 	// work under them. Automation is one click away via View all.
-	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery(
+	const {
+		data: sessionsPage,
+		isLoading: sessionsLoading,
+		error: sessionsError,
+		refetch: refetchSessions,
+	} = useQuery(
 		sessionListQueryOptions(api, {
 			page_size: RECENT_SESSIONS_CACHE_PAGE_SIZE,
 			automated: false,
@@ -137,16 +158,21 @@ export default function DashboardPage() {
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
 	const selfManagedCount = selfManagedTiles.length;
-	const hasAgents = !envsLoading && selfManagedCount > 0;
-	const ossIsEmptyState = !envsLoading && selfManagedCount === 0;
-	const projectTypeCounts = useMemo(() => countProjectTypes(projects), [projects]);
+	const hasAgents = !envsLoading && !envsError && selfManagedCount > 0;
+	const ossIsEmptyState = !envsLoading && !envsError && selfManagedCount === 0;
+	const projectTypeCounts = useMemo(
+		() => (projects ? countProjectTypes(projects) : undefined),
+		[projects],
+	);
 	const hostedAccessLoading = Boolean(HostedAgentsSection && hostedAccess.isLoading);
 	const hostedAgentsEnabled = Boolean(HostedAgentsSection && hostedAccess.canUseCloudAgents);
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
-	const greeting = renderGreeting(selfManagedFleetSummary);
+	const greeting = renderGreeting(selfManagedFleetSummary, {
+		agentStatusUnavailable: Boolean(envsError),
+	});
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -160,7 +186,11 @@ export default function DashboardPage() {
 						showCloudDeployments={hostedAgentsEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					>
-						{renderGreeting}
+						{(summary) =>
+							renderGreeting(summary, {
+								agentStatusUnavailable: Boolean(envsError) && summary.total === 0,
+							})
+						}
 					</HostedFleetSummary>
 				</Suspense>
 			) : (
@@ -182,6 +212,10 @@ export default function DashboardPage() {
 							<HostedAgentsSection
 								selfManagedTiles={selfManagedTiles}
 								envsLoading={envsLoading}
+								selfManagedError={envsError}
+								onRetrySelfManaged={() => {
+									void refetchEnvs();
+								}}
 								selfManagedCount={selfManagedCount}
 								cloudEnvs={environments ?? []}
 								showCloudDeployments={hostedAgentsEnabled}
@@ -191,7 +225,14 @@ export default function DashboardPage() {
 					) : ossIsEmptyState ? (
 						<OnboardingCard />
 					) : (
-						<AgentsCard agents={selfManagedTiles} isLoading={envsLoading} />
+						<AgentsCard
+							agents={selfManagedTiles}
+							isLoading={envsLoading}
+							error={envsError}
+							onRetry={() => {
+								void refetchEnvs();
+							}}
+						/>
 					)}
 
 					<Card>
@@ -203,7 +244,15 @@ export default function DashboardPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent>
-							{statsLoading ? (
+							{statsError ? (
+								<ApiErrorPanel
+									error={statsError}
+									onRetry={() => {
+										void refetchStats();
+									}}
+									title="Couldn't load activity"
+								/>
+							) : statsLoading ? (
 								<ActivityGraphSkeleton />
 							) : contribution ? (
 								<ContributionGraph data={contribution} />
@@ -226,13 +275,23 @@ export default function DashboardPage() {
 								</Link>
 							</Button>
 						</div>
-						<SessionFeed
-							sessions={sessions ?? []}
-							isLoading={sessionsLoading}
-							grouped={false}
-							emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
-							emptyVariant="inset"
-						/>
+						{sessionsError ? (
+							<ApiErrorPanel
+								error={sessionsError}
+								onRetry={() => {
+									void refetchSessions();
+								}}
+								title="Couldn't load recent sessions"
+							/>
+						) : (
+							<SessionFeed
+								sessions={sessions ?? []}
+								isLoading={sessionsLoading}
+								grouped={false}
+								emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
+								emptyVariant="inset"
+							/>
+						)}
 					</section>
 				</div>
 
@@ -258,26 +317,47 @@ export default function DashboardPage() {
 					) : null}
 					<ResourcesCard
 						stats={stats}
+						statsError={statsError}
+						onRetryStats={() => {
+							void refetchStats();
+						}}
 						projectCount={projects?.length}
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
+						projectCountError={projectsError}
+						onRetryProjectCount={() => {
+							void refetchProjects();
+						}}
 						hasConnectedAgent={
-							hostedAccessLoading || hostedSectionEnabled || envsLoading ? undefined : hasAgents
+							hostedAccessLoading || hostedSectionEnabled || envsLoading || envsError
+								? undefined
+								: hasAgents
 						}
 					/>
-					<ThisWeekCard stats={stats} contribution={contribution} />
+					<ThisWeekCard
+						stats={stats}
+						contribution={contribution}
+						error={statsError}
+						onRetry={() => {
+							void refetchStats();
+						}}
+					/>
 				</div>
 			</div>
 		</div>
 	);
 }
 
-function renderGreeting(summary: AgentFleetSummary) {
+function renderGreeting(
+	summary: AgentFleetSummary,
+	options: { agentStatusUnavailable?: boolean } = {},
+) {
 	return (
 		<Greeting
 			activeCount={summary.activeCount}
 			total={summary.total}
 			lastActive={summary.lastActive}
+			agentStatusUnavailable={options.agentStatusUnavailable}
 		/>
 	);
 }
@@ -358,12 +438,14 @@ function Greeting({
 	activeCount,
 	total,
 	lastActive,
+	agentStatusUnavailable = false,
 }: {
 	activeCount: number;
 	total: number;
 	/** Most recent last-seen timestamp across the fleet — the one fact the
 	 * old AgentsCard header carried that the greeting didn't. */
 	lastActive?: string | null;
+	agentStatusUnavailable?: boolean;
 }) {
 	const { user } = useCurrentUser();
 	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
@@ -371,8 +453,9 @@ function Greeting({
 		setDaypart(currentDaypart());
 	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
-	const summary =
-		total === 0
+	const summary = agentStatusUnavailable
+		? "Agent status is unavailable right now."
+		: total === 0
 			? "Connect your first agent to start syncing."
 			: activeCount > 0
 				? `${activeCount} of ${total} agents active right now.`

@@ -38,6 +38,7 @@ export function AgentHome({
 		isLoading,
 		isFetching,
 		error,
+		refetch,
 	} = useAgentDeployment(environmentId);
 	const requestedHostedAgent =
 		searchParams.get("source") === "on-clawdi" || !isCloudEnvId(environmentId);
@@ -57,6 +58,9 @@ export function AgentHome({
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={error}
+					onRetry={() => {
+						void refetch();
+					}}
 					title="Couldn’t load hosted agent"
 				/>
 			</div>
