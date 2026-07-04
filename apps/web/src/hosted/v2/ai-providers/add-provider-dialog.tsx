@@ -104,7 +104,7 @@ export function AddProviderDialog({
 	const providers = useAiProviders();
 	const upsert = useUpsertProvider();
 	const upsertQuiet = useUpsertProviderQuiet();
-	const cleanupCodex = useDeleteProviderQuiet();
+	const deleteProviderQuiet = useDeleteProviderQuiet();
 	const setKey = useSetApiKey();
 	const saveToVault = useSaveApiKeyToVault();
 	const validate = useValidateProvider();
@@ -139,6 +139,7 @@ export function AddProviderDialog({
 	// Guards a single completion across the three callback channels; finishRef
 	// holds the latest completion closure for the listener effect.
 	const completedRef = useRef(false);
+	const abandonedRef = useRef(false);
 	const finishRef = useRef<(r: CodexOAuthResult) => void>(() => {});
 	// The sign-in popup handle (to poll `closed`) and whether THIS flow created
 	// the canonical openai-codex provider (so an abandon cleans up only our own
@@ -156,6 +157,7 @@ export function AddProviderDialog({
 		setOauthIssue(null);
 		setApiKey("");
 		completedRef.current = false;
+		abandonedRef.current = false;
 		createdFreshRef.current = false;
 		popupRef.current = null;
 		if (editing) {
@@ -205,10 +207,16 @@ export function AddProviderDialog({
 	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
 	const canKeepManagedApiKey =
 		authMethod === "api_key" && isEdit && editing?.auth.type === "api_key";
+	const existingVaultAuth =
+		isEdit && editing?.auth.type === "secret_ref" && editing.auth.ref ? editing.auth : null;
+	const canKeepVaultSecretRef = authMethod === "vault" && Boolean(existingVaultAuth);
+	const canKeepExistingKey = canKeepManagedApiKey || canKeepVaultSecretRef;
 	// A key is required for api_key unless this provider is already using a
-	// managed API key, and always for vault (the secret_ref is built from the
-	// entered key — there's nothing to "keep").
-	const keyRequired = (authMethod === "api_key" && !canKeepManagedApiKey) || authMethod === "vault";
+	// managed API key. Vault edits can keep an existing secret_ref; creates and
+	// auth-method switches still need a key so a new ref can be built.
+	const keyRequired =
+		(authMethod === "api_key" && !canKeepManagedApiKey) ||
+		(authMethod === "vault" && !canKeepVaultSecretRef);
 	const canSubmit =
 		Boolean(providerId) &&
 		Boolean(baseUrl.trim()) &&
@@ -224,12 +232,20 @@ export function AddProviderDialog({
 		// the sub-screen). redirect_uri stays identical across start/complete.
 		if (authMethod === "oauth") {
 			const redirectUri = codexRedirectUri();
+			if (!providers.isSuccess) {
+				toast.error("Provider list not ready", {
+					description: providers.isLoading
+						? "Wait for providers to finish loading, then try again."
+						: "Refresh providers, then try again.",
+				});
+				return;
+			}
 			// The canonical openai-codex provider must exist before `start`, but it
 			// isn't connected until `complete`. Only create it (quietly, without
 			// invalidating the list) if it doesn't already exist — so we never
 			// clobber a previously-connected provider, and an abandon cleans up
 			// only the record we ourselves created.
-			const existingCodex = providers.data?.providers?.some(
+			const existingCodex = providers.data.providers.some(
 				(p) => p.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 			);
 			if (!existingCodex) {
@@ -251,12 +267,13 @@ export function AddProviderDialog({
 			if (!started) {
 				// Couldn't start — don't leave our just-created placeholder behind.
 				if (createdFreshRef.current) {
-					cleanupCodex.mutate(CLAWDI_CODEX_OAUTH_PROVIDER_ID);
+					deleteProviderQuiet.mutate(CLAWDI_CODEX_OAUTH_PROVIDER_ID);
 					createdFreshRef.current = false;
 				}
 				return; // oauthStart.onError already toasts
 			}
 			completedRef.current = false;
+			abandonedRef.current = false;
 			setOauthIssue(null);
 			try {
 				localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
@@ -275,11 +292,17 @@ export function AddProviderDialog({
 		// `vault`: store the key in the project vault first → secret_ref.
 		let auth = authFor(authMethod);
 		if (authMethod === "vault") {
-			const ref = await saveToVault
-				.mutateAsync({ providerId, apiKey: apiKey.trim() })
-				.catch(() => null);
-			if (!ref) return; // saveToVault.onError already toasts
-			auth = { type: "secret_ref", ref };
+			if (apiKey.trim()) {
+				const ref = await saveToVault
+					.mutateAsync({ providerId, apiKey: apiKey.trim() })
+					.catch(() => null);
+				if (!ref) return; // saveToVault.onError already toasts
+				auth = { type: "secret_ref", ref };
+			} else if (existingVaultAuth) {
+				auth = existingVaultAuth;
+			} else {
+				return;
+			}
 		}
 
 		const keyBacked = authMethod === "api_key" || authMethod === "vault";
@@ -308,7 +331,10 @@ export function AddProviderDialog({
 					runtime_env_name: runtimeEnv.trim() || undefined,
 				})
 				.catch(() => null);
-			if (!keyStored) return;
+			if (!keyStored) {
+				if (!isEdit) await deleteProviderQuiet.mutateAsync(providerId).catch(() => null);
+				return;
+			}
 		}
 
 		// The provider IS saved at this point. `validate` is a post-save config
@@ -359,6 +385,7 @@ export function AddProviderDialog({
 			.catch(() => null);
 		if (!started) return; // oauthStart.onError already toasts
 		completedRef.current = false;
+		abandonedRef.current = false;
 		try {
 			localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
 		} catch {}
@@ -371,6 +398,14 @@ export function AddProviderDialog({
 			expiresAt: started.expires_at,
 		});
 		openSignIn(started.auth_url);
+	}
+
+	function closeOAuthPopup() {
+		const popup = popupRef.current;
+		try {
+			if (popup && !popup.closed) popup.close();
+		} catch {}
+		popupRef.current = null;
 	}
 
 	/**
@@ -386,10 +421,20 @@ export function AddProviderDialog({
 	 * dashboard doesn't have.
 	 */
 	function abandonCodexIfIncomplete() {
-		if (oauth && !completedRef.current && createdFreshRef.current) {
-			cleanupCodex.mutate(oauth.providerId);
+		if (!oauth) return;
+		if (!completedRef.current && createdFreshRef.current) {
+			deleteProviderQuiet.mutate(oauth.providerId);
 			createdFreshRef.current = false;
 		}
+		abandonedRef.current = true;
+		completedRef.current = true;
+		closeOAuthPopup();
+		setOauth(null);
+		setOauthCode("");
+		setOauthIssue(null);
+		try {
+			localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
+		} catch {}
 	}
 
 	function requestClose(next: boolean) {
@@ -411,7 +456,7 @@ export function AddProviderDialog({
 	// Keep the latest completion handler in a ref so the cross-window listener
 	// (set up once per oauth session) always calls the current closure.
 	finishRef.current = async (result: CodexOAuthResult) => {
-		if (!oauth || completedRef.current) return;
+		if (!oauth || completedRef.current || abandonedRef.current) return;
 		if (result.error || !result.code) {
 			if (result.error) toast.error("ChatGPT sign-in failed", { description: result.error });
 			return;
@@ -425,8 +470,12 @@ export function AddProviderDialog({
 				redirect_uri: oauth.redirectUri,
 			})
 			.catch(() => null);
+		if (abandonedRef.current) return;
 		if (done) {
 			toast.success("Signed in with ChatGPT");
+			createdFreshRef.current = false;
+			closeOAuthPopup();
+			setOauth(null);
 			if (!isEdit) onCreated?.(oauth.providerId);
 			onOpenChange(false);
 		} else {
@@ -494,6 +543,7 @@ export function AddProviderDialog({
 	const busy =
 		upsert.isPending ||
 		upsertQuiet.isPending ||
+		deleteProviderQuiet.isPending ||
 		setKey.isPending ||
 		saveToVault.isPending ||
 		validate.isPending ||
@@ -667,7 +717,7 @@ export function AddProviderDialog({
 								<>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-key">
-											API key{canKeepManagedApiKey ? " (leave blank to keep)" : ""}
+											API key{canKeepExistingKey ? " (leave blank to keep)" : ""}
 										</Label>
 										<Input
 											id="provider-key"
