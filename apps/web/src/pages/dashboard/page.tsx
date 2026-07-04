@@ -268,15 +268,11 @@ export default function DashboardPage() {
 									Your latest work — automated runs live under View all.
 								</p>
 							</div>
-							<Button
-								render={<Link to="/sessions" search={{ automated: false }} />}
-								nativeButton={false}
-								variant="ghost"
-								size="sm"
-								className="text-muted-foreground"
-							>
-								View all
-								<ArrowRight />
+							<Button asChild variant="ghost" size="sm" className="text-muted-foreground">
+								<Link to="/sessions" search={{ automated: false }}>
+									View all
+									<ArrowRight />
+								</Link>
 							</Button>
 						</div>
 						{sessionsError ? (

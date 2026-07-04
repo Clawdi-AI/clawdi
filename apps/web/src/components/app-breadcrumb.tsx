@@ -104,9 +104,11 @@ export function AppBreadcrumb() {
 											{label}
 										</BreadcrumbPage>
 									) : (
-										// render lets us pass our own router-aware link while
+										// asChild lets us pass our own router-aware link while
 										// preserving shadcn's breadcrumb anchor semantics.
-										<BreadcrumbLink render={<Link to={href} />}>{label}</BreadcrumbLink>
+										<BreadcrumbLink asChild>
+											<Link to={href}>{label}</Link>
+										</BreadcrumbLink>
 									)}
 								</BreadcrumbItem>
 								{!isLast ? <BreadcrumbSeparator /> : null}

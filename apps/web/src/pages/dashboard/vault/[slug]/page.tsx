@@ -270,15 +270,11 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	if (vaults.error) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to="/vault" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					Vaults
+				<Button asChild variant="ghost" size="sm" className="w-fit">
+					<Link to="/vault">
+						<ArrowLeft className="mr-1.5 size-4" />
+						Vaults
+					</Link>
 				</Button>
 				{isApiNotFoundError(vaults.error) ? (
 					<DetailNotFound
@@ -301,15 +297,11 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	if (!vault) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to="/vault" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					Vaults
+				<Button asChild variant="ghost" size="sm" className="w-fit">
+					<Link to="/vault">
+						<ArrowLeft className="mr-1.5 size-4" />
+						Vaults
+					</Link>
 				</Button>
 				<DetailNotFound
 					title="Vault not found"
@@ -325,15 +317,11 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<Button
-				render={<Link to="/vault" />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="mr-1.5 size-4" />
-				Vaults
+			<Button asChild variant="ghost" size="sm" className="w-fit">
+				<Link to="/vault">
+					<ArrowLeft className="mr-1.5 size-4" />
+					Vaults
+				</Link>
 			</Button>
 
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -526,12 +514,12 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 										/>
 									) : null}
 									<Tooltip>
-										<TooltipTrigger
-											render={<span className="min-w-0 flex-1 truncate font-mono text-xs" />}
-										>
-											{/* "(default)" is the backend's implicit section — noise, hide it. */}
-											{section && section !== "(default)" ? `${section}/` : ""}
-											{name}
+										<TooltipTrigger asChild>
+											<span className="min-w-0 flex-1 truncate font-mono text-xs">
+												{/* "(default)" is the backend's implicit section — noise, hide it. */}
+												{section && section !== "(default)" ? `${section}/` : ""}
+												{name}
+											</span>
 										</TooltipTrigger>
 										<TooltipContent>{name}</TooltipContent>
 									</Tooltip>
@@ -709,12 +697,7 @@ function AttachProjectPicker({
 	if (projects.length === 0) return null;
 	return (
 		<div className="flex items-center gap-2">
-			<Select
-				value={value}
-				onValueChange={(nextValue) => {
-					if (nextValue !== null) setValue(nextValue);
-				}}
-			>
+			<Select value={value} onValueChange={setValue}>
 				<SelectTrigger size="sm" className="w-44" aria-label="Project to add this vault to">
 					<SelectValue placeholder="Add to Project…" />
 				</SelectTrigger>
@@ -816,12 +799,7 @@ function ShareKeysDialog({
 				</p>
 				<div className="space-y-1.5">
 					<Label htmlFor="share-keys-project">Project</Label>
-					<Select
-						value={projectId}
-						onValueChange={(value) => {
-							if (value !== null) setProjectId(value);
-						}}
-					>
+					<Select value={projectId} onValueChange={setProjectId}>
 						<SelectTrigger id="share-keys-project" className="w-full">
 							<SelectValue placeholder="Choose a Project…" />
 						</SelectTrigger>
@@ -876,9 +854,11 @@ function ShareKeysDialog({
 				if (!next) reset();
 			}}
 		>
-			<DialogTrigger render={<Button size="sm" />}>
-				<Share2 className="mr-1.5 size-3.5" />
-				Share keys
+			<DialogTrigger asChild>
+				<Button size="sm">
+					<Share2 className="mr-1.5 size-3.5" />
+					Share keys
+				</Button>
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>

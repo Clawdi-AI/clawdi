@@ -183,14 +183,11 @@ export function ConnectedAgentDetail({
 		) : null;
 	const headerActions =
 		activeTab === "skills" ? (
-			<Button
-				render={<Link to="/skills" search={{ target: id }} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-			>
-				<Plus />
-				Install skills
+			<Button asChild variant="outline" size="sm">
+				<Link to="/skills" search={{ target: id }}>
+					<Plus />
+					Install skills
+				</Link>
 			</Button>
 		) : null;
 	const scopedSessionLink = (sessionId: string) => ({

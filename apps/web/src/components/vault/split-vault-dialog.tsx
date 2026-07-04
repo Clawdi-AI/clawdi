@@ -182,9 +182,11 @@ export function SplitVaultDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={(next) => !run.isPending && setOpen(next)}>
-			<DialogTrigger render={<Button variant="outline" size="sm" />}>
-				<Scissors className="size-3.5" />
-				Split into vaults…
+			<DialogTrigger asChild>
+				<Button variant="outline" size="sm">
+					<Scissors className="size-3.5" />
+					Split into vaults…
+				</Button>
 			</DialogTrigger>
 			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
 				<DialogHeader>

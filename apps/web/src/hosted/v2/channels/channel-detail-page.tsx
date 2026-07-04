@@ -536,12 +536,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 					{linkItems.length > 1 ? (
 						<div className="flex flex-col gap-1.5">
 							<Label htmlFor="wa-agent">Agent</Label>
-							<Select
-								value={effectiveLink}
-								onValueChange={(value) => {
-									if (value !== null) setLinkId(value);
-								}}
-							>
+							<Select value={effectiveLink} onValueChange={setLinkId}>
 								<SelectTrigger id="wa-agent">
 									<SelectValue placeholder="Choose an agent" />
 								</SelectTrigger>
@@ -552,7 +547,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 											<SelectItem
 												key={l.id}
 												value={l.id}
-												label={envName(envs.data, l.agent_id, ownership)}
+												textValue={envName(envs.data, l.agent_id, ownership)}
 											>
 												<AgentName env={env} fallback={l.agent_id} />
 											</SelectItem>
@@ -723,9 +718,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					) : (
 						<Select
 							value={agentId}
-							onValueChange={(value) => {
-								if (value !== null) setAgentId(value);
-							}}
+							onValueChange={setAgentId}
 							disabled={!!envs.error || isGenerating}
 						>
 							<SelectTrigger id="pair-agent">
@@ -736,7 +729,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 									<SelectItem
 										key={env.id}
 										value={env.id}
-										label={envName(envs.data, env.id, ownership)}
+										textValue={envName(envs.data, env.id, ownership)}
 									>
 										<AgentName env={env} fallback={env.id} />
 									</SelectItem>
@@ -747,13 +740,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 				</div>
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-ttl">Expires in</Label>
-					<Select
-						value={ttl}
-						onValueChange={(value) => {
-							if (value !== null) setTtl(value);
-						}}
-						disabled={isGenerating}
-					>
+					<Select value={ttl} onValueChange={setTtl} disabled={isGenerating}>
 						<SelectTrigger id="pair-ttl">
 							<SelectValue />
 						</SelectTrigger>

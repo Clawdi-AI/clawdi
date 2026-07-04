@@ -163,11 +163,11 @@ export default function MemoriesPage() {
 				}
 				filters={
 					<ToggleGroup
-						value={[category]}
+						type="single"
+						value={category}
 						onValueChange={(v) => {
-							const selected = v[0];
-							if (!selected) return;
-							setCategory(selected);
+							if (!v) return;
+							setCategory(v);
 							setPagination((p) => ({ ...p, pageIndex: 0 }));
 						}}
 						variant="outline"
@@ -185,13 +185,9 @@ export default function MemoriesPage() {
 				actions={
 					<>
 						<ToggleGroup
-							value={[provider]}
-							onValueChange={(v) => {
-								const selected = v[0];
-								if (selected === "builtin" || selected === "mem0") {
-									updateSettings.mutate({ memory_provider: selected });
-								}
-							}}
+							type="single"
+							value={provider}
+							onValueChange={(v) => v && updateSettings.mutate({ memory_provider: v })}
 							disabled={updateSettings.isPending}
 							variant="outline"
 							size="sm"
@@ -313,11 +309,11 @@ function MemoryNotesGrid({
 							) : null,
 							memory.source_machine_name ? (
 								<Tooltip key="machine">
-									<TooltipTrigger
-										render={<span className="inline-flex min-w-0 items-center gap-1" />}
-									>
-										<Laptop className="size-3 shrink-0" />
-										<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+									<TooltipTrigger asChild>
+										<span className="inline-flex min-w-0 items-center gap-1">
+											<Laptop className="size-3 shrink-0" />
+											<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
 								</Tooltip>
@@ -421,9 +417,11 @@ function AddMemoryForm() {
 				if (!next) setContent("");
 			}}
 		>
-			<DialogTrigger render={<Button size="sm" />}>
-				<Plus />
-				New memory
+			<DialogTrigger asChild>
+				<Button size="sm">
+					<Plus />
+					New memory
+				</Button>
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
@@ -459,12 +457,7 @@ function AddMemoryForm() {
 							<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
 								Category
 							</Label>
-							<Select
-								value={addCategory}
-								onValueChange={(value) => {
-									if (value !== null) setAddCategory(value);
-								}}
-							>
+							<Select value={addCategory} onValueChange={setAddCategory}>
 								<SelectTrigger id="memory-category" size="sm" className="w-32">
 									<SelectValue />
 								</SelectTrigger>

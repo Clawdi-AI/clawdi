@@ -38,19 +38,17 @@ export function ShareHeaderUser() {
 	}
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger
-				render={
-					<button
-						type="button"
-						aria-label="Account menu"
-						className="rounded-full ring-offset-background transition focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-					/>
-				}
-			>
-				<Avatar className="size-8">
-					{user.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
-					<AvatarFallback>{user.fullName?.[0] ?? "U"}</AvatarFallback>
-				</Avatar>
+			<DropdownMenuTrigger asChild>
+				<button
+					type="button"
+					aria-label="Account menu"
+					className="rounded-full ring-offset-background transition focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				>
+					<Avatar className="size-8">
+						{user.imageUrl ? <AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} /> : null}
+						<AvatarFallback>{user.fullName?.[0] ?? "U"}</AvatarFallback>
+					</Avatar>
+				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent side="bottom" align="end" sideOffset={8} className="min-w-56">
 				<UserMenuItems />

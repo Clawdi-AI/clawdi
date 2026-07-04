@@ -135,11 +135,10 @@ export function ConnectBotDialog({
 							<Button variant="outline" onClick={() => onOpenChange(false)}>
 								Close
 							</Button>
-							<Button
-								render={<Link to="/channels/$id" params={{ id: created.id }} />}
-								nativeButton={false}
-							>
-								Open channel
+							<Button asChild>
+								<Link to="/channels/$id" params={{ id: created.id }}>
+									Open channel
+								</Link>
 							</Button>
 						</DialogFooter>
 					</>

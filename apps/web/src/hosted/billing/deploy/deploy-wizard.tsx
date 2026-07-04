@@ -772,9 +772,7 @@ export function DeployWizard() {
 							</label>
 							<Select
 								value={language || "default"}
-								onValueChange={(v) => {
-									setLanguage(v === null || v === "default" ? "" : v);
-								}}
+								onValueChange={(v) => setLanguage(v === "default" ? "" : v)}
 							>
 								<SelectTrigger id="agent-language">
 									<SelectValue />
