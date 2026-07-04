@@ -354,7 +354,6 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 					icon={Link2}
 					title="No agents linked"
 					description="Link an agent so it can send and receive on this channel."
-					fillHeight={false}
 				/>
 			) : (
 				<div className="flex flex-col gap-2">
@@ -471,8 +470,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 				/>
 			) : linkItems.length === 0 ? (
 				<EmptyState
-					bordered
-					fillHeight={false}
+					variant="inset"
 					title="Link an agent first"
 					description="A WhatsApp device is minted per agent. Link an agent on the Agents tab, then come back."
 				/>
@@ -530,9 +528,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 						title="Couldn't load linked devices"
 					/>
 				) : devices.length === 0 ? (
-					<div className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-						No devices linked yet.
-					</div>
+					<EmptyState variant="inset" description="No devices linked yet." />
 				) : (
 					devices.map((d) => (
 						<div
@@ -917,9 +913,10 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 							))}
 						</div>
 					) : sync.data ? (
-						<div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-							Command sync completed. The runtime returned no commands to publish.
-						</div>
+						<EmptyState
+							variant="inset"
+							description="Command sync completed. The runtime returned no commands to publish."
+						/>
 					) : null}
 				</>
 			) : null}

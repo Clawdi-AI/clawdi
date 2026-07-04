@@ -2,6 +2,7 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { MessageSquare, Zap } from "lucide-react";
+import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
 import { Stat } from "@/components/meta/stat";
 import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ export function SessionFeed({
 	sessions,
 	isLoading,
 	emptyMessage,
+	emptyVariant = "page",
 	grouped = true,
 	groupBy = "last_activity_at",
 	showAgent = true,
@@ -34,6 +36,7 @@ export function SessionFeed({
 	sessions: SessionListItem[];
 	isLoading: boolean;
 	emptyMessage: string;
+	emptyVariant?: EmptyStateVariant;
 	/** Group under Today / Yesterday / … headers (only meaningful for date sorts). */
 	grouped?: boolean;
 	groupBy?: "last_activity_at" | "started_at";
@@ -59,11 +62,7 @@ export function SessionFeed({
 	}
 
 	if (sessions.length === 0) {
-		return (
-			<div className="rounded-lg border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
-				{emptyMessage}
-			</div>
-		);
+		return <EmptyState variant={emptyVariant} icon={MessageSquare} description={emptyMessage} />;
 	}
 
 	if (!grouped) {

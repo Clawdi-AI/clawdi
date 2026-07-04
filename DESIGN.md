@@ -96,6 +96,12 @@ Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
 
 - Card tiers: entity cards are `rounded-lg p-4`; hero cards are
   `rounded-xl p-5`. Do not add new card tiers without updating this contract.
+- Empty states use `EmptyState` only. `variant="page"` (default) is for a
+  page or tab whose main region is empty: flat, centered, generous height, and
+  an icon tile. `variant="inset"` is for an empty sub-region inside existing
+  page/card/dialog chrome: solid border, `bg-muted/30`, compact padding, and
+  no large icon. Do not add appearance axes like bordered/fillHeight/iconVariant
+  or hand-roll dashed centered text placeholders.
 - Hover idioms: clickable rows/cards use `hover:bg-muted/50`; hero-card lift
   uses `hover:-translate-y-px hover:border-foreground/20`.
 - Tinted panels: subtle inset wells use `bg-muted/30`. Reserve

@@ -30,6 +30,7 @@ import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
@@ -286,6 +287,14 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
+	const headerActions = consoleUrl ? (
+		<Button asChild variant="outline" size="sm">
+			<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
+				Open {runtimeBrowserUiLabel(runtime)}
+				<ExternalLink className="size-3.5" />
+			</a>
+		</Button>
+	) : null;
 
 	return (
 		<div
@@ -297,7 +306,7 @@ export function HostedAgentDetail({
 					: "flex flex-col gap-6 px-4 lg:px-6",
 			)}
 		>
-			<h1 className="sr-only">{agentTitle}</h1>
+			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
 			<section
 				className={cn(
 					isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : HOSTED_AGENT_INNER_WIDTH_CLASS,
@@ -305,26 +314,13 @@ export function HostedAgentDetail({
 				)}
 			>
 				{isLiveToolTab ? null : (
-					<div className="flex flex-wrap items-start justify-between gap-3">
-						<div>
-							<div className="flex items-center gap-2">
-								{ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-								<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-								<AgentSourceBadge source="hosted" compact />
-							</div>
-							{activeNavItem.description ? (
-								<p className="mt-1 text-sm text-muted-foreground">{activeNavItem.description}</p>
-							) : null}
-						</div>
-						{consoleUrl ? (
-							<Button asChild variant="outline" size="sm">
-								<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-									Open {runtimeBrowserUiLabel(runtime)}
-									<ExternalLink className="size-3.5" />
-								</a>
-							</Button>
-						) : null}
-					</div>
+					<PageHeader
+						title={activeTabLabel}
+						description={activeNavItem.description}
+						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+						status={<AgentSourceBadge source="hosted" compact />}
+						actions={headerActions}
+					/>
 				)}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{activeTab === "overview" ? (
@@ -436,6 +432,7 @@ function OverviewTab({
 						sessions={sessions}
 						isLoading={sessionsLoading}
 						emptyMessage="No sessions from this agent yet."
+						emptyVariant="inset"
 						showAgent={false}
 						sessionLink={sessionLink}
 					/>
@@ -463,7 +460,6 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	if (!isRunning) {
 		return (
 			<EmptyState
-				bordered
 				icon={MonitorPlay}
 				title="Runtime UI available once running"
 				description={`The live ${browserUiLabel} opens here as soon as the agent is running — currently ${statusLabel(
@@ -477,7 +473,6 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	if (!url) {
 		return (
 			<EmptyState
-				bordered
 				icon={MonitorPlay}
 				title="No Runtime UI URL yet"
 				description={
@@ -663,7 +658,6 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	if (!isRunning) {
 		return (
 			<EmptyState
-				bordered
 				icon={TerminalSquare}
 				title="Terminal available once running"
 				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${statusLabel(
@@ -819,7 +813,6 @@ function AiProviderTab({
 	if (runtime === "codex") {
 		return (
 			<EmptyState
-				bordered
 				icon={Info}
 				title="Codex AI access is set at deploy time"
 				description="This hosted runtime is always available. Runtime-specific AI provider changes are available for OpenClaw and Hermes."
@@ -1045,7 +1038,6 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 	if (!hasEnvironmentId) {
 		return (
 			<EmptyState
-				bordered
 				icon={Link2}
 				title="Channels available once provisioning finishes"
 				description="The deployment is still minting its cloud agent id. When the agent is ready, link channels here."
@@ -1070,8 +1062,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 					/>
 				) : (linked.data ?? []).length === 0 ? (
 					<EmptyState
-						bordered
-						fillHeight={false}
+						variant="inset"
 						title="No channels linked"
 						description="Link a channel below so this agent can send and receive messages."
 					/>

@@ -438,15 +438,13 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<Skeleton className="h-32 w-full rounded-lg" />
 				) : keyNames.length === 0 ? (
 					<EmptyState
-						bordered
-						fillHeight={false}
+						variant="inset"
 						title="No keys yet"
 						description="Add one above or paste several at once with Import."
 					/>
 				) : filteredKeyNames.length === 0 ? (
 					<EmptyState
-						bordered
-						fillHeight={false}
+						variant="inset"
 						title="No keys match that search"
 						description="Try another key name or section."
 					/>
@@ -590,8 +588,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 				</div>
 				{attachedProjects.length === 0 ? (
 					<EmptyState
-						bordered
-						fillHeight={false}
+						variant="inset"
 						title="Not added to any Project yet"
 						description="Agents can't use these keys until this vault is added to a Project."
 					/>

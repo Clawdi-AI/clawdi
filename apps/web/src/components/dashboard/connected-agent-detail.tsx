@@ -19,10 +19,11 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
-	agentTypeLabel,
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	isCustomProject,
@@ -210,6 +211,22 @@ export function ConnectedAgentDetail({
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
+	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
+	const agentTitle = agent ? agentDisplayName(agent) : null;
+	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
+	const headerStatus =
+		agent && showSourceBadge ? (
+			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
+		) : null;
+	const headerActions =
+		activeTab === "skills" ? (
+			<Button asChild variant="outline" size="sm">
+				<Link to="/skills" search={{ target: id }}>
+					<Plus />
+					Install skills
+				</Link>
+			</Button>
+		) : null;
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id, sessionId },
@@ -219,10 +236,6 @@ export function ConnectedAgentDetail({
 		params: { id, _splat: skill.skill_key },
 		search: skill.project_id ? { project: skill.project_id } : undefined,
 	});
-
-	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
-	const agentTitle = agent ? agentDisplayName(agent) : null;
-	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
@@ -234,107 +247,83 @@ export function ConnectedAgentDetail({
 					<Skeleton className="h-4 w-64" />
 				</div>
 			) : agent ? (
-				<>
-					<h1 className="sr-only">{agentTitle || agentTypeLabel(agent.agent_type)}</h1>
+				<section className="flex flex-col gap-4">
+					<div className={cn(AGENT_DETAIL_INNER_WIDTH_CLASS, "flex flex-col gap-4")}>
+						<PageHeader
+							title={activeTabLabel}
+							description={activeTabMeta.description}
+							icon={
+								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+							}
+							status={headerStatus}
+							actions={headerActions}
+						/>
 
-					<section className="flex flex-col gap-4">
-						<div className={cn(AGENT_DETAIL_INNER_WIDTH_CLASS, "flex flex-col gap-4")}>
-							<div className="flex flex-wrap items-start justify-between gap-3">
-								<div>
-									<div className="flex items-center gap-2">
-										{ActiveTabIcon ? (
-											<ActiveTabIcon className="size-4 text-muted-foreground" />
-										) : null}
-										<h2 className="text-xl font-semibold tracking-tight">{activeTabLabel}</h2>
-										{showSourceBadge ? (
-											<AgentSourceBadgeForEnvironment
-												env={agent}
-												ownershipKind={ownershipKind}
-												compact
-											/>
-										) : null}
-									</div>
-									{activeTabMeta.description ? (
-										<p className="mt-1 text-sm text-muted-foreground">
-											{activeTabMeta.description}
-										</p>
-									) : null}
-								</div>
-								{activeTab === "skills" ? (
-									<Button asChild variant="outline" size="sm">
-										<Link to="/skills" search={{ target: id }}>
-											<Plus />
-											Install skills
-										</Link>
-									</Button>
-								) : null}
-							</div>
-
-							{activeTab === "overview" ? (
-								<div className="flex flex-col gap-4">
-									<div className="grid gap-3 sm:grid-cols-3">
-										<AgentStatPanel label="Sessions" value={sessionTotal} />
-										<AgentStatPanel
-											label="Skills"
-											value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
-										/>
-										<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
-									</div>
-									<SessionFeed
-										sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-										isLoading={sessionsLoading}
-										emptyMessage="No sessions synced from this agent yet."
-										showAgent={false}
-										sessionLink={(session) => scopedSessionLink(session.id)}
+						{activeTab === "overview" ? (
+							<div className="flex flex-col gap-4">
+								<div className="grid gap-3 sm:grid-cols-3">
+									<AgentStatPanel label="Sessions" value={sessionTotal} />
+									<AgentStatPanel
+										label="Skills"
+										value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
 									/>
+									<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
 								</div>
-							) : null}
-
-							{activeTab === "sessions" ? (
 								<SessionFeed
-									sessions={sessionsPage?.items ?? []}
+									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
 									isLoading={sessionsLoading}
 									emptyMessage="No sessions synced from this agent yet."
+									emptyVariant="inset"
 									showAgent={false}
 									sessionLink={(session) => scopedSessionLink(session.id)}
 								/>
-							) : null}
+							</div>
+						) : null}
 
-							{activeTab === "skills" ? (
-								<SkillCardGrid
-									skills={skillsForThisEnv ?? []}
-									isLoading={skillsLoading}
-									emptyMessage="No skills installed on this agent yet."
-									readOnlySkillCheck={(s) =>
-										!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-									}
-									onUninstall={(skillKey, projectId) =>
-										uninstallSkill.mutate({ skillKey, projectId })
-									}
-									uninstallPending={uninstallSkill.isPending}
-									skillLink={scopedSkillLink}
-								/>
-							) : null}
+						{activeTab === "sessions" ? (
+							<SessionFeed
+								sessions={sessionsPage?.items ?? []}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionLink={(session) => scopedSessionLink(session.id)}
+							/>
+						) : null}
 
-							{activeTab === "projects" ? (
-								<AgentProjectsPanel
-									agentId={id}
-									bindings={projectBindings ?? []}
-									projects={projects ?? []}
-									isLoading={projectBindingsLoading}
-									onChanged={() => {
-										queryClient.invalidateQueries({
-											queryKey: ["agent-project-bindings", id],
-										});
-										queryClient.invalidateQueries({ queryKey: ["projects"] });
-									}}
-								/>
-							) : null}
+						{activeTab === "skills" ? (
+							<SkillCardGrid
+								skills={skillsForThisEnv ?? []}
+								isLoading={skillsLoading}
+								emptyMessage="No skills installed on this agent yet."
+								readOnlySkillCheck={(s) =>
+									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+								}
+								onUninstall={(skillKey, projectId) =>
+									uninstallSkill.mutate({ skillKey, projectId })
+								}
+								uninstallPending={uninstallSkill.isPending}
+								skillLink={scopedSkillLink}
+							/>
+						) : null}
 
-							{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
-						</div>
-					</section>
-				</>
+						{activeTab === "projects" ? (
+							<AgentProjectsPanel
+								agentId={id}
+								bindings={projectBindings ?? []}
+								projects={projects ?? []}
+								isLoading={projectBindingsLoading}
+								onChanged={() => {
+									queryClient.invalidateQueries({
+										queryKey: ["agent-project-bindings", id],
+									});
+									queryClient.invalidateQueries({ queryKey: ["projects"] });
+								}}
+							/>
+						) : null}
+
+						{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
+					</div>
+				</section>
 			) : null}
 		</div>
 	);
@@ -460,9 +449,7 @@ function AgentProjectsPanel({
 						{primary ? (
 							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
 						) : (
-							<div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-								Agent Project is not loaded yet.
-							</div>
+							<EmptyState variant="inset" description="Agent Project is not loaded yet." />
 						)}
 					</div>
 					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
@@ -520,10 +507,10 @@ function AgentProjectsPanel({
 					<Badge variant="secondary">{contexts.length}</Badge>
 				</div>
 				{contexts.length === 0 ? (
-					<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-						No added Projects yet. Add a Custom or shared Project to make it available to this
-						agent.
-					</div>
+					<EmptyState
+						variant="inset"
+						description="No added Projects yet. Add a Custom or shared Project to make it available to this agent."
+					/>
 				) : (
 					<div className="divide-y rounded-lg border bg-card/60">
 						{contexts.map((binding, index) => {

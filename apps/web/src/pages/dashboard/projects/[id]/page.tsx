@@ -23,6 +23,7 @@ import {
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
 import { DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
@@ -424,6 +425,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						skills={skills.data?.items ?? []}
 						isLoading={skills.isLoading}
 						emptyMessage="No skills are visible in this Project yet."
+						emptyVariant="inset"
 					/>
 				)}
 			</HubSection>
@@ -1176,11 +1178,7 @@ function displayAgentName(env: Env) {
 }
 
 function EmptyLine({ message }: { message: string }) {
-	return (
-		<div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
-			{message}
-		</div>
-	);
+	return <EmptyState variant="inset" description={message} />;
 }
 
 function ErrorLine({ message }: { message: string }) {

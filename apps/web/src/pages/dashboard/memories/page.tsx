@@ -269,7 +269,7 @@ function MemoryNotesGrid({
 	}
 
 	if (!memories.length) {
-		return <EmptyState bordered fillHeight={false} description={emptyMessage} />;
+		return <EmptyState description={emptyMessage} />;
 	}
 
 	return (

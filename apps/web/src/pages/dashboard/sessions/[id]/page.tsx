@@ -391,7 +391,7 @@ export function SessionDetailContent({
 						</p>
 					</div>
 					<EmptyState
-						fillHeight={false}
+						variant="inset"
 						description="Conversation not uploaded yet. To back-fill history from that machine, run: clawdi push --modules sessions --all-agents --all"
 					/>
 				</DetailPanel>
@@ -577,13 +577,13 @@ function MessagesSkeleton() {
 }
 
 function EmptyContent() {
-	return <EmptyState fillHeight={false} description="No messages in this session." />;
+	return <EmptyState variant="inset" description="No messages in this session." />;
 }
 
 function ContentFetchError() {
 	return (
 		<EmptyState
-			fillHeight={false}
+			variant="inset"
 			description="Session content is unavailable. Check your connection and refresh this page."
 		/>
 	);

@@ -1,7 +1,8 @@
 "use client";
 
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { Trash2 } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
+import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
 import { HERO_CARD_BASE } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
@@ -166,6 +167,7 @@ export function SkillCardGrid({
 	skills,
 	isLoading,
 	emptyMessage,
+	emptyVariant = "page",
 	readOnlySkillCheck,
 	onUninstall,
 	uninstallPending,
@@ -178,6 +180,7 @@ export function SkillCardGrid({
 	skills: SkillSummary[];
 	isLoading: boolean;
 	emptyMessage: React.ReactNode;
+	emptyVariant?: EmptyStateVariant;
 	/** Returns true when the current user cannot uninstall this skill. */
 	readOnlySkillCheck?: (skill: SkillSummary) => boolean;
 	onUninstall?: (skillKey: string, projectId: string) => void;
@@ -200,11 +203,7 @@ export function SkillCardGrid({
 		);
 	}
 	if (skills.length === 0) {
-		return (
-			<div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
-				{emptyMessage}
-			</div>
-		);
+		return <EmptyState variant={emptyVariant} icon={Sparkles} description={emptyMessage} />;
 	}
 	return (
 		<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

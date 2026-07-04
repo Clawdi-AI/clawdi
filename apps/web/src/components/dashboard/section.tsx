@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -76,12 +77,5 @@ export function DashboardSectionToolbar({ children }: { children: ReactNode }) {
 }
 
 export function DashboardEmptyLine({ title, message }: { title: string; message: ReactNode }) {
-	return (
-		<div className="m-4 rounded-lg border border-dashed px-4 py-6">
-			<div className="space-y-1">
-				<h3 className="text-sm font-medium">{title}</h3>
-				<p className="max-w-2xl text-sm text-muted-foreground">{message}</p>
-			</div>
-		</div>
-	);
+	return <EmptyState variant="inset" title={title} description={message} className="m-4" />;
 }
