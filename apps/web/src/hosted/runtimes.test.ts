@@ -53,6 +53,7 @@ describe("deploymentRuntimes", () => {
 			deploymentRuntimes(
 				deployment(
 					configInfo({
+						enable_hermes: true,
 						clawdi_cloud_environments: {
 							hermes: "env-hermes",
 							openclaw: "env-openclaw",
@@ -73,6 +74,7 @@ describe("deploymentRuntimes", () => {
 						onboarded_agents: ["openclaw"],
 						configured_agents: ["openclaw", "hermes"],
 						clawdi_cloud_environments: {
+							hermes: "env-hermes",
 							openclaw: "env-openclaw",
 						},
 					}),
