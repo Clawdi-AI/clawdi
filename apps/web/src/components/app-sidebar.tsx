@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -123,6 +123,14 @@ import {
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 type AgentChromeKind = AgentOwnershipKind;
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const HostedFocusRuntimeStatusBadge = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/use-hosted-agent-tiles").then((m) => ({
+				default: m.HostedFocusRuntimeStatusBadge,
+			})),
+		)
+	: null;
 
 function useAgentChromeKind(agent: SidebarEnvironment | null): AgentChromeKind {
 	const ownership = useAgentOwnership();
@@ -1188,22 +1196,56 @@ function FocusHeader({
 					{meta.visibleLabel}
 				</div>
 			) : null}
-			<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+			<div
+				className={cn(
+					"mt-2 flex min-w-0 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4",
+					kind === "cloud" ? "flex-col items-start gap-0.5" : "items-center justify-between gap-2",
+				)}
+			>
 				{/* Legacy agents share the hosted copy variant (supervised
 				 * daemon, no CLI steps), while remediation stays in the legacy
 				 * v1 dashboard when that URL is configured. */}
-				<DaemonStatusBadge
-					env={activeAgent}
-					source={kind !== "connected" ? "on-clawdi" : "self-managed"}
-					manageHref={manageHref}
-					compact
-					tooltipDetail={meta.detailLabel}
-				/>
-				<span className="min-w-0 truncate text-muted-foreground" title={meta.activityLabel}>
+				{kind === "cloud" && HostedFocusRuntimeStatusBadge ? (
+					<Suspense fallback={<FocusStatusFallback />}>
+						<HostedFocusRuntimeStatusBadge
+							env={activeAgent}
+							manageHref={manageHref}
+							compact
+							tooltipDetail={meta.detailLabel}
+						/>
+					</Suspense>
+				) : (
+					<DaemonStatusBadge
+						env={activeAgent}
+						source={kind !== "connected" ? "on-clawdi" : "self-managed"}
+						manageHref={manageHref}
+						compact
+						tooltipDetail={meta.detailLabel}
+					/>
+				)}
+				<span
+					className={cn(
+						"min-w-0 truncate text-muted-foreground",
+						kind === "cloud" && "w-full pl-3.5",
+					)}
+					title={meta.activityLabel}
+				>
 					{meta.activityLabel}
 				</span>
 			</div>
 		</div>
+	);
+}
+
+function FocusStatusFallback() {
+	return (
+		<span className="inline-flex items-center gap-1.5 whitespace-nowrap text-muted-foreground">
+			<span
+				aria-hidden
+				className="inline-block size-1.5 rounded-full border border-muted-foreground/50 bg-transparent"
+			/>
+			<span>Status</span>
+		</span>
 	);
 }
 

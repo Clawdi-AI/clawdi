@@ -1,6 +1,7 @@
 "use client";
 
 import { CLAWDI_MANAGED_PROVIDER_IDS, isFirstPartyManagedAiProvider } from "@clawdi/shared";
+import type { components } from "@clawdi/shared/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
@@ -113,6 +114,7 @@ import {
 	runtimeIsConfigured,
 	runtimeIsEnabled,
 } from "@/hosted/runtimes";
+import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
@@ -323,6 +325,7 @@ export function HostedAgentDetail({
 					{activeTab === "overview" ? (
 						<OverviewTab
 							deployment={deployment}
+							agent={isCloudEnvId(environmentId) ? agent : null}
 							runtime={runtime}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
@@ -380,8 +383,41 @@ function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
 	);
 }
 
+function RuntimeStatusValue({
+	deployment,
+	agent,
+}: {
+	deployment: HostedDeployment;
+	agent: components["schemas"]["AgentResponse"] | null | undefined;
+}) {
+	const status = hostedRuntimeStatusView(deployment, agent);
+	return (
+		<div className="flex min-w-0 flex-col gap-1">
+			<span
+				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
+				title={`Compute ${status.primary.label}`}
+			>
+				<span
+					aria-hidden
+					className={cn("inline-block size-1.5 shrink-0 rounded-full", status.primary.dotClass)}
+				/>
+				<span className="truncate">{status.primary.label}</span>
+			</span>
+			{status.secondary ? (
+				<span
+					className={cn("truncate text-xs", status.secondary.textClass)}
+					title={status.secondary.tooltip}
+				>
+					{status.secondary.label}
+				</span>
+			) : null}
+		</div>
+	);
+}
+
 function OverviewTab({
 	deployment,
+	agent,
 	runtime,
 	isPerformance,
 	sessions,
@@ -391,6 +427,7 @@ function OverviewTab({
 	sessionLink,
 }: {
 	deployment: HostedDeployment;
+	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	runtime: Runtime;
 	isPerformance: boolean;
 	sessions: SessionListItem[];
@@ -405,11 +442,13 @@ function OverviewTab({
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
-	const status = parseDeploymentStatus(deployment.status);
 	return (
 		<div className="flex flex-col gap-5">
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<StatCard label="Status" value={deploymentStatusLabel(status)} />
+				<StatCard
+					label="Status"
+					value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
+				/>
 				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
 				<StatCard label="Model" value={model} />
 				<StatCard
