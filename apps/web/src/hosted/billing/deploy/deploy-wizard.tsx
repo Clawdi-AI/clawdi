@@ -1,7 +1,7 @@
 "use client";
 
 import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
-import { useRouter } from "@tanstack/react-router";
+import { useLocation, useRouter } from "@tanstack/react-router";
 import {
 	CalendarClock,
 	Check,
@@ -12,7 +12,7 @@ import {
 	Sparkles,
 	Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -44,18 +44,39 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type { BillingOffer, DeployRequest, Plan } from "@/hosted/billing/contracts";
+import type {
+	BillingOffer,
+	CheckoutRequest,
+	DeployRequest,
+	Plan,
+} from "@/hosted/billing/contracts";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
+	checkoutReturnDeploymentId,
+	checkoutReturnMarker,
 	useCheckout,
+	useCheckoutReturnRefresh,
 	useCreateDeployment,
 	useHostedDeployments,
 	usePlans,
 } from "@/hosted/billing/hooks";
-import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import {
+	type IdempotencyAttempt,
+	idempotencyAttemptFor,
+	idempotencyFingerprint,
+	newIdempotencyKey,
+} from "@/hosted/billing/idempotency";
+import {
+	COMPUTE_FREE_SLUG,
+	COMPUTE_PERFORMANCE_SLUG,
+	planOffers,
+	resolveFreePlan,
+	resolvePerformancePlan,
+	selectOfferForTerm,
+} from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
@@ -119,10 +140,6 @@ function supportedTimezones(): string[] {
 	} catch {
 		return [];
 	}
-}
-
-function activePlan(plans: Plan[] | undefined, paid: boolean): Plan | undefined {
-	return plans?.find((p) => (paid ? p.price_cents > 0 : p.price_cents === 0));
 }
 
 function aiAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
@@ -337,13 +354,18 @@ function computeStatusLine({
 
 export function DeployWizard() {
 	const router = useRouter();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
 	const channels = useChannels();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
+	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
+	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const checkoutReturnRef = useRef<string | null>(null);
 
 	const [engines, setEngines] = useState<Record<Engine, boolean>>({
 		openclaw: true,
@@ -370,11 +392,18 @@ export function DeployWizard() {
 		return all;
 	}, [timezone]);
 
-	const freePlan = activePlan(plans.data, false);
-	const perfPlan = activePlan(plans.data, true);
+	const freePlan = resolveFreePlan(plans.data);
+	const perfPlan = resolvePerformancePlan(plans.data);
 	const freeSlotUsed = usesActiveFreeComputeSlot(deployments.data);
 	const freeSlotPending = deployments.isLoading;
 	const freeSlotUnavailable = freeSlotUsed || freeSlotPending || !!deployments.error;
+	const perfOfferSelection = useMemo(
+		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
+		[perfPlan, term],
+	);
+	const perfOffer = perfOfferSelection?.offer ?? null;
+	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
+	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 
 	const dualAllowed = compute === "performance";
 	const enginesSelected = (Object.keys(engines) as Engine[]).filter((e) => engines[e]);
@@ -387,15 +416,47 @@ export function DeployWizard() {
 	);
 	const channelList = channels.data ?? [];
 	const computePlanReady =
-		compute === "performance" ? !!perfPlan : !!freePlan && !freeSlotUnavailable;
+		compute === "performance"
+			? !!perfPlan && !!perfOfferSelection
+			: !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit = planReady && !submitting;
+
+	useEffect(() => {
+		const marker = checkoutReturnMarker(searchStr);
+		if (!marker || checkoutReturnRef.current === marker) return;
+		checkoutReturnRef.current = marker;
+		void refreshCheckoutReturn().then(() => {
+			const deploymentId = checkoutReturnDeploymentId(searchStr);
+			if (deploymentId) {
+				void router.navigate({
+					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+					replace: true,
+				});
+				return;
+			}
+			toast.message("Checkout status refreshed", {
+				description: "We checked your deployments, subscription, and wallet.",
+			});
+		});
+	}, [refreshCheckoutReturn, router, searchStr]);
 
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
 		setCompute("free");
 		setEngines((prev) => (prev.openclaw && prev.hermes ? { openclaw: true, hermes: false } : prev));
 	}, [compute, plans.isSuccess, perfPlan]);
+
+	useEffect(() => {
+		if (
+			compute !== "performance" ||
+			!perfOfferSelection ||
+			term === perfOfferSelection.billingTermMonths
+		) {
+			return;
+		}
+		setTerm(perfOfferSelection.billingTermMonths);
+	}, [compute, perfOfferSelection, term]);
 
 	// Don't let the selection silently degrade to managed: if the chosen
 	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
@@ -414,12 +475,6 @@ export function DeployWizard() {
 		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
 		setCompute("performance");
 	}, [compute, freeSlotUsed, perfPlan]);
-
-	const perfOffer = useMemo(
-		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
-		[perfPlan, term],
-	);
-	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 
 	function toggleEngine(engine: Engine) {
 		setEngines((prev) => {
@@ -465,7 +520,7 @@ export function DeployWizard() {
 
 	function buildDeployRequest(aiFields: Partial<DeployRequest>): DeployRequest {
 		const computePlanSlug: ComputePlanSlug =
-			compute === "performance" ? "compute_performance" : "compute_free";
+			compute === "performance" ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_FREE_SLUG;
 		return buildHostedDeployRequest({
 			computePlanSlug,
 			engines,
@@ -495,12 +550,22 @@ export function DeployWizard() {
 			if (!aiFields) return;
 			const deployConfig = buildDeployRequest(aiFields);
 
-			if (compute === "performance" && perfPlan) {
-				const result = await checkout.mutateAsync({
+			if (compute === "performance" && perfPlan && perfOfferSelection) {
+				const body: CheckoutRequest = {
 					plan_slug: perfPlan.slug,
-					billing_term_months: term,
+					billing_term_months: perfOfferSelection.billingTermMonths,
 					ui_mode: "hosted",
 					deploy_config: deployConfig,
+				};
+				checkoutAttemptRef.current = idempotencyAttemptFor(
+					checkoutAttemptRef.current,
+					"subscription-checkout",
+					idempotencyFingerprint(body),
+					newIdempotencyKey,
+				);
+				const result = await checkout.mutateAsync({
+					body,
+					idempotencyKey: checkoutAttemptRef.current.key,
 				});
 				if (redirectTo(result.action_url || result.checkout_url)) return;
 				toast.error("Couldn't start checkout", {
@@ -509,7 +574,16 @@ export function DeployWizard() {
 				return;
 			}
 
-			const deployment = await createDeployment.mutateAsync(deployConfig);
+			deployAttemptRef.current = idempotencyAttemptFor(
+				deployAttemptRef.current,
+				"deploy",
+				idempotencyFingerprint(deployConfig),
+				newIdempotencyKey,
+			);
+			const deployment = await createDeployment.mutateAsync({
+				body: deployConfig,
+				idempotencyKey: deployAttemptRef.current.key,
+			});
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
@@ -749,7 +823,7 @@ export function DeployWizard() {
 					</div>
 					{compute === "performance" && perfOffers.length > 1 ? (
 						<div className="flex flex-col gap-2">
-							<TermSwitcher offers={perfOffers} value={term} onChange={setTerm} />
+							<TermSwitcher offers={perfOffers} value={perfBillingTermMonths} onChange={setTerm} />
 						</div>
 					) : null}
 					<ComputeStatusLine

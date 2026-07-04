@@ -12,3 +12,34 @@ export function newIdempotencyKey(prefix: string): string {
 	}
 	return `${prefix}-${Date.now()}`;
 }
+
+export type IdempotencyAttempt = {
+	fingerprint: string;
+	key: string;
+};
+
+type MintIdempotencyKey = (prefix: string) => string;
+
+function stableValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stableValue);
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, next]) => [key, stableValue(next)]),
+	);
+}
+
+export function idempotencyFingerprint(value: unknown): string {
+	return JSON.stringify(stableValue(value));
+}
+
+export function idempotencyAttemptFor(
+	current: IdempotencyAttempt | null,
+	prefix: string,
+	fingerprint: string,
+	mintKey: MintIdempotencyKey = newIdempotencyKey,
+): IdempotencyAttempt {
+	if (current?.fingerprint === fingerprint) return current;
+	return { fingerprint, key: mintKey(prefix) };
+}

@@ -106,8 +106,13 @@ export function useBillingClient() {
 				unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
 			getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
-			checkout: async (body: CheckoutRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/checkout", { body })),
+			checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
+				unwrapDeploy(
+					await api.POST("/v2/subscription/checkout", {
+						body,
+						headers: { "Idempotency-Key": idempotencyKey },
+					}),
+				),
 			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 			portal: async (body: PortalRequest) =>
@@ -120,8 +125,13 @@ export function useBillingClient() {
 			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/agent-environments")),
 
 			listDeployments: async () => unwrapDeploy(await api.GET("/v2/deployments")),
-			createDeployment: async (body: DeployRequest) =>
-				unwrapDeploy(await api.POST("/v2/deployments", { body })),
+			createDeployment: async (body: DeployRequest, idempotencyKey: string) =>
+				unwrapDeploy(
+					await api.POST("/v2/deployments", {
+						body,
+						headers: { "Idempotency-Key": idempotencyKey },
+					}),
+				),
 
 			setAgentEnabled: async (id: string, agentType: string, enabled: boolean) =>
 				unwrapDeploy(

@@ -18,14 +18,19 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
 import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
-import { planOffers, selectOfferForTerm } from "@/hosted/billing/subscription/subscription-utils";
+import {
+	planOffers,
+	resolveFreePlan,
+	resolvePerformancePlan,
+	selectOfferForTerm,
+} from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { free?: Plan; performance?: Plan } {
 	return {
-		free: plans.find((p) => p.price_cents === 0),
-		performance: plans.find((p) => p.price_cents > 0),
+		free: resolveFreePlan(plans),
+		performance: resolvePerformancePlan(plans),
 	};
 }
 
@@ -66,10 +71,12 @@ export function PlanComparison({
 		[plansQuery.data],
 	);
 
-	const performanceOffer = useMemo(
+	const performanceOfferSelection = useMemo(
 		() => (performance ? selectOfferForTerm(performance, term) : null),
 		[performance, term],
 	);
+	const performanceOffer = performanceOfferSelection?.offer ?? null;
+	const performanceBillingTermMonths = performanceOfferSelection?.billingTermMonths ?? term;
 
 	async function startPerformanceCheckout() {
 		if (!performance) return;
@@ -173,7 +180,11 @@ export function PlanComparison({
 						</CardDescription>
 						{performanceOffers.length > 1 ? (
 							<div className="mt-3">
-								<TermSwitcher offers={performanceOffers} value={term} onChange={setTerm} />
+								<TermSwitcher
+									offers={performanceOffers}
+									value={performanceBillingTermMonths}
+									onChange={setTerm}
+								/>
 							</div>
 						) : null}
 					</CardHeader>
