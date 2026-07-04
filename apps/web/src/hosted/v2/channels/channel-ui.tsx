@@ -111,7 +111,15 @@ export function TokenReveal({
 }
 
 /** Inline copyable monospace value (chat ids, webhook urls). */
-export function CopyInline({ value, className }: { value: string; className?: string }) {
+export function CopyInline({
+	value,
+	label,
+	className,
+}: {
+	value: string;
+	label: string;
+	className?: string;
+}) {
 	const { copied, copy } = useCopy();
 	return (
 		<button
@@ -123,7 +131,7 @@ export function CopyInline({ value, className }: { value: string; className?: st
 				"inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground",
 				className,
 			)}
-			aria-label="Copy"
+			aria-label={`Copy ${label}`}
 		>
 			<span className="truncate">{value}</span>
 			{copied ? <Check className="size-3 shrink-0" /> : <Copy className="size-3 shrink-0" />}

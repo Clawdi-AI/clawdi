@@ -560,7 +560,12 @@ export function AddProviderDialog({
 								</summary>
 								<div className="mt-2 flex flex-col gap-2">
 									<p>Paste the full address from the OpenAI page after signing in.</p>
+									<Label htmlFor="provider-oauth-callback" className="sr-only">
+										OAuth callback URL
+									</Label>
 									<Input
+										id="provider-oauth-callback"
+										name="provider-oauth-callback"
 										value={oauthCode}
 										onChange={(e) => setOauthCode(e.target.value)}
 										placeholder="https://…/callback?code=…&state=…"
@@ -628,6 +633,7 @@ export function AddProviderDialog({
 								<Label htmlFor="provider-label">Name</Label>
 								<Input
 									id="provider-label"
+									name="provider-label"
 									value={label}
 									onChange={(e) => setLabel(e.target.value)}
 									placeholder={`${meta.label} (my key)`}
@@ -661,6 +667,7 @@ export function AddProviderDialog({
 										</Label>
 										<Input
 											id="provider-key"
+											name="provider-key"
 											type="password"
 											value={apiKey}
 											onChange={(e) => setApiKey(e.target.value)}
@@ -683,6 +690,7 @@ export function AddProviderDialog({
 										<Label htmlFor="provider-env">Runtime env var</Label>
 										<Input
 											id="provider-env"
+											name="provider-env"
 											value={runtimeEnv}
 											onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
 											placeholder="OPENAI_API_KEY"
@@ -697,6 +705,7 @@ export function AddProviderDialog({
 								<Label htmlFor="provider-base">Base URL</Label>
 								<Input
 									id="provider-base"
+									name="provider-base"
 									value={baseUrl}
 									onChange={(e) => setBaseUrl(e.target.value)}
 									placeholder="https://api.example.com/v1"
@@ -716,6 +725,7 @@ export function AddProviderDialog({
 									<Label htmlFor="provider-model">Default model</Label>
 									<Input
 										id="provider-model"
+										name="provider-model"
 										value={defaultModel}
 										onChange={(e) => setDefaultModel(e.target.value)}
 										placeholder={meta.modelPlaceholder}

@@ -20,6 +20,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -125,8 +126,11 @@ export function LinkAgentDialog({
 					/>
 				) : (
 					<div className="flex flex-col gap-2">
+						<Label htmlFor="link-agent-select" className="sr-only">
+							Agent
+						</Label>
 						<Select value={agentId} onValueChange={setAgentId}>
-							<SelectTrigger>
+							<SelectTrigger id="link-agent-select">
 								<SelectValue placeholder="Choose an agent" />
 							</SelectTrigger>
 							<SelectContent>

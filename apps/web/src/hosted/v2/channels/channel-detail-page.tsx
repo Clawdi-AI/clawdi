@@ -764,7 +764,7 @@ function BindingsTab({ accountId }: { accountId: string }) {
 							<span key="type" className="capitalize">
 								{b.external_chat_type ?? "chat"}
 							</span>,
-							<CopyInline key="chat-id" value={b.external_chat_id} />,
+							<CopyInline key="chat-id" value={b.external_chat_id} label="chat ID" />,
 						]}
 					/>
 					<span className="text-xs capitalize text-muted-foreground">{b.status}</span>
@@ -838,7 +838,7 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 				) : null}
 				{item.external_chat_id ? (
 					<div className="mt-1">
-						<CopyInline value={item.external_chat_id} />
+						<CopyInline value={item.external_chat_id} label="external chat ID" />
 					</div>
 				) : null}
 			</div>
