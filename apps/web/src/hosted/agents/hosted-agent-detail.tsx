@@ -1,5 +1,6 @@
 "use client";
 
+import { CLAWDI_MANAGED_PROVIDER_IDS, isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
@@ -94,6 +95,14 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
+	canRestart as canRestartDeployment,
+	canStart as canStartDeployment,
+	canStop as canStopDeployment,
+	deploymentStatusLabel,
+	isRunningStatus,
+	parseDeploymentStatus,
+} from "@/hosted/deployment-status";
+import {
 	HOSTED_RUNTIMES,
 	type HostedRuntime,
 	OPTIONAL_HOSTED_RUNTIMES,
@@ -185,24 +194,11 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
-const STARTABLE_STATUSES = new Set(["stopped", "failed"]);
-const STOPPABLE_STATUSES = new Set(["running", "ready", "starting"]);
-const RESTARTABLE_STATUSES = new Set(["running", "ready", "starting", "failed"]);
-
 /** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
 function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
 	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
 		? "codex_oauth"
 		: "api_key";
-}
-
-function statusLabel(status: string): string {
-	if (status === "running" || status === "ready") return "Running";
-	if (status === "provisioning") return "Provisioning";
-	if (status === "starting") return "Starting";
-	if (status === "stopped") return "Stopped";
-	if (status === "failed" || status === "error") return "Failed";
-	return status;
 }
 
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
@@ -409,10 +405,11 @@ function OverviewTab({
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
+	const status = parseDeploymentStatus(deployment.status);
 	return (
 		<div className="flex flex-col gap-5">
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<StatCard label="Status" value={statusLabel(deployment.status)} />
+				<StatCard label="Status" value={deploymentStatusLabel(status)} />
 				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
 				<StatCard label="Model" value={model} />
 				<StatCard
@@ -452,7 +449,8 @@ function OverviewTab({
  * the full-screen link is the alternate path.
  */
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
-	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const status = parseDeploymentStatus(deployment.status);
+	const isRunning = isRunningStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
@@ -463,9 +461,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				icon={MonitorPlay}
 				title="Runtime UI available once running"
-				description={`The live ${browserUiLabel} opens here as soon as the agent is running — currently ${statusLabel(
-					deployment.status,
-				).toLowerCase()}.`}
+				description={`The live ${browserUiLabel} opens here as soon as the agent is running — currently ${deploymentStatusLabel(status).toLowerCase()}.`}
 			/>
 		);
 	}
@@ -592,7 +588,8 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 }
 
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
-	const isRunning = deployment.status === "running" || deployment.status === "ready";
+	const status = parseDeploymentStatus(deployment.status);
+	const isRunning = isRunningStatus(status);
 	const label = deploymentDisplayName(deployment.name);
 	const terminal = useCreateTerminalSession();
 	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
@@ -661,9 +658,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 			<EmptyState
 				icon={TerminalSquare}
 				title="Terminal available once running"
-				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${statusLabel(
-					deployment.status,
-				).toLowerCase()}.`}
+				description={`A deployment shell can be opened when the hosted compute is running. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`}
 			/>
 		);
 	}
@@ -779,15 +774,17 @@ function AiProviderTab({
 	// its own provider in ai_provider_bindings[runtime].
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const boundRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
+	const boundProvider = boundRef
+		? (list.find((p) => p.id === boundRef || p.provider_id === boundRef) ?? null)
+		: null;
 	const currentManaged =
 		!boundRef ||
-		boundRef === "clawdi-managed" ||
+		CLAWDI_MANAGED_PROVIDER_IDS.has(boundRef) ||
+		(boundProvider ? isFirstPartyManagedAiProvider(boundProvider) : false) ||
 		(binding?.auth_kind ?? ci?.ai_provider_auth_kind) === "managed";
 	// The binding stores the provider's id (UUID); map it back to the slug the
 	// select uses as its value.
-	const inUseSlug = currentManaged
-		? null
-		: (list.find((p) => p.id === boundRef || p.provider_id === boundRef)?.provider_id ?? null);
+	const inUseSlug = currentManaged ? null : (boundProvider?.provider_id ?? null);
 	const unresolvedProviderRef = !currentManaged && !inUseSlug ? boundRef : null;
 	const showUnresolvedProvider =
 		Boolean(unresolvedProviderRef) && !providers.isLoading && !providers.error;
@@ -1258,10 +1255,11 @@ function ComputeSettingsSections({
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const ci = deployment.config_info;
-	const canStop = STOPPABLE_STATUSES.has(deployment.status);
-	const canStart = STARTABLE_STATUSES.has(deployment.status);
-	const canRestart = RESTARTABLE_STATUSES.has(deployment.status);
-	const primaryLifecycleAction = canStop ? "stop" : "start";
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
+	const canStop = canStopDeployment(deploymentStatus);
+	const canStart = canStartDeployment(deploymentStatus);
+	const canRestart = canRestartDeployment(deploymentStatus);
+	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
 	const currentSubscription = deployment.compute_subscription;
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
@@ -1270,6 +1268,10 @@ function ComputeSettingsSections({
 	const optionalEnabledCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
 		runtimeIsEnabled(ci, runtimeId),
 	).length;
+	const enabledRuntimeCount = RUNTIMES.filter((runtimeItem) =>
+		runtimeIsEnabled(ci, runtimeItem.id),
+	).length;
+	const restartNeedsConfirmation = enabledRuntimeCount > 1;
 	const runtimePending = setEnabled.isPending || onboard.isPending;
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
@@ -1307,7 +1309,7 @@ function ComputeSettingsSections({
 		? "Checking Performance availability..."
 		: !perfPlan
 			? "Performance compute is unavailable right now."
-			: deployment.status === "running" || deployment.status === "stopped"
+			: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
 				? "An upgrade may already be pending for this Free agent."
 				: "Upgrade is available once this Free agent is running or stopped.";
 	useEffect(() => {
@@ -1421,6 +1423,23 @@ function ComputeSettingsSections({
 		}
 	}
 
+	async function setRuntimeEnabled(agentType: Runtime, enabled: boolean) {
+		await setEnabled.mutateAsync({ id: deployment.id, agentType, enabled });
+	}
+
+	async function addRuntime(agentType: Runtime) {
+		await onboard.mutateAsync({ id: deployment.id, agentType });
+	}
+
+	async function runLifecycleAction(action: "restart" | "stop" | "start") {
+		await lifecycle.mutateAsync({ id: deployment.id, action });
+	}
+
+	async function deleteCompute() {
+		await del.mutateAsync(deployment.id);
+		await router.navigate({ href: "/" });
+	}
+
 	return (
 		<div className="flex flex-col gap-9">
 			<SettingsSection
@@ -1471,7 +1490,7 @@ function ComputeSettingsSections({
 													checked={enabled}
 													disabled={runtimePending || blockedByPlan}
 													onCheckedChange={(next) =>
-														setEnabled.mutate({ id: deployment.id, agentType: r.id, enabled: next })
+														void runAction(() => setRuntimeEnabled(r.id, next))
 													}
 													aria-label={`Toggle ${r.label}`}
 												/>
@@ -1485,7 +1504,7 @@ function ComputeSettingsSections({
 															? "Performance compute is required to run both runtimes"
 															: undefined
 													}
-													onClick={() => onboard.mutate({ id: deployment.id, agentType: r.id })}
+													onClick={() => void runAction(() => addRuntime(r.id))}
 												>
 													{onboard.isPending && onboard.variables?.agentType === r.id ? (
 														<Spinner className="size-3.5" />
@@ -1658,30 +1677,73 @@ function ComputeSettingsSections({
 				description="Restart, stop, or start the whole hosted compute."
 			>
 				<div className="flex flex-wrap gap-2.5">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={lifecycle.isPending || !canRestart}
-						onClick={() => lifecycle.mutate({ id: deployment.id, action: "restart" })}
-					>
-						{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-						Restart
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
-						onClick={() => lifecycle.mutate({ id: deployment.id, action: primaryLifecycleAction })}
-					>
-						{lifecycle.isPending && lifecycle.variables?.action === primaryLifecycleAction ? (
-							<Spinner className="size-3.5" />
-						) : null}
-						{canStop ? "Stop" : "Start"}
-					</Button>
+					{restartNeedsConfirmation ? (
+						<ConfirmAction
+							title="Restart shared compute?"
+							description={<p>This restarts every enabled runtime on this compute.</p>}
+							confirmLabel="Restart compute"
+							onConfirm={() => runAction(() => runLifecycleAction("restart"))}
+						>
+							<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
+								{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<RefreshCw className="size-3.5" />
+								)}
+								Restart
+							</Button>
+						</ConfirmAction>
+					) : (
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={lifecycle.isPending || !canRestart}
+							onClick={() => void runAction(() => runLifecycleAction("restart"))}
+						>
+							{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Restart
+						</Button>
+					)}
+					{canStop ? (
+						<ConfirmAction
+							title="Stop shared compute?"
+							description={
+								<p>
+									This stops the shared compute for every enabled runtime. Runtime UIs, terminal
+									access, sessions, and channels pause until you start it again.
+								</p>
+							}
+							confirmLabel="Stop compute"
+							onConfirm={() => runAction(() => runLifecycleAction("stop"))}
+						>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
+							>
+								{lifecycle.isPending && lifecycle.variables?.action === "stop" ? (
+									<Spinner className="size-3.5" />
+								) : null}
+								Stop
+							</Button>
+						</ConfirmAction>
+					) : (
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
+							onClick={() => void runAction(() => runLifecycleAction(primaryLifecycleAction))}
+						>
+							{lifecycle.isPending && lifecycle.variables?.action === primaryLifecycleAction ? (
+								<Spinner className="size-3.5" />
+							) : null}
+							Start
+						</Button>
+					)}
 				</div>
 			</SettingsSection>
 
@@ -1704,9 +1766,7 @@ function ComputeSettingsSections({
 						}
 						confirmLabel="Delete compute"
 						destructive
-						onConfirm={() =>
-							del.mutate(deployment.id, { onSuccess: () => void router.navigate({ href: "/" }) })
-						}
+						onConfirm={() => runAction(deleteCompute)}
 					>
 						<Button
 							variant="outline"

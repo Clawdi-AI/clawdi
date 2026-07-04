@@ -10,6 +10,12 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import {
+	deploymentStatusLabel,
+	isRunningStatus,
+	parseDeploymentStatus,
+	shouldPollDeployments,
+} from "@/hosted/deployment-status";
 import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { agentSectionHref } from "@/lib/agent-routes";
 
@@ -65,14 +71,10 @@ export function useHostedAgentTiles({
 		enabled: configured && includeDeployments,
 		queryFn: () => client.listDeployments(),
 		retry: billingQueryRetry,
-		// Status changes (Provisioning → Ready) — refetch periodically
-		// while a deployment is still spinning up. 10s is the balance
-		// between snappy feedback and avoiding excess deploy API load.
-		refetchInterval: (q) => {
-			const items = q.state.data ?? [];
-			const transient = items.some((d) => isTransientStatus(d.status));
-			return transient ? 10_000 : false;
-		},
+		// Poll while deployments are unsettled. The deploy API status is a string,
+		// so unknown future states are treated as non-terminal until a settled
+		// state arrives.
+		refetchInterval: (q) => (shouldPollDeployments(q.state.data) ? 10_000 : false),
 	});
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead
@@ -143,9 +145,8 @@ export function useHostedAgentTiles({
 function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = deploymentRuntimes(d);
 	const slug = deploymentDisplayName(d.name);
-	const statusLabel = displayStatus(d.status);
+	const tileStatus = hostedAgentTileStatus(d.status);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	const active = d.status === "running" || d.status === "ready";
 	return runtimes.map((runtime) => {
 		// Hosted env join: each hosted runtime registers a cloud-api env
 		// via the admin endpoint. Match by agent_type → environment_id
@@ -177,7 +178,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
 			contextLabel,
-			statusLabel,
+			statusLabel: tileStatus.label,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			// `?source=on-clawdi` is the breadcrumb the agent detail page
 			// reads so its sync badge can mirror the hosted-aware copy
@@ -188,7 +189,7 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 			href: detailHref,
 			external: false,
 			manageHref: settingsHref,
-			active,
+			active: tileStatus.active,
 			env: matchedEnv ?? null,
 			// Group sibling runtime-agents under their shared compute on /agents.
 			computeId: d.id,
@@ -197,16 +198,10 @@ function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): Agen
 	});
 }
 
-function displayStatus(status: string): string {
-	if (status === "running" || status === "ready") return "Running";
-	if (status === "pending") return "Pending";
-	if (status === "provisioning") return "Provisioning…";
-	if (status === "starting") return "Starting…";
-	if (status === "failed" || status === "error") return "Failed";
-	if (status === "stopped") return "Stopped";
-	return status;
-}
-
-function isTransientStatus(status: string): boolean {
-	return status === "pending" || status === "provisioning" || status === "starting";
+export function hostedAgentTileStatus(rawStatus: string): { label: string; active: boolean } {
+	const status = parseDeploymentStatus(rawStatus);
+	return {
+		label: deploymentStatusLabel(status),
+		active: isRunningStatus(status),
+	};
 }
