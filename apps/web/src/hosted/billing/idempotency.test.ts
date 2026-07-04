@@ -67,6 +67,23 @@ describe("idempotencyFingerprint", () => {
 			}),
 		);
 	});
+
+	test("changes when launch-critical request body fields change", () => {
+		const baseBody = {
+			plan_slug: "compute_performance",
+			deploy_config: { enable_hermes: true, enable_openclaw: true },
+			billing_term_months: 1,
+		};
+		const baseFingerprint = idempotencyFingerprint(baseBody);
+
+		for (const changedBody of [
+			{ ...baseBody, plan_slug: "compute_basic" },
+			{ ...baseBody, billing_term_months: 12 },
+			{ ...baseBody, deploy_config: { ...baseBody.deploy_config, enable_hermes: false } },
+		]) {
+			expect(idempotencyFingerprint(changedBody)).not.toBe(baseFingerprint);
+		}
+	});
 });
 
 describe("idempotencyAttemptFor", () => {

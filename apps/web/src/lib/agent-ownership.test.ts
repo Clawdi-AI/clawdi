@@ -17,6 +17,20 @@ describe("agentOwnershipKindFromId", () => {
 		expect(agentOwnershipKindFromId("cccc", ownership)).toBe("connected");
 	});
 
+	it("trims environment ids and treats missing ids as connected for cosmetic callers", () => {
+		const ownership = {
+			cloudEnvIds: new Set(["aaaa"]),
+			legacyEnvIds: new Set(["bbbb"]),
+		};
+
+		expect(agentOwnershipKindFromId("  AAAA  ", ownership)).toBe("cloud");
+		expect(agentOwnershipKindFromId("  BBBB  ", ownership)).toBe("legacy");
+
+		for (const envId of [null, undefined, "", "   "]) {
+			expect(agentOwnershipKindFromId(envId, ownership)).toBe("connected");
+		}
+	});
+
 	it("defaults to connected while ownership is unknown", () => {
 		// Cosmetic fallback only — destructive consumers (Disconnect) must
 		// additionally require a non-null (resolved) ownership value.
@@ -68,6 +82,18 @@ describe("agentDisconnectUnavailable", () => {
 		).toBe(true);
 	});
 
+	it("fails closed while ownership is unresolved for edge environment ids", () => {
+		for (const envId of ["aaaa", null, undefined, "", "   "]) {
+			expect(
+				agentDisconnectUnavailable({
+					envId,
+					explicitIdentity: false,
+					ownership: null,
+				}),
+			).toBe(true);
+		}
+	});
+
 	it("blocks disconnect while ownership is unresolved or externally owned", () => {
 		expect(
 			agentDisconnectUnavailable({
@@ -81,6 +107,13 @@ describe("agentDisconnectUnavailable", () => {
 				envId: "aaaa",
 				explicitIdentity: false,
 				ownership: { cloudEnvIds: new Set(["aaaa"]), legacyEnvIds: new Set() },
+			}),
+		).toBe(true);
+		expect(
+			agentDisconnectUnavailable({
+				envId: "aaaa",
+				explicitIdentity: false,
+				ownership: { cloudEnvIds: new Set(), legacyEnvIds: new Set(["aaaa"]) },
 			}),
 		).toBe(true);
 	});
