@@ -42,6 +42,13 @@ export function UsagePage() {
 	}
 
 	const u = usage.data;
+	const hasDailyBreakdown = u.by_day.length > 0;
+	const firstDailyPoint = u.by_day[0];
+	const lastDailyPoint = u.by_day[u.by_day.length - 1];
+	const dailyChartLabel =
+		hasDailyBreakdown && firstDailyPoint && lastDailyPoint
+			? `Daily AI Credit usage from ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)}: ${formatCredits(u.total_credits)} total.`
+			: undefined;
 	const maxDay = Math.max(1, ...u.by_day.map((d) => d.credits));
 	const maxModel = Math.max(1, ...u.by_model.map((m) => m.credits));
 
@@ -91,20 +98,47 @@ export function UsagePage() {
 					<CardTitle className="text-base">Daily consumption</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<div className="flex h-28 items-end gap-1">
-						{u.by_day.map((d) => (
-							<div
-								key={d.date}
-								title={`${d.date}: ${formatCredits(d.credits)} credits`}
-								className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
-								style={{ height: `${Math.max(2, (d.credits / maxDay) * 100)}%` }}
-							/>
-						))}
-					</div>
-					<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
-						<span>{u.by_day[0]?.date.slice(5)}</span>
-						<span>{u.by_day[u.by_day.length - 1]?.date.slice(5)}</span>
-					</div>
+					{hasDailyBreakdown ? (
+						<>
+							<div className="flex h-28 items-end gap-1" role="img" aria-label={dailyChartLabel}>
+								{u.by_day.map((d) => (
+									<div
+										key={d.date}
+										title={`${d.date}: ${formatCredits(d.credits)} credits`}
+										className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
+										style={{ height: `${Math.max(2, (d.credits / maxDay) * 100)}%` }}
+									/>
+								))}
+							</div>
+							<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
+								<span>{firstDailyPoint?.date.slice(5)}</span>
+								<span>{lastDailyPoint?.date.slice(5)}</span>
+							</div>
+							<table className="sr-only">
+								<caption>Daily consumption by day</caption>
+								<thead>
+									<tr>
+										<th scope="col">Day</th>
+										<th scope="col">AI Credits used</th>
+									</tr>
+								</thead>
+								<tbody>
+									{u.by_day.map((d) => (
+										<tr key={d.date}>
+											<td>{d.date}</td>
+											<td>{formatCredits(d.credits)}</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</>
+					) : (
+						<EmptyState
+							variant="inset"
+							description="No daily breakdown available"
+							className="py-4 md:p-4"
+						/>
+					)}
 				</CardContent>
 			</Card>
 
