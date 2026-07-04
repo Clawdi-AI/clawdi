@@ -33,7 +33,6 @@ type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
 
 const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const SETTINGS_PANEL_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
 	queryClient.setQueryData(["agents", environment.id], environment);
@@ -44,11 +43,9 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 
 export function AgentSettingsPanel({
 	environmentId,
-	contained = true,
 	className,
 }: {
 	environmentId: string;
-	contained?: boolean;
 	className?: string;
 }) {
 	const api = useApi();
@@ -158,7 +155,7 @@ export function AgentSettingsPanel({
 
 	if (isLoading) {
 		return (
-			<div className={cn(contained && SETTINGS_PANEL_WIDTH_CLASS, className)}>
+			<div className={className}>
 				<Skeleton className="h-[420px] w-full rounded-lg" />
 			</div>
 		);
@@ -166,13 +163,7 @@ export function AgentSettingsPanel({
 
 	if (error || !agent) {
 		return (
-			<div
-				className={cn(
-					"flex flex-col gap-1 rounded-md border p-4",
-					contained && SETTINGS_PANEL_WIDTH_CLASS,
-					className,
-				)}
-			>
+			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
 				<div className="text-sm font-semibold">Settings unavailable</div>
 				<p className="text-sm text-muted-foreground">{errorMessage(error ?? "Agent not found")}</p>
 			</div>
@@ -205,7 +196,7 @@ export function AgentSettingsPanel({
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 
 	return (
-		<div className={cn("flex flex-col gap-9", contained && SETTINGS_PANEL_WIDTH_CLASS, className)}>
+		<div className={cn("flex flex-col gap-9", className)}>
 			<input
 				ref={fileInputRef}
 				type="file"
@@ -234,7 +225,7 @@ export function AgentSettingsPanel({
 				title="Display name"
 				description="Use a short name that distinguishes this agent from others."
 			>
-				<div className="flex flex-col gap-3">
+				<div className="flex max-w-2xl flex-col gap-3">
 					<div className="flex flex-col gap-2 lg:flex-row">
 						<Label htmlFor="agent-display-name" className="sr-only">
 							Display name

@@ -79,7 +79,6 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 		description: "Name and avatar used across the dashboard.",
 	},
 };
-const AGENT_DETAIL_INNER_WIDTH_CLASS = "mx-auto w-full max-w-4xl";
 
 export function ConnectedAgentDetail({
 	environmentId,
@@ -248,81 +247,75 @@ export function ConnectedAgentDetail({
 				</div>
 			) : agent ? (
 				<section className="flex flex-col gap-4">
-					<div className={cn(AGENT_DETAIL_INNER_WIDTH_CLASS, "flex flex-col gap-4")}>
-						<PageHeader
-							title={activeTabLabel}
-							description={activeTabMeta.description}
-							icon={
-								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
-							}
-							status={headerStatus}
-							actions={headerActions}
-						/>
+					<PageHeader
+						title={activeTabLabel}
+						description={activeTabMeta.description}
+						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+						status={headerStatus}
+						actions={headerActions}
+					/>
 
-						{activeTab === "overview" ? (
-							<div className="flex flex-col gap-4">
-								<div className="grid gap-3 sm:grid-cols-3">
-									<AgentStatPanel label="Sessions" value={sessionTotal} />
-									<AgentStatPanel
-										label="Skills"
-										value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
-									/>
-									<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
-								</div>
-								<SessionFeed
-									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									emptyVariant="inset"
-									showAgent={false}
-									sessionLink={(session) => scopedSessionLink(session.id)}
+					{activeTab === "overview" ? (
+						<div className="flex flex-col gap-4">
+							<div className="grid gap-3 sm:grid-cols-3">
+								<AgentStatPanel label="Sessions" value={sessionTotal} />
+								<AgentStatPanel
+									label="Skills"
+									value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
 								/>
+								<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
 							</div>
-						) : null}
-
-						{activeTab === "sessions" ? (
 							<SessionFeed
-								sessions={sessionsPage?.items ?? []}
+								sessions={(sessionsPage?.items ?? []).slice(0, 5)}
 								isLoading={sessionsLoading}
 								emptyMessage="No sessions synced from this agent yet."
+								emptyVariant="inset"
 								showAgent={false}
 								sessionLink={(session) => scopedSessionLink(session.id)}
 							/>
-						) : null}
+						</div>
+					) : null}
 
-						{activeTab === "skills" ? (
-							<SkillCardGrid
-								skills={skillsForThisEnv ?? []}
-								isLoading={skillsLoading}
-								emptyMessage="No skills installed on this agent yet."
-								readOnlySkillCheck={(s) =>
-									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-								}
-								onUninstall={(skillKey, projectId) =>
-									uninstallSkill.mutate({ skillKey, projectId })
-								}
-								uninstallPending={uninstallSkill.isPending}
-								skillLink={scopedSkillLink}
-							/>
-						) : null}
+					{activeTab === "sessions" ? (
+						<SessionFeed
+							sessions={sessionsPage?.items ?? []}
+							isLoading={sessionsLoading}
+							emptyMessage="No sessions synced from this agent yet."
+							showAgent={false}
+							sessionLink={(session) => scopedSessionLink(session.id)}
+						/>
+					) : null}
 
-						{activeTab === "projects" ? (
-							<AgentProjectsPanel
-								agentId={id}
-								bindings={projectBindings ?? []}
-								projects={projects ?? []}
-								isLoading={projectBindingsLoading}
-								onChanged={() => {
-									queryClient.invalidateQueries({
-										queryKey: ["agent-project-bindings", id],
-									});
-									queryClient.invalidateQueries({ queryKey: ["projects"] });
-								}}
-							/>
-						) : null}
+					{activeTab === "skills" ? (
+						<SkillCardGrid
+							skills={skillsForThisEnv ?? []}
+							isLoading={skillsLoading}
+							emptyMessage="No skills installed on this agent yet."
+							readOnlySkillCheck={(s) =>
+								!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+							}
+							onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
+							uninstallPending={uninstallSkill.isPending}
+							skillLink={scopedSkillLink}
+						/>
+					) : null}
 
-						{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
-					</div>
+					{activeTab === "projects" ? (
+						<AgentProjectsPanel
+							agentId={id}
+							bindings={projectBindings ?? []}
+							projects={projects ?? []}
+							isLoading={projectBindingsLoading}
+							onChanged={() => {
+								queryClient.invalidateQueries({
+									queryKey: ["agent-project-bindings", id],
+								});
+								queryClient.invalidateQueries({ queryKey: ["projects"] });
+							}}
+						/>
+					) : null}
+
+					{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
 				</section>
 			) : null}
 		</div>

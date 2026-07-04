@@ -771,7 +771,7 @@ export function DeployWizard() {
 				}
 				description="Give your agent a name, tone, language, and timezone."
 			>
-				<div className="flex flex-col gap-4">
+				<div className="flex max-w-2xl flex-col gap-4">
 					<div className="flex flex-col gap-1.5">
 						<label htmlFor="agent-name" className="text-sm text-muted-foreground">
 							Name

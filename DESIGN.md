@@ -94,6 +94,12 @@ Weights: use 500/600 for hierarchy; 400 body; avoid 700+.
 
 ### Component conventions
 
+- Page width: every dashboard route — console pages and agent sub-pages
+  alike — uses `CENTERED_PAGE_WIDTH_CLASS.page` (`max-w-7xl`) as its only
+  width container. No inner centered columns (`mx-auto max-w-*` wrappers
+  inside a page); content and `PageHeader` share the same left edge. Forms
+  cap individual controls or text blocks (`max-w-2xl` on the block), never
+  the page column.
 - Card tiers: entity cards are `rounded-lg p-4`; hero cards are
   `rounded-xl p-5`. Do not add new card tiers without updating this contract.
 - Empty states use `EmptyState` only. `variant="page"` (default) is for a
