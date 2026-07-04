@@ -10,7 +10,7 @@ import { EntityIcon } from "@/components/entity-icon";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
+import { orderedProviderIds, providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import { AccessBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
@@ -51,10 +51,12 @@ export function SharedBotsPool() {
 	}
 
 	const providers = pool.data?.providers ?? {};
-	const sections = CHANNEL_PROVIDERS.map((p) => ({
-		provider: p,
-		items: providers[p] ?? [],
-	})).filter((s) => s.items.length > 0);
+	const sections = orderedProviderIds(Object.keys(providers))
+		.map((p) => ({
+			provider: p,
+			items: providers[p] ?? [],
+		}))
+		.filter((s) => s.items.length > 0);
 
 	if (sections.length === 0) {
 		return (
@@ -108,7 +110,7 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 			: `${item.link_count} of ${item.max_links} linked`;
 
 	const meta = providerMeta(item.provider);
-	const linkable = item.available && item.capabilities.link_agent;
+	const linkable = !meta.unavailable && item.available && item.capabilities.link_agent;
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
@@ -141,7 +143,7 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 				<Button size="sm" variant="outline" className="w-full" disabled>
 					{/* `available` false = genuinely full; otherwise the bot just
 					    isn't linkable (capability-gated) — don't mislabel as capacity. */}
-					{item.available ? "Not linkable" : "At capacity"}
+					{meta.unavailable ? "Unavailable" : item.available ? "Not linkable" : "At capacity"}
 				</Button>
 			)}
 		</div>

@@ -20,5 +20,5 @@ Route entrypoints still use the hosted build flag as a bundle gate plus
 
 ## What lives here today
 
-- `channels/` — Telegram, Discord, WhatsApp, and iMessage channel management.
+- `channels/` — Telegram, Discord, and WhatsApp channel management.
 - `ai-providers/` — Model provider catalog, BYOK credentials, and Codex OAuth.

@@ -76,7 +76,7 @@ const CLOUD_NAV_SHORTCUTS: NavShortcut[] = [
 		href: "/channels",
 		icon: MessagesSquare,
 		subtitle: "Account resources",
-		searchText: "channels telegram discord whatsapp imessage bots messaging",
+		searchText: "channels telegram discord whatsapp bots messaging",
 	},
 	{
 		label: "Model Providers",

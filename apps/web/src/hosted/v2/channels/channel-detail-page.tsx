@@ -231,6 +231,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 	const ch = channel.data;
 	const meta = providerMeta(ch.provider);
+	const providerUnavailable = meta.unavailable === true;
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
@@ -268,30 +269,39 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 			/>
 
+			{providerUnavailable ? (
+				<InfoCard icon={TriangleAlert} title="Provider unavailable">
+					This provider is no longer available for new native channels. Existing channel data
+					remains visible, and you can remove the channel.
+				</InfoCard>
+			) : null}
+
 			<Tabs defaultValue="agents" className="min-w-0">
 				<TabsList className="h-auto flex-wrap justify-start">
 					<TabsTrigger value="agents">Agents</TabsTrigger>
-					{ch.provider === "whatsapp" ? (
+					{ch.provider === "whatsapp" && !providerUnavailable ? (
 						<TabsTrigger value="devices">Linked devices</TabsTrigger>
 					) : null}
-					<TabsTrigger value="pair">Pair code</TabsTrigger>
+					{providerUnavailable ? null : <TabsTrigger value="pair">Pair code</TabsTrigger>}
 					<TabsTrigger value="bindings">Chats</TabsTrigger>
 					<TabsTrigger value="activity">Activity</TabsTrigger>
 					<TabsTrigger value="health">Health</TabsTrigger>
-					<TabsTrigger value="commands">Commands</TabsTrigger>
+					{providerUnavailable ? null : <TabsTrigger value="commands">Commands</TabsTrigger>}
 				</TabsList>
 
 				<TabsContent value="agents" className={LIST_TAB_CLASS}>
-					<AgentsTab accountId={id} accountName={ch.name} />
+					<AgentsTab accountId={id} accountName={ch.name} readOnly={providerUnavailable} />
 				</TabsContent>
-				{ch.provider === "whatsapp" ? (
+				{ch.provider === "whatsapp" && !providerUnavailable ? (
 					<TabsContent value="devices" className={FORM_TAB_CLASS}>
 						<WhatsAppDevicesTab accountId={id} />
 					</TabsContent>
 				) : null}
-				<TabsContent value="pair" className={FORM_TAB_CLASS}>
-					<PairCodeTab accountId={id} provider={ch.provider} />
-				</TabsContent>
+				{providerUnavailable ? null : (
+					<TabsContent value="pair" className={FORM_TAB_CLASS}>
+						<PairCodeTab accountId={id} provider={ch.provider} />
+					</TabsContent>
+				)}
 				<TabsContent value="bindings" className={LIST_TAB_CLASS}>
 					<BindingsTab accountId={id} />
 				</TabsContent>
@@ -301,9 +311,11 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				<TabsContent value="health" className={LIST_TAB_CLASS}>
 					<HealthTab accountId={id} />
 				</TabsContent>
-				<TabsContent value="commands" className={FORM_TAB_CLASS}>
-					<CommandsTab accountId={id} provider={ch.provider} />
-				</TabsContent>
+				{providerUnavailable ? null : (
+					<TabsContent value="commands" className={FORM_TAB_CLASS}>
+						<CommandsTab accountId={id} provider={ch.provider} />
+					</TabsContent>
+				)}
 			</Tabs>
 		</div>
 	);
@@ -311,7 +323,15 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 // ── Agents ───────────────────────────────────────────────────────────────────
 
-function AgentsTab({ accountId, accountName }: { accountId: string; accountName: string }) {
+function AgentsTab({
+	accountId,
+	accountName,
+	readOnly = false,
+}: {
+	accountId: string;
+	accountName: string;
+	readOnly?: boolean;
+}) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
 	const rotate = useRotateAgentToken(accountId);
@@ -344,10 +364,12 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 				label="Linked agents"
 				count={items.length}
 				action={
-					<Button size="sm" onClick={() => setLinkOpen(true)}>
-						<Link2 className="size-3.5" />
-						Link an agent
-					</Button>
+					readOnly ? null : (
+						<Button size="sm" onClick={() => setLinkOpen(true)}>
+							<Link2 className="size-3.5" />
+							Link an agent
+						</Button>
+					)
 				}
 			/>
 
@@ -355,7 +377,11 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 				<EmptyState
 					icon={Link2}
 					title="No agents linked"
-					description="Link an agent so it can send and receive on this channel."
+					description={
+						readOnly
+							? "No agents are linked to this channel."
+							: "Link an agent so it can send and receive on this channel."
+					}
 				/>
 			) : (
 				<div className="flex flex-col gap-2">
@@ -369,50 +395,52 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 										{relativeTime(link.created_at)}
 									</div>
 								</div>
-								<div className="flex shrink-0 flex-wrap items-center gap-1.5">
-									<Button
-										variant="outline"
-										size="sm"
-										// Per-row: only the acting row's button shows pending, not all.
-										disabled={rotate.isPending && rotate.variables === link.id}
-										onClick={() =>
-											rotate.mutate(link.id, {
-												onSuccess: (data) => {
-													const token = data.agent_token;
-													if (!token) return;
-													setRotated((prev) => ({
-														...prev,
-														[link.id]: token,
-													}));
-												},
-											})
-										}
-									>
-										{rotate.isPending && rotate.variables === link.id ? (
-											<Spinner className="size-3.5" />
-										) : (
-											<RefreshCw className="size-3.5" />
-										)}
-										Rotate token
-									</Button>
-									<ConfirmAction
-										title="Unlink this agent?"
-										description={<p>It stops sending and receiving on {accountName}.</p>}
-										confirmLabel="Unlink"
-										destructive
-										onConfirm={() => unlink.mutateAsync(link.id)}
-									>
+								{readOnly ? null : (
+									<div className="flex shrink-0 flex-wrap items-center gap-1.5">
 										<Button
-											variant="ghost"
-											size="icon-sm"
-											className="text-muted-foreground hover:text-destructive"
-											disabled={unlink.isPending && unlink.variables === link.id}
-											aria-label="Unlink agent"
+											variant="outline"
+											size="sm"
+											// Per-row: only the acting row's button shows pending, not all.
+											disabled={rotate.isPending && rotate.variables === link.id}
+											onClick={() =>
+												rotate.mutate(link.id, {
+													onSuccess: (data) => {
+														const token = data.agent_token;
+														if (!token) return;
+														setRotated((prev) => ({
+															...prev,
+															[link.id]: token,
+														}));
+													},
+												})
+											}
 										>
-											<Link2Off className="size-4" />
+											{rotate.isPending && rotate.variables === link.id ? (
+												<Spinner className="size-3.5" />
+											) : (
+												<RefreshCw className="size-3.5" />
+											)}
+											Rotate token
 										</Button>
-									</ConfirmAction>
-								</div>
+										<ConfirmAction
+											title="Unlink this agent?"
+											description={<p>It stops sending and receiving on {accountName}.</p>}
+											confirmLabel="Unlink"
+											destructive
+											onConfirm={() => unlink.mutateAsync(link.id)}
+										>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												className="text-muted-foreground hover:text-destructive"
+												disabled={unlink.isPending && unlink.variables === link.id}
+												aria-label="Unlink agent"
+											>
+												<Link2Off className="size-4" />
+											</Button>
+										</ConfirmAction>
+									</div>
+								)}
 							</div>
 							{rotated[link.id] ? (
 								<div className="mt-3">
@@ -428,12 +456,14 @@ function AgentsTab({ accountId, accountName }: { accountId: string; accountName:
 				</div>
 			)}
 
-			<LinkAgentDialog
-				open={linkOpen}
-				onOpenChange={setLinkOpen}
-				accountId={accountId}
-				accountName={accountName}
-			/>
+			{readOnly ? null : (
+				<LinkAgentDialog
+					open={linkOpen}
+					onOpenChange={setLinkOpen}
+					accountId={accountId}
+					accountName={accountName}
+				/>
+			)}
 		</div>
 	);
 }

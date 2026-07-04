@@ -20,11 +20,7 @@ import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-	CHANNEL_PROVIDERS,
-	type ChannelProviderId,
-	providerMeta,
-} from "@/hosted/v2/channels/channel-providers";
+import { orderedProviderIds, providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { HealthBadge } from "@/hosted/v2/channels/channel-ui";
 import { useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
@@ -32,7 +28,7 @@ import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { SharedBotsPool } from "@/hosted/v2/channels/shared-bots-pool";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Connect Telegram, Discord, WhatsApp, and iMessage to your agents.";
+const DESCRIPTION = "Connect Telegram, Discord, and WhatsApp to your agents.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
 
@@ -64,7 +60,7 @@ export function ChannelsPage() {
 function YourChannels({ onConnect }: { onConnect: () => void }) {
 	const channels = useChannels();
 	const health = useChannelHealth();
-	const [filter, setFilter] = useState<ChannelProviderId | "all">("all");
+	const [filter, setFilter] = useState<string | "all">("all");
 
 	if (channels.isLoading) {
 		return (
@@ -110,10 +106,11 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 	for (const c of all) counts.set(c.provider, (counts.get(c.provider) ?? 0) + 1);
 
 	const visible = filter === "all" ? all : all.filter((c) => c.provider === filter);
-	const groups = CHANNEL_PROVIDERS.map((p) => ({
+	const filterProviders = orderedProviderIds(all.map((channel) => channel.provider));
+	const groups = orderedProviderIds(visible.map((channel) => channel.provider)).map((p) => ({
 		provider: p,
 		items: visible.filter((c) => c.provider === p),
-	})).filter((g) => g.items.length > 0);
+	}));
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -131,7 +128,7 @@ function YourChannels({ onConnect }: { onConnect: () => void }) {
 							All
 							<span className="text-muted-foreground tabular-nums">{all.length}</span>
 						</FilterChip>
-						{CHANNEL_PROVIDERS.filter((p) => counts.has(p)).map((p) => (
+						{filterProviders.map((p) => (
 							<FilterChip key={p} active={filter === p} onClick={() => setFilter(p)}>
 								{providerMeta(p).label}
 								<span className="text-muted-foreground tabular-nums">{counts.get(p)}</span>
