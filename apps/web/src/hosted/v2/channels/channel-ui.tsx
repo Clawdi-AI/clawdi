@@ -73,7 +73,7 @@ function useCopy() {
 	return useCopyToClipboard({ error: "Copy failed" });
 }
 
-/** Copyable secret box — used for revealed agent tokens, webhook secrets. */
+/** Copyable token box for values revealed once. */
 export function TokenReveal({
 	label,
 	value,
@@ -110,7 +110,7 @@ export function TokenReveal({
 	);
 }
 
-/** Inline copyable monospace value (chat ids, webhook urls). */
+/** Inline copyable monospace value (chat ids, ids, urls). */
 export function CopyInline({
 	value,
 	label,

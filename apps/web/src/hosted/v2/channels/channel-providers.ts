@@ -48,7 +48,7 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 		connect: "discord",
 		tokenLabel: "Bot token",
 		tokenPlaceholder: "Bot token",
-		hint: "From the Discord developer portal: the bot token, plus the application ID and public key for slash commands and interactions.",
+		hint: "Paste the bot token and application ID from your Discord application. Include the public key when available.",
 	},
 	whatsapp: {
 		id: "whatsapp",
