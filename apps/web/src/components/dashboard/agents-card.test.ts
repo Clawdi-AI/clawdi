@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import {
+	type AgentTile,
+	fleetSummaryFromTiles,
+	selfManagedAgentTiles,
+} from "@/components/dashboard/agents-card";
 
 type Env = components["schemas"]["AgentResponse"];
 
@@ -56,5 +60,47 @@ describe("selfManagedAgentTiles", () => {
 			name: "Launch runner",
 		});
 		expect("runtimeLabel" in tile).toBe(false);
+	});
+});
+
+describe("fleetSummaryFromTiles", () => {
+	it("counts active tiles instead of requiring a fresh cloud-api last-seen timestamp", () => {
+		const freshSeenAt = new Date().toISOString();
+		const newestSeenAt = new Date(Date.now() + 1000).toISOString();
+		const selfManaged = selfManagedAgentTiles([
+			env({
+				last_seen_at: freshSeenAt,
+			}),
+		]);
+		const hostedRunningWithoutEnv: AgentTile = {
+			id: "dep_123:codex",
+			source: "on-clawdi",
+			name: "Codex",
+			agentType: "codex",
+			statusLabel: "Running",
+			lastSeenAt: null,
+			href: "/agents/dep_123",
+			active: true,
+			env: null,
+		};
+		const hostedStoppedWithFreshEnv: AgentTile = {
+			id: "dep_456:codex",
+			source: "on-clawdi",
+			name: "Stopped Codex",
+			agentType: "codex",
+			statusLabel: "Stopped",
+			lastSeenAt: newestSeenAt,
+			href: "/agents/dep_456",
+			active: true,
+			env: null,
+		};
+
+		expect(
+			fleetSummaryFromTiles([...selfManaged, hostedRunningWithoutEnv, hostedStoppedWithFreshEnv]),
+		).toEqual({
+			activeCount: 3,
+			total: 3,
+			lastActive: newestSeenAt,
+		});
 	});
 });

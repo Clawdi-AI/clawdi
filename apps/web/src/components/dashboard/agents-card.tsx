@@ -13,7 +13,7 @@ import {
 	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
-import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
@@ -56,6 +56,17 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 	}));
 }
 
+export interface AgentTileStatusDot {
+	label: string;
+	dotClass: string;
+}
+
+export interface AgentTileSecondaryStatus {
+	label: string;
+	title?: string;
+	textClass?: string;
+}
+
 /**
  * UI-side projection of an agent for the dashboard grid. The dashboard
  * page composes this from cloud-api environments and (for hosted users)
@@ -87,7 +98,13 @@ export interface AgentTile {
 	 * status dialogs. Tiles render daemon status as a non-interactive dot. */
 	manageHref?: string;
 	/** Counted in the "N active now" header line; no per-tile indicator rendered. */
-	active?: boolean;
+	active: boolean;
+	/** Primary status dot. Hosted tiles use compute status here; connected tiles
+	 * omit it and fall back to live-sync status. */
+	statusDot?: AgentTileStatusDot;
+	/** Secondary qualifier appended to the tile meta line. Hosted tiles use this
+	 * only for meaningful sync qualifiers such as "Sync paused". */
+	secondaryStatus?: AgentTileSecondaryStatus | null;
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with
@@ -99,6 +116,24 @@ export interface AgentTile {
 	 * deployment. Self-managed tiles leave these undefined. */
 	computeId?: string;
 	computeName?: string;
+}
+
+export interface AgentFleetSummary {
+	activeCount: number;
+	total: number;
+	lastActive: string | null;
+}
+
+export function fleetSummaryFromTiles(agents: readonly AgentTile[]): AgentFleetSummary {
+	return {
+		activeCount: agents.filter((agent) => agent.active).length,
+		total: agents.length,
+		lastActive:
+			agents
+				.map((agent) => agent.lastSeenAt)
+				.filter((value): value is string => Boolean(value))
+				.sort((a, b) => b.localeCompare(a))[0] ?? null,
+	};
 }
 
 export function AgentsCard({
@@ -218,36 +253,48 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	});
 	const meta: string[] = [];
 	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
+	if (onClawdi) meta.push(tile.statusLabel);
 	const activityLabel = agentTileActivityLabel(tile);
-	if (activityLabel) meta.push(activityLabel);
-	const metaLabel = meta.join(" · ");
+	if (activityLabel && !onClawdi) meta.push(activityLabel);
 	const statusVisual = daemonStatusVisual(
 		tile.env,
 		onClawdi || legacyHosted ? "on-clawdi" : "self-managed",
 	);
+	const statusDot = tile.statusDot ?? {
+		label: statusVisual.label,
+		dotClass: statusVisual.dotClass,
+	};
 
 	const card = (
 		<div
-			className={cn(
-				ENTITY_CARD_BASE,
-				"relative flex h-full items-start gap-3 transition-colors group-hover:bg-muted/50",
-			)}
+			className={cn(ENTITY_CARD_BASE, "relative h-full transition-colors group-hover:bg-muted/50")}
 		>
 			<EntityHeader
 				align="start"
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
 					<span className="flex min-w-0 items-center gap-1.5">
-						<AgentStatusDot visual={statusVisual} />
+						<AgentStatusDot visual={statusDot} />
 						<span className="min-w-0 truncate" title={tile.name}>
 							{displayMachineName(tile.name)}
 						</span>
 					</span>
 				}
-				meta={metaLabel || undefined}
+				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
 				className="min-w-0 flex-1"
 			/>
+			{onClawdi && tile.secondaryStatus ? (
+				<div
+					className={cn(
+						"mt-0.5 pl-11 text-xs leading-4",
+						tile.secondaryStatus.textClass ?? "text-muted-foreground",
+					)}
+					title={tile.secondaryStatus.title}
+				>
+					{tile.secondaryStatus.label}
+				</div>
+			) : null}
 			{tile.external ? (
 				<ArrowUpRight
 					aria-hidden
@@ -260,7 +307,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		"group block h-full rounded-lg text-inherit no-underline",
 		ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	);
-	const linkLabel = `Open ${tile.name}. Status: ${statusVisual.label}`;
+	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
+	const linkLabel = `Open ${tile.name}. Status: ${linkStatus}`;
 
 	if (tile.external) {
 		return (
@@ -283,7 +331,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 }
 
-function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
+function AgentStatusDot({ visual }: { visual: AgentTileStatusDot }) {
 	return (
 		<span title={visual.label} className="inline-flex shrink-0 items-center">
 			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />

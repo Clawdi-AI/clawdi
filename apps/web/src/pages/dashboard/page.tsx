@@ -6,8 +6,9 @@ import { ArrowRight } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import {
+	type AgentFleetSummary,
 	AgentsCard,
-	isAgentActive,
+	fleetSummaryFromTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
@@ -69,6 +70,13 @@ const HostedSecondaryCTA = IS_HOSTED_BUILD
 			})),
 		)
 	: null;
+const HostedFleetSummary = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/use-hosted-agent-tiles").then((m) => ({
+				default: m.HostedFleetSummary,
+			})),
+		)
+	: null;
 
 export default function DashboardPage() {
 	const api = useApi();
@@ -117,12 +125,10 @@ export default function DashboardPage() {
 			: null;
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
-	const fleetAgents = environments ?? [];
-	const fleetLastActive =
-		fleetAgents
-			.map((env) => env.last_seen_at)
-			.filter((value): value is string => Boolean(value))
-			.sort((a, b) => b.localeCompare(a))[0] ?? null;
+	const selfManagedFleetSummary = useMemo(
+		() => fleetSummaryFromTiles(selfManagedTiles),
+		[selfManagedTiles],
+	);
 
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
@@ -140,14 +146,26 @@ export default function DashboardPage() {
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
 	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
+	const greeting = renderGreeting(selfManagedFleetSummary);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<Greeting
-				activeCount={fleetAgents.filter((env) => isAgentActive(env.last_seen_at)).length}
-				total={fleetAgents.length}
-				lastActive={fleetLastActive}
-			/>
+			{hostedAccessLoading ? (
+				greeting
+			) : hostedSectionEnabled && HostedFleetSummary ? (
+				<Suspense fallback={greeting}>
+					<HostedFleetSummary
+						selfManagedTiles={selfManagedTiles}
+						cloudEnvs={environments ?? []}
+						showCloudDeployments={hostedAgentsEnabled}
+						showLegacyAgents={legacyHostedAgentsEnabled}
+					>
+						{renderGreeting}
+					</HostedFleetSummary>
+				</Suspense>
+			) : (
+				greeting
+			)}
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				{/* Left column — live status + activity. `min-w-0` is load-bearing:
@@ -251,6 +269,16 @@ export default function DashboardPage() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+function renderGreeting(summary: AgentFleetSummary) {
+	return (
+		<Greeting
+			activeCount={summary.activeCount}
+			total={summary.total}
+			lastActive={summary.lastActive}
+		/>
 	);
 }
 

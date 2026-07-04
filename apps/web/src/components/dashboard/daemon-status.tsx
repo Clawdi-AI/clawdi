@@ -196,6 +196,8 @@ export function DaemonStatusBadge({
 	manageHref,
 	compact = false,
 	tooltipDetail,
+	showDot = true,
+	labelOverride,
 }: {
 	env: Env;
 	/** "on-clawdi" tiles change the dialog copy across every non-
@@ -218,10 +220,15 @@ export function DaemonStatusBadge({
 	compact?: boolean;
 	/** Extra context shown only in the tooltip for crowded layouts. */
 	tooltipDetail?: string;
+	/** Hosted compute-primary surfaces can render sync as text-only context. */
+	showDot?: boolean;
+	/** Hosted compute-primary surfaces may need the fully-qualified sync label
+	 * even in compact layouts. */
+	labelOverride?: string;
 }) {
 	const visual = daemonStatusVisual(env, source);
 	const [open, setOpen] = useState(false);
-	const label = compact ? visual.compactLabel : visual.badgeLabel;
+	const label = labelOverride ?? (compact ? visual.compactLabel : visual.badgeLabel);
 	const inner = (
 		<span
 			className={cn(
@@ -231,7 +238,9 @@ export function DaemonStatusBadge({
 				"cursor-pointer hover:text-foreground",
 			)}
 		>
-			<span aria-hidden className={cn("inline-block size-1.5 rounded-full", visual.dotClass)} />
+			{showDot ? (
+				<span aria-hidden className={cn("inline-block size-1.5 rounded-full", visual.dotClass)} />
+			) : null}
 			<span className="whitespace-nowrap">{label}</span>
 		</span>
 	);
