@@ -1369,7 +1369,7 @@ function UserControl({
 			) : (
 				trigger
 			)}
-			<DropdownMenuContent className="min-w-56 rounded-lg" side="top" align="end">
+			<DropdownMenuContent className="min-w-56 rounded-lg" side="top" align="start">
 				<UserMenuItems />
 			</DropdownMenuContent>
 		</DropdownMenu>
@@ -1392,6 +1392,9 @@ function GlobalControls({
 	return (
 		<SidebarMenu className="w-full flex-row items-center gap-1">
 			<SidebarMenuItem>
+				<UserControl user={user} showTooltip={showTooltips} />
+			</SidebarMenuItem>
+			<SidebarMenuItem className="ml-auto">
 				<GlobalControlButton label="Search" onClick={onSearch} showTooltip={showTooltips}>
 					<Search />
 				</GlobalControlButton>
@@ -1408,9 +1411,6 @@ function GlobalControls({
 				>
 					<Settings />
 				</GlobalControlButton>
-			</SidebarMenuItem>
-			<SidebarMenuItem className="ml-auto">
-				<UserControl user={user} showTooltip={showTooltips} />
 			</SidebarMenuItem>
 		</SidebarMenu>
 	);
