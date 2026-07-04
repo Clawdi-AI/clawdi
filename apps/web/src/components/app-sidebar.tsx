@@ -101,7 +101,11 @@ import {
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
-import { availableAppsQueryOptions, CONNECTOR_CATALOG_PAGE_SIZE } from "@/lib/connectors-data";
+import {
+	availableAppsQueryOptions,
+	CONNECTOR_CATALOG_PAGE_SIZE,
+	connectionsQueryOptions,
+} from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
@@ -376,6 +380,7 @@ function ConsoleResourcesSection({
 				pageSize: CONNECTOR_CATALOG_PAGE_SIZE,
 			}),
 		);
+		void queryClient.prefetchQuery(connectionsQueryOptions(api));
 	}, [api, queryClient]);
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
 		projectResourceDefinitionsForGroup(group.id).map((definition) => {
@@ -683,14 +688,16 @@ function FocusNavigationPane({
 					onNavigate={onNavigate}
 				/>
 			</SidebarContent>
-			<SidebarFooter className="border-t px-3 py-2">
-				<GlobalControls
-					user={user}
-					onSearch={onSearch}
-					onSettings={onSettings}
-					settingsOpen={settingsOpen}
-					showTooltips={showTooltips}
-				/>
+			<SidebarFooter className="p-0">
+				<div className="w-full border-border border-t px-3 py-2">
+					<GlobalControls
+						user={user}
+						onSearch={onSearch}
+						onSettings={onSettings}
+						settingsOpen={settingsOpen}
+						showTooltips={showTooltips}
+					/>
+				</div>
 			</SidebarFooter>
 		</div>
 	);

@@ -139,7 +139,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	const activeConnections =
 		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
 	const isConnected = activeConnections.length > 0;
-	const isLoading = isAppLoading || isConnectionsLoading;
+	const isLoading = isAppLoading;
 
 	const displayName = app?.display_name || formatName(name);
 
@@ -287,14 +287,23 @@ function ConnectorDetail({ name }: { name: string }) {
 				<DashboardSectionHeader
 					icon={Plug}
 					title="Connected accounts"
-					count={usesNoAuth ? "No account required" : `${activeConnections.length} connected`}
+					count={
+						usesNoAuth
+							? "No account required"
+							: isConnectionsLoading
+								? "Checking accounts"
+								: `${activeConnections.length} connected`
+					}
 					description={
 						usesNoAuth
 							? "This connector does not require an account connection."
 							: "Connect an account once. Approved tools become available to agents through this connector."
 					}
 					actions={
-						!usesNoAuth && !isSetupBlocked && activeConnections.length > 0 ? (
+						!usesNoAuth &&
+						!isSetupBlocked &&
+						!isConnectionsLoading &&
+						activeConnections.length > 0 ? (
 							<Button
 								variant="outline"
 								size="sm"
@@ -308,7 +317,7 @@ function ConnectorDetail({ name }: { name: string }) {
 					}
 				/>
 				<div className="p-4">
-					{connectionsQ.error ? (
+					{!usesNoAuth && connectionsQ.error ? (
 						// Without this, a failed connections fetch silently renders
 						// the "No connected accounts yet" empty state — the user
 						// would think they have nothing connected when really we
@@ -320,6 +329,16 @@ function ConnectorDetail({ name }: { name: string }) {
 							}}
 							title="Couldn't load connections"
 						/>
+					) : !usesNoAuth && isConnectionsLoading ? (
+						<div className="rounded-lg border bg-card p-4">
+							<div className="flex items-center gap-3">
+								<Skeleton className="size-9 shrink-0 rounded-lg" />
+								<div className="min-w-0 flex-1 space-y-2">
+									<Skeleton className="h-3.5 w-40" />
+									<Skeleton className="h-3 w-28" />
+								</div>
+							</div>
+						</div>
 					) : usesNoAuth ? (
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (

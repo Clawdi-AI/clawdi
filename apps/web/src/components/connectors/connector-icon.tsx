@@ -41,6 +41,8 @@ export function ConnectorIcon({
 				<img
 					src={logo}
 					alt=""
+					loading="lazy"
+					decoding="async"
 					className={cn("h-full w-full object-contain", s.pad)}
 					onError={() => setImgError(true)}
 				/>
