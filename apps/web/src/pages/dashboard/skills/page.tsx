@@ -552,23 +552,23 @@ function SkillsPageInner() {
 							))}
 							{overflowProjects.length > 0 ? (
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<button type="button" className={filterChipClass(overflowActive)}>
-											{overflowActive && targetProject ? (
-												<>
-													<span aria-hidden className="select-none">
-														{identityFor(displayProjectName(targetProject)).emoji}
-													</span>
-													{displayProjectName(targetProject)}
-												</>
-											) : (
-												<>Agent projects</>
-											)}
-											<span className="text-muted-foreground tabular-nums">
-												{overflowProjects.length}
-											</span>
-											<ChevronDown className="size-3.5" />
-										</button>
+									<DropdownMenuTrigger
+										render={<button type="button" className={filterChipClass(overflowActive)} />}
+									>
+										{overflowActive && targetProject ? (
+											<>
+												<span aria-hidden className="select-none">
+													{identityFor(displayProjectName(targetProject)).emoji}
+												</span>
+												{displayProjectName(targetProject)}
+											</>
+										) : (
+											<>Agent projects</>
+										)}
+										<span className="text-muted-foreground tabular-nums">
+											{overflowProjects.length}
+										</span>
+										<ChevronDown className="size-3.5" />
 									</DropdownMenuTrigger>
 									<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
 										{overflowProjects.map((p) => (

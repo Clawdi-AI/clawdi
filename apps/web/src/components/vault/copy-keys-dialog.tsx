@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,7 @@ export function CopyKeysDialog({
 	mode: "copy" | "move";
 	/** Called after success — the parent clears its selection. */
 	onDone?: () => void;
-	children: React.ReactNode;
+	children: ReactElement;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
@@ -220,7 +220,7 @@ export function CopyKeysDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger asChild>{children}</DialogTrigger>
+			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>
@@ -242,7 +242,12 @@ export function CopyKeysDialog({
 					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
 						<div className="space-y-1.5">
 							<Label htmlFor="copy-keys-target">Destination vault</Label>
-							<Select value={effectiveChoice} onValueChange={setTargetChoice}>
+							<Select
+								value={effectiveChoice}
+								onValueChange={(value) => {
+									if (value !== null) setTargetChoice(value);
+								}}
+							>
 								<SelectTrigger id="copy-keys-target" className="w-full">
 									<SelectValue placeholder="Choose a vault…" />
 								</SelectTrigger>

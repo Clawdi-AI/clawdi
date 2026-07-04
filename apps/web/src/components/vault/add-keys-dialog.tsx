@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -46,7 +46,7 @@ export function AddKeysDialog({
 	children,
 }: {
 	vaultSlug?: string;
-	children?: React.ReactNode;
+	children?: ReactElement;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
@@ -198,16 +198,16 @@ export function AddKeysDialog({
 		setUpdateExisting(false);
 	}, [open, vaultSlug]);
 
+	const trigger = children ?? (
+		<Button size="sm">
+			<Plus className="size-3.5" />
+			Add keys
+		</Button>
+	);
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger asChild>
-				{children ?? (
-					<Button size="sm">
-						<Plus className="size-3.5" />
-						Add keys
-					</Button>
-				)}
-			</DialogTrigger>
+			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Add keys</DialogTitle>
@@ -229,7 +229,12 @@ export function AddKeysDialog({
 						<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
 							<div className="space-y-1.5">
 								<Label htmlFor="add-keys-vault">Into vault</Label>
-								<Select value={effectiveChoice} onValueChange={setVaultChoice}>
+								<Select
+									value={effectiveChoice}
+									onValueChange={(value) => {
+										if (value !== null) setVaultChoice(value);
+									}}
+								>
 									<SelectTrigger id="add-keys-vault" className="w-full">
 										<SelectValue placeholder="Choose a vault…" />
 									</SelectTrigger>

@@ -22,11 +22,9 @@ export function DevAuthBypassPage({ mode }: { mode: "sign-in" | "sign-up" }) {
 					<div className="font-medium">Dev User</div>
 					<div className="text-muted-foreground">dev@clawdi.local</div>
 				</div>
-				<Button asChild className="mt-5 w-full">
-					<Link to="/">
-						Open Dashboard
-						<ArrowRight className="size-4" />
-					</Link>
+				<Button render={<Link to="/" />} nativeButton={false} className="mt-5 w-full">
+					Open Dashboard
+					<ArrowRight className="size-4" />
 				</Button>
 			</section>
 		</main>

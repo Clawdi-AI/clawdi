@@ -55,38 +55,36 @@ export function DataTableFacetedFilter({
 
 	return (
 		<Popover>
-			<PopoverTrigger asChild>
-				<Button variant="outline" size="sm" className="h-8 border-dashed">
-					<PlusCircleIcon className="size-4" />
-					{title}
-					{selected.length > 0 && (
-						<>
-							<Separator orientation="vertical" className="mx-2 h-4" />
-							<Badge variant="secondary" className="rounded-sm px-1 font-normal lg:hidden">
-								{selected.length}
-							</Badge>
-							<div className="hidden gap-1 lg:flex">
-								{selected.length > 2 ? (
-									<Badge variant="secondary" className="rounded-sm px-1 font-normal">
-										{selected.length} selected
-									</Badge>
-								) : (
-									options
-										.filter((option) => selectedSet.has(option.value))
-										.map((option) => (
-											<Badge
-												key={option.value}
-												variant="secondary"
-												className="rounded-sm px-1 font-normal"
-											>
-												{option.label}
-											</Badge>
-										))
-								)}
-							</div>
-						</>
-					)}
-				</Button>
+			<PopoverTrigger render={<Button variant="outline" size="sm" className="h-8 border-dashed" />}>
+				<PlusCircleIcon className="size-4" />
+				{title}
+				{selected.length > 0 && (
+					<>
+						<Separator orientation="vertical" className="mx-2 h-4" />
+						<Badge variant="secondary" className="rounded-sm px-1 font-normal lg:hidden">
+							{selected.length}
+						</Badge>
+						<div className="hidden gap-1 lg:flex">
+							{selected.length > 2 ? (
+								<Badge variant="secondary" className="rounded-sm px-1 font-normal">
+									{selected.length} selected
+								</Badge>
+							) : (
+								options
+									.filter((option) => selectedSet.has(option.value))
+									.map((option) => (
+										<Badge
+											key={option.value}
+											variant="secondary"
+											className="rounded-sm px-1 font-normal"
+										>
+											{option.label}
+										</Badge>
+									))
+							)}
+						</div>
+					</>
+				)}
 			</PopoverTrigger>
 			<PopoverContent className="w-[200px] p-0" align="start">
 				<Command>
