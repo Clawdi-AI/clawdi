@@ -74,7 +74,6 @@ import {
 import {
 	Sidebar,
 	SidebarContent,
-	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
 	SidebarGroupLabel,
@@ -101,7 +100,11 @@ import {
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
-import { availableAppsQueryOptions, CONNECTOR_CATALOG_PAGE_SIZE } from "@/lib/connectors-data";
+import {
+	availableAppsQueryOptions,
+	CONNECTOR_CATALOG_PAGE_SIZE,
+	connectionsQueryOptions,
+} from "@/lib/connectors-data";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
@@ -376,6 +379,7 @@ function ConsoleResourcesSection({
 				pageSize: CONNECTOR_CATALOG_PAGE_SIZE,
 			}),
 		);
+		void queryClient.prefetchQuery(connectionsQueryOptions(api));
 	}, [api, queryClient]);
 	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
 		projectResourceDefinitionsForGroup(group.id).map((definition) => {
@@ -640,12 +644,7 @@ type FocusNavigationPaneProps = {
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
-	user: ReturnType<typeof useCurrentUser>["user"];
-	onSearch: () => void;
-	onSettings: () => void;
-	settingsOpen: boolean;
 	onNavigate?: () => void;
-	showTooltips?: boolean;
 };
 
 function FocusNavigationPane({
@@ -656,12 +655,7 @@ function FocusNavigationPane({
 	activeAgent,
 	agentsLoaded,
 	activeSection,
-	user,
-	onSearch,
-	onSettings,
-	settingsOpen,
 	onNavigate,
-	showTooltips = true,
 }: FocusNavigationPaneProps) {
 	return (
 		<div className={cn("flex min-h-0 flex-1 flex-col", className)}>
@@ -672,7 +666,7 @@ function FocusNavigationPane({
 					showCloudFeatures={showCloudFeatures}
 				/>
 			</SidebarHeader>
-			<SidebarContent>
+			<SidebarContent className="pb-[calc(var(--header-height)+0.75rem)]">
 				<SidebarMainNavigation
 					pathname={pathname}
 					showCloudFeatures={showCloudFeatures}
@@ -683,15 +677,6 @@ function FocusNavigationPane({
 					onNavigate={onNavigate}
 				/>
 			</SidebarContent>
-			<SidebarFooter className="border-t px-3 py-2">
-				<GlobalControls
-					user={user}
-					onSearch={onSearch}
-					onSettings={onSettings}
-					settingsOpen={settingsOpen}
-					showTooltips={showTooltips}
-				/>
-			</SidebarFooter>
 		</div>
 	);
 }
@@ -1046,7 +1031,7 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-2.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<RailFocusButton
@@ -1405,7 +1390,7 @@ function GlobalControls({
 	showTooltips?: boolean;
 }) {
 	return (
-		<SidebarMenu className="flex-row items-center gap-1">
+		<SidebarMenu className="w-full flex-row items-center gap-1">
 			<SidebarMenuItem>
 				<GlobalControlButton label="Search" onClick={onSearch} showTooltip={showTooltips}>
 					<Search />
@@ -1431,6 +1416,45 @@ function GlobalControls({
 	);
 }
 
+function SidebarGlobalControlsBar({
+	user,
+	onSearch,
+	onSettings,
+	settingsOpen,
+	showTooltips = true,
+	mobile = false,
+	collapsed = false,
+}: {
+	user: ReturnType<typeof useCurrentUser>["user"];
+	onSearch: () => void;
+	onSettings: () => void;
+	settingsOpen: boolean;
+	showTooltips?: boolean;
+	mobile?: boolean;
+	collapsed?: boolean;
+}) {
+	if (!mobile && collapsed) return null;
+	return (
+		<div
+			data-sidebar="global-controls"
+			className={cn(
+				"z-30 h-(--header-height) items-center border-border border-t bg-sidebar px-3 text-sidebar-foreground",
+				mobile
+					? "absolute inset-x-0 bottom-0 flex"
+					: "fixed bottom-0 left-0 hidden w-[calc(var(--clawdi-rail-width)+var(--sidebar-width))] md:flex",
+			)}
+		>
+			<GlobalControls
+				user={user}
+				onSearch={onSearch}
+				onSettings={onSettings}
+				settingsOpen={settingsOpen}
+				showTooltips={showTooltips}
+			/>
+		</div>
+	);
+}
+
 export function AppSidebar({
 	className,
 	variant,
@@ -1440,7 +1464,7 @@ export function AppSidebar({
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const { user } = useCurrentUser();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
-	const { isMobile, setOpenMobile } = useSidebar();
+	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
@@ -1512,15 +1536,19 @@ export function AppSidebar({
 						activeAgent={activeAgent ?? null}
 						agentsLoaded={agentsLoaded}
 						activeSection={activeSection}
-						user={user}
-						onSearch={openSearch}
-						onSettings={openSettingsFromSidebar}
-						settingsOpen={settingsOpen}
 					/>
 				) : null}
 
 				{isMobile ? (
-					<div className="flex min-h-0 flex-1">
+					<div
+						className="relative flex min-h-0 flex-1"
+						style={
+							{
+								"--clawdi-rail-width": "calc(var(--spacing) * 20)",
+								"--header-height": "calc(var(--spacing) * 12)",
+							} as React.CSSProperties
+						}
+					>
 						<nav
 							className="flex w-(--clawdi-rail-width) shrink-0 flex-col border-r bg-sidebar/95"
 							aria-label="Focus rail"
@@ -1540,16 +1568,28 @@ export function AppSidebar({
 							activeAgent={activeAgent ?? null}
 							agentsLoaded={agentsLoaded}
 							activeSection={activeSection}
+							onNavigate={closeMobileSidebar}
+						/>
+						<SidebarGlobalControlsBar
 							user={user}
 							onSearch={openSearch}
 							onSettings={openSettingsFromSidebar}
 							settingsOpen={settingsOpen}
-							onNavigate={closeMobileSidebar}
 							showTooltips={false}
+							mobile
 						/>
 					</div>
 				) : null}
 			</Sidebar>
+			{!isMobile ? (
+				<SidebarGlobalControlsBar
+					user={user}
+					onSearch={openSearch}
+					onSettings={openSettingsFromSidebar}
+					settingsOpen={settingsOpen}
+					collapsed={sidebarState === "collapsed"}
+				/>
+			) : null}
 			<SettingsDialog
 				open={settingsOpen}
 				section={activeSettingsSection}

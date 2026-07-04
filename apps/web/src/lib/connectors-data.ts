@@ -1,5 +1,6 @@
 "use client";
 
+import type { components } from "@clawdi/shared/api";
 import {
 	keepPreviousData,
 	useMutation,
@@ -7,7 +8,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { unwrap, useApi } from "@/lib/api";
 
 /**
@@ -31,6 +32,7 @@ export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
 export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
 type ApiClient = ReturnType<typeof useApi>;
+type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
 
 export type AvailableAppsQueryArgs = {
 	page: number;
@@ -59,46 +61,79 @@ export function availableAppsQueryOptions(api: ApiClient, args: AvailableAppsQue
 	};
 }
 
-export function useConnections() {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["connections"],
-		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
-	});
+export function availableAppQueryKey(appName: string) {
+	return ["available-app", appName] as const;
 }
 
-export function useAvailableApp(appName: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["available-app", appName],
+export function availableAppQueryOptions(api: ApiClient, appName: string) {
+	return {
+		queryKey: availableAppQueryKey(appName),
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/connectors/available/{app_name}", {
 					params: { path: { app_name: appName } },
 				}),
 			),
-	});
+		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+	};
 }
 
-export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	const api = useApi();
-	return useQuery({
-		...availableAppsQueryOptions(api, { page, pageSize, search }),
-		placeholderData: keepPreviousData,
-	});
+export function connectionsQueryOptions(api: ApiClient) {
+	return {
+		queryKey: ["connections"] as const,
+		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
+	};
 }
 
-export function useConnectorTools(appName: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["connector-tools", appName],
+export function connectorToolsQueryKey(appName: string) {
+	return ["connector-tools", appName] as const;
+}
+
+export function connectorToolsQueryOptions(api: ApiClient, appName: string) {
+	return {
+		queryKey: connectorToolsQueryKey(appName),
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/connectors/{app_name}/tools", {
 					params: { path: { app_name: appName } },
 				}),
 			),
+		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+	};
+}
+
+export function useConnections() {
+	const api = useApi();
+	return useQuery(connectionsQueryOptions(api));
+}
+
+export function useAvailableApp(appName: string) {
+	const api = useApi();
+	return useQuery(availableAppQueryOptions(api, appName));
+}
+
+export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const query = useQuery({
+		...availableAppsQueryOptions(api, { page, pageSize, search }),
+		placeholderData: keepPreviousData,
 	});
+	useEffect(() => {
+		const apps = query.data?.items;
+		if (!apps) return;
+		for (const app of apps) {
+			queryClient.setQueryData<ConnectorAvailableApp>(availableAppQueryKey(app.name), app);
+		}
+	}, [query.data?.items, queryClient]);
+	return query;
+}
+
+export function useConnectorTools(appName: string) {
+	const api = useApi();
+	return useQuery(connectorToolsQueryOptions(api, appName));
 }
 
 export function useAuthFields(appName: string, { enabled }: { enabled: boolean }) {
@@ -208,15 +243,7 @@ export function useConnectedAppCards() {
 	);
 
 	const lookup = useQueries({
-		queries: names.map((name) => ({
-			queryKey: ["available-app", name] as const,
-			queryFn: async () =>
-				unwrap(
-					await api.GET("/v1/connectors/available/{app_name}", {
-						params: { path: { app_name: name } },
-					}),
-				),
-		})),
+		queries: names.map((name) => availableAppQueryOptions(api, name)),
 	});
 
 	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
