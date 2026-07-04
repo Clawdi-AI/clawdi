@@ -29,7 +29,7 @@ import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
  * cloud-api): Telegram = bot token; Discord = bot token + application_id +
  * public_key (+ guild_id); WhatsApp = no token (device is linked afterwards
  * via the Baileys tenant-creds flow on the channel page). On success the
- * webhook secret is revealed once.
+ * scoped agent token may be revealed once when an agent is auto-linked.
  */
 export function ConnectBotDialog({
 	open,
@@ -114,15 +114,10 @@ export function ConnectBotDialog({
 						<DialogHeader>
 							<DialogTitle>Channel connected</DialogTitle>
 							<DialogDescription>
-								<span className="font-medium">{created.name}</span> is ready. Keep the webhook
-								secret safe — it signs incoming updates.
+								<span className="font-medium">{created.name}</span> is connected. Clawdi handles
+								message delivery automatically. There is nothing else to configure.
 							</DialogDescription>
 						</DialogHeader>
-						<TokenReveal
-							label="Webhook secret"
-							value={created.webhook_secret}
-							note="Shown once. Configure this as the secret token on your bot's webhook."
-						/>
 						{created.agent_token ? (
 							<TokenReveal
 								label="Agent token"
@@ -241,7 +236,7 @@ export function ConnectBotDialog({
 											spellCheck={false}
 										/>
 										<p className="text-xs text-muted-foreground">
-											Verifies incoming interaction signatures.
+											Stored with the Discord application metadata.
 										</p>
 									</div>
 									<div className="flex flex-col gap-1.5">
