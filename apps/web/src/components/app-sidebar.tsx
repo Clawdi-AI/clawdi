@@ -640,7 +640,12 @@ type FocusNavigationPaneProps = {
 	activeAgent: SidebarEnvironment | null;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
+	user: ReturnType<typeof useCurrentUser>["user"];
+	onSearch: () => void;
+	onSettings: () => void;
+	settingsOpen: boolean;
 	onNavigate?: () => void;
+	showTooltips?: boolean;
 };
 
 function FocusNavigationPane({
@@ -651,7 +656,12 @@ function FocusNavigationPane({
 	activeAgent,
 	agentsLoaded,
 	activeSection,
+	user,
+	onSearch,
+	onSettings,
+	settingsOpen,
 	onNavigate,
+	showTooltips = true,
 }: FocusNavigationPaneProps) {
 	return (
 		<div className={cn("flex min-h-0 flex-1 flex-col", className)}>
@@ -673,6 +683,15 @@ function FocusNavigationPane({
 					onNavigate={onNavigate}
 				/>
 			</SidebarContent>
+			<SidebarFooter className="border-t px-3 py-2">
+				<GlobalControls
+					user={user}
+					onSearch={onSearch}
+					onSettings={onSettings}
+					settingsOpen={settingsOpen}
+					showTooltips={showTooltips}
+				/>
+			</SidebarFooter>
 		</div>
 	);
 }
@@ -861,19 +880,11 @@ function SortableAgentRailItem({
 function FocusRailContent({
 	agents,
 	activeAgentId,
-	user,
-	onSearch,
-	onSettings,
-	settingsOpen,
 	onNavigate,
 	showTooltips = true,
 }: {
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
-	user: ReturnType<typeof useCurrentUser>["user"];
-	onSearch: () => void;
-	onSettings: () => void;
-	settingsOpen: boolean;
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
@@ -1091,16 +1102,6 @@ function FocusRailContent({
 					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
 				</SidebarMenu>
 			</SidebarContent>
-
-			<SidebarFooter className="items-center border-t p-2.5">
-				<GlobalControls
-					user={user}
-					onSearch={onSearch}
-					onSettings={onSettings}
-					settingsOpen={settingsOpen}
-					showTooltips={showTooltips}
-				/>
-			</SidebarFooter>
 		</>
 	);
 }
@@ -1224,17 +1225,9 @@ function FocusHeader({
 function RailSidebar({
 	agents,
 	activeAgentId,
-	user,
-	onSearch,
-	onSettings,
-	settingsOpen,
 }: {
 	agents: SidebarEnvironment[];
 	activeAgentId: string | null;
-	user: ReturnType<typeof useCurrentUser>["user"];
-	onSearch: () => void;
-	onSettings: () => void;
-	settingsOpen: boolean;
 }) {
 	return (
 		<Sidebar
@@ -1243,14 +1236,7 @@ function RailSidebar({
 			className="sticky top-0 hidden h-svh shrink-0 border-r bg-sidebar/95 md:flex"
 			aria-label="Focus rail"
 		>
-			<FocusRailContent
-				agents={agents}
-				activeAgentId={activeAgentId}
-				user={user}
-				onSearch={onSearch}
-				onSettings={onSettings}
-				settingsOpen={settingsOpen}
-			/>
+			<FocusRailContent agents={agents} activeAgentId={activeAgentId} />
 		</Sidebar>
 	);
 }
@@ -1307,7 +1293,7 @@ function GlobalControlButton({
 	children,
 	onClick,
 	active = false,
-	tooltipSide = "right",
+	tooltipSide = "top",
 	showTooltip = true,
 }: {
 	label: string;
@@ -1324,7 +1310,8 @@ function GlobalControlButton({
 			size="icon-lg"
 			onClick={onClick}
 			aria-label={label}
-			className="rounded-lg"
+			aria-pressed={active}
+			className={cn("rounded-lg", active && "ring-2 ring-ring/40")}
 		>
 			{children}
 		</Button>
@@ -1351,12 +1338,12 @@ function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 			{showTooltip ? (
 				<Tooltip>
 					<TooltipTrigger asChild>{trigger}</TooltipTrigger>
-					<TooltipContent side="right">Help</TooltipContent>
+					<TooltipContent side="top">Help</TooltipContent>
 				</Tooltip>
 			) : (
 				trigger
 			)}
-			<DropdownMenuContent side="right" align="end" className="min-w-56">
+			<DropdownMenuContent side="top" align="start" className="min-w-56">
 				<HelpMenuItems />
 			</DropdownMenuContent>
 		</DropdownMenu>
@@ -1392,12 +1379,12 @@ function UserControl({
 			{showTooltip ? (
 				<Tooltip>
 					<TooltipTrigger asChild>{trigger}</TooltipTrigger>
-					<TooltipContent side="right">User menu</TooltipContent>
+					<TooltipContent side="top">User menu</TooltipContent>
 				</Tooltip>
 			) : (
 				trigger
 			)}
-			<DropdownMenuContent className="min-w-56 rounded-lg" side="right" align="end">
+			<DropdownMenuContent className="min-w-56 rounded-lg" side="top" align="end">
 				<UserMenuItems />
 			</DropdownMenuContent>
 		</DropdownMenu>
@@ -1418,7 +1405,7 @@ function GlobalControls({
 	showTooltips?: boolean;
 }) {
 	return (
-		<SidebarMenu className="items-center gap-1">
+		<SidebarMenu className="flex-row items-center gap-1">
 			<SidebarMenuItem>
 				<GlobalControlButton label="Search" onClick={onSearch} showTooltip={showTooltips}>
 					<Search />
@@ -1437,7 +1424,7 @@ function GlobalControls({
 					<Settings />
 				</GlobalControlButton>
 			</SidebarMenuItem>
-			<SidebarMenuItem>
+			<SidebarMenuItem className="ml-auto">
 				<UserControl user={user} showTooltip={showTooltips} />
 			</SidebarMenuItem>
 		</SidebarMenu>
@@ -1504,16 +1491,7 @@ export function AppSidebar({
 
 	return (
 		<>
-			{!isMobile ? (
-				<RailSidebar
-					agents={agents}
-					activeAgentId={activeAgentId}
-					user={user}
-					onSearch={openSearch}
-					onSettings={openSettingsFromSidebar}
-					settingsOpen={settingsOpen}
-				/>
-			) : null}
+			{!isMobile ? <RailSidebar agents={agents} activeAgentId={activeAgentId} /> : null}
 			<Sidebar
 				collapsible="offcanvas"
 				variant={variant}
@@ -1534,6 +1512,10 @@ export function AppSidebar({
 						activeAgent={activeAgent ?? null}
 						agentsLoaded={agentsLoaded}
 						activeSection={activeSection}
+						user={user}
+						onSearch={openSearch}
+						onSettings={openSettingsFromSidebar}
+						settingsOpen={settingsOpen}
 					/>
 				) : null}
 
@@ -1546,10 +1528,6 @@ export function AppSidebar({
 							<FocusRailContent
 								agents={agents}
 								activeAgentId={activeAgentId}
-								user={user}
-								onSearch={openSearch}
-								onSettings={openSettingsFromSidebar}
-								settingsOpen={settingsOpen}
 								onNavigate={closeMobileSidebar}
 								showTooltips={false}
 							/>
@@ -1562,7 +1540,12 @@ export function AppSidebar({
 							activeAgent={activeAgent ?? null}
 							agentsLoaded={agentsLoaded}
 							activeSection={activeSection}
+							user={user}
+							onSearch={openSearch}
+							onSettings={openSettingsFromSidebar}
+							settingsOpen={settingsOpen}
 							onNavigate={closeMobileSidebar}
+							showTooltips={false}
 						/>
 					</div>
 				) : null}
