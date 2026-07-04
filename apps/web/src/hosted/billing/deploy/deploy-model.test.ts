@@ -39,10 +39,12 @@ describe("usesActiveFreeComputeSlot", () => {
 		expect(usesActiveFreeComputeSlot([deployment("running", "compute_free")])).toBe(true);
 		expect(usesActiveFreeComputeSlot([deployment("starting", "compute_free")])).toBe(true);
 		expect(usesActiveFreeComputeSlot([deployment("failed", "compute_free")])).toBe(true);
+		expect(usesActiveFreeComputeSlot([deployment("deleting", "compute_free")])).toBe(true);
 	});
 
-	test("does not count stopped Free or Performance deployments", () => {
+	test("does not count stopped or deleted Free deployments or Performance deployments", () => {
 		expect(usesActiveFreeComputeSlot([deployment("stopped", "compute_free")])).toBe(false);
+		expect(usesActiveFreeComputeSlot([deployment("deleted", "compute_free")])).toBe(false);
 		expect(usesActiveFreeComputeSlot([deployment("running", "compute_performance")])).toBe(false);
 	});
 });

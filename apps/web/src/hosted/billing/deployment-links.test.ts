@@ -9,7 +9,7 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 		name: "openclaw-test",
 		app_id: "app_123",
 		backend: null,
-		status: "provisioning",
+		status: "creating",
 		endpoints: [],
 		openclaw_control_ui_url: null,
 		hermes_control_ui_url: null,
