@@ -221,13 +221,13 @@ export function useHostedAgentTiles({
  * One deployment fans out to one tile per hosted runtime. Codex is the default
  * always-on runtime; OpenClaw and Hermes are optional sibling runtimes.
  *
- * Runtime resolution priority (see `resolveRuntimes` below):
- *   1. `clawdi_cloud_environments` keys. Each key corresponds to a
- *      runtime with a live cloud-api env binding.
- *   2. `onboarded_agents`, when it names recognizable runtimes.
+ * Runtime resolution priority (see `deploymentRuntimes`):
+ *   1. Enabled runtimes named by `clawdi_cloud_environments` keys. Each key
+ *      corresponds to a live cloud-api env binding.
+ *   2. Enabled `onboarded_agents`, when it names recognizable runtimes.
  *   3. Codex plus enabled legacy runtime flags for older payloads.
  */
-function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
+export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtimes = deploymentRuntimes(d);
 	const slug = deploymentDisplayName(d.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal

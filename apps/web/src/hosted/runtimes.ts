@@ -62,7 +62,7 @@ export function runtimeIsEnabled(
 	runtime: HostedRuntime,
 ): boolean {
 	if (runtime === ALWAYS_ON_HOSTED_RUNTIME) return true;
-	if (runtime === "openclaw") return configInfo?.enable_openclaw !== false;
+	if (runtime === "openclaw") return configInfo?.enable_openclaw === true;
 	return configInfo?.enable_hermes === true;
 }
 
@@ -97,15 +97,11 @@ export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[
 		...(configInfo?.onboarded_agents ?? []),
 	]);
 	if (explicit.length > 0) {
-		return sortHostedRuntimes([ALWAYS_ON_HOSTED_RUNTIME, ...explicit]);
+		const enabledExplicit = explicit.filter((runtime) => runtimeIsEnabled(configInfo, runtime));
+		return sortHostedRuntimes([ALWAYS_ON_HOSTED_RUNTIME, ...enabledExplicit]);
 	}
 
 	const fallback = new Set<HostedRuntime>([ALWAYS_ON_HOSTED_RUNTIME]);
-	for (const runtime of sortHostedRuntimes(
-		Object.keys(configInfo?.clawdi_cloud_environments ?? {}),
-	)) {
-		fallback.add(runtime);
-	}
 	if (runtimeIsEnabled(configInfo, "openclaw")) fallback.add("openclaw");
 	if (runtimeIsEnabled(configInfo, "hermes")) fallback.add("hermes");
 	return sortHostedRuntimes(fallback);

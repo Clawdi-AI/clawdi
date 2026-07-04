@@ -1,12 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 
 type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").hostedAgentTileStatus;
+type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
 type HostedRuntimeStatusView =
 	typeof import("@/hosted/use-hosted-agent-tiles").hostedRuntimeStatusView;
 type Env = components["schemas"]["AgentResponse"];
 
 let getTileStatus: HostedAgentTileStatus | null = null;
+let getDeploymentToTiles: DeploymentToTiles | null = null;
 let getRuntimeStatusView: HostedRuntimeStatusView | null = null;
 
 beforeAll(async () => {
@@ -15,6 +18,7 @@ beforeAll(async () => {
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/use-hosted-agent-tiles");
 	getTileStatus = module.hostedAgentTileStatus;
+	getDeploymentToTiles = module.deploymentToTiles;
 	getRuntimeStatusView = module.hostedRuntimeStatusView;
 });
 
@@ -26,6 +30,14 @@ function hostedAgentTileStatus(rawStatus: string) {
 function hostedRuntimeStatusView(rawStatus: string, environment: Env | null | undefined) {
 	if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
 	return getRuntimeStatusView({ status: rawStatus }, environment);
+}
+
+function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = []) {
+	if (!getDeploymentToTiles) throw new Error("deploymentToTiles was not loaded");
+	return getDeploymentToTiles(
+		deployment,
+		new Map(envs.map((item) => [item.id.toLowerCase(), item])),
+	);
 }
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -50,6 +62,82 @@ function env(overrides: Partial<Env> = {}): Env {
 		...overrides,
 	};
 }
+
+function deployment(
+	overrides: Partial<HostedDeployment> = {},
+	configInfoOverrides: Partial<NonNullable<HostedDeployment["config_info"]>> = {},
+): HostedDeployment {
+	return {
+		id: "dep_123",
+		user_id: "user_123",
+		name: "hosted-test",
+		app_id: "app_123",
+		backend: null,
+		status: "running",
+		endpoints: [],
+		openclaw_control_ui_url: null,
+		hermes_control_ui_url: null,
+		config_info: {
+			compute_plan_slug: "compute_free",
+			mux_enabled: true,
+			telegram_mux_enabled: false,
+			discord_mux_enabled: false,
+			whatsapp_mux_enabled: false,
+			imessage_mux_enabled: false,
+			kobb_available: false,
+			channel: null,
+			primary_model: null,
+			ai_provider_id: null,
+			ai_provider_auth_kind: "managed",
+			public_ports: [],
+			enable_openclaw: true,
+			enable_hermes: false,
+			onboarded_agents: ["openclaw"],
+			configured_agents: ["openclaw"],
+			clawdi_cloud_environments: {},
+			vcpu: null,
+			ram_gb: null,
+			disk_gb: null,
+			...configInfoOverrides,
+		},
+		created_at: "2026-06-22T00:00:00Z",
+		upgrade_available: false,
+		...overrides,
+	};
+}
+
+describe("deploymentToTiles", () => {
+	test("omits disabled optional runtimes even when stale environment mappings remain", () => {
+		const openclawEnv = env({
+			id: "33333333-3333-4333-8333-333333333333",
+			name: "hosted-openclaw",
+			default_name: "hosted-openclaw",
+			machine_name: "hosted-openclaw",
+			agent_type: "openclaw",
+			last_seen_at: new Date().toISOString(),
+		});
+		const tiles = hostedDeploymentToTiles(
+			deployment(
+				{},
+				{
+					enable_openclaw: false,
+					enable_hermes: false,
+					onboarded_agents: ["openclaw", "hermes"],
+					configured_agents: ["openclaw", "hermes"],
+					clawdi_cloud_environments: {
+						openclaw: openclawEnv.id,
+						hermes: "44444444-4444-4444-8444-444444444444",
+					},
+				},
+			),
+			[openclawEnv],
+		);
+
+		expect(tiles.map((tile) => tile.agentType)).toEqual(["codex"]);
+		expect(tiles.some((tile) => tile.id === "dep_123:openclaw")).toBe(false);
+		expect(tiles.some((tile) => tile.id === "dep_123:hermes")).toBe(false);
+	});
+});
 
 describe("hostedAgentTileStatus", () => {
 	test("marks running deployments active and normalizes the ready alias", () => {
