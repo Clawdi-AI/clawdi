@@ -19,6 +19,7 @@ import {
 	QrCode,
 	RefreshCw,
 	Settings,
+	Sparkles,
 	TerminalSquare,
 	Trash2,
 	Zap,
@@ -30,6 +31,7 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -166,6 +168,7 @@ type HostedAgentTab =
 	| "console"
 	| "terminal"
 	| "sessions"
+	| "skills"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -179,6 +182,7 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"console",
 	"terminal",
 	"sessions",
+	"skills",
 	"ai",
 	"channels",
 	"settings",
@@ -199,6 +203,10 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	sessions: {
 		description: "History synced by this hosted runtime.",
 		icon: RefreshCw,
+	},
+	skills: {
+		description: "Installed in this agent's Agent Project.",
+		icon: Sparkles,
 	},
 	ai: {
 		description: "Runtime-scoped provider and model binding.",
@@ -325,7 +333,7 @@ export function HostedAgentDetail({
 	const api = useApi();
 	const router = useRouter();
 	const ci = deployment.config_info;
-	const { data: agent } = useQuery({
+	const agentQuery = useQuery({
 		queryKey: ["agents", environmentId],
 		queryFn: async () =>
 			unwrap(
@@ -335,6 +343,7 @@ export function HostedAgentDetail({
 			),
 		enabled: isCloudEnvId(environmentId),
 	});
+	const agent = agentQuery.data;
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
@@ -370,14 +379,22 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
-	const headerActions = consoleUrl ? (
-		<Button asChild variant="outline" size="sm">
-			<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
-				Open {runtimeBrowserUiLabel(runtime)}
-				<ExternalLink className="size-3.5" />
-			</a>
-		</Button>
-	) : null;
+	const headerActions =
+		activeTab === "skills" ? (
+			<Button asChild variant="outline" size="sm">
+				<Link to="/skills" search={{ target: environmentId }}>
+					<Plus />
+					Install skills
+				</Link>
+			</Button>
+		) : consoleUrl ? (
+			<Button asChild variant="outline" size="sm">
+				<a href={consoleUrl} target="_blank" rel="noopener noreferrer">
+					Open {runtimeBrowserUiLabel(runtime)}
+					<ExternalLink className="size-3.5" />
+				</a>
+			</Button>
+		) : null;
 
 	return (
 		<div
@@ -420,6 +437,23 @@ export function HostedAgentDetail({
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} />
+					) : null}
+					{activeTab === "skills" ? (
+						agentQuery.error ? (
+							<ApiErrorPanel
+								error={agentQuery.error}
+								onRetry={() => {
+									void agentQuery.refetch();
+								}}
+								title="Couldn't load agent skills"
+							/>
+						) : (
+							<AgentSkillsTab
+								agentId={environmentId}
+								agentProjectId={agent?.default_project_id}
+								isResolvingAgentProject={agentQuery.isLoading && isCloudEnvId(environmentId)}
+							/>
+						)
 					) : null}
 					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
 					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}

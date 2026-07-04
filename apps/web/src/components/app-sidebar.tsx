@@ -196,6 +196,11 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Sessions from this runtime",
 	},
 	{
+		id: "skills",
+		icon: Sparkles,
+		tooltip: "Skills installed in this agent's Agent Project",
+	},
+	{
 		id: "ai",
 		icon: Zap,
 		tooltip: "Runtime model provider binding",

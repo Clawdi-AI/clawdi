@@ -7,6 +7,8 @@ import {
 	agentSectionSegment,
 	agentSessionDetailHref,
 	agentSkillDetailHref,
+	CONNECTED_AGENT_SECTION_IDS,
+	HOSTED_AGENT_SECTION_IDS,
 	hasAgentTabQuery,
 	parseAgentPathname,
 	parseAgentSectionSegment,
@@ -61,6 +63,11 @@ describe("agent routes", () => {
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
 		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
+	});
+
+	it("keeps Skills available for connected and hosted agent detail", () => {
+		expect(CONNECTED_AGENT_SECTION_IDS).toContain("skills");
+		expect(HOSTED_AGENT_SECTION_IDS).toContain("skills");
 	});
 
 	it("detects and removes tab params without changing the canonical section", () => {
