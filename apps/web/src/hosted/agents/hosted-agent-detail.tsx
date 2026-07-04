@@ -2,7 +2,7 @@
 
 import { CLAWDI_MANAGED_PROVIDER_IDS, isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import type { components } from "@clawdi/shared/api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowUpRight,
@@ -39,6 +39,14 @@ import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -96,6 +104,10 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
+	type PaymentOutcome,
+	StripePaymentForm,
+} from "@/hosted/billing/wallet/stripe-payment-form";
+import {
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
@@ -145,6 +157,10 @@ import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
 type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
+type TermChangeConfirmation = {
+	clientSecret: string;
+	billingTermMonths: number;
+};
 type HostedAgentTab =
 	| "overview"
 	| "console"
@@ -403,21 +419,7 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
-						sessions.error ? (
-							<ApiErrorPanel
-								error={sessions.error}
-								onRetry={() => sessions.refetch()}
-								title="Couldn't load sessions"
-							/>
-						) : (
-							<SessionFeed
-								sessions={sessions.data?.items ?? []}
-								isLoading={sessions.isLoading}
-								emptyMessage="No sessions from this agent yet."
-								showAgent={false}
-								sessionLink={(session) => scopedSessionLink(session.id)}
-							/>
-						)
+						<HostedAgentSessionsTab environmentId={environmentId} />
 					) : null}
 					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
 					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
@@ -431,6 +433,71 @@ export function HostedAgentDetail({
 					) : null}
 				</div>
 			</section>
+		</div>
+	);
+}
+
+function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
+	const api = useApi();
+	const [page, setPage] = useState(1);
+	const [pageSize, setPageSize] = useState(20);
+
+	useEffect(() => {
+		setPage(1);
+	}, [environmentId]);
+
+	const sessions = useQuery({
+		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
+		enabled: isCloudEnvId(environmentId),
+		placeholderData: keepPreviousData,
+	});
+	const total = sessions.data?.total ?? 0;
+	const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+	useEffect(() => {
+		if (sessions.data && page > pageCount) setPage(pageCount);
+	}, [page, pageCount, sessions.data]);
+
+	if (sessions.error) {
+		return (
+			<ApiErrorPanel
+				error={sessions.error}
+				onRetry={() => sessions.refetch()}
+				title="Couldn't load sessions"
+			/>
+		);
+	}
+
+	return (
+		<div
+			className={cn(
+				"space-y-4 transition-opacity",
+				sessions.isFetching && !sessions.isLoading ? "opacity-60" : "opacity-100",
+			)}
+		>
+			<SessionFeed
+				sessions={sessions.data?.items ?? []}
+				isLoading={sessions.isLoading && !sessions.data}
+				emptyMessage="No sessions from this agent yet."
+				showAgent={false}
+				sessionLink={(session) => ({
+					to: "/agents/$id/sessions/$sessionId" as const,
+					params: { id: environmentId, sessionId: session.id },
+				})}
+			/>
+			{sessions.data ? (
+				<DataTablePagination
+					page={page}
+					pageSize={pageSize}
+					total={total}
+					onPageChange={setPage}
+					onPageSizeChange={(nextPageSize) => {
+						setPageSize(nextPageSize);
+						setPage(1);
+					}}
+					pageSizeOptions={[20, 50, 100]}
+				/>
+			) : null}
 		</div>
 	);
 }
@@ -1151,6 +1218,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 	// undefined↔string flip) while staying falsy for the gated Link button.
 	const [accountId, setAccountId] = useState("");
 	const [token, setToken] = useState<string | null>(null);
+	const linkInFlightRef = useRef(false);
 
 	const linkedIds = useMemo(
 		() => new Set((linked.data ?? []).map((l) => l.account_id)),
@@ -1189,7 +1257,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 				}),
 			),
 		onSuccess: (data) => {
-			setToken(data.agent_token ?? null);
+			if (data.agent_token != null) setToken(data.agent_token);
 			setAccountId("");
 			qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
 			qc.invalidateQueries({ queryKey: ["channel-agent-links", data.account_id] });
@@ -1199,6 +1267,16 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 		},
 		onError: toastApiError("Couldn't link channel"),
 	});
+
+	function submitLink() {
+		if (!accountId || linkInFlightRef.current) return;
+		linkInFlightRef.current = true;
+		link.mutate(accountId, {
+			onSettled: () => {
+				linkInFlightRef.current = false;
+			},
+		});
+	}
 
 	if (!hasEnvironmentId) {
 		return (
@@ -1264,7 +1342,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 						</SelectContent>
 					</Select>
 					<Button
-						onClick={() => accountId && link.mutate(accountId)}
+						onClick={submitLink}
 						disabled={!accountId || link.isPending || channels.isLoading || botPool.isLoading}
 					>
 						{link.isPending ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
@@ -1431,6 +1509,8 @@ function ComputeSettingsSections({
 	const currentSubscription = deployment.compute_subscription;
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
+	const [termChangeConfirmation, setTermChangeConfirmation] =
+		useState<TermChangeConfirmation | null>(null);
 	const envs = ci?.clawdi_cloud_environments ?? {};
 	const optionalEnabledCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
 		runtimeIsEnabled(ci, runtimeId),
@@ -1556,6 +1636,13 @@ function ComputeSettingsSections({
 				flow: "subscription_update_confirm",
 				billing_term_months: selectedBillingTerm,
 			});
+			if (res.payment_intent_client_secret) {
+				setTermChangeConfirmation({
+					clientSecret: res.payment_intent_client_secret,
+					billingTermMonths: selectedBillingTerm,
+				});
+				return;
+			}
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;
@@ -1566,6 +1653,20 @@ function ComputeSettingsSections({
 		} catch (error) {
 			toast.error("Couldn’t change billing term", { description: normalizeBillingError(error) });
 		}
+	}
+
+	function completeBillingTermConfirmation(status: PaymentOutcome) {
+		setTermChangeConfirmation(null);
+		void refreshCheckoutReturn().catch(() => undefined);
+		toast.success(
+			status === "succeeded" ? "Billing term update confirmed" : "Billing term update processing",
+			{
+				description:
+					status === "succeeded"
+						? "We refreshed your compute subscription details."
+						: "We will refresh your compute subscription details once the payment settles.",
+			},
+		);
 	}
 
 	async function cancelPerformanceSubscription() {
@@ -1609,6 +1710,33 @@ function ComputeSettingsSections({
 
 	return (
 		<div className="flex flex-col gap-9">
+			<Dialog
+				open={termChangeConfirmation !== null}
+				onOpenChange={(open) => {
+					if (!open) setTermChangeConfirmation(null);
+				}}
+			>
+				<DialogContent className="sm:max-w-md" data-hosted="true">
+					<DialogHeader>
+						<DialogTitle>Confirm billing term change</DialogTitle>
+						<DialogDescription>
+							Complete your bank confirmation to switch this compute to{" "}
+							{billingTermLabel(
+								termChangeConfirmation?.billingTermMonths ?? selectedBillingTerm,
+							).toLowerCase()}
+							.
+						</DialogDescription>
+					</DialogHeader>
+					{termChangeConfirmation ? (
+						<StripePaymentForm
+							clientSecret={termChangeConfirmation.clientSecret}
+							onComplete={completeBillingTermConfirmation}
+							onCancel={() => setTermChangeConfirmation(null)}
+						/>
+					) : null}
+				</DialogContent>
+			</Dialog>
+
 			<SettingsSection
 				title="Runtime availability"
 				description="Choose which runtimes are active on this hosted compute."
