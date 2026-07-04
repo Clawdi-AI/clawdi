@@ -1529,7 +1529,9 @@ function ComputeSettingsSections({
 													checked={enabled}
 													disabled={runtimePending || blockedByPlan}
 													onCheckedChange={(next) =>
-														void runAction(() => setRuntimeEnabled(r.id, next))
+														void runAction(() => setRuntimeEnabled(r.id, next)).catch(
+															() => undefined,
+														)
 													}
 													aria-label={`Toggle ${r.label}`}
 												/>
@@ -1543,7 +1545,9 @@ function ComputeSettingsSections({
 															? "Performance compute is required to run both runtimes"
 															: undefined
 													}
-													onClick={() => void runAction(() => addRuntime(r.id))}
+													onClick={() =>
+														void runAction(() => addRuntime(r.id)).catch(() => undefined)
+													}
 												>
 													{onboard.isPending && onboard.variables?.agentType === r.id ? (
 														<Spinner className="size-3.5" />
@@ -1627,7 +1631,7 @@ function ComputeSettingsSections({
 										!perfPlan ||
 										!perfOfferSelection
 									}
-									onClick={() => runAction(startPerformanceUpgrade)}
+									onClick={() => void runAction(startPerformanceUpgrade).catch(() => undefined)}
 								>
 									{checkout.isPending ? (
 										<Spinner className="size-3.5" />
@@ -1648,7 +1652,7 @@ function ComputeSettingsSections({
 									variant="outline"
 									size="sm"
 									disabled={portal.isPending || !canChangeBillingTerm}
-									onClick={() => runAction(changeBillingTerm)}
+									onClick={() => void runAction(changeBillingTerm).catch(() => undefined)}
 								>
 									{portal.isPending && portal.variables?.flow === "subscription_update_confirm" ? (
 										<Spinner className="size-3.5" />
@@ -1663,7 +1667,9 @@ function ComputeSettingsSections({
 										variant="outline"
 										size="sm"
 										disabled={resumeSubscription.isPending}
-										onClick={() => runAction(resumePerformanceSubscription)}
+										onClick={() =>
+											void runAction(resumePerformanceSubscription).catch(() => undefined)
+										}
 									>
 										{resumeSubscription.isPending ? (
 											<Spinner className="size-3.5" />
@@ -1737,7 +1743,9 @@ function ComputeSettingsSections({
 							variant="outline"
 							size="sm"
 							disabled={lifecycle.isPending || !canRestart}
-							onClick={() => void runAction(() => runLifecycleAction("restart"))}
+							onClick={() =>
+								void runAction(() => runLifecycleAction("restart")).catch(() => undefined)
+							}
 						>
 							{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
 								<Spinner className="size-3.5" />
@@ -1775,7 +1783,11 @@ function ComputeSettingsSections({
 							variant="outline"
 							size="sm"
 							disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
-							onClick={() => void runAction(() => runLifecycleAction(primaryLifecycleAction))}
+							onClick={() =>
+								void runAction(() => runLifecycleAction(primaryLifecycleAction)).catch(
+									() => undefined,
+								)
+							}
 						>
 							{lifecycle.isPending && lifecycle.variables?.action === primaryLifecycleAction ? (
 								<Spinner className="size-3.5" />
