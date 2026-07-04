@@ -2,17 +2,7 @@
 
 import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { useLocation, useRouter } from "@tanstack/react-router";
-import {
-	CalendarClock,
-	Check,
-	ChevronsUpDown,
-	Cpu,
-	Plus,
-	RefreshCw,
-	Rocket,
-	Sparkles,
-	Zap,
-} from "lucide-react";
+import { CalendarClock, Cpu, Plus, RefreshCw, Rocket, Sparkles, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
@@ -24,16 +14,6 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -53,6 +33,12 @@ import type {
 } from "@/hosted/billing/contracts";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
+import {
+	browserTimezone,
+	LANGUAGE_OPTIONS,
+	supportedTimezones,
+	TimezoneCombobox,
+} from "@/hosted/billing/deploy/language-timezone-controls";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
@@ -112,43 +98,6 @@ const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	normalizeError: (error) => `${normalizeApiError(error)} Managed AI still works.`,
 };
 
-/** Personality presets accepted by hosted deployment onboarding. */
-const PERSONALITY_PRESETS = [
-	{ id: "friendly", label: "Friendly" },
-	{ id: "professional", label: "Professional" },
-	{ id: "creative", label: "Creative" },
-	{ id: "concise", label: "Concise" },
-] as const;
-
-/** Common UI languages offered during onboarding. */
-const LANGUAGE_OPTIONS = [
-	{ code: "en", label: "English" },
-	{ code: "zh-CN", label: "简体中文" },
-	{ code: "zh-TW", label: "繁體中文" },
-	{ code: "ja", label: "日本語" },
-	{ code: "ko", label: "한국어" },
-	{ code: "es", label: "Español" },
-	{ code: "fr", label: "Français" },
-	{ code: "de", label: "Deutsch" },
-	{ code: "pt", label: "Português" },
-];
-
-function browserTimezone(): string {
-	try {
-		return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-	} catch {
-		return "";
-	}
-}
-
-function supportedTimezones(): string[] {
-	try {
-		return Intl.supportedValuesOf("timeZone");
-	} catch {
-		return [];
-	}
-}
-
 function aiAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
 	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
 		? "codex_oauth"
@@ -195,71 +144,6 @@ function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
 			}
 			className="h-full bg-card"
 		/>
-	);
-}
-
-function timezoneLabel(timezone: string): string {
-	return timezone.replaceAll("_", " ");
-}
-
-function TimezoneCombobox({
-	value,
-	onValueChange,
-	options,
-}: {
-	value: string;
-	onValueChange: (value: string) => void;
-	options: string[];
-}) {
-	const [open, setOpen] = useState(false);
-	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					id="agent-timezone"
-					type="button"
-					variant="outline"
-					role="combobox"
-					aria-expanded={open}
-					className="w-full justify-between"
-				>
-					<span className={cn("truncate", !value && "text-muted-foreground")}>
-						{value ? timezoneLabel(value) : "Select a timezone"}
-					</span>
-					<ChevronsUpDown className="opacity-50" />
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
-				<Command>
-					<CommandInput placeholder="Search timezones…" />
-					<CommandList className="max-h-72">
-						<CommandEmpty>No timezone found.</CommandEmpty>
-						<CommandGroup>
-							{options.map((tz) => {
-								const selected = value === tz;
-								return (
-									<CommandItem
-										key={tz}
-										value={tz}
-										keywords={[timezoneLabel(tz), tz.replaceAll("/", " ")]}
-										onSelect={() => {
-											onValueChange(tz);
-											setOpen(false);
-										}}
-									>
-										<Check className={cn("size-4", selected ? "opacity-100" : "opacity-0")} />
-										<span className="truncate">{timezoneLabel(tz)}</span>
-										{timezoneLabel(tz) !== tz ? (
-											<span className="ml-auto truncate text-xs text-muted-foreground">{tz}</span>
-										) : null}
-									</CommandItem>
-								);
-							})}
-						</CommandGroup>
-					</CommandList>
-				</Command>
-			</PopoverContent>
-		</Popover>
 	);
 }
 
@@ -383,8 +267,6 @@ export function DeployWizard() {
 	});
 	const [aiChoice, setAiChoice] = useState<string>(MANAGED_AI_CHOICE); // sentinel | provider_id
 	const [compute, setCompute] = useState<Compute>("free");
-	const [agentName, setAgentName] = useState("");
-	const [personality, setPersonality] = useState("");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
@@ -559,8 +441,6 @@ export function DeployWizard() {
 			computePlanSlug,
 			engines,
 			persona: {
-				assistantName: agentName,
-				personality,
 				language,
 				timezone,
 			},
@@ -640,13 +520,10 @@ export function DeployWizard() {
 		runtimeDisplayName("codex"),
 		...enginesSelected.map((engine) => runtimeDisplayName(engine)),
 	].join(" + ");
-	const personalityLabel = PERSONALITY_PRESETS.find((p) => p.id === personality)?.label;
 	const summaryLine = [
-		agentName.trim() || null,
 		`${compute === "performance" ? "Performance" : "Free"} compute`,
 		aiSummary,
 		runtimeSummary,
-		personalityLabel ?? null,
 		LANGUAGE_OPTIONS.find((l) => l.code === language)?.label ?? null,
 		timezone || null,
 	]
@@ -885,45 +762,10 @@ export function DeployWizard() {
 						Personalize <span className="font-normal text-muted-foreground">· optional</span>
 					</>
 				}
-				description="Give your agent a name, tone, language, and timezone."
+				description="Choose the agent's language and timezone."
 			>
 				<div className="flex max-w-2xl flex-col gap-4">
-					<div className="flex flex-col gap-1.5">
-						<label htmlFor="agent-name" className="text-sm text-muted-foreground">
-							Name
-						</label>
-						<Input
-							id="agent-name"
-							name="agent-name"
-							value={agentName}
-							onChange={(e) => setAgentName(e.target.value)}
-							placeholder="My assistant"
-							autoComplete="off"
-							maxLength={60}
-						/>
-					</div>
 					<div className="grid gap-4 sm:grid-cols-2">
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="agent-personality" className="text-sm text-muted-foreground">
-								Personality
-							</label>
-							<Select
-								value={personality || "default"}
-								onValueChange={(v) => setPersonality(v === "default" ? "" : v)}
-							>
-								<SelectTrigger id="agent-personality">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="default">Default</SelectItem>
-									{PERSONALITY_PRESETS.map((p) => (
-										<SelectItem key={p.id} value={p.id}>
-											{p.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
 						<div className="flex flex-col gap-1.5">
 							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
 								Language

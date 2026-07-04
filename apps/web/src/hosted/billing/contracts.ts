@@ -22,6 +22,7 @@ export type PortalResult = Schemas["V2PortalResponse"];
 export type RebindAgentAiProviderRequest = Schemas["V2RebindAgentAiProviderRequest"];
 export type RuntimeAgentType =
 	DeployPaths["/v2/deployments/{deployment_id}/agents/{agent_type}"]["patch"]["parameters"]["path"]["agent_type"];
+export type SetAgentEnabledRequest = Schemas["V2SetAgentEnabledRequest"];
 export type TerminalSessionResponse = Schemas["V2DeploymentTerminalSessionResponse"];
 export type UsageDay = Schemas["V2HostedUsageDay"];
 export type UsageModelBreakdown = Schemas["V2HostedUsageModelBreakdown"];

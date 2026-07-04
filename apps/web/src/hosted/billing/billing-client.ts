@@ -11,6 +11,7 @@ import type {
 	DeployRequest,
 	PortalRequest,
 	RuntimeAgentType,
+	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
@@ -140,6 +141,19 @@ export function useBillingClient() {
 							path: { deployment_id: id, agent_type: runtimeAgentType(agentType) },
 						},
 						body: { enabled },
+					}),
+				),
+			setAgentLanguageTimezone: async (
+				id: string,
+				agentType: string,
+				body: SetAgentEnabledRequest,
+			) =>
+				unwrapDeploy(
+					await api.PATCH("/v2/deployments/{deployment_id}/agents/{agent_type}", {
+						params: {
+							path: { deployment_id: id, agent_type: runtimeAgentType(agentType) },
+						},
+						body,
 					}),
 				),
 			setAgentAiProvider: async (

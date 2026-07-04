@@ -87,12 +87,12 @@ describe("idempotencyAttemptFor", () => {
 		const monthly = idempotencyFingerprint({
 			plan_slug: "compute_performance",
 			billing_term_months: 1,
-			deploy_config: { assistant_name: "Agent" },
+			deploy_config: { language: "en", timezone: "America/Los_Angeles" },
 		});
 		const annual = idempotencyFingerprint({
 			plan_slug: "compute_performance",
 			billing_term_months: 12,
-			deploy_config: { assistant_name: "Agent" },
+			deploy_config: { language: "en", timezone: "America/Los_Angeles" },
 		});
 		const first = idempotencyAttemptFor(null, "checkout", monthly, mint);
 		const changed = idempotencyAttemptFor(first, "checkout", annual, mint);

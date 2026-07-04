@@ -70,6 +70,7 @@ import {
 	useOnboardAgent,
 	useSetAgentAiProvider,
 	useSetAgentEnabled,
+	useSetAgentLanguageTimezone,
 } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
@@ -81,6 +82,11 @@ import type {
 	HostedDeployment,
 	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
+import {
+	LANGUAGE_OPTIONS,
+	supportedTimezones,
+	TimezoneCombobox,
+} from "@/hosted/billing/deploy/language-timezone-controls";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
@@ -1500,12 +1506,136 @@ function HostedAgentSettingsTab({
 	return (
 		<div className="flex flex-col gap-10">
 			<AgentSettingsPanel environmentId={environmentId} />
+			<LanguageTimezoneSettingsSection deployment={deployment} />
 			<ComputeSettingsSections
 				deployment={deployment}
 				isPerformance={isPerformance}
 				runtime={runtime}
 			/>
 		</div>
+	);
+}
+
+function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDeployment }) {
+	const setLanguageTimezone = useSetAgentLanguageTimezone();
+	const runAction = useActionLock();
+	const ci = deployment.config_info;
+	// Generated V2HostedDeploymentDetailsInfo currently exposes no language/timezone fields.
+	const configLanguage = "";
+	const configTimezone = "";
+	const configIdentity = JSON.stringify([deployment.id, configLanguage, configTimezone]);
+	const [syncedIdentity, setSyncedIdentity] = useState(configIdentity);
+	const [savedLanguage, setSavedLanguage] = useState(configLanguage);
+	const [savedTimezone, setSavedTimezone] = useState(configTimezone);
+	const [language, setLanguage] = useState(configLanguage);
+	const [timezone, setTimezone] = useState(configTimezone);
+	if (configIdentity !== syncedIdentity) {
+		setSyncedIdentity(configIdentity);
+		setSavedLanguage(configLanguage);
+		setSavedTimezone(configTimezone);
+		setLanguage(configLanguage);
+		setTimezone(configTimezone);
+	}
+	const tzOptions = useMemo(() => {
+		const all = supportedTimezones();
+		if (timezone && !all.includes(timezone)) return [timezone, ...all];
+		return all;
+	}, [timezone]);
+	const targetRuntimes = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
+		runtimeIsEnabled(ci, runtimeId),
+	);
+	const targetRuntimeLabels = targetRuntimes.map(runtimeDisplayName).join(", ");
+	const dirty = language !== savedLanguage || timezone !== savedTimezone;
+	const canSave = dirty && targetRuntimes.length > 0 && !setLanguageTimezone.isPending;
+
+	async function saveLanguageTimezone() {
+		if (!canSave) return;
+		await setLanguageTimezone.mutateAsync({
+			id: deployment.id,
+			agentTypes: targetRuntimes,
+			enabledByAgentType: Object.fromEntries(
+				targetRuntimes.map((runtimeId) => [runtimeId, runtimeIsEnabled(ci, runtimeId)]),
+			),
+			language,
+			timezone,
+		});
+		setSavedLanguage(language);
+		setSavedTimezone(timezone);
+	}
+
+	function resetLanguageTimezone() {
+		setLanguage(savedLanguage);
+		setTimezone(savedTimezone);
+	}
+
+	return (
+		<SettingsSection
+			title="Language & timezone"
+			description="Set locale context for enabled hosted runtimes."
+		>
+			<div className="flex max-w-2xl flex-col gap-4">
+				<LiveNote>
+					{targetRuntimes.length > 0
+						? `Changes apply live to ${targetRuntimeLabels}.`
+						: "Add OpenClaw or Hermes before saving language and timezone."}
+				</LiveNote>
+				<div className="grid gap-4 sm:grid-cols-2">
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="settings-agent-language">Language</Label>
+						<Select
+							value={language || "default"}
+							onValueChange={(value) => setLanguage(value === "default" ? "" : value)}
+						>
+							<SelectTrigger id="settings-agent-language">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="default">Default</SelectItem>
+								{LANGUAGE_OPTIONS.map((option) => (
+									<SelectItem key={option.code} value={option.code}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+					{tzOptions.length > 0 ? (
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="settings-agent-timezone">Timezone</Label>
+							<TimezoneCombobox
+								id="settings-agent-timezone"
+								value={timezone}
+								onValueChange={setTimezone}
+								options={tzOptions}
+							/>
+						</div>
+					) : null}
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						disabled={!canSave}
+						onClick={() => void runAction(saveLanguageTimezone).catch(() => undefined)}
+					>
+						{setLanguageTimezone.isPending ? <Spinner className="size-3.5" /> : null}
+						Save changes
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						disabled={!dirty || setLanguageTimezone.isPending}
+						onClick={resetLanguageTimezone}
+					>
+						Reset
+					</Button>
+					{setLanguageTimezone.isPending ? (
+						<span className="text-xs text-muted-foreground">Updating runtime settings...</span>
+					) : null}
+				</div>
+			</div>
+		</SettingsSection>
 	);
 }
 
