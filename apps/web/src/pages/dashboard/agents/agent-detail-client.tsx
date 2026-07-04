@@ -1,9 +1,10 @@
 "use client";
 
 import { lazy, Suspense } from "react";
-import { ConnectedAgentDetail } from "@/components/dashboard/connected-agent-detail";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+	ConnectedAgentDetail,
+	ConnectedAgentDetailSkeleton,
+} from "@/components/dashboard/connected-agent-detail";
 import type { AgentSectionId } from "@/lib/agent-routes";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
@@ -26,11 +27,11 @@ export function AgentDetailClient({
 }) {
 	const hostedAccess = useHostedProductAccess();
 	if (AgentHome && hostedAccess.isLoading) {
-		return <AgentDetailSkeleton />;
+		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 	if (AgentHome && hostedAccess.canUseCloudAgents) {
 		return (
-			<Suspense fallback={<AgentDetailSkeleton />}>
+			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted />}>
 				<AgentHome environmentId={environmentId} section={section} />
 			</Suspense>
 		);
@@ -44,15 +45,5 @@ export function AgentDetailClient({
 			section={section}
 			showSourceBadge={showSourceBadge}
 		/>
-	);
-}
-
-function AgentDetailSkeleton() {
-	return (
-		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}>
-			<Skeleton className="h-10 w-64" />
-			<Skeleton className="h-9 w-full max-w-md" />
-			<Skeleton className="h-48 w-full" />
-		</div>
 	);
 }

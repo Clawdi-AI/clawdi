@@ -23,6 +23,7 @@ import {
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
@@ -241,10 +242,7 @@ export function ConnectedAgentDetail({
 			{error ? (
 				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
 			) : isLoading ? (
-				<div className="flex flex-col gap-3 py-2">
-					<Skeleton className="h-6 w-48" />
-					<Skeleton className="h-4 w-64" />
-				</div>
+				<AgentDetailContentSkeleton />
 			) : agent ? (
 				<section className="flex flex-col gap-4">
 					<PageHeader
@@ -319,6 +317,50 @@ export function ConnectedAgentDetail({
 				</section>
 			) : null}
 		</div>
+	);
+}
+
+export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: boolean }) {
+	return (
+		<div
+			data-hosted={hosted ? "true" : undefined}
+			className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
+		>
+			<AgentDetailContentSkeleton />
+		</div>
+	);
+}
+
+function AgentDetailContentSkeleton() {
+	return (
+		<section className="flex flex-col gap-4">
+			<div className="flex flex-col gap-2">
+				<div className="flex items-center gap-2">
+					<Skeleton className="size-4 rounded-sm" />
+					<Skeleton className="h-5 w-28" />
+				</div>
+				<Skeleton className="h-4 w-80 max-w-full" />
+			</div>
+			<div className="grid gap-3 sm:grid-cols-3">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<DetailPanel key={index} className="p-3">
+						<Skeleton className="h-7 w-12" />
+						<Skeleton className="mt-1.5 h-3 w-16" />
+					</DetailPanel>
+				))}
+			</div>
+			<div className="flex flex-col gap-2">
+				{Array.from({ length: 3 }).map((_, index) => (
+					<div key={index} className={cn(ENTITY_CARD_BASE, "flex items-start gap-3")}>
+						<Skeleton className="size-8 shrink-0 rounded-md" />
+						<div className="min-w-0 flex-1">
+							<Skeleton className="h-4 w-4/5" />
+							<Skeleton className="mt-3 h-3 w-1/2" />
+						</div>
+					</div>
+				))}
+			</div>
+		</section>
 	);
 }
 

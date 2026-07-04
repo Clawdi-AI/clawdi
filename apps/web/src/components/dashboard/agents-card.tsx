@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowUpRight } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadge,
@@ -21,7 +21,6 @@ import {
 	ENTITY_STRETCHED_LINK_CLASS,
 	EntityHeader,
 } from "@/components/entity-card";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
@@ -70,9 +69,9 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Optional deployment/source context shown after the runtime disambiguator. */
+	/** Optional deployment/source context for callers that group or label hosted tiles. */
 	contextLabel?: string | null;
-	/** "Synced 2m ago", "Running", "Provisioning…" — already humanized. */
+	/** Humanized fallback when there is no last-seen timestamp ("Running", "Never seen"). */
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
@@ -221,62 +220,64 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		machine_name: tile.name,
 		agent_type: tile.agentType,
 	});
+	const meta: string[] = [];
+	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
+	const activityLabel = agentTileActivityLabel(tile);
+	if (activityLabel) meta.push(activityLabel);
+	const metaLabel = meta.join(" · ");
+
 	// `tile.env` adds a sync badge that renders a `<button>`
-	// (clicks open a status dialog). It MUST live in the meta
-	// line under the agent name — same row as `statusLabel` so
-	// the user sees one tidy "agent + state" stack per tile.
-	// But putting that button as a descendant of a wrapping
-	// <Link>/<a> is invalid HTML (nested interactive), trips a
-	// React hydration warning, and on some browsers swallows the
-	// dialog click entirely.
+	// (clicks open a status dialog). Putting that button as a
+	// descendant of a wrapping <Link>/<a> is invalid HTML (nested
+	// interactive), trips a React hydration warning, and on some
+	// browsers swallows the dialog click entirely.
 	//
 	// Stretched-link pattern fixes both: the link sits as an
 	// absolute overlay (`inset-0`) covering the whole tile but
-	// is NOT an ancestor of the meta. The badge wrapper has
+	// is NOT an ancestor of the badge. The badge wrapper has
 	// `relative z-10` so it stacks above the absolute link and
 	// captures its own clicks; clicks anywhere else hit the
-	// link and navigate. Visual layout matches the original
-	// "sync state under the agent name" — pre-fix-attempt the
-	// badge was floated to the trailing edge.
-	const meta: ReactNode[] = [];
-	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
-	if (tile.contextLabel) meta.push(tile.contextLabel);
-	if (tile.statusLabel) meta.push(tile.statusLabel);
-	if (tile.env) {
-		meta.push(
-			<span className="relative z-10">
-				{/* Legacy hosted envs run a supervised daemon in the v1 runtime
-				 * image — same story as on-clawdi, so they share the hosted copy
-				 * variant. The self-managed copy would tell the user to run CLI
-				 * commands they have no shell for. */}
-				<DaemonStatusBadge
-					env={tile.env}
-					source={onClawdi || legacyHosted ? "on-clawdi" : "self-managed"}
-					manageHref={tile.manageHref}
-				/>
-			</span>,
-		);
-	}
-
-	const trailing = tile.external ? (
-		<ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+	// link and navigate.
+	const status = tile.env ? (
+		<span className="relative z-10 shrink-0 pt-0.5">
+			{/* Legacy hosted envs run a supervised daemon in the v1 runtime
+			 * image — same story as on-clawdi, so they share the hosted copy
+			 * variant. The self-managed copy would tell the user to run CLI
+			 * commands they have no shell for. */}
+			<DaemonStatusBadge
+				env={tile.env}
+				source={onClawdi || legacyHosted ? "on-clawdi" : "self-managed"}
+				manageHref={tile.manageHref}
+				compact
+			/>
+		</span>
 	) : null;
+
+	const trailing = (
+		<div className="flex shrink-0 items-start gap-2">
+			{status}
+			{tile.external ? (
+				<ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+			) : null}
+		</div>
+	);
 
 	const card = (
 		<div
 			className={cn(
 				ENTITY_CARD_BASE,
-				"flex h-full items-center gap-3 transition-colors group-hover:bg-muted/50",
+				"flex h-full items-start gap-3 transition-colors group-hover:bg-muted/50",
 			)}
 		>
 			<EntityHeader
+				align="start"
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={<span title={tile.name}>{displayMachineName(tile.name)}</span>}
-				meta={meta}
+				meta={metaLabel || undefined}
 				titleAdornment={sourcePill}
 				className="min-w-0 flex-1"
 			/>
-			{trailing}
+			{status || tile.external ? trailing : null}
 		</div>
 	);
 
@@ -314,6 +315,11 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 }
 
+function agentTileActivityLabel(tile: AgentTile): string | null {
+	if (tile.lastSeenAt) return relativeTime(tile.lastSeenAt);
+	return tile.statusLabel || null;
+}
+
 function compareAgentTiles(a: AgentTile, b: AgentTile): number {
 	if (a.env && b.env) return compareAgentEnvironments(a.env, b.env);
 	const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
@@ -326,14 +332,19 @@ function compareAgentTiles(a: AgentTile, b: AgentTile): number {
 
 function TileSkeleton() {
 	return (
-		<Card className="py-0">
-			<CardContent className="flex items-center gap-3 p-4">
-				<Skeleton className="size-8 shrink-0 rounded-md" />
-				<div className="min-w-0 flex-1 space-y-1.5">
-					<Skeleton className="h-4 w-24" />
-					<Skeleton className="h-3 w-32" />
+		<div className={cn(ENTITY_CARD_BASE, "flex h-full items-start gap-3")}>
+			<Skeleton className="size-8 shrink-0 rounded-md" />
+			<div className="min-w-0 flex-1">
+				<div className="flex min-w-0 items-center gap-2">
+					<Skeleton className="h-4 w-28 max-w-[70%]" />
+					<Skeleton className="h-5 w-12 shrink-0 rounded-sm" />
 				</div>
-			</CardContent>
-		</Card>
+				<div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden">
+					<Skeleton className="h-3 w-14 shrink-0" />
+					<Skeleton className="h-3 w-16 shrink-0" />
+				</div>
+			</div>
+			<Skeleton className="mt-0.5 h-4 w-10 shrink-0" />
+		</div>
 	);
 }
