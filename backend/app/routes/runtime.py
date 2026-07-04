@@ -208,13 +208,12 @@ async def _provider_projection(
     secret_cache: dict[str, tuple[str | None, AiProviderAuthPayload | None]] = {}
 
     for runtime_name, binding in sorted(bindings.items()):
-        if binding.provider_id not in provider_cache:
-            provider_cache[binding.provider_id] = await _select_provider(
-                db,
-                auth=auth,
-                provider_id=binding.provider_id,
-            )
-        provider = provider_cache[binding.provider_id]
+        provider = await _select_provider_for_binding(
+            db,
+            auth=auth,
+            provider_id=binding.provider_id,
+            provider_cache=provider_cache,
+        )
         if provider is None:
             continue
 
@@ -346,6 +345,31 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
             model=None,
         )
     return bindings
+
+
+async def _select_provider_for_binding(
+    db: AsyncSession,
+    *,
+    auth: AuthContext,
+    provider_id: str | None,
+    provider_cache: dict[str | None, AiProvider | None],
+) -> AiProvider | None:
+    if provider_id not in provider_cache:
+        provider_cache[provider_id] = await _select_provider(
+            db,
+            auth=auth,
+            provider_id=provider_id,
+        )
+    provider = provider_cache[provider_id]
+    if provider is not None or provider_id is None:
+        return provider
+    if None not in provider_cache:
+        provider_cache[None] = await _select_provider(
+            db,
+            auth=auth,
+            provider_id=None,
+        )
+    return provider_cache[None]
 
 
 async def _select_provider(

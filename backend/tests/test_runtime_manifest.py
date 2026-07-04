@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -628,6 +629,89 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
         "provider.hermes.apiKey": "sk-hermes-provider",
         "provider.openclaw.apiKey": "sk-openclaw-provider",
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_falls_back_to_managed_provider_for_archived_binding(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"archived-provider-{uuid4().hex[:8]}",
+        machine_name="Runtime archived provider",
+        agent_type="openclaw",
+    )
+    ciphertext, nonce = encrypt("sk-managed-provider")
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="deleted-custom-provider",
+                type="custom_openai_compatible",
+                base_url="https://deleted-provider.test/v1",
+                default_model="deleted-model",
+                api_mode="openai_responses",
+                auth_type="api_key",
+                auth_metadata={"source": "managed"},
+                managed_by="user",
+                runtime_env_name="DELETED_PROVIDER_API_KEY",
+                archived_at=datetime.now(UTC),
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="clawdi-managed-v2",
+                type="custom_openai_compatible",
+                base_url="https://managed-provider.test/v1",
+                default_model="gpt-5.5",
+                api_mode="openai_responses",
+                auth_type="api_key",
+                auth_metadata={"source": "managed"},
+                managed_by="clawdi",
+                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id="clawdi-managed-v2",
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=ciphertext,
+                nonce=nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "provider_id": "deleted-custom-provider",
+            },
+            "hermes": {"enabled": False},
+        },
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["manifest"]["providers"]["openclaw"] == {
+        "kind": "openai-compatible",
+        "baseUrl": "https://managed-provider.test/v1",
+        "model": "gpt-5.5",
+        "apiMode": "openai_chat",
+        "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "apiKeySecretRef": "provider.openclaw.apiKey",
+    }
+    assert payload["secretValues"] == {"provider.openclaw.apiKey": "sk-managed-provider"}
 
 
 @pytest.mark.asyncio
