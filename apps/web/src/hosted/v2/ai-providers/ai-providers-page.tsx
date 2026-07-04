@@ -112,6 +112,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 	const meta = providerTypeMeta(provider.type);
 	const del = useDeleteProvider();
 	const validate = useValidateProvider();
+	const providerLabel = provider.label ?? provider.provider_id;
 
 	function runValidate() {
 		validate.mutate(provider.provider_id, {
@@ -126,14 +127,8 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
 			<EntityHeader
 				align="start"
-				icon={
-					<EntityIcon
-						kind="provider"
-						id={provider.type}
-						label={provider.label ?? provider.provider_id}
-					/>
-				}
-				title={provider.label ?? provider.provider_id}
+				icon={<EntityIcon kind="provider" id={provider.type} label={providerLabel} />}
+				title={providerLabel}
 				titleAdornment={<AuthBadge auth={provider.auth} />}
 				meta={[
 					`${meta.label}${provider.default_model ? ` · ${formatModelLabel(provider.default_model)}` : ""}${
@@ -148,16 +143,22 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-				<Button variant="ghost" size="sm" onClick={runValidate} disabled={validate.isPending}>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={runValidate}
+					disabled={validate.isPending}
+					aria-label={`Validate ${providerLabel}`}
+				>
 					<BadgeCheck />
 					Validate
 				</Button>
-				<Button variant="outline" size="sm" onClick={onEdit}>
+				<Button variant="outline" size="sm" onClick={onEdit} aria-label={`Edit ${providerLabel}`}>
 					<Pencil />
 					Edit
 				</Button>
 				<ConfirmAction
-					title={`Remove ${provider.label ?? provider.provider_id}?`}
+					title={`Remove ${providerLabel}?`}
 					description={
 						<p>
 							Agents using this provider fall back to the managed default. This can't be undone.
@@ -172,7 +173,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 						size="icon-sm"
 						className="ml-auto text-muted-foreground hover:text-destructive"
 						disabled={del.isPending}
-						aria-label={`Remove ${provider.label ?? provider.provider_id}`}
+						aria-label={`Remove ${providerLabel}`}
 					>
 						<Trash2 />
 					</Button>

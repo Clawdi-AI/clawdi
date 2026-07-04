@@ -318,11 +318,11 @@ export function AgentSettingsPanel({
 			{legacyDashboardUrl ? (
 				<SettingsSection
 					title="Legacy dashboard"
-					description="Manage this v1 hosted agent in the legacy dashboard."
+					description="Manage this Legacy hosted agent in the legacy dashboard."
 				>
 					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 						<p className="max-w-md text-sm text-muted-foreground">
-							This agent uses the legacy v1 management surface for runtime actions.
+							This agent uses the legacy management surface for runtime actions.
 						</p>
 						<Button variant="outline" size="sm" asChild>
 							<a href={legacyDashboardUrl} target="_blank" rel="noopener noreferrer">

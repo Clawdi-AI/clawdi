@@ -31,6 +31,7 @@ export function TermSwitcher({
 			variant="outline"
 			size="sm"
 			className="w-full"
+			aria-label="Billing term"
 		>
 			{sorted.map((offer) => (
 				<ToggleGroupItem

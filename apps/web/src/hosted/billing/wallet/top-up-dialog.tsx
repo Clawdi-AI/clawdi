@@ -157,8 +157,10 @@ export function TopUpDialog({
 								</span>
 								<Input
 									id="topup-amount"
+									name="topup-amount"
 									type="number"
 									inputMode="decimal"
+									autoComplete="off"
 									min={TOPUP_MIN_CENTS / 100}
 									max={TOPUP_MAX_CENTS / 100}
 									step="1"

@@ -114,8 +114,10 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 						<Label htmlFor="ar-threshold">When below ($)</Label>
 						<Input
 							id="ar-threshold"
+							name="ar-threshold"
 							type="number"
 							inputMode="decimal"
+							autoComplete="off"
 							min={1}
 							step="1"
 							className="tabular-nums"
@@ -134,8 +136,10 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 						<Label htmlFor="ar-amount">Add ($)</Label>
 						<Input
 							id="ar-amount"
+							name="ar-amount"
 							type="number"
 							inputMode="decimal"
+							autoComplete="off"
 							min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
 							max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
 							step="1"
@@ -155,8 +159,10 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 						<Label htmlFor="ar-cap">Monthly cap ($)</Label>
 						<Input
 							id="ar-cap"
+							name="ar-cap"
 							type="number"
 							inputMode="decimal"
+							autoComplete="off"
 							min={0}
 							step="1"
 							className="tabular-nums"
