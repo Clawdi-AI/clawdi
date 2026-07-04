@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
@@ -11,6 +12,7 @@ import {
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
@@ -43,6 +45,8 @@ type Env = components["schemas"]["AgentResponse"];
 export function HostedAgentsSection({
 	selfManagedTiles,
 	envsLoading,
+	selfManagedError,
+	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
 	showCloudDeployments = true,
@@ -50,6 +54,8 @@ export function HostedAgentsSection({
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
+	selfManagedError?: unknown;
+	onRetrySelfManaged?: () => void;
 	selfManagedCount: number;
 	/**
 	 * Cloud-api environments the parent already fetched for the
@@ -95,6 +101,7 @@ export function HostedAgentsSection({
 	// onboarding hero.
 	const isEmptyState =
 		!envsLoading &&
+		!selfManagedError &&
 		selfManagedCount === 0 &&
 		hosted.tiles.length === 0 &&
 		legacyConnectedTiles.length === 0 &&
@@ -109,9 +116,15 @@ export function HostedAgentsSection({
 				<AgentsCard
 					agents={agentTiles}
 					isLoading={envsLoading}
+					error={selfManagedError}
+					onRetry={onRetrySelfManaged}
 					hostedStatus={{
 						isLoading: ownershipLoading,
 						error: hosted.error,
+						onRetry: () => {
+							void hosted.refetch();
+						},
+						normalizer: billingErrorNormalizer,
 					}}
 				/>
 			)}
@@ -209,6 +222,8 @@ export function HostedSecondaryCTA({
 export function HostedAgentsByCompute({
 	selfManagedTiles,
 	envsLoading,
+	selfManagedError,
+	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
 	showCloudDeployments = true,
@@ -216,6 +231,8 @@ export function HostedAgentsByCompute({
 }: {
 	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
+	selfManagedError?: unknown;
+	onRetrySelfManaged?: () => void;
 	selfManagedCount: number;
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
@@ -257,6 +274,7 @@ export function HostedAgentsByCompute({
 
 	const isEmptyState =
 		!envsLoading &&
+		!selfManagedError &&
 		selfManagedCount === 0 &&
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0 &&
@@ -300,7 +318,26 @@ export function HostedAgentsByCompute({
 				</section>
 			) : null}
 
-			{hosted.error ? <HostedUnavailableBanner /> : null}
+			{selfManagedError ? (
+				<section className="space-y-2">
+					<SectionLabel>Other agents</SectionLabel>
+					<ApiErrorPanel
+						error={selfManagedError}
+						onRetry={onRetrySelfManaged}
+						title="Couldn't load agents"
+					/>
+				</section>
+			) : null}
+
+			{hosted.error ? (
+				<HostedUnavailableBanner
+					error={hosted.error}
+					onRetry={() => {
+						void hosted.refetch();
+					}}
+					normalizer={billingErrorNormalizer}
+				/>
+			) : null}
 		</div>
 	);
 }

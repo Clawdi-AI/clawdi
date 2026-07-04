@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentSourceBadgeForEnvironment,
@@ -47,6 +48,7 @@ import {
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -107,6 +109,7 @@ export function ConnectedAgentDetail({
 		data: agent,
 		isLoading,
 		error,
+		refetch: refetchAgent,
 	} = useQuery({
 		queryKey: ["agents", id],
 		queryFn: async () =>
@@ -117,7 +120,11 @@ export function ConnectedAgentDetail({
 			),
 	});
 
-	const { data: projects } = useQuery({
+	const {
+		data: projects,
+		error: projectsError,
+		refetch: refetchProjects,
+	} = useQuery({
 		queryKey: ["projects"],
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 		enabled: !!agent,
@@ -132,7 +139,12 @@ export function ConnectedAgentDetail({
 		[projects],
 	);
 
-	const { data: projectBindings, isLoading: projectBindingsLoading } = useQuery({
+	const {
+		data: projectBindings,
+		isLoading: projectBindingsLoading,
+		error: projectBindingsError,
+		refetch: refetchProjectBindings,
+	} = useQuery({
 		queryKey: ["agent-project-bindings", id],
 		queryFn: async (): Promise<ProjectBindingRow[]> =>
 			unwrap(
@@ -143,7 +155,12 @@ export function ConnectedAgentDetail({
 		enabled: !!agent,
 	});
 
-	const { data: sessionsPage, isLoading: sessionsLoading } = useQuery({
+	const {
+		data: sessionsPage,
+		isLoading: sessionsLoading,
+		error: sessionsError,
+		refetch: refetchSessions,
+	} = useQuery({
 		...sessionListQueryOptions(api, { environment_id: id, page_size: 50 }),
 		enabled: !!agent,
 	});
@@ -163,7 +180,12 @@ export function ConnectedAgentDetail({
 	// page uses; hard cap at 50 pages = 10k skills as a
 	// runaway-listing guard.
 	const agentProjectId = agent?.default_project_id;
-	const { data: skillsData, isLoading: skillsLoading } = useQuery({
+	const {
+		data: skillsData,
+		isLoading: skillsLoading,
+		error: skillsError,
+		refetch: refetchSkills,
+	} = useQuery({
 		queryKey: ["skills", agentProjectId, "all-pages"],
 		queryFn: async () =>
 			fetchAllPages<SkillSummary>(
@@ -207,7 +229,7 @@ export function ConnectedAgentDetail({
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
 
-	const sessionTotal = sessionsPage?.total ?? 0;
+	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
@@ -240,7 +262,17 @@ export function ConnectedAgentDetail({
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{error ? (
-				<DetailNotFound title="Agent not found" message={errorMessage(error)} />
+				isApiNotFoundError(error) ? (
+					<DetailNotFound title="Agent not found" message={errorMessage(error)} />
+				) : (
+					<ApiErrorPanel
+						error={error}
+						onRetry={() => {
+							void refetchAgent();
+						}}
+						title="Couldn't load agent"
+					/>
+				)
 			) : isLoading ? (
 				<AgentDetailContentSkeleton />
 			) : agent ? (
@@ -259,43 +291,96 @@ export function ConnectedAgentDetail({
 								<AgentStatPanel label="Sessions" value={sessionTotal} />
 								<AgentStatPanel
 									label="Skills"
-									value={skillsForThisEnv ? skillsForThisEnv.length : "—"}
+									value={skillsError ? "—" : skillsForThisEnv ? skillsForThisEnv.length : "—"}
 								/>
-								<AgentStatPanel label="Projects" value={projectBindings?.length ?? "—"} />
+								<AgentStatPanel
+									label="Projects"
+									value={projectBindingsError ? "—" : (projectBindings?.length ?? "—")}
+								/>
 							</div>
-							<SessionFeed
-								sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-								isLoading={sessionsLoading}
-								emptyMessage="No sessions synced from this agent yet."
-								emptyVariant="inset"
-								showAgent={false}
-								sessionLink={(session) => scopedSessionLink(session.id)}
-							/>
+							{skillsError ? (
+								<ApiErrorPanel
+									error={skillsError}
+									onRetry={() => {
+										void refetchSkills();
+									}}
+									title="Couldn't load agent skills"
+								/>
+							) : null}
+							{projectBindingsError ? (
+								<ApiErrorPanel
+									error={projectBindingsError}
+									onRetry={() => {
+										void refetchProjectBindings();
+									}}
+									title="Couldn't load agent Projects"
+								/>
+							) : null}
+							{sessionsError ? (
+								<ApiErrorPanel
+									error={sessionsError}
+									onRetry={() => {
+										void refetchSessions();
+									}}
+									title="Couldn't load agent sessions"
+								/>
+							) : (
+								<SessionFeed
+									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
+									isLoading={sessionsLoading}
+									emptyMessage="No sessions synced from this agent yet."
+									emptyVariant="inset"
+									showAgent={false}
+									sessionLink={(session) => scopedSessionLink(session.id)}
+								/>
+							)}
 						</div>
 					) : null}
 
 					{activeTab === "sessions" ? (
-						<SessionFeed
-							sessions={sessionsPage?.items ?? []}
-							isLoading={sessionsLoading}
-							emptyMessage="No sessions synced from this agent yet."
-							showAgent={false}
-							sessionLink={(session) => scopedSessionLink(session.id)}
-						/>
+						sessionsError ? (
+							<ApiErrorPanel
+								error={sessionsError}
+								onRetry={() => {
+									void refetchSessions();
+								}}
+								title="Couldn't load agent sessions"
+							/>
+						) : (
+							<SessionFeed
+								sessions={sessionsPage?.items ?? []}
+								isLoading={sessionsLoading}
+								emptyMessage="No sessions synced from this agent yet."
+								showAgent={false}
+								sessionLink={(session) => scopedSessionLink(session.id)}
+							/>
+						)
 					) : null}
 
 					{activeTab === "skills" ? (
-						<SkillCardGrid
-							skills={skillsForThisEnv ?? []}
-							isLoading={skillsLoading}
-							emptyMessage="No skills installed on this agent yet."
-							readOnlySkillCheck={(s) =>
-								!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
-							}
-							onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
-							uninstallPending={uninstallSkill.isPending}
-							skillLink={scopedSkillLink}
-						/>
+						skillsError ? (
+							<ApiErrorPanel
+								error={skillsError}
+								onRetry={() => {
+									void refetchSkills();
+								}}
+								title="Couldn't load agent skills"
+							/>
+						) : (
+							<SkillCardGrid
+								skills={skillsForThisEnv ?? []}
+								isLoading={skillsLoading}
+								emptyMessage="No skills installed on this agent yet."
+								readOnlySkillCheck={(s) =>
+									!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)
+								}
+								onUninstall={(skillKey, projectId) =>
+									uninstallSkill.mutate({ skillKey, projectId })
+								}
+								uninstallPending={uninstallSkill.isPending}
+								skillLink={scopedSkillLink}
+							/>
+						)
 					) : null}
 
 					{activeTab === "projects" ? (
@@ -304,6 +389,14 @@ export function ConnectedAgentDetail({
 							bindings={projectBindings ?? []}
 							projects={projects ?? []}
 							isLoading={projectBindingsLoading}
+							bindingsError={projectBindingsError}
+							onRetryBindings={() => {
+								void refetchProjectBindings();
+							}}
+							projectsError={projectsError}
+							onRetryProjects={() => {
+								void refetchProjects();
+							}}
 							onChanged={() => {
 								queryClient.invalidateQueries({
 									queryKey: ["agent-project-bindings", id],
@@ -384,12 +477,20 @@ function AgentProjectsPanel({
 	bindings,
 	projects,
 	isLoading,
+	bindingsError,
+	onRetryBindings,
+	projectsError,
+	onRetryProjects,
 	onChanged,
 }: {
 	agentId: string;
 	bindings: ProjectBindingRow[];
 	projects: ProjectRow[];
 	isLoading: boolean;
+	bindingsError?: unknown;
+	onRetryBindings?: () => void;
+	projectsError?: unknown;
+	onRetryProjects?: () => void;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -467,6 +568,26 @@ function AgentProjectsPanel({
 	};
 
 	if (isLoading) return <Skeleton className="h-40 w-full" />;
+
+	if (bindingsError) {
+		return (
+			<ApiErrorPanel
+				error={bindingsError}
+				onRetry={onRetryBindings}
+				title="Couldn't load agent Projects"
+			/>
+		);
+	}
+
+	if (projectsError) {
+		return (
+			<ApiErrorPanel
+				error={projectsError}
+				onRetry={onRetryProjects}
+				title="Couldn't load Projects"
+			/>
+		);
+	}
 
 	return (
 		<div className="space-y-4">

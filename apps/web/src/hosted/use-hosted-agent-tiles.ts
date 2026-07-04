@@ -213,6 +213,7 @@ export function useHostedAgentTiles({
 		// stays 'pending'); mask both flags when we never fetch.
 		isLoading: configured && includeDeployments ? query.isLoading : false,
 		error: configured && includeDeployments && !unreachableFromOrigin ? query.error : null,
+		refetch: query.refetch,
 	};
 }
 

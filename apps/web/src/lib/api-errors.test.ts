@@ -5,6 +5,7 @@ import {
 	formatApiError,
 	isApiAuthError,
 	isApiNetworkError,
+	isApiNotFoundError,
 	isApiServerError,
 	normalizeApiError,
 	parseApiDetail,
@@ -51,6 +52,15 @@ describe("cloud-api error classification", () => {
 	test("401 is an auth error, not server", () => {
 		const e = new ApiError(401, "token expired");
 		expect(isApiAuthError(e)).toBe(true);
+		expect(isApiNotFoundError(e)).toBe(false);
+		expect(isApiServerError(e)).toBe(false);
+		expect(isApiNetworkError(e)).toBe(false);
+	});
+
+	test("404 is a not-found error, not transport", () => {
+		const e = new ApiError(404, "agent not found");
+		expect(isApiNotFoundError(e)).toBe(true);
+		expect(isApiAuthError(e)).toBe(false);
 		expect(isApiServerError(e)).toBe(false);
 		expect(isApiNetworkError(e)).toBe(false);
 	});
@@ -66,6 +76,7 @@ describe("cloud-api error classification", () => {
 			const e = new ApiNetworkError(kind);
 			expect(isApiNetworkError(e)).toBe(true);
 			expect(isApiAuthError(e)).toBe(false);
+			expect(isApiNotFoundError(e)).toBe(false);
 			expect(isApiServerError(e)).toBe(false);
 		}
 	});
@@ -73,6 +84,7 @@ describe("cloud-api error classification", () => {
 	test("non-api errors classify as nothing", () => {
 		const e = new Error("random");
 		expect(isApiAuthError(e)).toBe(false);
+		expect(isApiNotFoundError(e)).toBe(false);
 		expect(isApiServerError(e)).toBe(false);
 		expect(isApiNetworkError(e)).toBe(false);
 	});

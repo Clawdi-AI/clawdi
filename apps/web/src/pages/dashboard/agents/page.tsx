@@ -30,7 +30,12 @@ const HostedAgentsByCompute = IS_HOSTED_BUILD
 export default function AgentsIndexPage() {
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
-	const { data: environments, isLoading: envsLoading } = useQuery({
+	const {
+		data: environments,
+		isLoading: envsLoading,
+		error: envsError,
+		refetch: refetchEnvs,
+	} = useQuery({
 		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		// Match the Overview/agent-detail 10s cadence so the live status badges
@@ -57,6 +62,10 @@ export default function AgentsIndexPage() {
 					<HostedAgentsByCompute
 						selfManagedTiles={selfManagedTiles}
 						envsLoading={envsLoading}
+						selfManagedError={envsError}
+						onRetrySelfManaged={() => {
+							void refetchEnvs();
+						}}
 						selfManagedCount={selfManagedCount}
 						cloudEnvs={environments ?? []}
 						showCloudDeployments={hostedAgentsEnabled}
@@ -64,7 +73,14 @@ export default function AgentsIndexPage() {
 					/>
 				</Suspense>
 			) : (
-				<AgentsCard agents={selfManagedTiles} isLoading={envsLoading} />
+				<AgentsCard
+					agents={selfManagedTiles}
+					isLoading={envsLoading}
+					error={envsError}
+					onRetry={() => {
+						void refetchEnvs();
+					}}
+				/>
 			)}
 		</div>
 	);

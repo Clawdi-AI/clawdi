@@ -3,6 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import { CheckCircle2 } from "lucide-react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,7 +27,7 @@ import { cn, formatNumber } from "@/lib/utils";
 type Resource = {
 	icon: LucideIcon;
 	definition: ProjectResourceDefinition;
-	count: number;
+	count: number | null;
 };
 
 export type ProjectTypeCounts = {
@@ -49,37 +50,53 @@ function formatProjectTypeCounts(counts: ProjectTypeCounts) {
 	return `${formatNumber(counts.custom)} Custom · ${formatNumber(counts.global)} Global · ${formatNumber(counts.agent)} Agent`;
 }
 
-function buildResources(stats: DashboardStats, projectCount: number): Resource[] {
+function buildResources(stats: DashboardStats, projectCount: number | null): Resource[] {
 	return PROJECT_RESOURCE_NAV_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
 		return {
 			icon: PROJECT_RESOURCE_ICONS[id],
 			definition,
-			count: projectResourceCount(definition, stats, projectCount),
+			count:
+				id === "projects" && projectCount === null
+					? null
+					: projectResourceCount(definition, stats, projectCount ?? 0),
 		};
 	});
 }
 
 export function ResourcesCard({
 	stats,
+	statsError,
+	onRetryStats,
 	projectCount,
 	projectTypeCounts,
 	projectCountLoading = false,
+	projectCountError,
+	onRetryProjectCount,
 	hasConnectedAgent,
 }: {
 	stats: DashboardStats | undefined;
+	statsError?: unknown;
+	onRetryStats?: () => void;
 	projectCount: number | undefined;
 	projectTypeCounts?: ProjectTypeCounts;
 	projectCountLoading?: boolean;
+	projectCountError?: unknown;
+	onRetryProjectCount?: () => void;
 	hasConnectedAgent?: boolean;
 }) {
-	const ready = stats && (!projectCountLoading || projectCount !== undefined);
+	const projectCountUnavailable = Boolean(projectCountError && projectCount === undefined);
+	const ready =
+		stats &&
+		!statsError &&
+		(!projectCountLoading || projectCount !== undefined || projectCountUnavailable);
 	const waitingForAgent = hasConnectedAgent === false;
 	const finalStep = waitingForAgent ? "Ready to Add to agent" : "Add to agent";
 	// The "First path" walkthrough is onboarding — once the user has
 	// created a custom Project they've walked the path, and the banner
 	// is just permanent noise above their real counts. Hide it then.
 	const established = (projectTypeCounts?.custom ?? 0) > 0;
+	const showFirstPath = !projectCountUnavailable && !established;
 	return (
 		<Card className="gap-0 pb-0">
 			<CardHeader className="border-b">
@@ -90,49 +107,73 @@ export function ResourcesCard({
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="p-0">
-				{established ? null : (
-					<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
-						<div className="flex flex-wrap items-center gap-2">
-							<span className="font-medium text-foreground">
-								{waitingForAgent ? "After connecting an agent" : "First path"}
-							</span>
-							{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
-								<span
-									key={step}
-									className={cn(
-										"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
-										waitingForAgent && index === 2 && "border-dashed opacity-60",
-									)}
-								>
-									<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
-									{step}
-								</span>
-							))}
-						</div>
-						<p className="text-muted-foreground">
-							Create Projects to share with teammates. Use the Global Project for defaults. Agent
-							Projects stay private to one agent. Skills and Vaults live in Projects; Sessions,
-							Memories, and Connectors apply account-wide.
-						</p>
-					</div>
-				)}
-				<div className="divide-y">
-					{ready ? (
-						<ProjectResourceGroups
-							resources={buildResources(stats, projectCount ?? 0)}
-							projectTypeCounts={projectTypeCounts}
+				{statsError ? (
+					<div className="p-6">
+						<ApiErrorPanel
+							error={statsError}
+							onRetry={onRetryStats}
+							title="Couldn't load resources"
 						/>
-					) : (
-						PROJECT_RESOURCE_GROUPS.map((group) => (
-							<div key={group.id}>
-								<ResourceGroupLabel label={group.label} />
-								{group.resourceIds.map((id) => (
-									<ResourceRowSkeleton key={id} />
-								))}
+					</div>
+				) : (
+					<>
+						{projectCountError ? (
+							<div className="border-b px-6 py-4">
+								<ApiErrorPanel
+									error={projectCountError}
+									onRetry={onRetryProjectCount}
+									title="Couldn't load project count"
+								/>
 							</div>
-						))
-					)}
-				</div>
+						) : null}
+						{showFirstPath ? (
+							<div className="grid gap-3 border-b bg-muted/15 px-6 py-4 text-xs">
+								<div className="flex flex-wrap items-center gap-2">
+									<span className="font-medium text-foreground">
+										{waitingForAgent ? "After connecting an agent" : "First path"}
+									</span>
+									{[...FIRST_PATH_STEPS, finalStep].map((step, index) => (
+										<span
+											key={step}
+											className={cn(
+												"inline-flex items-center gap-1 rounded-sm border bg-background px-2 py-1 text-muted-foreground",
+												waitingForAgent && index === 2 && "border-dashed opacity-60",
+											)}
+										>
+											<span className="font-medium tabular-nums text-foreground">{index + 1}.</span>
+											{step}
+										</span>
+									))}
+								</div>
+								<p className="text-muted-foreground">
+									Create Projects to share with teammates. Use the Global Project for defaults.
+									Agent Projects stay private to one agent. Skills and Vaults live in Projects;
+									Sessions, Memories, and Connectors apply account-wide.
+								</p>
+							</div>
+						) : null}
+						<div className="divide-y">
+							{ready ? (
+								<ProjectResourceGroups
+									resources={buildResources(
+										stats,
+										projectCountUnavailable ? null : (projectCount ?? 0),
+									)}
+									projectTypeCounts={projectCountUnavailable ? undefined : projectTypeCounts}
+								/>
+							) : (
+								PROJECT_RESOURCE_GROUPS.map((group) => (
+									<div key={group.id}>
+										<ResourceGroupLabel label={group.label} />
+										{group.resourceIds.map((id) => (
+											<ResourceRowSkeleton key={id} />
+										))}
+									</div>
+								))
+							)}
+						</div>
+					</>
+				)}
 			</CardContent>
 		</Card>
 	);
@@ -190,6 +231,7 @@ function ResourceRow({
 	resource: Resource;
 	projectTypeCounts?: ProjectTypeCounts;
 }) {
+	const countUnavailable = resource.count === null;
 	const empty = resource.count === 0;
 	const Icon = resource.icon;
 	const { definition } = resource;
@@ -200,10 +242,13 @@ function ResourceRow({
 	const isProjectRow = definition.id === "projects";
 	const count = (
 		<span
-			className={cn("text-sm tabular-nums", empty ? "text-muted-foreground" : "font-semibold")}
+			className={cn(
+				"text-sm tabular-nums",
+				empty || countUnavailable ? "text-muted-foreground" : "font-semibold",
+			)}
 			title={scopeLabel}
 		>
-			{formatNumber(resource.count)}
+			{countUnavailable ? "—" : formatNumber(resource.count ?? 0)}
 		</span>
 	);
 	const countCluster =

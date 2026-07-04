@@ -119,6 +119,7 @@ export function useAgentDeployment(environmentId: string) {
 		isLoading: query.isLoading,
 		isFetching: query.isFetching,
 		error: query.error,
+		refetch: query.refetch,
 	};
 }
 
