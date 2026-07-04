@@ -194,6 +194,7 @@ export function useRotateAgentToken(accountId: string) {
 
 export function useCreatePairCode(accountId: string) {
 	const api = useApi();
+	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string; ttl_seconds?: number }) =>
 			unwrap(
@@ -202,6 +203,11 @@ export function useCreatePairCode(accountId: string) {
 					body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
 				}),
 			),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
+			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
+			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
+		},
 		onError: toastApiError("Couldn't create pairing code"),
 	});
 }

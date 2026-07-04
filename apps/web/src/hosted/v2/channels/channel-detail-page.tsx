@@ -16,7 +16,7 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -338,6 +338,32 @@ function AgentsTab({
 	const unlink = useUnlinkChannelAgent(accountId);
 	const [linkOpen, setLinkOpen] = useState(false);
 	const [rotated, setRotated] = useState<Record<string, string>>({});
+	const rotatingLinksRef = useRef<Set<string>>(new Set());
+	const [rotatingLinks, setRotatingLinks] = useState<ReadonlySet<string>>(() => new Set());
+
+	function rotateToken(linkId: string) {
+		if (rotatingLinksRef.current.has(linkId)) return;
+		rotatingLinksRef.current.add(linkId);
+		setRotatingLinks((prev) => new Set(prev).add(linkId));
+		rotate.mutate(linkId, {
+			onSuccess: (data) => {
+				const token = data.agent_token;
+				if (!token) return;
+				setRotated((prev) => ({
+					...prev,
+					[linkId]: token,
+				}));
+			},
+			onSettled: () => {
+				rotatingLinksRef.current.delete(linkId);
+				setRotatingLinks((prev) => {
+					const next = new Set(prev);
+					next.delete(linkId);
+					return next;
+				});
+			},
+		});
+	}
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (links.error) {
@@ -385,74 +411,66 @@ function AgentsTab({
 				/>
 			) : (
 				<div className="flex flex-col gap-2">
-					{items.map((link: ChannelAgentLink) => (
-						<div key={link.id} className={ENTITY_CARD_BASE}>
-							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-								<div className="min-w-0">
-									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-									<div className="text-xs text-muted-foreground">
-										<span className="capitalize">{link.status}</span> · linked{" "}
-										{relativeTime(link.created_at)}
+					{items.map((link: ChannelAgentLink) => {
+						const isRotating = rotatingLinks.has(link.id);
+						return (
+							<div key={link.id} className={ENTITY_CARD_BASE}>
+								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+									<div className="min-w-0">
+										<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
+										<div className="text-xs text-muted-foreground">
+											<span className="capitalize">{link.status}</span> · linked{" "}
+											{relativeTime(link.created_at)}
+										</div>
 									</div>
-								</div>
-								{readOnly ? null : (
-									<div className="flex shrink-0 flex-wrap items-center gap-1.5">
-										<Button
-											variant="outline"
-											size="sm"
-											// Per-row: only the acting row's button shows pending, not all.
-											disabled={rotate.isPending && rotate.variables === link.id}
-											onClick={() =>
-												rotate.mutate(link.id, {
-													onSuccess: (data) => {
-														const token = data.agent_token;
-														if (!token) return;
-														setRotated((prev) => ({
-															...prev,
-															[link.id]: token,
-														}));
-													},
-												})
-											}
-										>
-											{rotate.isPending && rotate.variables === link.id ? (
-												<Spinner className="size-3.5" />
-											) : (
-												<RefreshCw className="size-3.5" />
-											)}
-											Rotate token
-										</Button>
-										<ConfirmAction
-											title="Unlink this agent?"
-											description={<p>It stops sending and receiving on {accountName}.</p>}
-											confirmLabel="Unlink"
-											destructive
-											onConfirm={() => unlink.mutateAsync(link.id)}
-										>
+									{readOnly ? null : (
+										<div className="flex shrink-0 flex-wrap items-center gap-1.5">
 											<Button
-												variant="ghost"
-												size="icon-sm"
-												className="text-muted-foreground hover:text-destructive"
-												disabled={unlink.isPending && unlink.variables === link.id}
-												aria-label="Unlink agent"
+												variant="outline"
+												size="sm"
+												// Per-row: only the acting row's button shows pending, not all.
+												disabled={isRotating}
+												onClick={() => rotateToken(link.id)}
 											>
-												<Link2Off className="size-4" />
+												{isRotating ? (
+													<Spinner className="size-3.5" />
+												) : (
+													<RefreshCw className="size-3.5" />
+												)}
+												Rotate token
 											</Button>
-										</ConfirmAction>
-									</div>
-								)}
-							</div>
-							{rotated[link.id] ? (
-								<div className="mt-3">
-									<TokenReveal
-										label="New agent token"
-										value={rotated[link.id]}
-										note="The previous token is now invalid. Update the agent with this value."
-									/>
+											<ConfirmAction
+												title="Unlink this agent?"
+												description={<p>It stops sending and receiving on {accountName}.</p>}
+												confirmLabel="Unlink"
+												destructive
+												onConfirm={() => unlink.mutateAsync(link.id)}
+											>
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													className="text-muted-foreground hover:text-destructive"
+													disabled={unlink.isPending && unlink.variables === link.id}
+													aria-label="Unlink agent"
+												>
+													<Link2Off className="size-4" />
+												</Button>
+											</ConfirmAction>
+										</div>
+									)}
 								</div>
-							) : null}
-						</div>
-					))}
+								{rotated[link.id] ? (
+									<div className="mt-3">
+										<TokenReveal
+											label="New agent token"
+											value={rotated[link.id]}
+											note="The previous token is now invalid. Update the agent with this value."
+										/>
+									</div>
+								) : null}
+							</div>
+						);
+					})}
 				</div>
 			)}
 
@@ -615,6 +633,22 @@ const TTL_OPTIONS = [
 	{ value: "86400", label: "24 hours" },
 ];
 
+type PairCodeResult = {
+	code: string;
+	expires_at: string;
+	agent_link_id: string;
+};
+
+type RevealedAgentToken = {
+	agentLinkId: string;
+	value: string;
+};
+
+function isExpired(expiresAt: string, nowMs: number): boolean {
+	const expiresAtMs = new Date(expiresAt).getTime();
+	return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
+}
+
 function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const envs = useEnvironments();
 	const create = useCreatePairCode(accountId);
@@ -623,10 +657,24 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	// Select controlled; mapped back to undefined in the request below.
 	const [agentId, setAgentId] = useState("");
 	const [ttl, setTtl] = useState("900");
-	const [result, setResult] = useState<{ code: string; expires_at: string } | null>(null);
+	const [result, setResult] = useState<PairCodeResult | null>(null);
+	const [revealedAgentToken, setRevealedAgentToken] = useState<RevealedAgentToken | null>(null);
+	const [nowMs, setNowMs] = useState(() => Date.now());
 	const generateLocked = useRef(false);
 	const meta = providerMeta(provider);
 	const isGenerating = create.isPending || generateLocked.current;
+	const visibleAgentToken =
+		result && revealedAgentToken?.agentLinkId === result.agent_link_id
+			? revealedAgentToken.value
+			: null;
+	const resultExpired = result ? isExpired(result.expires_at, nowMs) : false;
+
+	useEffect(() => {
+		if (!result) return;
+		setNowMs(Date.now());
+		const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+		return () => window.clearInterval(interval);
+	}, [result]);
 
 	function generate() {
 		if (generateLocked.current) return;
@@ -635,7 +683,19 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 		create.mutate(
 			{ agent_id: agentId || undefined, ttl_seconds: Number(ttl) },
 			{
-				onSuccess: (data) => setResult({ code: data.code, expires_at: data.expires_at }),
+				onSuccess: (data) => {
+					if (data.agent_token) {
+						setRevealedAgentToken({
+							agentLinkId: data.agent_link_id,
+							value: data.agent_token,
+						});
+					}
+					setResult({
+						code: data.code,
+						expires_at: data.expires_at,
+						agent_link_id: data.agent_link_id,
+					});
+				},
 				onSettled: () => {
 					generateLocked.current = false;
 				},
@@ -713,9 +773,22 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					<div className="text-xs font-medium text-primary">Pairing code</div>
 					<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
 					<p className="text-sm text-muted-foreground">
-						Send <span className="font-mono font-medium">{result.code}</span> from the chat you want
-						to pair. Expires {relativeTime(result.expires_at)}.
+						{resultExpired ? (
+							"Expired. Generate a new code."
+						) : (
+							<>
+								Send <span className="font-mono font-medium">{result.code}</span> from the chat you
+								want to pair. Expires {relativeTime(result.expires_at)}.
+							</>
+						)}
 					</p>
+					{visibleAgentToken ? (
+						<TokenReveal
+							label="Agent token"
+							value={visibleAgentToken}
+							note="Copy it now. It won't be shown again. The agent runtime uses this to send and receive on this channel."
+						/>
+					) : null}
 				</div>
 			) : null}
 		</div>
