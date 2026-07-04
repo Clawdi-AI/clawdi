@@ -24,6 +24,12 @@ import {
 } from "@/components/ui/table";
 import type { WalletLedgerEntry, WalletLedgerStatus } from "@/hosted/billing/contracts";
 import { creditsToUsd, formatCredits } from "@/hosted/billing/format";
+import {
+	filteredLedgerEntries,
+	isLedgerFilter,
+	type LedgerFilter,
+	ledgerEmptyStateCopy,
+} from "@/hosted/billing/wallet/ledger-table.logic";
 import { cn, relativeTime } from "@/lib/utils";
 
 const OPERATION_LABELS: Record<string, string> = {
@@ -44,16 +50,6 @@ const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
 	pending: "Pending",
 	failed: "Failed",
 };
-
-type Filter = "all" | "topup" | "grant" | "usage" | "refund";
-
-function groupOf(op: string): Filter {
-	if (op === "topup" || op === "invoice" || op === "x402") return "topup";
-	if (op.startsWith("grant_")) return "grant";
-	if (op === "proxy") return "usage";
-	if (op === "refund") return "refund";
-	return "all";
-}
 
 function statusVariant(
 	status: WalletLedgerStatus,
@@ -102,18 +98,36 @@ export function LedgerTable({
 	isFetchingMore?: boolean;
 	onShowMore?: () => void;
 }) {
-	const [filter, setFilter] = useState<Filter>("all");
+	const [filter, setFilter] = useState<LedgerFilter>("all");
 	const headingId = useId();
 
-	const filtered = useMemo(
-		() =>
-			(filter === "all" ? entries : entries.filter((e) => groupOf(e.operation) === filter)).filter(
-				// Defensive: skip malformed rows (missing id) rather than emit a
-				// React key warning or render an "undefined" row.
-				(e): e is WalletLedgerEntry => e != null && typeof e.id === "string",
-			),
-		[entries, filter],
-	);
+	const filtered = useMemo(() => filteredLedgerEntries(entries, filter), [entries, filter]);
+	const canLoadMore = !atCap && hasMore && onShowMore != null;
+	const emptyState = ledgerEmptyStateCopy({ entriesCount: entries.length, filter, canLoadMore });
+
+	function handleFilterChange(value: string) {
+		if (isLedgerFilter(value)) {
+			setFilter(value);
+		}
+	}
+
+	function renderLoadMoreControl() {
+		if (!canLoadMore || !onShowMore) return null;
+
+		return (
+			<div className="flex justify-center">
+				<Button size="sm" variant="outline" onClick={onShowMore} disabled={isFetchingMore}>
+					{isFetchingMore ? (
+						<>
+							<Spinner /> Loading…
+						</>
+					) : (
+						"Show more"
+					)}
+				</Button>
+			</div>
+		);
+	}
 
 	return (
 		<section data-hosted="true" className="space-y-3" aria-labelledby={headingId}>
@@ -121,7 +135,7 @@ export function LedgerTable({
 				<h2 id={headingId} className="text-base font-semibold">
 					Activity
 				</h2>
-				<Select value={filter} onValueChange={(v) => setFilter(v as Filter)}>
+				<Select value={filter} onValueChange={handleFilterChange}>
 					<SelectTrigger size="sm" className="w-40" aria-label="Filter activity">
 						<SelectValue />
 					</SelectTrigger>
@@ -145,16 +159,15 @@ export function LedgerTable({
 					))}
 				</div>
 			) : filtered.length === 0 ? (
-				<EmptyState
-					variant="inset"
-					icon={Receipt}
-					title={entries.length === 0 ? "No activity yet" : "No matching activity"}
-					description={
-						entries.length === 0
-							? "Top-ups, grants, and usage will show up here."
-							: "Change the filter to see other wallet entries."
-					}
-				/>
+				<>
+					<EmptyState
+						variant="inset"
+						icon={Receipt}
+						title={emptyState.title}
+						description={emptyState.description}
+					/>
+					{renderLoadMoreControl()}
+				</>
 			) : (
 				<>
 					{/* Mobile: a stacked list — a 4-column table would clip on narrow
@@ -241,19 +254,9 @@ export function LedgerTable({
 						<p className="text-center text-xs text-muted-foreground">
 							Showing your most recent activity. Older entries are archived.
 						</p>
-					) : hasMore && onShowMore ? (
-						<div className="flex justify-center">
-							<Button size="sm" variant="outline" onClick={onShowMore} disabled={isFetchingMore}>
-								{isFetchingMore ? (
-									<>
-										<Spinner /> Loading…
-									</>
-								) : (
-									"Show more"
-								)}
-							</Button>
-						</div>
-					) : null}
+					) : (
+						renderLoadMoreControl()
+					)}
 				</>
 			)}
 		</section>
