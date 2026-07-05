@@ -31,6 +31,7 @@ export interface RuntimePaths {
 	manifestLastGood: string;
 	manifestEtag: string;
 	channelsEtag: string;
+	managedSecretCacheFile: string;
 	runConfigRoot: string;
 	mitmProfileRoot: string;
 	mitmProfileBundle: string;
@@ -48,6 +49,7 @@ export interface RuntimePaths {
 	runRoot: string;
 	managedSecretRoot: string;
 	managedSecretFile: string;
+	runtimeSecretFileRoot: string;
 	daemonAuthToken: string;
 	instanceData: string;
 	sensitiveInstanceData: string;
@@ -131,6 +133,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		manifestEtag: join(cacheRoot, "manifest.etag"),
 		channelsEtag: join(cacheRoot, "channels.etag"),
+		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
 		mitmProfileRoot: join(serviceStateRoot, "config", "mitm"),
 		mitmProfileBundle: join(serviceStateRoot, "config", "mitm", "profiles.json"),
@@ -149,6 +152,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		runRoot,
 		managedSecretRoot: join(runRoot, "secrets"),
 		managedSecretFile: join(runRoot, "secrets", "runtime-secrets.json"),
+		runtimeSecretFileRoot: join(runRoot, "secrets", "runtimes"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),
 		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),

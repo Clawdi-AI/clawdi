@@ -7,6 +7,7 @@ import {
 	readFileSync,
 	readlinkSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	utimesSync,
 	writeFileSync,
@@ -439,7 +440,7 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors[0]).toContain("runtime source config does not exist");
 	});
 
-	it("refuses last-good offline boot when cached manifest references secretValues", async () => {
+	it("loads last-good offline boot when cached secret values satisfy refs", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -471,13 +472,61 @@ describe("runtime manifest datasource", () => {
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 			}),
 		);
+		writeFileSync(
+			join(state, "cache", "runtime-secrets.last-good.json"),
+			JSON.stringify({ "provider.default.apiKey": "sk-cached-provider" }),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths());
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected offline manifest load success");
+		expect(loaded.source).toBe("last-good-cache");
+		expect(loaded.offline).toBe(true);
+		expect(loaded.secretValues).toEqual({
+			"provider.default.apiKey": "sk-cached-provider",
+			"secret://provider.default.apiKey": "sk-cached-provider",
+		});
+	});
+
+	it("refuses last-good offline boot when cached secret values are missing", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			join(state, "cache", "manifest.last-good.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_cached_secret_missing",
+				environmentId: "env_cached_secret_missing",
+				instanceId: "iid_cached_secret_missing",
+				generation: 3,
+				issuedAt: "2026-06-06T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: false } },
+				projection: {
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://sub2api.test/v1",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			}),
+		);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
 		expect("errors" in loaded).toBe(true);
 		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
 		expect(loaded.mode).toBe("repair");
 		expect(loaded.errors).toContain(
-			"cached manifest references secretValues (provider.default.apiKey); refusing offline boot without a fresh runtime manifest",
+			"cached manifest references secretValues (provider.default.apiKey); refusing offline boot because cached secret values are missing",
 		);
 	});
 
@@ -984,7 +1033,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		expect(runConfig.secretEnv).toEqual({
 			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
 		});
-		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
+		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
@@ -1271,6 +1320,107 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(false);
 	});
 
+	it("preserves non-OpenAI hosted provider protocols in direct agent projection", () => {
+		for (const providerCase of [
+			{
+				id: "anthropic",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				model: "claude-opus-4-6",
+				apiMode: "anthropic_messages",
+				expectedOpenClawApi: "anthropic-messages",
+			},
+			{
+				id: "gemini",
+				type: "gemini",
+				baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+				model: "gemini-2.5-pro",
+				apiMode: "google_generate_content",
+				expectedOpenClawApi: "google-generative-ai",
+			},
+		]) {
+			const caseRoot = join(root, `provider-${providerCase.id}`);
+			const home = join(caseRoot, "home", "clawdi");
+			const state = join(caseRoot, "var", "lib", "clawdi");
+			const run = join(caseRoot, "run", "clawdi");
+			const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+			const openclawPatch = join(caseRoot, "openclaw-provider-patch.json");
+			mkdirSync(dirname(openclawBin), { recursive: true });
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+			writeFileSync(
+				openclawBin,
+				[
+					"#!/bin/sh",
+					'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
+					`  cat > '${openclawPatch}'`,
+					"  exit 0",
+					"fi",
+					"exit 2",
+					"",
+				].join("\n"),
+			);
+			chmodSync(openclawBin, 0o700);
+
+			const loaded: RuntimeManifestLoad = {
+				source: "remote-datasource",
+				sourcePath: "https://runtime-source.test/desired-state",
+				offline: false,
+				secretValues: {
+					"provider.openclaw.apiKey": `sk-${providerCase.id}`,
+					"secret://provider.openclaw.apiKey": `sk-${providerCase.id}`,
+				},
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: `dep_${providerCase.id}_provider`,
+					environmentId: `env_${providerCase.id}_provider`,
+					instanceId: `iid_${providerCase.id}_provider`,
+					generation: 1,
+					issuedAt: "2026-06-22T00:00:00Z",
+					workspaceRoot: join(home, "clawdi"),
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: {
+							enabled: true,
+							install: {
+								authority: "official",
+								method: "official-installer",
+								url: "https://openclaw.ai/install-cli.sh",
+								home,
+								args: ["--json", "--no-onboard"],
+							},
+						},
+					},
+					projection: {
+						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						system: { home },
+						providers: {
+							openclaw: {
+								kind: "openai-compatible",
+								type: providerCase.type,
+								baseUrl: providerCase.baseUrl,
+								model: providerCase.model,
+								apiMode: providerCase.apiMode,
+								runtimeEnvName: `${providerCase.id.toUpperCase()}_API_KEY`,
+								apiKeySecretRef: "provider.openclaw.apiKey",
+							},
+						},
+					},
+					mitmProfiles: { profiles: [] },
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				},
+			};
+
+			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+			expect(convergence.installErrors).toEqual([]);
+			const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+			expect(patch.models.providers.openclaw.api).toBe(providerCase.expectedOpenClawApi);
+			expect(patch.models.providers.openclaw.api).not.toBeUndefined();
+		}
+	});
+
 	it("injects provider secrets from hosted runtime manifest responses into runtime run config", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1332,10 +1482,93 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		expect(runConfig.secretEnv).toEqual({
 			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
 		});
-		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtime-secrets.json"));
+		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
-		const secrets = JSON.parse(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"));
-		expect(secrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
+		const aggregateSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
+		);
+		expect(aggregateSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
+		const runtimeSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "runtimes", "openclaw.json"), "utf-8"),
+		);
+		expect(runtimeSecrets).toEqual({
+			"provider.default.apiKey": "sk-runtime-provider",
+			"secret://provider.default.apiKey": "sk-runtime-provider",
+		});
+	});
+
+	it("does not project a key-required hosted provider without a secret ref as no-auth", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+printf 'provider projection should not run for unhealthy provider\\n' >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const convergence = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_key_required_missing_ref",
+					environmentId: "env_key_required_missing_ref",
+					instanceId: "iid_key_required_missing_ref",
+					generation: 1,
+					issuedAt: "2026-06-26T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: {
+							enabled: true,
+							run: {
+								command: openclawBin,
+								args: ["gateway", "run"],
+								env: {},
+								prependPath: [],
+							},
+						},
+					},
+					projection: {
+						providers: {
+							openclaw: {
+								kind: "openai-compatible",
+								type: "anthropic",
+								baseUrl: "https://api.anthropic.com",
+								model: "claude-opus-4-6",
+								apiMode: "anthropic_messages",
+								apiKeyRequired: true,
+								status: "error",
+								error: { code: "provider_secret_unavailable" },
+							},
+						},
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: "test://key-required-missing-ref",
+				offline: false,
+				secretValues: {},
+			},
+			getRuntimePaths(),
+		);
+
+		expect(convergence.installErrors).toEqual([]);
+		const providerHealth = JSON.parse(
+			readFileSync(join(state, "status", "provider-health.json"), "utf-8"),
+		);
+		expect(providerHealth.providers.openclaw.status).toBe("error");
+		expect(providerHealth.providers.openclaw.reasons).toContain("provider_error");
+		expect(providerHealth.providers.openclaw.reasons).toContain("provider_secret_unavailable");
+		expect(providerHealth.providers.openclaw.reasons).toContain("api_key_secret_ref_missing");
 	});
 
 	it("does not infer runtime entries from the runtime bridge token", async () => {
@@ -1946,6 +2179,111 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				'ExecStart="clawdi" "runtime" "watch"',
 			);
 			expect(readSystemdEnvFile(paths, "clawdi-runtime-watch")).not.toContain("file-runtime-token");
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime watch does not advance last-good or ETags when systemd apply fails", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+printf 'systemctl failed\\n' >&2
+exit 42
+`,
+		);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		seedCurrentCliInstall(state);
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								deploymentId: "dep_watch_systemd_failure",
+								environmentId: "env_watch_systemd_failure",
+								instanceId: "iid_watch_systemd_failure",
+								generation: 13,
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								runtimes: {
+									openclaw: { enabled: false },
+									hermes: { enabled: false },
+								},
+							},
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: {
+								"content-type": "application/json",
+								etag: '"etag-watch-systemd-failure"',
+							},
+						},
+					),
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: () =>
+					new Response(JSON.stringify([]), {
+						status: 200,
+						headers: {
+							"content-type": "application/json",
+							etag: '"channels-etag-systemd-failure"',
+						},
+					}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.error).toContain("systemd apply failed");
+			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
+			expect(existsSync(join(state, "cache", "channels.etag"))).toBe(false);
+			expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -4461,6 +4799,7 @@ exit 64
 				secretValues: {
 					"provider.default.apiKey": "sk-runtime",
 					"secret://provider.default.apiKey": "sk-runtime",
+					"provider.hermes.apiKey": "sk-other-runtime",
 				},
 			},
 			getRuntimePaths(),
@@ -4483,6 +4822,15 @@ exit 64
 		expect(openclawUnit).not.toContain("sk-runtime");
 		expect(openclawEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
 		expect(openclawEnv).not.toContain(join(state, "bin"));
+		expect(statSync(join(run, "secrets")).mode & 0o777).toBe(0o711);
+		const aggregateSecretPath = join(run, "secrets", "runtime-secrets.json");
+		expect(statSync(aggregateSecretPath).mode & 0o777).toBe(0o600);
+		expect(statSync(join(run, "secrets", "runtimes")).mode & 0o777).toBe(0o700);
+		const runtimeSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "runtimes", "openclaw.json"), "utf-8"),
+		);
+		expect(runtimeSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
+		expect(JSON.stringify(runtimeSecrets)).not.toContain("sk-other-runtime");
 	});
 
 	it("fails closed when direct systemd launch cannot resolve a provider secret", () => {
@@ -4906,8 +5254,8 @@ exit 64
 
 			expect(convergence.mode).toBe("normal");
 			expect(convergence.outputs.mitmProfileBundle).toBe(null);
-			expect(convergence.outputs.mitmSecretFile).toBe(join(run, "secrets", "runtime-secrets.json"));
-			expect(existsSync(convergence.outputs.mitmSecretFile ?? "")).toBe(true);
+			expect(convergence.outputs.mitmSecretFile).toBeNull();
+			expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(true);
 			const paths = getRuntimePaths();
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([

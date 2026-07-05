@@ -161,13 +161,25 @@ const hostedRuntimeEntrySchema = z
 	})
 	.passthrough();
 
-const hostedProviderAuthSchema = z
-	.object({
-		type: z.literal("agent_profile"),
-		tool: z.literal("codex"),
-		profile: z.string().min(1),
-	})
-	.strict();
+const hostedProviderAuthSchema = z.discriminatedUnion("type", [
+	z
+		.object({
+			type: z.literal("agent_profile"),
+			tool: z.literal("codex"),
+			profile: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			type: z.literal("api_key"),
+		})
+		.passthrough(),
+	z
+		.object({
+			type: z.literal("secret_ref"),
+		})
+		.passthrough(),
+]);
 
 export const hostedRuntimeManifestSchema = z
 	.object({
@@ -213,6 +225,15 @@ export const hostedRuntimeManifestSchema = z
 						apiMode: z.string().min(1).optional(),
 						runtimeEnvName: z.string().min(1).optional(),
 						apiKeySecretRef: z.string().min(1).nullable().optional(),
+						apiKeyRequired: z.boolean().optional(),
+						status: z.enum(["ok", "error", "disabled"]).optional(),
+						error: z
+							.object({
+								code: z.string().min(1),
+								message: z.string().min(1).optional(),
+							})
+							.passthrough()
+							.optional(),
 						auth: hostedProviderAuthSchema.optional(),
 					})
 					.passthrough(),

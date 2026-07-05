@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { hostedManifestMitmProfiles, normalizeSecretRef } from "./hosted-mitm-profiles";
+import { hostedManifestMitmProfiles } from "./hosted-mitm-profiles";
 import {
 	DEFAULT_CLAWDI_CLI_POLICY,
 	type HostedRuntimeManifest,
@@ -14,6 +14,7 @@ import {
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
+import { normalizeSecretValues } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -593,18 +594,6 @@ function runtimeManifestUrlFromEnvOrSource(): string {
 	return "https://runtime.invalid/manifest";
 }
 
-function normalizeSecretValues(secretValues: Record<string, string>): Record<string, string> {
-	const normalized: Record<string, string> = {};
-	for (const [ref, value] of Object.entries(secretValues)) {
-		normalized[ref] = value;
-		const secretRef = normalizeSecretRef(ref);
-		if (secretRef && normalized[secretRef] === undefined) {
-			normalized[secretRef] = value;
-		}
-	}
-	return normalized;
-}
-
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 	if (!existsSync(paths.manifestLastGood)) return {};
 	const parsed = parseManifestSafe(readJsonFile(paths.manifestLastGood));
@@ -814,11 +803,23 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 		}
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
+			const cached = loadCachedSecretValues(paths);
+			if ("errors" in cached) return cached;
+			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
+			if (missingSecretRefs.length === 0) {
+				return {
+					manifest,
+					source: "last-good-cache",
+					sourcePath: paths.manifestLastGood,
+					offline: true,
+					secretValues: cached.secretValues,
+				};
+			}
 			return {
 				mode: "repair",
 				stage: "local",
 				errors: [
-					`cached manifest references secretValues (${secretRefs.join(", ")}); refusing offline boot without a fresh runtime manifest`,
+					`cached manifest references secretValues (${missingSecretRefs.join(", ")}); refusing offline boot because cached secret values are missing`,
 				],
 			};
 		}
@@ -834,6 +835,36 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 			stage: "local",
 			errors: [
 				`could not read last-good runtime manifest at ${paths.manifestLastGood}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			],
+		};
+	}
+}
+
+function loadCachedSecretValues(
+	paths: RuntimePaths,
+): { secretValues: Record<string, string> } | RuntimeManifestFailure {
+	if (!existsSync(paths.managedSecretCacheFile)) return { secretValues: {} };
+	try {
+		const raw = readJsonFile(paths.managedSecretCacheFile);
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+			throw new Error("cached secret values must be a JSON object");
+		}
+		const secretValues: Record<string, string> = {};
+		for (const [ref, value] of Object.entries(raw as Record<string, unknown>)) {
+			if (typeof value !== "string") {
+				throw new Error(`cached secret value for ${ref} must be a string`);
+			}
+			secretValues[ref] = value;
+		}
+		return { secretValues: normalizeSecretValues(secretValues) };
+	} catch (error) {
+		return {
+			mode: "repair",
+			stage: "local",
+			errors: [
+				`could not read cached runtime secret values at ${paths.managedSecretCacheFile}: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
 			],

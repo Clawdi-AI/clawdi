@@ -15,6 +15,7 @@ import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
+	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
 	withRuntimeConvergeLock,
@@ -1714,10 +1715,21 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		];
 		const installOk = runtimeErrors.length === 0;
 		if (installOk && loaded.source === "remote-datasource") {
+			convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
+				convergence.manifest,
+				paths,
+				convergenceLoad.secretValues,
+			);
 			writeRuntimeManifestEtag(paths, loaded.etag);
 			if (channelsLoad) {
 				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
 			}
+		} else if (installOk) {
+			convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
+				convergence.manifest,
+				paths,
+				convergenceLoad.secretValues,
+			);
 		}
 		const status = buildRuntimeBootStatus(
 			{
@@ -1872,11 +1884,18 @@ async function runtimeWatchTick(
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
-			if (convergence.installErrors.length === 0 && !("notModified" in manifestLoad)) {
-				writeRuntimeManifestEtag(paths, manifestLoad.etag);
-			}
-			if (convergence.installErrors.length === 0 && !("notModified" in channelsLoad)) {
-				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+			if (convergence.installErrors.length === 0 && !systemdApplyError) {
+				convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
+					convergence.manifest,
+					paths,
+					loaded.secretValues,
+				);
+				if (!("notModified" in manifestLoad)) {
+					writeRuntimeManifestEtag(paths, manifestLoad.etag);
+				}
+				if (!("notModified" in channelsLoad)) {
+					writeRuntimeChannelsEtag(paths, channelsLoad.etag);
+				}
 			}
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -1892,6 +1911,11 @@ async function runtimeWatchTick(
 				convergence: convergence.outputs,
 			};
 		}
+		convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
+			convergence.manifest,
+			paths,
+			loaded.secretValues,
+		);
 		if (!("notModified" in manifestLoad)) {
 			writeRuntimeManifestEtag(paths, manifestLoad.etag);
 		}
@@ -1946,7 +1970,7 @@ function applyRuntimeDesiredState(
 		if (!opts.continueOnCliUpdateError) throw error;
 		cliUpdate = runtimeCliUpdateError(load.manifest, paths, error);
 	}
-	const convergence = convergeRuntimeManifest(load, paths);
+	const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 	return { cliUpdate, convergence };
 }
 

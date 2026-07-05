@@ -24,7 +24,7 @@ import type {
 	AiProviderCatalog,
 	AiProviderType,
 } from "@clawdi/shared";
-import { isAiProviderType } from "@clawdi/shared";
+import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
 import { z } from "zod";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
@@ -35,6 +35,10 @@ import {
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import {
+	normalizeSecretValues,
+	runtimeSecretValue as resolveRuntimeSecretValue,
+} from "./secret-values";
 
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 export {
@@ -131,13 +135,53 @@ function writeJsonFile(path: string, payload: unknown): void {
 	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-function writeLastGoodManifest(manifest: RuntimeManifest, paths: RuntimePaths): string | null {
+function writeLastGoodManifest(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	secretValues: Record<string, string> | undefined,
+): string | null {
 	if (manifest.recovery.cacheManifest === false) {
 		rmSync(paths.manifestLastGood, { force: true });
+		rmSync(paths.managedSecretCacheFile, { force: true });
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
+	writeLastGoodSecretValues(secretValues, paths);
 	return paths.manifestLastGood;
+}
+
+export function cacheRuntimeLastGoodManifest(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	secretValues?: Record<string, string>,
+): string | null {
+	return writeLastGoodManifest(manifest, paths, secretValues);
+}
+
+function writeLastGoodSecretValues(
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): void {
+	const normalized = normalizeSecretValues(secretValues);
+	if (Object.keys(normalized).length === 0) {
+		rmSync(paths.managedSecretCacheFile, { force: true });
+		return;
+	}
+	writePrivateFileAtomic(paths.managedSecretCacheFile, `${JSON.stringify(normalized, null, 2)}\n`, {
+		mode: 0o600,
+		dirMode: 0o755,
+	});
+	makeRootOwned(dirname(paths.managedSecretCacheFile));
+	makeRootOwned(paths.managedSecretCacheFile);
+}
+
+function makeManagedSecretRoot(path: string): void {
+	makeRootOwned(path);
+	try {
+		chmodSync(path, 0o711);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
 }
 
 function writeSecretValues(
@@ -146,24 +190,73 @@ function writeSecretValues(
 ): string | null {
 	const path = paths.managedSecretFile;
 	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
-	if (!secretValues || Object.keys(secretValues).length === 0) {
+	const normalized = normalizeSecretValues(secretValues);
+	if (Object.keys(normalized).length === 0) {
 		rmSync(path, { force: true });
 		rmSync(legacyPath, { force: true });
 		return null;
 	}
 	rmSync(legacyPath, { force: true });
-	writePrivateFileAtomic(path, `${JSON.stringify(secretValues, null, 2)}\n`, {
+	writePrivateFileAtomic(path, `${JSON.stringify(normalized, null, 2)}\n`, {
 		mode: 0o600,
 		dirMode: 0o700,
 	});
-	makeRootOwned(dirname(path));
-	makeRuntimeSecretReadable(path);
-	try {
-		chmodSync(path, 0o600);
-	} catch {
-		// Best effort for non-POSIX local development environments.
+	makeManagedSecretRoot(dirname(path));
+	makeRootOwned(path);
+	return path;
+}
+
+function writeScopedSecretValues(
+	path: string,
+	secretValues: Record<string, string> | undefined,
+	refs: readonly string[],
+	paths: RuntimePaths,
+	owner: "root" | "runtime-user",
+): string | null {
+	const scoped = scopedSecretValues(secretValues, refs);
+	if (Object.keys(scoped).length === 0) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(path, `${JSON.stringify(scoped, null, 2)}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
+	if (owner === "runtime-user") {
+		if (dirname(path) !== paths.managedSecretRoot) {
+			makeRuntimeUserOwned(dirname(path));
+		}
+		makeRuntimeUserOwned(path);
+	} else {
+		makeRootOwned(dirname(path));
+		makeRootOwned(path);
+	}
+	if (path.startsWith(paths.managedSecretRoot)) {
+		makeManagedSecretRoot(paths.managedSecretRoot);
+		try {
+			chmodSync(path, 0o600);
+		} catch {
+			// Best effort for non-POSIX local development environments.
+		}
 	}
 	return path;
+}
+
+function scopedSecretValues(
+	secretValues: Record<string, string> | undefined,
+	refs: readonly string[],
+): Record<string, string> {
+	const normalizedValues = normalizeSecretValues(secretValues);
+	const scoped: Record<string, string> = {};
+	for (const ref of refs) {
+		const value = resolveRuntimeSecretValue(normalizedValues, ref);
+		if (!value) continue;
+		scoped[ref] = value;
+		const normalized = normalizeSecretRef(ref);
+		if (normalized) scoped[normalized] = value;
+		if (ref.startsWith("secret://")) scoped[ref.slice("secret://".length)] = value;
+	}
+	return scoped;
 }
 
 function writeProviderHealthStatus(
@@ -229,6 +322,15 @@ function providerHealthReasons(
 	secretAvailable: boolean | null,
 ): string[] {
 	const reasons: string[] = [];
+	const status = stringValue(provider.status);
+	if (status && status !== "ok") {
+		reasons.push(`provider_${status}`);
+	}
+	const error = recordValue(provider.error);
+	const errorCode = error ? stringValue(error.code) : null;
+	if (errorCode) {
+		reasons.push(errorCode);
+	}
 	const baseUrl = stringValue(provider.baseUrl);
 	if (!baseUrl) {
 		reasons.push("base_url_missing");
@@ -255,6 +357,9 @@ function providerHealthReasons(
 	}
 	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
 		reasons.push("secret_missing");
+	}
+	if (hostedProviderRequiresApiKey(provider) && !stringValue(provider.apiKeySecretRef)) {
+		reasons.push("api_key_secret_ref_missing");
 	}
 	return reasons;
 }
@@ -297,17 +402,6 @@ function makeRootOwned(path: string): void {
 	} catch {
 		// Best effort for local tests and non-root development environments.
 	}
-}
-
-function makeRuntimeSecretReadable(path: string): void {
-	const dir = dirname(path);
-	makeRootOwned(dir);
-	try {
-		chmodSync(dir, 0o711);
-	} catch {
-		// Best effort for non-POSIX local development environments.
-	}
-	makeRuntimeUserOwned(path);
 }
 
 function makeRuntimeUserPrivateDir(path: string): void {
@@ -689,8 +783,10 @@ function hostedAiProviderCatalog(
 			const apiKeySecretRef =
 				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
 			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
+			if (hostedProviderUnhealthy(input)) return null;
 			if (!baseUrl || !model) return null;
 			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
+			if (!auth) return null;
 			return {
 				id,
 				type: hostedProviderType(input),
@@ -729,7 +825,7 @@ function hostedProviderEntries(
 
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
 	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
-	if (raw === "openai_chat" || raw === "openai_responses") {
+	if (typeof raw === "string" && isAiProviderApiMode(raw)) {
 		return raw;
 	}
 	return "openai_chat";
@@ -743,7 +839,7 @@ function hostedProviderType(input: Record<string, unknown>): AiProviderType {
 function hostedProviderAuth(
 	input: Record<string, unknown>,
 	hasApiKeySecretRef: boolean,
-): AiProviderAuth {
+): AiProviderAuth | null {
 	const auth = recordValue(input.auth);
 	if (auth) {
 		const type = stringValue(auth.type);
@@ -752,11 +848,29 @@ function hostedProviderAuth(
 		if (type === "agent_profile" && tool === "codex" && profile) {
 			return { type: "agent_profile", tool: "codex", profile };
 		}
+		if ((type === "api_key" || type === "secret_ref") && !hasApiKeySecretRef) {
+			return null;
+		}
 	}
 	if (hasApiKeySecretRef) {
 		return { type: "api_key", source: "managed" };
 	}
+	if (hostedProviderRequiresApiKey(input)) {
+		return null;
+	}
 	return { type: "none" };
+}
+
+function hostedProviderUnhealthy(input: Record<string, unknown>): boolean {
+	const status = stringValue(input.status);
+	return Boolean(status && status !== "ok");
+}
+
+function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
+	if (input.apiKeyRequired === true) return true;
+	const auth = recordValue(input.auth);
+	const type = auth ? stringValue(auth.type) : null;
+	return type === "api_key" || type === "secret_ref";
 }
 
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
@@ -787,6 +901,63 @@ function hostedProviderSecretEnv(
 		env[runtimeEnvName] = normalizeSecretRef(apiKeySecretRef) ?? apiKeySecretRef;
 	}
 	return env;
+}
+
+function runtimeSecretFilePath(paths: RuntimePaths, runtimeName: string): string {
+	return join(paths.runtimeSecretFileRoot, `${runtimeName}.json`);
+}
+
+function writeRuntimeProviderSecretFile(
+	runtimeName: string,
+	secretValues: Record<string, string> | undefined,
+	secretEnv: Record<string, string>,
+	paths: RuntimePaths,
+): string | null {
+	return writeScopedSecretValues(
+		runtimeSecretFilePath(paths, runtimeName),
+		secretValues,
+		Object.values(secretEnv),
+		paths,
+		"runtime-user",
+	);
+}
+
+function mitmSecretFilePath(paths: RuntimePaths): string {
+	return join(paths.managedSecretRoot, "mitm-secrets.json");
+}
+
+function writeMitmSecretFile(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): string | null {
+	return writeScopedSecretValues(
+		mitmSecretFilePath(paths),
+		secretValues,
+		mitmSecretRefs(manifest),
+		paths,
+		"runtime-user",
+	);
+}
+
+function mitmSecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	collectSecretRefs(manifest.mitmProfiles, refs);
+	return [...refs].sort();
+}
+
+function collectSecretRefs(value: unknown, refs: Set<string>): void {
+	if (!value || typeof value !== "object") return;
+	if (Array.isArray(value)) {
+		for (const item of value) collectSecretRefs(item, refs);
+		return;
+	}
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
+			refs.add(entry);
+		}
+		collectSecretRefs(entry, refs);
+	}
 }
 
 function isEnvKey(value: string): boolean {
@@ -1094,6 +1265,21 @@ function removeStaleRuntimeRunConfigs(writtenRunConfigIds: Set<string>, paths: R
 	}
 }
 
+function removeStaleRuntimeSecretFiles(
+	writtenRuntimeSecretIds: Set<string>,
+	paths: RuntimePaths,
+): void {
+	if (!existsSync(paths.runtimeSecretFileRoot)) return;
+	for (const entry of readdirSync(paths.runtimeSecretFileRoot)) {
+		if (!entry.endsWith(".json")) continue;
+		const id = entry.slice(0, -".json".length);
+		if (!runtimeNameSchema.safeParse(id).success) continue;
+		if (!writtenRuntimeSecretIds.has(id)) {
+			rmSync(join(paths.runtimeSecretFileRoot, entry), { force: true });
+		}
+	}
+}
+
 function runtimeRunConfigIdIsValid(id: string): boolean {
 	const [runtime, service, ...rest] = id.split("+");
 	if (rest.length > 0) return false;
@@ -1201,7 +1387,7 @@ function writeDaemonAuthToken(paths: RuntimePaths): string | null {
 	}
 	rmSync(legacyPath, { force: true });
 	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
-	makeRootOwned(dirname(path));
+	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
 }
@@ -1473,17 +1659,7 @@ function buildRuntimeSystemdUserProgram(input: {
 }
 
 export function runtimeSecretValue(secrets: Record<string, string>, ref: string): string | null {
-	const normalized = normalizeSecretRef(ref);
-	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
-	const candidates = [ref, normalized, raw].filter(
-		(candidate, index, values): candidate is string =>
-			Boolean(candidate) && values.indexOf(candidate) === index,
-	);
-	for (const candidate of candidates) {
-		const value = secrets[candidate];
-		if (typeof value === "string" && value.length > 0) return value;
-	}
-	return null;
+	return resolveRuntimeSecretValue(secrets, ref);
 }
 
 function hashToUInt16(input: string): number {
@@ -2182,6 +2358,7 @@ function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): s
 export function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
+	opts: { cacheLastGood?: boolean } = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
@@ -2198,6 +2375,7 @@ export function convergeRuntimeManifest(
 	const runConfigs: string[] = [];
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
+	const writtenRuntimeSecretIds = new Set<string>();
 
 	mkdirSync(workspaceRoot, { recursive: true });
 	makeRuntimeUserOwned(paths.userHome);
@@ -2206,6 +2384,8 @@ export function convergeRuntimeManifest(
 	mkdirSync(paths.installInventory, { recursive: true });
 	mkdirSync(paths.projectionRoot, { recursive: true });
 	mkdirSync(semRoot, { recursive: true });
+	mkdirSync(paths.managedSecretRoot, { recursive: true });
+	makeManagedSecretRoot(paths.managedSecretRoot);
 
 	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {
@@ -2267,7 +2447,8 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	const mitmSecretFile = writeSecretValues(load.secretValues, paths);
+	writeSecretValues(load.secretValues, paths);
+	const mitmSecretFile = writeMitmSecretFile(manifest, load.secretValues, paths);
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,
 		paths,
@@ -2341,6 +2522,14 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
+		const secretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
+			name,
+			load.secretValues,
+			secretEnv,
+			paths,
+		);
+		if (runtimeProviderSecretFile) writtenRuntimeSecretIds.add(name);
 		const runConfig = buildRuntimeRunConfig({
 			runtime: runtimeName,
 			enabled: runtime.enabled,
@@ -2352,8 +2541,8 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			mitmProfileBundlePath,
 			settings: runtime.run,
-			secretFilePath: mitmSecretFile,
-			secretEnv: hostedProviderSecretEnv(manifest, name),
+			secretFilePath: runtimeProviderSecretFile,
+			secretEnv,
 		});
 		const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
 		runConfigs.push(runConfigPath);
@@ -2423,8 +2612,9 @@ export function convergeRuntimeManifest(
 	const bootFinished = join(instanceRoot, "boot-finished");
 	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
 	removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
-	if (installErrors.length === 0) {
-		manifestLastGood = writeLastGoodManifest(manifest, paths);
+	removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
+	if (installErrors.length === 0 && opts.cacheLastGood !== false) {
+		manifestLastGood = writeLastGoodManifest(manifest, paths, load.secretValues);
 	}
 
 	return {

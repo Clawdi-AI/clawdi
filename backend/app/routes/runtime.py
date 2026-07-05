@@ -34,6 +34,7 @@ router = APIRouter(prefix="/runtime", tags=["runtime"])
 class _RuntimeProviderBinding:
     provider_id: str | None
     model: str | None
+    explicit_provider_id: bool
 
 
 _SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
@@ -212,9 +213,16 @@ async def _provider_projection(
             db,
             auth=auth,
             provider_id=binding.provider_id,
+            allow_default_fallback=not binding.explicit_provider_id,
             provider_cache=provider_cache,
         )
         if provider is None:
+            providers[runtime_name] = _unhealthy_provider_manifest_entry(
+                provider_id=binding.provider_id,
+                model=binding.model,
+                code="provider_not_found",
+                message="explicit runtime provider is missing or archived",
+            )
             continue
 
         if provider.provider_id not in secret_cache:
@@ -225,10 +233,21 @@ async def _provider_projection(
             )
         secret, payload = secret_cache[provider.provider_id]
         secret_ref = _provider_secret_ref(runtime_name) if secret else None
+        missing_required_secret = _provider_requires_secret(provider) and not secret_ref
         providers[runtime_name] = _provider_manifest_entry(
             provider,
             model=binding.model,
             secret_ref=secret_ref,
+            error=(
+                {
+                    "code": "provider_secret_unavailable",
+                    "message": (
+                        "provider requires an API key but no runtime secret value is available"
+                    ),
+                }
+                if missing_required_secret
+                else None
+            ),
         )
         if secret and secret_ref:
             secret_values[secret_ref] = secret
@@ -245,9 +264,11 @@ def _provider_manifest_entry(
     *,
     model: str | None,
     secret_ref: str | None,
+    error: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     projection: dict[str, Any] = {
         "kind": "openai-compatible",
+        "type": provider.type,
         "baseUrl": provider.base_url,
     }
     is_managed = _is_clawdi_managed_provider(provider)
@@ -263,12 +284,35 @@ def _provider_manifest_entry(
         projection["apiMode"] = api_mode
     if runtime_env_name:
         projection["runtimeEnvName"] = runtime_env_name
+    if _provider_requires_secret(provider) and not secret_ref:
+        projection["apiKeyRequired"] = True
     if secret_ref:
         projection["apiKeySecretRef"] = secret_ref
     auth = _provider_manifest_auth(provider)
     if auth is not None:
-        projection["type"] = provider.type
         projection["auth"] = auth
+    if error is not None:
+        projection["status"] = "error"
+        projection["error"] = error
+    return projection
+
+
+def _unhealthy_provider_manifest_entry(
+    *,
+    provider_id: str | None,
+    model: str | None,
+    code: str,
+    message: str,
+) -> dict[str, Any]:
+    projection: dict[str, Any] = {
+        "kind": "openai-compatible",
+        "status": "error",
+        "error": {"code": code, "message": message},
+    }
+    if provider_id:
+        projection["providerId"] = provider_id
+    if model:
+        projection["model"] = model
     return projection
 
 
@@ -285,6 +329,10 @@ def _provider_manifest_auth(provider: AiProvider) -> dict[str, str] | None:
         "tool": "codex",
         "profile": profile.strip(),
     }
+
+
+def _provider_requires_secret(provider: AiProvider) -> bool:
+    return provider.auth_type in {"api_key", "secret_ref"}
 
 
 def _provider_secret_ref(runtime_name: str) -> str:
@@ -313,6 +361,7 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
                 f"unsupported enabled runtime: {runtime_key}",
             )
         raw_provider_id = runtime.get("provider_id", runtime.get("providerId"))
+        explicit_provider_id = raw_provider_id is not None
         if raw_provider_id is None:
             provider_id = state.provider_id
         elif isinstance(raw_provider_id, str) and raw_provider_id.strip():
@@ -338,11 +387,13 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
         bindings[runtime_key] = _RuntimeProviderBinding(
             provider_id=provider_id,
             model=model.strip() if isinstance(model, str) else None,
+            explicit_provider_id=explicit_provider_id,
         )
     if not bindings and state.provider_id:
         bindings["default"] = _RuntimeProviderBinding(
             provider_id=state.provider_id,
             model=None,
+            explicit_provider_id=False,
         )
     return bindings
 
@@ -352,6 +403,7 @@ async def _select_provider_for_binding(
     *,
     auth: AuthContext,
     provider_id: str | None,
+    allow_default_fallback: bool,
     provider_cache: dict[str | None, AiProvider | None],
 ) -> AiProvider | None:
     if provider_id not in provider_cache:
@@ -363,6 +415,8 @@ async def _select_provider_for_binding(
     provider = provider_cache[provider_id]
     if provider is not None or provider_id is None:
         return provider
+    if not allow_default_fallback:
+        return None
     if None not in provider_cache:
         provider_cache[None] = await _select_provider(
             db,
