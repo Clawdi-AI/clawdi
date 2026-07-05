@@ -62,7 +62,6 @@ export interface AiProvider {
 	type: AiProviderType;
 	label?: string;
 	base_url: string;
-	default_model?: string;
 	api_mode?: AiProviderApiMode;
 	auth: AiProviderAuth;
 	managed_by?: "user" | "clawdi";
@@ -247,11 +246,6 @@ function validateProvider(
 	if (!isHttpUrl(provider.base_url)) {
 		errors.push(`Provider ${prefix} has invalid base_url.`);
 	}
-	if (isLegacyOpenAiCodexModelRef(provider.default_model) && !isLegacyManagedProvider(provider)) {
-		errors.push(
-			`Provider ${prefix} default_model must use the OpenAI model id without the legacy openai-codex prefix.`,
-		);
-	}
 	if (provider.api_mode !== undefined) {
 		if (!isAiProviderApiMode(provider.api_mode)) {
 			errors.push(`Provider ${prefix} has invalid api_mode "${provider.api_mode}".`);
@@ -317,10 +311,6 @@ function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
 	if (providerId === CLAWDI_MANAGED_V2_PROVIDER_ID) return CLAWDI_MANAGED_V2_API_MODE;
 	return null;
-}
-
-function isLegacyManagedProvider(provider: AiProvider): boolean {
-	return provider.managed_by === "clawdi" && provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID;
 }
 
 function validateAuth(

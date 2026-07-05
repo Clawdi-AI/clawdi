@@ -1,6 +1,6 @@
 "use client";
 
-import { CLAWDI_MANAGED_PROVIDER_IDS, isFirstPartyManagedAiProvider } from "@clawdi/shared";
+import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import type { components } from "@clawdi/shared/api";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
@@ -137,9 +137,25 @@ import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
+	dedupeProviderIds,
+	firstModelForProvider,
+	isManagedProviderId,
+	MANAGED_AI_CHOICE,
+	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_PROVIDER_ID,
+	modelIdsForProvider,
+	normalizeSelectedProviderIds,
+	primaryModelProviderId,
+	primaryModelRef,
+	primaryModelValue,
+	providerChoiceFromRef,
+	providerRefFromChoice,
+} from "@/hosted/v2/ai-providers/model-binding";
+import {
 	aiProviderRuntimeId,
-	buildAiProviderBootstrap,
+	buildAiProviderPoolBootstrap,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
@@ -192,6 +208,8 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"settings",
 ]);
+const CUSTOM_MODEL_CHOICE = "__custom__";
+const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
 		description: "Status, model, resources, and recent sessions.",
@@ -667,7 +685,10 @@ function OverviewTab({
 }) {
 	const ci = deployment.config_info;
 	const binding = ci?.ai_provider_bindings?.[runtime];
-	const model = binding?.primary_model ?? ci?.primary_model ?? "Managed default";
+	const model =
+		primaryModelValue(binding?.primary_model) ||
+		primaryModelValue(ci?.primary_model) ||
+		"Managed default";
 	const deploymentStatus = parseDeploymentStatus(deployment.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
@@ -1061,6 +1082,49 @@ function ProviderOptionSkeleton() {
 	);
 }
 
+function unresolvedProviderChoice(providerRef: string): string {
+	return `${UNRESOLVED_PROVIDER_PREFIX}${providerRef}`;
+}
+
+function isUnresolvedProviderChoice(choice: string): boolean {
+	return choice.startsWith(UNRESOLVED_PROVIDER_PREFIX);
+}
+
+function unresolvedProviderRef(choice: string): string {
+	return choice.slice(UNRESOLVED_PROVIDER_PREFIX.length);
+}
+
+function agentChoiceFromProviderRef(
+	providerRef: string | null | undefined,
+	providers: readonly AiProvider[],
+): string | null {
+	if (!providerRef) return null;
+	const choice = providerChoiceFromRef(providerRef, providers);
+	if (!choice) return null;
+	if (
+		choice === MANAGED_AI_CHOICE ||
+		providers.some((provider) => provider.provider_id === choice)
+	) {
+		return choice;
+	}
+	return unresolvedProviderChoice(providerRef);
+}
+
+function agentProviderRefFromChoice(
+	choice: string,
+	providers: readonly AiProvider[],
+): string | null {
+	if (isUnresolvedProviderChoice(choice)) return unresolvedProviderRef(choice);
+	return providerRefFromChoice(choice, providers);
+}
+
+function providerCatalogDescription(provider: AiProvider): string {
+	const count = provider.models?.length ?? 0;
+	if (count === 0) return provider.base_url.replace(/^https?:\/\//, "");
+	if (count === 1) return provider.models?.[0]?.id ?? provider.base_url;
+	return `${count} catalog models`;
+}
+
 function AiProviderTab({
 	deployment,
 	runtime,
@@ -1072,29 +1136,46 @@ function AiProviderTab({
 	const setProvider = useSetAgentAiProvider();
 	const ci = deployment.config_info;
 	const list = providers.data?.providers ?? [];
+	const customProviders = useMemo(
+		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
+		[list],
+	);
 	// PER-RUNTIME binding (not the deployment-level field): each runtime binds
 	// its own provider in ai_provider_bindings[runtime].
 	const binding = ci?.ai_provider_bindings?.[runtime];
-	const boundRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
-	const boundProvider = boundRef
-		? (list.find((p) => p.id === boundRef || p.provider_id === boundRef) ?? null)
-		: null;
-	const currentManaged =
-		!boundRef ||
-		CLAWDI_MANAGED_PROVIDER_IDS.has(boundRef) ||
-		(boundProvider ? isFirstPartyManagedAiProvider(boundProvider) : false) ||
-		(binding?.auth_kind ?? ci?.ai_provider_auth_kind) === "managed";
-	// The binding stores the provider's id (UUID); map it back to the slug the
-	// select uses as its value.
-	const inUseSlug = currentManaged ? null : (boundProvider?.provider_id ?? null);
-	const unresolvedProviderRef = !currentManaged && !inUseSlug ? boundRef : null;
-	const showUnresolvedProvider =
-		Boolean(unresolvedProviderRef) && !providers.isLoading && !providers.error;
-	const currentModel = binding?.primary_model ?? ci?.primary_model ?? "";
+	const legacyProviderRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
+	const rawProviderRefs =
+		binding?.provider_ids && binding.provider_ids.length > 0
+			? binding.provider_ids
+			: legacyProviderRef
+				? [legacyProviderRef]
+				: [MANAGED_PROVIDER_ID];
+	const primaryProviderRef =
+		primaryModelProviderId(binding?.primary_model) ??
+		legacyProviderRef ??
+		rawProviderRefs[0] ??
+		MANAGED_PROVIDER_ID;
+	const initialPrimaryChoice =
+		agentChoiceFromProviderRef(primaryProviderRef, list) ??
+		(isManagedProviderId(primaryProviderRef)
+			? MANAGED_AI_CHOICE
+			: unresolvedProviderChoice(primaryProviderRef));
+	const initialProviderChoices = normalizeSelectedProviderIds(
+		rawProviderRefs
+			.map((providerRef) => agentChoiceFromProviderRef(providerRef, list))
+			.filter((choice): choice is string => Boolean(choice)),
+		initialPrimaryChoice,
+	);
+	const currentModel =
+		primaryModelValue(binding?.primary_model) ||
+		primaryModelValue(ci?.primary_model) ||
+		firstModelForProvider(initialPrimaryChoice, list);
 
-	const initial = currentManaged ? "managed" : (inUseSlug ?? `unresolved:${unresolvedProviderRef}`);
-	const [selected, setSelected] = useState<string>(initial);
-	const [primaryModel, setPrimaryModel] = useState<string>(currentModel);
+	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
+	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
+	const [primaryModel, setPrimaryModel] = useState<string>(
+		currentModel || MANAGED_PRIMARY_MODEL_FALLBACK,
+	);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
 	// user's own apply completing, or an out-of-band change) — never on a plain
@@ -1102,37 +1183,110 @@ function AiProviderTab({
 	// same identity → in-progress edits stay untouched; a real change → reset to
 	// the new truth. This is React's "adjust state during render" idiom, which
 	// replaces an effect that re-ran on every keystroke.
-	const bindingIdentity = JSON.stringify([initial, currentModel]);
+	const bindingIdentity = JSON.stringify([
+		initialProviderChoices,
+		initialPrimaryChoice,
+		currentModel,
+	]);
 	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
 	if (bindingIdentity !== syncedIdentity) {
 		setSyncedIdentity(bindingIdentity);
-		setSelected(initial);
-		setPrimaryModel(currentModel);
+		setSelectedProviders(initialProviderChoices);
+		setPrimaryProviderChoice(initialPrimaryChoice);
+		setPrimaryModel(currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
 	}
 
-	const dirty = selected !== initial || primaryModel !== currentModel;
+	const selectedIdentity = JSON.stringify(
+		normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice),
+	);
+	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
+	const dirty =
+		selectedIdentity !== initialSelectedIdentity ||
+		primaryProviderChoice !== initialPrimaryChoice ||
+		primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
+
+	function setPrimaryProvider(choice: string) {
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list);
+		const nextCatalog = modelIdsForProvider(choice, list);
+		const fallback = firstModelForProvider(choice, list);
+		setPrimaryProviderChoice(choice);
+		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
+		setPrimaryModel((current) => {
+			const trimmed = current.trim();
+			if (!trimmed) return fallback || current;
+			if (
+				previousCatalog.includes(trimmed) &&
+				nextCatalog.length > 0 &&
+				!nextCatalog.includes(trimmed)
+			) {
+				return fallback;
+			}
+			return current;
+		});
+	}
+
+	function toggleProvider(choice: string) {
+		const selected = selectedProviders.includes(choice);
+		let next =
+			choice === MANAGED_AI_CHOICE && selectedProviders.some(isUnresolvedProviderChoice)
+				? [MANAGED_AI_CHOICE]
+				: selected
+					? selectedProviders.filter((item) => item !== choice)
+					: selectedProviders.length === 1 &&
+							selectedProviders[0] === MANAGED_AI_CHOICE &&
+							choice !== MANAGED_AI_CHOICE
+						? [choice]
+						: [...selectedProviders, choice];
+		if (next.length === 0) next = [choice];
+		next = dedupeProviderIds(next);
+		setSelectedProviders(next);
+		if (!next.includes(primaryProviderChoice)) {
+			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
+		}
+	}
 
 	function apply() {
+		const selectedChoices = normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice);
+		const providerRefs = selectedChoices
+			.map((choice) => agentProviderRefFromChoice(choice, customProviders))
+			.filter((providerId): providerId is string => Boolean(providerId));
+		if (providerRefs.length !== selectedChoices.length) {
+			toast.error("Provider unavailable", {
+				description: "Refresh providers or choose Managed by Clawdi.",
+			});
+			return;
+		}
+		const primaryProviderRef =
+			agentProviderRefFromChoice(primaryProviderChoice, customProviders) ?? MANAGED_PROVIDER_ID;
+		const nextPrimaryModel = primaryModelRef(primaryProviderRef, primaryModel);
+		if (!nextPrimaryModel) {
+			toast.error("Primary model required", {
+				description: "Choose a catalog model or enter a model id.",
+			});
+			return;
+		}
+		const primaryProvider = customProviders.find(
+			(provider) => provider.provider_id === primaryProviderChoice,
+		);
+		const customSelectedProviders = selectedChoices
+			.filter((choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice))
+			.map((choice) => customProviders.find((provider) => provider.provider_id === choice))
+			.filter((provider): provider is AiProvider => Boolean(provider));
+		const kind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
 		const body: RebindAgentAiProviderRequest = {
-			primary_model: primaryModel.trim() || null,
-			ai_provider_auth_kind: "managed",
+			primary_model: nextPrimaryModel,
+			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+			provider_ids: providerRefs,
+			ai_provider_auth_kind: kind,
 		};
-		if (selected === "managed") {
-			body.ai_provider_auth_kind = "managed";
-			body.ai_provider_id = null;
-		} else {
-			const p = list.find((x) => x.provider_id === selected);
-			if (!p) {
-				toast.error("Provider unavailable", {
-					description: "Refresh providers or choose Managed by Clawdi.",
-				});
-				return;
-			}
-			const kind = aiAuthKind(p);
+		if (customSelectedProviders.length > 0) {
+			const bootstrapSelectedProvider = primaryProvider ?? customSelectedProviders[0];
 			try {
-				body.ai_provider_auth_kind = kind;
-				body.ai_provider_id = aiProviderRuntimeId(p);
-				body.ai_provider_bootstrap = buildAiProviderBootstrap(p, kind);
+				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
+					customSelectedProviders,
+					bootstrapSelectedProvider.provider_id,
+					aiAuthKind(bootstrapSelectedProvider),
+				);
 			} catch (error) {
 				toast.error("Provider unavailable", {
 					description:
@@ -1154,18 +1308,22 @@ function AiProviderTab({
 	}
 
 	return (
-		<div className="space-y-4">
+		<div className="flex flex-col gap-4">
 			<LiveNote>Provider changes apply to the running runtime — no restart.</LiveNote>
 
-			<div className="space-y-2">
+			<div className="flex flex-col gap-2">
 				<button
 					type="button"
-					onClick={() => setSelected("managed")}
-					className={selectableCard(selected === "managed")}
+					onClick={() => toggleProvider(MANAGED_AI_CHOICE)}
+					className={selectableCard(selectedProviders.includes(MANAGED_AI_CHOICE))}
 				>
 					<div className="flex items-center justify-between gap-2">
 						<span className="text-sm font-medium">Managed by Clawdi</span>
-						{currentManaged ? <Badge variant="secondary">In use</Badge> : null}
+						{primaryProviderChoice === MANAGED_AI_CHOICE ? (
+							<Badge variant="secondary">Primary</Badge>
+						) : selectedProviders.includes(MANAGED_AI_CHOICE) ? (
+							<Badge variant="outline">Bound</Badge>
+						) : null}
 					</div>
 					<p className="mt-0.5 text-sm text-muted-foreground">
 						Clawdi-managed Claude models, billed from your wallet.
@@ -1180,40 +1338,45 @@ function AiProviderTab({
 						title="Couldn't load providers"
 					/>
 				) : null}
-				{showUnresolvedProvider ? (
-					<button type="button" disabled className={selectableCard(selected === initial)}>
+				{selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
+					<button key={choice} type="button" disabled className={selectableCard(true)}>
 						<div className="flex items-center justify-between gap-2">
 							<span className="text-sm font-medium">Provider unavailable</span>
 							<Badge variant="secondary">In use</Badge>
 						</div>
 						<p className="mt-0.5 text-sm text-muted-foreground">
-							This runtime is bound to {unresolvedProviderRef}, but that provider could not be
-							loaded. Choose Managed by Clawdi to replace it.
+							This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could not
+							be loaded. Choose Managed by Clawdi to replace it.
 						</p>
 					</button>
-				) : null}
-				{list.map((p) => (
-					<button
-						key={p.provider_id}
-						type="button"
-						onClick={() => setSelected(p.provider_id)}
-						className={`flex items-center gap-3 ${selectableCard(selected === p.provider_id)}`}
-					>
-						<ProviderTypeChip type={p.type} />
-						<span className="min-w-0 flex-1">
-							<span className="flex items-center gap-2">
-								<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
-								<AuthBadge auth={p.auth} />
-							</span>
-							{p.default_model ? (
-								<span className="block text-xs text-muted-foreground">
-									{formatModelLabel(p.default_model)}
-								</span>
-							) : null}
-						</span>
-						{p.provider_id === inUseSlug ? <Badge variant="secondary">In use</Badge> : null}
-					</button>
 				))}
+				{customProviders.map((p) => {
+					const selected = selectedProviders.includes(p.provider_id);
+					return (
+						<button
+							key={p.provider_id}
+							type="button"
+							onClick={() => toggleProvider(p.provider_id)}
+							className={`flex items-center gap-3 ${selectableCard(selected)}`}
+						>
+							<ProviderTypeChip type={p.type} />
+							<span className="min-w-0 flex-1">
+								<span className="flex items-center gap-2">
+									<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
+									<AuthBadge auth={p.auth} />
+								</span>
+								<span className="block text-xs text-muted-foreground">
+									{providerCatalogDescription(p)}
+								</span>
+							</span>
+							{primaryProviderChoice === p.provider_id ? (
+								<Badge variant="secondary">Primary</Badge>
+							) : selected ? (
+								<Badge variant="outline">Bound</Badge>
+							) : null}
+						</button>
+					);
+				})}
 				<Button
 					render={<Link to="/ai-providers" />}
 					nativeButton={false}
@@ -1226,17 +1389,18 @@ function AiProviderTab({
 				</Button>
 			</div>
 
-			<div className="max-w-sm space-y-1.5">
-				<Label htmlFor="primary-model">Primary model (optional)</Label>
-				<Input
-					id="primary-model"
-					value={primaryModel}
-					onChange={(e) => setPrimaryModel(e.target.value)}
-					placeholder="claude-sonnet-4-5"
-					autoComplete="off"
-					spellCheck={false}
-				/>
-			</div>
+			<AgentPrimaryModelPicker
+				providers={list}
+				customProviders={customProviders}
+				selectedProviderChoices={normalizeSelectedProviderIds(
+					selectedProviders,
+					primaryProviderChoice,
+				)}
+				primaryProviderChoice={primaryProviderChoice}
+				primaryModel={primaryModel}
+				onPrimaryProviderChange={setPrimaryProvider}
+				onPrimaryModelChange={setPrimaryModel}
+			/>
 
 			<div className="flex items-center gap-2">
 				<Button
@@ -1244,7 +1408,12 @@ function AiProviderTab({
 					disabled={
 						!dirty ||
 						setProvider.isPending ||
-						(selected !== "managed" && (providers.isLoading || !!providers.error))
+						(providers.isLoading &&
+							selectedProviders.some((choice) => choice !== MANAGED_AI_CHOICE)) ||
+						(!!providers.error &&
+							selectedProviders.some(
+								(choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice),
+							))
 					}
 				>
 					{setProvider.isPending ? <Spinner className="size-3.5" /> : null}
@@ -1262,6 +1431,102 @@ function AiProviderTab({
 				</Link>
 				.
 			</p>
+		</div>
+	);
+}
+
+function AgentPrimaryModelPicker({
+	providers,
+	customProviders,
+	selectedProviderChoices,
+	primaryProviderChoice,
+	primaryModel,
+	onPrimaryProviderChange,
+	onPrimaryModelChange,
+}: {
+	providers: readonly AiProvider[];
+	customProviders: readonly AiProvider[];
+	selectedProviderChoices: readonly string[];
+	primaryProviderChoice: string;
+	primaryModel: string;
+	onPrimaryProviderChange: (choice: string) => void;
+	onPrimaryModelChange: (model: string) => void;
+}) {
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
+	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	return (
+		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+			<div className="grid gap-3 sm:grid-cols-2">
+				<div className="flex flex-col gap-1.5">
+					<Label htmlFor="agent-primary-provider">Primary provider</Label>
+					<Select
+						value={primaryProviderChoice}
+						onValueChange={(value) => {
+							if (value) onPrimaryProviderChange(value);
+						}}
+					>
+						<SelectTrigger id="agent-primary-provider" className="w-full">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
+								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+							) : null}
+							{selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => (
+								<SelectItem key={choice} value={choice}>
+									{unresolvedProviderRef(choice)}
+								</SelectItem>
+							))}
+							{customProviders
+								.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+								.map((provider) => (
+									<SelectItem key={provider.provider_id} value={provider.provider_id}>
+										{provider.label ?? provider.provider_id}
+									</SelectItem>
+								))}
+						</SelectContent>
+					</Select>
+				</div>
+				{catalogModelIds.length > 0 ? (
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="agent-catalog-model">Catalog model</Label>
+						<Select
+							value={modelChoice}
+							onValueChange={(value) => {
+								if (!value) return;
+								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
+							}}
+						>
+							<SelectTrigger id="agent-catalog-model" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{catalogModelIds.map((model) => (
+									<SelectItem key={model} value={model}>
+										{formatModelLabel(model)}
+									</SelectItem>
+								))}
+								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				) : null}
+			</div>
+			<div className="flex flex-col gap-1.5">
+				<Label htmlFor="agent-primary-model">Primary model</Label>
+				<Input
+					id="agent-primary-model"
+					value={primaryModel}
+					onChange={(event) => onPrimaryModelChange(event.target.value)}
+					placeholder={
+						primaryProviderChoice === MANAGED_AI_CHOICE
+							? MANAGED_PRIMARY_MODEL_FALLBACK
+							: "model id"
+					}
+					autoComplete="off"
+					spellCheck={false}
+				/>
+			</div>
 		</div>
 	);
 }

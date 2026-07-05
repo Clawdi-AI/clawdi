@@ -282,7 +282,7 @@ async def admin_upsert_clawdi_managed_ai_provider(
             "provider_id": MANAGED_AI_PROVIDER_ID,
             "api_mode": MANAGED_AI_PROVIDER_API_MODE,
             "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
-            "default_model": body.default_model,
+            "models": provider.models,
             "has_capabilities": body.capabilities is not None,
         },
     )
@@ -300,7 +300,7 @@ async def admin_upsert_clawdi_managed_ai_provider(
         api_mode=provider.api_mode or "",
         runtime_env_name=provider.runtime_env_name or "",
         base_url=provider.base_url,
-        default_model=provider.default_model,
+        models=provider.models,
         has_api_key=True,
     )
 

@@ -1144,7 +1144,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("provider: custom:hermes");
 		expect(hermesConfig).toContain("api: https://hermes-provider.example.test/v1");
-		expect(hermesConfig).toContain("default_model: kimi/kimi-for-coding");
+		expect(hermesConfig).toContain("default: kimi/kimi-for-coding");
 		expect(hermesConfig).not.toContain("openclaw-provider.example.test");
 		const openclawRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),

@@ -544,7 +544,7 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
                 provider_id="openai-managed",
                 type="custom_openai_compatible",
                 base_url="https://openclaw-provider.test/v1",
-                default_model="gpt-5.5",
+                models=[{"id": "gpt-5.5"}],
                 api_mode="openai_responses",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -565,7 +565,7 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
                 provider_id="anthropic-managed",
                 type="custom_openai_compatible",
                 base_url="https://hermes-provider.test/v1",
-                default_model="claude-opus-4-6",
+                models=[{"id": "claude-opus-4-6"}],
                 api_mode="openai_chat",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -590,13 +590,19 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
         runtimes={
             "openclaw": {
                 "enabled": True,
-                "provider_id": "openai-managed",
-                "model": "gpt-5.5",
+                "provider_ids": ["openai-managed", "anthropic-managed"],
+                "primary_model": {
+                    "provider_id": "openai-managed",
+                    "model": "gpt-5.5",
+                },
             },
             "hermes": {
                 "enabled": True,
-                "providerId": "anthropic-managed",
-                "model": "claude-opus-4-6",
+                "provider_ids": ["openai-managed", "anthropic-managed"],
+                "primary_model": {
+                    "provider_id": "anthropic-managed",
+                    "model": "claude-opus-4-6",
+                },
             },
         },
     )
@@ -609,27 +615,44 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert "default" not in payload["manifest"]["providers"]
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert "openclaw" not in payload["manifest"]["providers"]
+    assert payload["manifest"]["providers"]["openai-managed"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://openclaw-provider.test/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_responses",
+        "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "OPENCLAW_PROVIDER_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.openai-managed.apiKey",
     }
-    assert payload["manifest"]["providers"]["hermes"] == {
+    assert payload["manifest"]["providers"]["anthropic-managed"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://hermes-provider.test/v1",
-        "model": "claude-opus-4-6",
         "apiMode": "openai_chat",
+        "models": [{"id": "claude-opus-4-6"}],
         "runtimeEnvName": "HERMES_PROVIDER_API_KEY",
-        "apiKeySecretRef": "provider.hermes.apiKey",
+        "apiKeySecretRef": "provider.anthropic-managed.apiKey",
+    }
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "openai-managed",
+        "anthropic-managed",
+    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "openai-managed",
+        "model": "gpt-5.5",
+    }
+    assert payload["manifest"]["runtimes"]["hermes"]["provider_ids"] == [
+        "openai-managed",
+        "anthropic-managed",
+    ]
+    assert payload["manifest"]["runtimes"]["hermes"]["primary_model"] == {
+        "provider_id": "anthropic-managed",
+        "model": "claude-opus-4-6",
     }
     assert payload["secretValues"] == {
-        "provider.hermes.apiKey": "sk-hermes-provider",
-        "provider.openclaw.apiKey": "sk-openclaw-provider",
+        "provider.anthropic-managed.apiKey": "sk-hermes-provider",
+        "provider.openai-managed.apiKey": "sk-openclaw-provider",
     }
 
 
@@ -655,7 +678,7 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
                 provider_id="anthropic-byok",
                 type="anthropic",
                 base_url="https://api.anthropic.com",
-                default_model="claude-opus-4-6",
+                models=[{"id": "claude-opus-4-6"}],
                 api_mode="anthropic_messages",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -676,7 +699,7 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
                 provider_id="gemini-byok",
                 type="gemini",
                 base_url="https://generativelanguage.googleapis.com/v1beta",
-                default_model="gemini-2.5-pro",
+                models=[{"id": "gemini-2.5-pro"}],
                 api_mode="google_generate_content",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -719,27 +742,35 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert payload["manifest"]["providers"]["anthropic-byok"] == {
         "kind": "openai-compatible",
         "type": "anthropic",
         "baseUrl": "https://api.anthropic.com",
-        "model": "claude-opus-4-6",
         "apiMode": "anthropic_messages",
+        "models": [{"id": "claude-opus-4-6"}],
         "runtimeEnvName": "ANTHROPIC_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.anthropic-byok.apiKey",
     }
-    assert payload["manifest"]["providers"]["hermes"] == {
+    assert payload["manifest"]["providers"]["gemini-byok"] == {
         "kind": "openai-compatible",
         "type": "gemini",
         "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-        "model": "gemini-2.5-pro",
         "apiMode": "google_generate_content",
+        "models": [{"id": "gemini-2.5-pro"}],
         "runtimeEnvName": "GEMINI_API_KEY",
-        "apiKeySecretRef": "provider.hermes.apiKey",
+        "apiKeySecretRef": "provider.gemini-byok.apiKey",
+    }
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "anthropic-byok",
+        "model": "claude-opus-4-6",
+    }
+    assert payload["manifest"]["runtimes"]["hermes"]["primary_model"] == {
+        "provider_id": "gemini-byok",
+        "model": "gemini-2.5-pro",
     }
     assert payload["secretValues"] == {
-        "provider.hermes.apiKey": "sk-gemini-provider",
-        "provider.openclaw.apiKey": "sk-anthropic-provider",
+        "provider.gemini-byok.apiKey": "sk-gemini-provider",
+        "provider.anthropic-byok.apiKey": "sk-anthropic-provider",
     }
 
 
@@ -762,7 +793,7 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
             provider_id="missing-key-provider",
             type="anthropic",
             base_url="https://api.anthropic.com",
-            default_model="claude-opus-4-6",
+            models=[{"id": "claude-opus-4-6"}],
             api_mode="anthropic_messages",
             auth_type="api_key",
             auth_metadata={"source": "managed"},
@@ -790,13 +821,14 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    provider = response.json()["manifest"]["providers"]["openclaw"]
+    body = response.json()
+    provider = body["manifest"]["providers"]["missing-key-provider"]
     assert provider == {
         "kind": "openai-compatible",
         "type": "anthropic",
         "baseUrl": "https://api.anthropic.com",
-        "model": "claude-opus-4-6",
         "apiMode": "anthropic_messages",
+        "models": [{"id": "claude-opus-4-6"}],
         "runtimeEnvName": "ANTHROPIC_API_KEY",
         "apiKeyRequired": True,
         "status": "error",
@@ -806,7 +838,14 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
         },
     }
     assert "apiKeySecretRef" not in provider
-    assert response.json()["secretValues"] == {}
+    assert body["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "missing-key-provider"
+    ]
+    assert body["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "missing-key-provider",
+        "model": "claude-opus-4-6",
+    }
+    assert body["secretValues"] == {}
 
 
 @pytest.mark.asyncio
@@ -830,7 +869,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 provider_id="deleted-custom-provider",
                 type="custom_openai_compatible",
                 base_url="https://deleted-provider.test/v1",
-                default_model="deleted-model",
+                models=[{"id": "deleted-model"}],
                 api_mode="openai_responses",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -843,7 +882,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 provider_id="clawdi-managed-v2",
                 type="custom_openai_compatible",
                 base_url="https://managed-provider.test/v1",
-                default_model="gpt-5.5",
+                models=[{"id": "gpt-5.5"}],
                 api_mode="openai_responses",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -881,7 +920,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert payload["manifest"]["providers"]["deleted-custom-provider"] == {
         "kind": "openai-compatible",
         "status": "error",
         "error": {
@@ -890,6 +929,10 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
         },
         "providerId": "deleted-custom-provider",
     }
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "deleted-custom-provider"
+    ]
+    assert "primary_model" not in payload["manifest"]["runtimes"]["openclaw"]
     assert payload["secretValues"] == {}
 
 
@@ -914,7 +957,7 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
                 provider_id="deleted-default-provider",
                 type="custom_openai_compatible",
                 base_url="https://deleted-provider.test/v1",
-                default_model="deleted-model",
+                models=[{"id": "deleted-model"}],
                 api_mode="openai_responses",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -927,7 +970,7 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
                 provider_id="clawdi-managed-v2",
                 type="custom_openai_compatible",
                 base_url="https://managed-provider.test/v1",
-                default_model="gpt-5.5",
+                models=[{"id": "gpt-5.5"}],
                 api_mode="openai_responses",
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
@@ -963,16 +1006,25 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert payload["manifest"]["providers"]["clawdi-managed-v2"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://managed-provider.test/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_chat",
+        "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["secretValues"] == {"provider.openclaw.apiKey": "sk-managed-provider"}
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "clawdi-managed-v2"
+    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "clawdi-managed-v2",
+        "model": "gpt-5.5",
+    }
+    assert payload["secretValues"] == {
+        "provider.clawdi-managed-v2.apiKey": "sk-managed-provider"
+    }
 
 
 @pytest.mark.asyncio
@@ -1263,7 +1315,7 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                 provider_id="openai-codex",
                 type="openai",
                 base_url="https://api.openai.com/v1",
-                default_model="gpt-5.5",
+                models=[{"id": "gpt-5.5"}],
                 api_mode="openai_responses",
                 auth_type="agent_profile",
                 auth_metadata={"tool": "codex", "profile": "default"},
@@ -1277,7 +1329,14 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                 generation=7,
                 provider_id="openai-codex",
                 runtimes={
-                    "codex": {"enabled": True},
+                    "codex": {
+                        "enabled": True,
+                        "provider_ids": ["openai-codex"],
+                        "primary_model": {
+                            "provider_id": "openai-codex",
+                            "model": "gpt-5.5",
+                        },
+                    },
                     "openclaw": {"enabled": False},
                 },
                 system=None,
@@ -1300,17 +1359,23 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["providers"]["codex"] == {
+    payload = response.json()
+    assert payload["manifest"]["providers"]["openai-codex"] == {
         "kind": "openai-compatible",
         "type": "openai",
         "baseUrl": "https://api.openai.com/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_responses",
+        "models": [{"id": "gpt-5.5"}],
         "auth": {
             "type": "agent_profile",
             "tool": "codex",
             "profile": "default",
         },
+    }
+    assert payload["manifest"]["runtimes"]["codex"]["provider_ids"] == ["openai-codex"]
+    assert payload["manifest"]["runtimes"]["codex"]["primary_model"] == {
+        "provider_id": "openai-codex",
+        "model": "gpt-5.5",
     }
 
 
@@ -1480,7 +1545,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
             provider_id="clawdi-managed-v2",
             type="custom_openai_compatible",
             base_url="https://sub2api.test/v1",
-            default_model="gpt-5.5",
+            models=[{"id": "gpt-5.5"}],
             # Simulate a stale v2 managed provider row from before the chat-completions contract.
             api_mode="openai_responses",
             auth_type="api_key",
@@ -1510,16 +1575,25 @@ async def test_runtime_manifest_projects_provider_secret_values(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert payload["manifest"]["providers"]["clawdi-managed-v2"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://sub2api.test/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_chat",
+        "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["secretValues"] == {"provider.openclaw.apiKey": "sk-test-provider"}
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "clawdi-managed-v2"
+    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "clawdi-managed-v2",
+        "model": "gpt-5.5",
+    }
+    assert payload["secretValues"] == {
+        "provider.clawdi-managed-v2.apiKey": "sk-test-provider"
+    }
     etag = response.headers["etag"]
 
     ciphertext, nonce = encrypt("sk-rotated-provider")
@@ -1548,7 +1622,9 @@ async def test_runtime_manifest_projects_provider_secret_values(
 
     assert rotated.status_code == 200, rotated.text
     assert rotated.headers["etag"] != etag
-    assert rotated.json()["secretValues"] == {"provider.openclaw.apiKey": "sk-rotated-provider"}
+    assert rotated.json()["secretValues"] == {
+        "provider.clawdi-managed-v2.apiKey": "sk-rotated-provider"
+    }
 
 
 @pytest.mark.asyncio
@@ -1571,7 +1647,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
             provider_id="clawdi-managed",
             type="custom_openai_compatible",
             base_url="https://sub2api.test/v1",
-            default_model="openai-codex/gpt-5.5",
+            models=[{"id": "openai-codex/gpt-5.5"}],
             api_mode="openai_responses",
             auth_type="api_key",
             auth_metadata={"source": "managed"},
@@ -1600,16 +1676,22 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["openclaw"] == {
+    assert payload["manifest"]["providers"]["clawdi-managed"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://sub2api.test/v1",
-        "model": "openai-codex/gpt-5.5",
         "apiMode": "openai_responses",
+        "models": [{"id": "openai-codex/gpt-5.5"}],
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.clawdi-managed.apiKey",
     }
-    assert payload["secretValues"] == {"provider.openclaw.apiKey": "sk-test-legacy-provider"}
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "clawdi-managed",
+        "model": "openai-codex/gpt-5.5",
+    }
+    assert payload["secretValues"] == {
+        "provider.clawdi-managed.apiKey": "sk-test-legacy-provider"
+    }
 
 
 @pytest.mark.asyncio
@@ -1632,7 +1714,6 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
             provider_id="custom-openai",
             type="custom_openai_compatible",
             base_url="https://provider.test/v1",
-            default_model=None,
             api_mode="openai_responses",
             auth_type="api_key",
             auth_metadata={"source": "managed"},
@@ -1672,14 +1753,19 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["providers"]["openclaw"] == {
+    payload = response.json()
+    assert payload["manifest"]["providers"]["custom-openai"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
         "baseUrl": "https://provider.test/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_responses",
         "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.openclaw.apiKey",
+        "apiKeySecretRef": "provider.custom-openai.apiKey",
+    }
+    assert "models" not in payload["manifest"]["providers"]["custom-openai"]
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "custom-openai",
+        "model": "gpt-5.5",
     }
 
 
@@ -1702,7 +1788,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
             provider_id="openai-codex",
             type="openai",
             base_url="https://api.openai.com/v1",
-            default_model="gpt-5.5",
+            models=[{"id": "gpt-5.5"}],
             api_mode="openai_responses",
             auth_type="agent_profile",
             auth_metadata={"tool": "codex", "profile": "default"},
@@ -1731,17 +1817,22 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["providers"]["openclaw"] == {
+    payload = response.json()
+    assert payload["manifest"]["providers"]["openai-codex"] == {
         "kind": "openai-compatible",
         "type": "openai",
         "baseUrl": "https://api.openai.com/v1",
-        "model": "gpt-5.5",
         "apiMode": "openai_responses",
+        "models": [{"id": "gpt-5.5"}],
         "auth": {
             "type": "agent_profile",
             "tool": "codex",
             "profile": "default",
         },
+    }
+    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": "openai-codex",
+        "model": "gpt-5.5",
     }
     assert response.json()["secretValues"] == {}
 

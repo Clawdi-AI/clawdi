@@ -145,7 +145,7 @@ export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}
 	const rows = catalog.providers.map((provider) => ({
 		id: provider.id,
 		type: provider.type,
-		default_model: provider.default_model ?? null,
+		models: modelsSummary(provider),
 		auth: describeAuth(provider),
 		agent_env_name: inferredAgentEnvName(provider) ?? provider.runtime_env_name ?? null,
 	}));
@@ -167,7 +167,7 @@ export async function aiProviderStatusCommand(opts: AiProviderStatusOptions = {}
 	console.log(`Providers: ${rows.length}`);
 	for (const row of rows) {
 		console.log(
-			`  ${row.id} (${row.type}) model=${row.default_model ?? "-"} auth=${row.auth} env=${row.agent_env_name ?? "-"}`,
+			`  ${row.id} (${row.type}) models=${row.models} auth=${row.auth} env=${row.agent_env_name ?? "-"}`,
 		);
 	}
 	for (const agent of agents) {
@@ -436,6 +436,13 @@ function targetAuthPath(target: AgentTarget): string {
 	if (target === "codex") return join(getCodexHome(), "auth.json");
 	if (target === "hermes") return join(getHermesHome(), "auth.json");
 	return join(resolveOpenClawDefaultAgentDir(), "auth-profiles.json");
+}
+
+function modelsSummary(provider: AiProvider): string {
+	const models = provider.models?.map((model) => model.id).filter(Boolean) ?? [];
+	if (models.length === 0) return "-";
+	if (models.length <= 2) return models.join(", ");
+	return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
 }
 
 function resolveOpenClawDefaultAgentDir(): string {

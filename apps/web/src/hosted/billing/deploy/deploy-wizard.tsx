@@ -14,6 +14,8 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -70,8 +72,19 @@ import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog"
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
+	dedupeProviderIds,
+	firstModelForProvider,
+	MANAGED_AI_CHOICE,
+	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_PROVIDER_ID,
+	modelIdsForProvider,
+	normalizeSelectedProviderIds,
+	primaryModelRef,
+	providerRefFromChoice,
+} from "@/hosted/v2/ai-providers/model-binding";
+import {
 	aiProviderRuntimeId,
-	buildAiProviderBootstrap,
+	buildAiProviderPoolBootstrap,
 	type RuntimeAiProviderAuthKind,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -90,9 +103,7 @@ const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-/** Sentinel for the managed-AI choice. Underscores keep it outside the
- * provider-id charset so no user provider_id can ever collide with it. */
-const MANAGED_AI_CHOICE = "__managed__";
+const CUSTOM_MODEL_CHOICE = "__custom__";
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
@@ -266,7 +277,9 @@ export function DeployWizard() {
 		openclaw: true,
 		hermes: false,
 	});
-	const [aiChoice, setAiChoice] = useState<string>(MANAGED_AI_CHOICE); // sentinel | provider_id
+	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
+	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
+	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
 	const [compute, setCompute] = useState<Compute>("free");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
@@ -321,7 +334,8 @@ export function DeployWizard() {
 			providerId,
 			dataUpdatedAt: aiProviders.dataUpdatedAt,
 		};
-		setAiChoice(providerId);
+		setAiProviderChoices([providerId]);
+		setPrimaryProvider(providerId);
 	}
 
 	useEffect(() => {
@@ -364,30 +378,48 @@ export function DeployWizard() {
 	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
 	// reset to managed so the UI and the deploy request agree.
 	useEffect(() => {
-		if (aiChoice === MANAGED_AI_CHOICE) return;
-		const providerExists = providerList.some((p) => p.provider_id === aiChoice);
+		const providerIds = new Set(providerList.map((provider) => provider.provider_id));
 		const createdGuard = createdProviderGuardRef.current;
 
-		if (providerExists) {
-			if (createdGuard?.providerId === aiChoice) createdProviderGuardRef.current = null;
-			return;
+		let nextChoices = aiProviderChoices.filter(
+			(choice) => choice === MANAGED_AI_CHOICE || providerIds.has(choice),
+		);
+		if (nextChoices.some((choice) => choice === createdGuard?.providerId)) {
+			createdProviderGuardRef.current = null;
 		}
 
-		if (createdGuard?.providerId === aiChoice) {
+		if (createdGuard && aiProviderChoices.includes(createdGuard.providerId)) {
 			if (aiProviders.dataUpdatedAt <= createdGuard.dataUpdatedAt) return;
 			createdProviderGuardRef.current = null;
 		}
 
 		if (aiProviders.isSuccess && !aiProviders.isFetching) {
-			setAiChoice(MANAGED_AI_CHOICE);
+			if (nextChoices.length === 0) nextChoices = [MANAGED_AI_CHOICE];
+			const normalized = dedupeProviderIds(nextChoices);
+			if (normalized.join("\0") !== aiProviderChoices.join("\0")) {
+				setAiProviderChoices(normalized);
+			}
+			if (!normalized.includes(primaryProviderChoice)) {
+				setPrimaryProvider(normalized[0] ?? MANAGED_AI_CHOICE);
+			}
 		}
 	}, [
-		aiChoice,
+		aiProviderChoices,
 		aiProviders.dataUpdatedAt,
 		aiProviders.isFetching,
 		aiProviders.isSuccess,
+		primaryProviderChoice,
 		providerList,
 	]);
+
+	useEffect(() => {
+		if (primaryModel.trim()) return;
+		const fallback = firstModelForProvider(
+			primaryProviderChoice,
+			aiProviders.data?.providers ?? [],
+		);
+		if (fallback) setPrimaryModel(fallback);
+	}, [aiProviders.data?.providers, primaryModel, primaryProviderChoice]);
 
 	useEffect(() => {
 		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
@@ -416,25 +448,94 @@ export function DeployWizard() {
 		toast.error("Provider unavailable", { description });
 	}
 
+	function setPrimaryProvider(choice: string) {
+		const providers = aiProviders.data?.providers ?? [];
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers);
+		const nextCatalog = modelIdsForProvider(choice, providers);
+		const fallback = firstModelForProvider(choice, providers);
+		setPrimaryProviderChoice(choice);
+		setAiProviderChoices((current) => normalizeSelectedProviderIds(current, choice));
+		setPrimaryModel((current) => {
+			const trimmed = current.trim();
+			if (!trimmed) return fallback;
+			if (
+				previousCatalog.includes(trimmed) &&
+				nextCatalog.length > 0 &&
+				!nextCatalog.includes(trimmed)
+			) {
+				return fallback;
+			}
+			return current;
+		});
+	}
+
+	function toggleAiProviderChoice(choice: string) {
+		const selected = aiProviderChoices.includes(choice);
+		let next = selected
+			? aiProviderChoices.filter((item) => item !== choice)
+			: aiProviderChoices.length === 1 &&
+					aiProviderChoices[0] === MANAGED_AI_CHOICE &&
+					choice !== MANAGED_AI_CHOICE
+				? [choice]
+				: [...aiProviderChoices, choice];
+		if (next.length === 0) next = [choice];
+		next = dedupeProviderIds(next);
+		setAiProviderChoices(next);
+		if (!next.includes(primaryProviderChoice)) {
+			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
+		}
+	}
+
 	function aiDeployFields(): Partial<DeployRequest> | null {
-		if (aiChoice === MANAGED_AI_CHOICE) return { ai_provider_auth_kind: "managed" };
-		const provider = providerList.find((p) => p.provider_id === aiChoice);
-		if (!provider) {
+		const selectedChoices = normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice);
+		const providerRefs = selectedChoices
+			.map((choice) => providerRefFromChoice(choice, providerList))
+			.filter((providerId): providerId is string => Boolean(providerId));
+		if (providerRefs.length !== selectedChoices.length) {
 			providerUnavailable();
 			return null;
 		}
-		const kind = aiAuthKind(provider);
-		try {
-			const providerRef = aiProviderRuntimeId(provider);
-			return {
-				ai_provider_id: providerRef,
-				ai_provider_auth_kind: kind,
-				ai_provider_bootstrap: buildAiProviderBootstrap(provider, kind),
-			};
-		} catch (error) {
-			providerUnavailable(error instanceof Error ? error.message : "Check provider configuration.");
+
+		const primaryProviderRef =
+			providerRefFromChoice(primaryProviderChoice, providerList) ?? MANAGED_PROVIDER_ID;
+		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
+		if (!modelRef) {
+			toast.error("Primary model required", {
+				description: "Choose a catalog model or enter a model id.",
+			});
 			return null;
 		}
+		const primaryProvider = providerList.find(
+			(provider) => provider.provider_id === primaryProviderChoice,
+		);
+		const primaryKind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
+		const customProviders = selectedChoices
+			.filter((choice) => choice !== MANAGED_AI_CHOICE)
+			.map((choice) => providerList.find((provider) => provider.provider_id === choice))
+			.filter((provider): provider is AiProvider => Boolean(provider));
+		const body: Partial<DeployRequest> = {
+			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+			ai_provider_auth_kind: primaryKind,
+			provider_ids: providerRefs,
+			primary_model: modelRef,
+		};
+		if (customProviders.length > 0) {
+			const bootstrapSelectedProvider = primaryProvider ?? customProviders[0];
+			const bootstrapKind = aiAuthKind(bootstrapSelectedProvider);
+			try {
+				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
+					customProviders,
+					bootstrapSelectedProvider.provider_id,
+					bootstrapKind,
+				);
+			} catch (error) {
+				providerUnavailable(
+					error instanceof Error ? error.message : "Check provider configuration.",
+				);
+				return null;
+			}
+		}
+		return body;
 	}
 
 	function buildDeployRequest(aiFields: Partial<DeployRequest>): DeployRequest {
@@ -515,10 +616,13 @@ export function DeployWizard() {
 	}
 
 	const deployLabel = compute === "performance" ? "Continue to checkout" : "Deploy agent";
-	const aiSummary =
-		aiChoice === MANAGED_AI_CHOICE
-			? "Managed AI"
-			: (providerList.find((p) => p.provider_id === aiChoice)?.label ?? "Your provider");
+	const selectedProviderCount = normalizeSelectedProviderIds(
+		aiProviderChoices,
+		primaryProviderChoice,
+	).length;
+	const aiSummary = `${providerChoiceLabel(primaryProviderChoice, providerList)}${
+		selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
+	}`;
 	const runtimeSummary =
 		enginesSelected.map((engine) => runtimeDisplayName(engine)).join(" + ") ||
 		"No execution engine selected";
@@ -597,13 +701,13 @@ export function DeployWizard() {
 				</SettingsSection>
 
 				<SettingsSection
-					title="AI provider"
-					description="Managed AI bills your wallet, or route through one of your own providers."
+					title="AI providers"
+					description="Bind the provider pool and choose the primary model for the deployment."
 				>
 					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={aiChoice === MANAGED_AI_CHOICE}
-							onClick={() => setAiChoice(MANAGED_AI_CHOICE)}
+							selected={aiProviderChoices.includes(MANAGED_AI_CHOICE)}
+							onClick={() => toggleAiProviderChoice(MANAGED_AI_CHOICE)}
 							icon={
 								<IconChip tint="bg-primary/10 text-primary">
 									<Sparkles />
@@ -611,7 +715,11 @@ export function DeployWizard() {
 							}
 							title="Managed by Clawdi"
 							description="AI Credits from your wallet."
-							badge={<Badge variant="secondary">Default</Badge>}
+							badge={
+								<Badge variant="secondary">
+									{primaryProviderChoice === MANAGED_AI_CHOICE ? "Primary" : "Managed"}
+								</Badge>
+							}
 						/>
 						{aiProviders.isLoading ? (
 							<Skeleton className="h-[74px] w-full rounded-lg" />
@@ -628,12 +736,18 @@ export function DeployWizard() {
 						{providerList.map((provider) => (
 							<EntityChoiceCard
 								key={provider.provider_id}
-								selected={aiChoice === provider.provider_id}
-								onClick={() => setAiChoice(provider.provider_id)}
+								selected={aiProviderChoices.includes(provider.provider_id)}
+								onClick={() => toggleAiProviderChoice(provider.provider_id)}
 								icon={<ProviderTypeChip type={provider.type} />}
 								title={provider.label ?? provider.provider_id}
-								description={provider.default_model ?? providerTypeLabelFallback(provider)}
-								badge={<AuthBadge auth={provider.auth} />}
+								description={providerCatalogDescription(provider)}
+								badge={
+									primaryProviderChoice === provider.provider_id ? (
+										<Badge variant="secondary">Primary</Badge>
+									) : (
+										<AuthBadge auth={provider.auth} />
+									)
+								}
 							/>
 						))}
 						<AddTile
@@ -642,6 +756,18 @@ export function DeployWizard() {
 							onClick={() => setAddProviderOpen(true)}
 						/>
 					</div>
+					<PrimaryModelPicker
+						providers={aiProviders.data?.providers ?? []}
+						customProviders={providerList}
+						selectedProviderChoices={normalizeSelectedProviderIds(
+							aiProviderChoices,
+							primaryProviderChoice,
+						)}
+						primaryProviderChoice={primaryProviderChoice}
+						primaryModel={primaryModel}
+						onPrimaryProviderChange={setPrimaryProvider}
+						onPrimaryModelChange={setPrimaryModel}
+					/>
 				</SettingsSection>
 
 				<SettingsSection
@@ -835,6 +961,110 @@ export function DeployWizard() {
 				onCreated={selectCreatedProvider}
 			/>
 			<ConnectBotDialog open={connectChannelOpen} onOpenChange={setConnectChannelOpen} />
+		</div>
+	);
+}
+
+function providerChoiceLabel(choice: string, providers: readonly AiProvider[]): string {
+	if (choice === MANAGED_AI_CHOICE) return "Managed AI";
+	const provider = providers.find((item) => item.provider_id === choice);
+	return provider?.label ?? provider?.provider_id ?? "Your provider";
+}
+
+function providerCatalogDescription(provider: AiProvider): string {
+	const count = provider.models?.length ?? 0;
+	if (count === 0) return providerTypeLabelFallback(provider);
+	if (count === 1) return provider.models?.[0]?.id ?? providerTypeLabelFallback(provider);
+	return `${count} catalog models`;
+}
+
+function PrimaryModelPicker({
+	providers,
+	customProviders,
+	selectedProviderChoices,
+	primaryProviderChoice,
+	primaryModel,
+	onPrimaryProviderChange,
+	onPrimaryModelChange,
+}: {
+	providers: readonly AiProvider[];
+	customProviders: readonly AiProvider[];
+	selectedProviderChoices: readonly string[];
+	primaryProviderChoice: string;
+	primaryModel: string;
+	onPrimaryProviderChange: (choice: string) => void;
+	onPrimaryModelChange: (model: string) => void;
+}) {
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
+	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	return (
+		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+			<div className="grid gap-3 sm:grid-cols-2">
+				<div className="flex flex-col gap-1.5">
+					<Label htmlFor="deploy-primary-provider">Primary provider</Label>
+					<Select
+						value={primaryProviderChoice}
+						onValueChange={(value) => {
+							if (value) onPrimaryProviderChange(value);
+						}}
+					>
+						<SelectTrigger id="deploy-primary-provider" className="w-full">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
+								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+							) : null}
+							{customProviders
+								.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+								.map((provider) => (
+									<SelectItem key={provider.provider_id} value={provider.provider_id}>
+										{provider.label ?? provider.provider_id}
+									</SelectItem>
+								))}
+						</SelectContent>
+					</Select>
+				</div>
+				{catalogModelIds.length > 0 ? (
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="deploy-catalog-model">Catalog model</Label>
+						<Select
+							value={modelChoice}
+							onValueChange={(value) => {
+								if (!value) return;
+								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
+							}}
+						>
+							<SelectTrigger id="deploy-catalog-model" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{catalogModelIds.map((model) => (
+									<SelectItem key={model} value={model}>
+										{model}
+									</SelectItem>
+								))}
+								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				) : null}
+			</div>
+			<div className="flex flex-col gap-1.5">
+				<Label htmlFor="deploy-primary-model">Primary model</Label>
+				<Input
+					id="deploy-primary-model"
+					value={primaryModel}
+					onChange={(event) => onPrimaryModelChange(event.target.value)}
+					placeholder={
+						primaryProviderChoice === MANAGED_AI_CHOICE
+							? MANAGED_PRIMARY_MODEL_FALLBACK
+							: "model id"
+					}
+					autoComplete="off"
+					spellCheck={false}
+				/>
+			</div>
 		</div>
 	);
 }

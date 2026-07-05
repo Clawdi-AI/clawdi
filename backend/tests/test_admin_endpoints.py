@@ -483,7 +483,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
-        "default_model": "gpt-5.4-mini",
+        "models": [{"id": "gpt-5.4-mini"}],
         "has_api_key": True,
     }
 
@@ -502,6 +502,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert provider.auth_metadata == {"source": "managed", "profile": "default"}
     assert provider.managed_by == "clawdi"
     assert provider.runtime_env_name == MANAGED_AI_PROVIDER_RUNTIME_ENV
+    assert provider.models == [{"id": "gpt-5.4-mini"}]
     assert provider.archived_at is None
 
     payload = (
@@ -566,7 +567,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
         .all()
     )
     assert len(providers) == 1
-    assert providers[0].default_model == "gpt-5.4"
+    assert providers[0].models == [{"id": "gpt-5.4"}]
 
     payloads = (
         (

@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
 DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
+DEV_V2_MANAGED_PROVIDER_ID = "clawdi-managed-v2"
 STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -82,6 +83,37 @@ def _ordered_agents(values: set[str]) -> list[str]:
     return sorted(values, key=lambda value: order.get(value, 99))
 
 
+def _primary_model_value(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        model = raw.get("model")
+        return model.strip() if isinstance(model, str) and model.strip() else None
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _primary_provider_id(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        provider_id = raw.get("provider_id") or raw.get("providerId")
+        return provider_id.strip() if isinstance(provider_id, str) and provider_id.strip() else None
+    return None
+
+
+def _primary_model_ref(provider_id: str, model: str) -> dict[str, str]:
+    return {"provider_id": provider_id, "model": model}
+
+
+def _provider_ids(body: dict[str, Any], primary_provider_id: str) -> list[str]:
+    raw = body.get("provider_ids") or body.get("providerIds")
+    if not isinstance(raw, list):
+        return [primary_provider_id]
+    provider_ids: list[str] = []
+    for value in raw:
+        if isinstance(value, str) and value.strip() and value.strip() not in provider_ids:
+            provider_ids.append(value.strip())
+    if primary_provider_id not in provider_ids:
+        provider_ids.insert(0, primary_provider_id)
+    return provider_ids or [primary_provider_id]
+
+
 def _base_config() -> dict[str, Any]:
     return {
         "compute_plan_slug": "compute_performance",
@@ -98,18 +130,21 @@ def _base_config() -> dict[str, Any]:
         "ai_provider_bindings": {
             "codex": {
                 "provider_id": DEV_V2_PROVIDER_ID,
+                "provider_ids": [DEV_V2_PROVIDER_ID],
                 "auth_kind": "api_key",
-                "primary_model": "openai/gpt-4o-mini",
+                "primary_model": _primary_model_ref(DEV_V2_PROVIDER_ID, "openai/gpt-4o-mini"),
             },
             "openclaw": {
                 "provider_id": DEV_V2_PROVIDER_ID,
+                "provider_ids": [DEV_V2_PROVIDER_ID],
                 "auth_kind": "api_key",
-                "primary_model": "openai/gpt-4o-mini",
+                "primary_model": _primary_model_ref(DEV_V2_PROVIDER_ID, "openai/gpt-4o-mini"),
             },
             "hermes": {
                 "provider_id": DEV_V2_PROVIDER_ID,
+                "provider_ids": [DEV_V2_PROVIDER_ID],
                 "auth_kind": "api_key",
-                "primary_model": "openai/gpt-4o-mini",
+                "primary_model": _primary_model_ref(DEV_V2_PROVIDER_ID, "openai/gpt-4o-mini"),
             },
         },
         "telegram_allowed_usernames": ["dev-user", "dev-preview"],
@@ -216,14 +251,23 @@ async def create_deployment(request: Request) -> dict[str, Any]:
     config["onboarded_agents"] = agents
     config["configured_agents"] = agents
     config["clawdi_cloud_environments"] = {runtime: _runtime_env_id(runtime) for runtime in agents}
-    config["primary_model"] = body.get("primary_model") or "openai/gpt-4o-mini"
-    config["ai_provider_id"] = body.get("ai_provider_id") or DEV_V2_PROVIDER_ID
+    primary_model_raw = body.get("primary_model")
+    primary_model = _primary_model_value(primary_model_raw) or "openai/gpt-4o-mini"
+    primary_provider_id = (
+        body.get("ai_provider_id") or _primary_provider_id(primary_model_raw) or DEV_V2_PROVIDER_ID
+    )
+    if primary_provider_id == "managed":
+        primary_provider_id = DEV_V2_MANAGED_PROVIDER_ID
+    provider_ids = _provider_ids(body, primary_provider_id)
+    config["primary_model"] = primary_model
+    config["ai_provider_id"] = primary_provider_id
     config["ai_provider_auth_kind"] = body.get("ai_provider_auth_kind") or "managed"
     config["ai_provider_bindings"] = {
         runtime: {
-            "provider_id": config["ai_provider_id"],
+            "provider_id": primary_provider_id,
+            "provider_ids": provider_ids,
             "auth_kind": config["ai_provider_auth_kind"],
-            "primary_model": config["primary_model"],
+            "primary_model": _primary_model_ref(primary_provider_id, primary_model),
         }
         for runtime in agents
     }
@@ -308,15 +352,25 @@ async def set_agent_ai_provider(
         raise HTTPException(status_code=400, detail="Unsupported runtime")
     config = deployment["config_info"]
     bindings = dict(config.get("ai_provider_bindings") or {})
+    primary_model_raw = body.get("primary_model")
+    primary_model = _primary_model_value(primary_model_raw) or "openai/gpt-4o-mini"
+    primary_provider_id = (
+        body.get("ai_provider_id")
+        or _primary_provider_id(primary_model_raw)
+        or DEV_V2_MANAGED_PROVIDER_ID
+    )
+    if primary_provider_id == "managed":
+        primary_provider_id = DEV_V2_MANAGED_PROVIDER_ID
     bindings[agent_type] = {
-        "provider_id": body.get("ai_provider_id") or "managed",
+        "provider_id": primary_provider_id,
+        "provider_ids": _provider_ids(body, primary_provider_id),
         "auth_kind": body.get("ai_provider_auth_kind") or "managed",
-        "primary_model": body.get("primary_model") or "openai/gpt-4o-mini",
+        "primary_model": _primary_model_ref(primary_provider_id, primary_model),
     }
     config["ai_provider_bindings"] = bindings
     config["ai_provider_id"] = bindings[agent_type]["provider_id"]
     config["ai_provider_auth_kind"] = bindings[agent_type]["auth_kind"]
-    config["primary_model"] = bindings[agent_type]["primary_model"]
+    config["primary_model"] = primary_model
     return deployment
 
 
@@ -343,19 +397,47 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
             None,
         )
         if explicit_provider or source is None:
+            primary_model_raw = body.get("primary_model")
+            primary_model = (
+                _primary_model_value(primary_model_raw)
+                or _primary_model_value(config.get("primary_model"))
+                or "openai/gpt-4o-mini"
+            )
+            primary_provider_id = (
+                body.get("ai_provider_id")
+                or _primary_provider_id(primary_model_raw)
+                or DEV_V2_MANAGED_PROVIDER_ID
+            )
+            if primary_provider_id == "managed":
+                primary_provider_id = DEV_V2_MANAGED_PROVIDER_ID
             binding = {
-                "provider_id": body.get("ai_provider_id") or "managed",
+                "provider_id": primary_provider_id,
+                "provider_ids": _provider_ids(body, primary_provider_id),
                 "auth_kind": body.get("ai_provider_auth_kind") or "managed",
-                "primary_model": body.get("primary_model") or config.get("primary_model"),
+                "primary_model": _primary_model_ref(primary_provider_id, primary_model),
             }
             bootstrap = body.get("ai_provider_bootstrap")
         else:
+            primary_model_raw = body.get("primary_model")
+            primary_model = (
+                _primary_model_value(primary_model_raw)
+                or _primary_model_value(source.get("primary_model"))
+                or _primary_model_value(config.get("primary_model"))
+                or "openai/gpt-4o-mini"
+            )
+            primary_provider_id = (
+                _primary_provider_id(primary_model_raw)
+                or _primary_provider_id(source.get("primary_model"))
+                or source.get("provider_id")
+                or DEV_V2_MANAGED_PROVIDER_ID
+            )
+            if primary_provider_id == "managed":
+                primary_provider_id = DEV_V2_MANAGED_PROVIDER_ID
             binding = {
-                "provider_id": source.get("provider_id") or "managed",
+                "provider_id": primary_provider_id,
+                "provider_ids": source.get("provider_ids") or [primary_provider_id],
                 "auth_kind": source.get("auth_kind") or "managed",
-                "primary_model": body.get("primary_model")
-                or source.get("primary_model")
-                or config.get("primary_model"),
+                "primary_model": _primary_model_ref(primary_provider_id, primary_model),
             }
             bootstrap = source.get("bootstrap")
         if isinstance(bootstrap, dict):
@@ -364,7 +446,7 @@ async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
         config["ai_provider_bindings"] = bindings
         config["ai_provider_id"] = binding["provider_id"]
         config["ai_provider_auth_kind"] = binding["auth_kind"]
-        config["primary_model"] = binding["primary_model"]
+        config["primary_model"] = _primary_model_value(binding["primary_model"])
     if agent_type != "codex":
         config[f"enable_{agent_type}"] = True
     onboarded = set(config.get("onboarded_agents") or [])

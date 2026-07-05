@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	aiProviderRuntimeId,
 	buildAiProviderBootstrap,
+	buildAiProviderPoolBootstrap,
 	toRuntimeAiProvider,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -13,7 +14,7 @@ const provider: AiProvider = {
 	type: "openai",
 	label: "ChatGPT",
 	base_url: "https://api.openai.com/v1",
-	default_model: "gpt-5.1",
+	models: [{ id: "gpt-5.1" }],
 	api_mode: "openai_responses",
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
 	managed_by: "user",
@@ -38,7 +39,7 @@ describe("AI provider runtime bootstrap", () => {
 		const runtimeProvider = toRuntimeAiProvider({
 			...provider,
 			label: null,
-			default_model: null,
+			models: null,
 			api_mode: null,
 			runtime_env_name: null,
 		});
@@ -51,6 +52,33 @@ describe("AI provider runtime bootstrap", () => {
 			managed_by: "user",
 			capabilities: { chat: true, responses: true },
 		});
+	});
+
+	test("builds a provider-pool bootstrap with the selected provider as chat default", () => {
+		const secondary: AiProvider = {
+			...provider,
+			id: "db-record-secondary",
+			provider_id: "anthropic-prod",
+			type: "anthropic",
+			label: "Anthropic",
+			base_url: "https://api.anthropic.com",
+			models: [{ id: "claude-sonnet-5" }],
+			api_mode: "anthropic_messages",
+			auth: { type: "api_key", source: "managed" },
+		};
+
+		const bootstrap = buildAiProviderPoolBootstrap(
+			[provider, secondary],
+			"anthropic-prod",
+			"api_key",
+		);
+
+		expect(bootstrap.selected_provider_id).toBe("anthropic-prod");
+		expect(bootstrap.catalog.defaults?.chat_provider_id).toBe("anthropic-prod");
+		expect(bootstrap.catalog.providers.map((item) => item.id)).toEqual([
+			"openai-codex",
+			"anthropic-prod",
+		]);
 	});
 
 	test("rejects malformed auth before building a bootstrap payload", () => {

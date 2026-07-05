@@ -2,6 +2,7 @@ import type {
 	AiProviderCatalog,
 	AiProvider as RuntimeAiProvider,
 	AiProviderAuth as RuntimeAiProviderAuth,
+	AiProviderModel as RuntimeAiProviderModel,
 } from "@clawdi/shared";
 import { validateAiProviderCatalog } from "@clawdi/shared";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -32,11 +33,23 @@ export function buildAiProviderBootstrap(
 	provider: AiProvider,
 	authKind: RuntimeAiProviderAuthKind,
 ): RuntimeAiProviderBootstrap {
-	const runtimeProvider = toRuntimeAiProvider(provider);
+	return buildAiProviderPoolBootstrap([provider], provider.provider_id, authKind);
+}
+
+export function buildAiProviderPoolBootstrap(
+	providers: readonly AiProvider[],
+	selectedProviderId: string,
+	authKind: RuntimeAiProviderAuthKind,
+): RuntimeAiProviderBootstrap {
+	const runtimeProviders = providers.map((provider) => toRuntimeAiProvider(provider));
+	const selectedProvider = runtimeProviders.find((provider) => provider.id === selectedProviderId);
+	if (!selectedProvider) {
+		throw new Error("Selected AI provider is not in the provider pool.");
+	}
 	const catalog: AiProviderCatalog = {
 		schema_version: 1,
-		providers: [runtimeProvider],
-		defaults: { chat_provider_id: runtimeProvider.id },
+		providers: runtimeProviders,
+		defaults: { chat_provider_id: selectedProvider.id },
 	};
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
@@ -44,7 +57,7 @@ export function buildAiProviderBootstrap(
 	}
 	return {
 		schema_version: 1,
-		selected_provider_id: runtimeProvider.id,
+		selected_provider_id: selectedProvider.id,
 		auth_kind: authKind,
 		catalog,
 	};
@@ -59,12 +72,35 @@ export function toRuntimeAiProvider(provider: AiProvider): RuntimeAiProvider {
 		managed_by: provider.managed_by,
 	};
 	if (provider.label) runtimeProvider.label = provider.label;
-	if (provider.default_model) runtimeProvider.default_model = provider.default_model;
+	const models = toRuntimeModels(provider.models);
+	if (models.length > 0) runtimeProvider.models = models;
 	if (provider.api_mode) runtimeProvider.api_mode = provider.api_mode;
 	if (provider.runtime_env_name) runtimeProvider.runtime_env_name = provider.runtime_env_name;
 	const capabilities = toRuntimeCapabilities(provider.capabilities);
 	if (capabilities) runtimeProvider.capabilities = capabilities;
 	return runtimeProvider;
+}
+
+function toRuntimeModels(models: AiProvider["models"]): RuntimeAiProviderModel[] {
+	if (!models) return [];
+	return models.map((model) => {
+		const runtimeModel: RuntimeAiProviderModel = { id: model.id };
+		if (model.label) runtimeModel.label = model.label;
+		if (model.api_mode) runtimeModel.api_mode = model.api_mode;
+		if (model.input_modalities) runtimeModel.input_modalities = model.input_modalities;
+		if (model.supports_reasoning !== null && model.supports_reasoning !== undefined) {
+			runtimeModel.supports_reasoning = model.supports_reasoning;
+		}
+		if (model.context_window !== null && model.context_window !== undefined) {
+			runtimeModel.context_window = model.context_window;
+		}
+		if (model.max_tokens !== null && model.max_tokens !== undefined) {
+			runtimeModel.max_tokens = model.max_tokens;
+		}
+		if (model.cost) runtimeModel.cost = model.cost;
+		if (model.capabilities) runtimeModel.capabilities = model.capabilities;
+		return runtimeModel;
+	});
 }
 
 function toRuntimeAuth(auth: AiProvider["auth"]): RuntimeAiProviderAuth {

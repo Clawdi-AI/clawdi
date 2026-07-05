@@ -33,17 +33,17 @@ export function codexRedirectUri(): string {
 	return `${window.location.origin}/oauth/codex/callback`;
 }
 
-/** Default model shown for a fresh Codex provider (OpenAI Responses / GPT-5). */
+/** Catalog seed for a fresh Codex provider (OpenAI Responses / GPT-5). */
 export const CODEX_DEFAULT_MODEL = "gpt-5";
 
 /** Upsert body for the canonical Codex provider (pre-sign-in placeholder auth). */
-export function codexProviderBody(defaultModel?: string): AiProviderUpsert {
+export function codexProviderBody(): AiProviderUpsert {
 	return {
 		provider_id: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 		type: "openai",
 		label: "Codex (ChatGPT)",
 		base_url: "https://api.openai.com/v1",
-		default_model: defaultModel?.trim() || CODEX_DEFAULT_MODEL,
+		models: [{ id: CODEX_DEFAULT_MODEL }],
 		api_mode: "openai_responses",
 		auth: { type: "agent_profile", tool: "codex", profile: "default" },
 		managed_by: "user",

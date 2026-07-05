@@ -19,6 +19,7 @@ ApiMode = Literal[
     "google_generate_content",
 ]
 AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "none"]
+InputModality = Literal["text", "image", "video", "audio"]
 
 
 class AiProviderAuth(BaseModel):
@@ -33,16 +34,30 @@ class AiProviderAuth(BaseModel):
     value: SkipJsonSchema[SecretStr | None] = None
 
 
+class AiProviderModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    id: str = Field(min_length=1, max_length=300)
+    label: str | None = Field(default=None, max_length=300)
+    api_mode: ApiMode | None = None
+    input_modalities: list[InputModality] | None = None
+    supports_reasoning: bool | None = None
+    context_window: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, ge=0)
+    cost: dict[str, Any] | None = None
+    capabilities: dict[str, Any] | None = None
+
+
 class AiProviderBase(BaseModel):
     type: ProviderType
     label: str | None = Field(default=None, max_length=200)
     base_url: str = Field(min_length=1, max_length=1000)
-    default_model: str | None = Field(default=None, max_length=300)
     api_mode: ApiMode | None = None
     auth: AiProviderAuth
     managed_by: Literal["user", "clawdi"] = "user"
     runtime_env_name: str | None = Field(default=None, max_length=128)
     capabilities: dict[str, Any] | None = None
+    models: list[AiProviderModel] | None = None
 
 
 class AiProviderUpsert(AiProviderBase):
@@ -53,12 +68,12 @@ class AiProviderPatch(BaseModel):
     type: ProviderType | None = None
     label: str | None = Field(default=None, max_length=200)
     base_url: str | None = Field(default=None, min_length=1, max_length=1000)
-    default_model: str | None = Field(default=None, max_length=300)
     api_mode: ApiMode | None = None
     auth: AiProviderAuth | None = None
     managed_by: Literal["user", "clawdi"] | None = None
     runtime_env_name: str | None = Field(default=None, max_length=128)
     capabilities: dict[str, Any] | None = None
+    models: list[AiProviderModel] | None = None
 
 
 class AiProviderResponse(AiProviderBase):

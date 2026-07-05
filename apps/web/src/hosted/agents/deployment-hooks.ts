@@ -228,7 +228,7 @@ export function useSetAgentLanguageTimezone() {
 	});
 }
 
-/** Re-bind the AI provider for the deployment's enabled runtimes (live). */
+/** Re-bind the AI provider pool and primary model for deployment runtimes (live). */
 export function useSetAgentAiProvider() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
