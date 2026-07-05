@@ -12,6 +12,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { type ApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 
@@ -154,7 +155,7 @@ export function ApiKeysPanel() {
 
 			{/* Create form */}
 			<form
-				className="flex gap-2"
+				className="flex flex-col gap-2 sm:flex-row"
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (newLabel) createKey.mutate(newLabel);
@@ -168,11 +169,15 @@ export function ApiKeysPanel() {
 					value={newLabel}
 					onChange={(e) => setNewLabel(e.target.value)}
 					placeholder="my-laptop…"
-					className="flex-1"
+					className="min-w-0 flex-1"
 					name="new-key-label"
 					autoComplete="off"
 				/>
-				<Button type="submit" disabled={!newLabel || createKey.isPending}>
+				<Button
+					type="submit"
+					disabled={!newLabel || createKey.isPending}
+					className="w-full sm:w-auto"
+				>
 					<Plus />
 					Create
 				</Button>
@@ -184,7 +189,7 @@ export function ApiKeysPanel() {
 					<div className="text-sm font-medium text-primary">
 						Key created — copy it now, it won't be shown again.
 					</div>
-					<div className="flex items-center gap-2">
+					<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 						<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
 							{createdKey}
 						</code>
@@ -206,12 +211,104 @@ export function ApiKeysPanel() {
 				</div>
 			) : null}
 
+			<div className="md:hidden">
+				<ApiKeysMobileList
+					keys={keys ?? []}
+					isLoading={isLoading}
+					isRevoking={revokeKey.isPending}
+					onRevoke={(keyId) => revokeKey.mutate(keyId)}
+				/>
+			</div>
 			<DataTable
 				columns={columns}
 				data={keys ?? []}
 				isLoading={isLoading}
 				emptyMessage="No API keys yet."
+				className="hidden md:block"
 			/>
+		</div>
+	);
+}
+
+function ApiKeysMobileList({
+	keys,
+	isLoading,
+	isRevoking,
+	onRevoke,
+}: {
+	keys: ApiKey[];
+	isLoading: boolean;
+	isRevoking: boolean;
+	onRevoke: (keyId: string) => void;
+}) {
+	if (isLoading) {
+		return (
+			<div className="flex flex-col gap-2">
+				{[0, 1, 2].map((i) => (
+					<div key={i} className="rounded-lg border bg-card p-3">
+						<Skeleton className="h-4 w-32" />
+						<Skeleton className="mt-2 h-3 w-24" />
+					</div>
+				))}
+			</div>
+		);
+	}
+
+	if (keys.length === 0) {
+		return (
+			<div className="rounded-lg border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
+				No API keys yet.
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex flex-col gap-2">
+			{keys.map((key) => (
+				<div key={key.id} className="rounded-lg border bg-card p-3">
+					<div className="flex min-w-0 items-start justify-between gap-3">
+						<div className="min-w-0">
+							<div className="flex min-w-0 flex-wrap items-center gap-2">
+								<span className="break-words text-sm font-medium">{key.label}</span>
+								{key.revoked_at ? <Badge variant="destructive">Off</Badge> : null}
+							</div>
+							<div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+								<span className="font-mono">{key.key_prefix}…</span>
+								<span>Created {new Date(key.created_at).toLocaleDateString()}</span>
+								<span>
+									Last used{" "}
+									{key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : "—"}
+								</span>
+							</div>
+						</div>
+						{key.revoked_at ? null : (
+							<ConfirmAction
+								title={`Turn off ${key.label}?`}
+								description={
+									<p>
+										If a machine is still using this key, sync will stop within a minute. Sign in
+										again from that machine to resume.
+									</p>
+								}
+								confirmLabel="Turn Off Key"
+								destructive
+								onConfirm={() => onRevoke(key.id)}
+							>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									disabled={isRevoking}
+									aria-label="Turn off key"
+									className="shrink-0 text-muted-foreground hover:text-destructive"
+								>
+									<Trash2 className="size-3.5" />
+								</Button>
+							</ConfirmAction>
+						)}
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }

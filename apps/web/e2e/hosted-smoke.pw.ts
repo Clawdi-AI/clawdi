@@ -88,6 +88,19 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("command palette opens with Ctrl+K", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page);
+	await page.goto("/channels");
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	await page.waitForLoadState("networkidle");
+
+	await page.keyboard.press("Control+K");
+	await expect(page.locator('[data-slot="command"]')).toBeVisible();
+	await page.waitForTimeout(150);
+	expect(errors, `command palette: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("channels connect dialog opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);
