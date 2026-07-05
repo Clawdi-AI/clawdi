@@ -58,6 +58,7 @@ export function TopUpDialog({
 		Number.isFinite(amountCents) &&
 		amountCents >= TOPUP_MIN_CENTS &&
 		amountCents <= TOPUP_MAX_CENTS;
+	const amountInvalid = !valid && Boolean(dollars);
 	const credits = valid ? formatCredits((amountCents / 100) * wallet.points_per_usd) : "";
 
 	function setAmount(next: string) {
@@ -167,10 +168,12 @@ export function TopUpDialog({
 									className="pl-6"
 									value={dollars}
 									onChange={(e) => setAmount(e.target.value)}
+									aria-invalid={amountInvalid}
+									aria-describedby={amountInvalid ? "topup-amount-err" : undefined}
 								/>
 							</div>
-							{!valid && dollars ? (
-								<p className="text-xs text-destructive">
+							{amountInvalid ? (
+								<p id="topup-amount-err" className="text-xs text-destructive">
 									Enter an amount between {formatCents(TOPUP_MIN_CENTS)} and{" "}
 									{formatCents(TOPUP_MAX_CENTS)}.
 								</p>

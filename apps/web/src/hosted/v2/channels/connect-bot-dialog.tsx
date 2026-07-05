@@ -23,6 +23,7 @@ import {
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
+import { discordPublicKeyError } from "@/hosted/v2/channels/connect-bot-dialog.logic";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
@@ -61,6 +62,7 @@ export function ConnectBotDialog({
 	}, [open]);
 
 	const meta = PROVIDER_META[provider];
+	const publicKeyError = meta.connect === "discord" ? discordPublicKeyError(publicKey) : null;
 
 	function changeProvider(next: ChannelProviderId) {
 		setProvider(next);
@@ -77,7 +79,7 @@ export function ConnectBotDialog({
 			: meta.connect === "token"
 				? token.trim().length > 0
 				: meta.connect === "discord"
-					? token.trim().length > 0 && applicationId.trim().length > 0
+					? token.trim().length > 0 && applicationId.trim().length > 0 && !publicKeyError
 					: false);
 
 	function buildBody(): ChannelCreate {
@@ -235,10 +237,20 @@ export function ConnectBotDialog({
 											placeholder="Ed25519 public key (hex)"
 											autoComplete="off"
 											spellCheck={false}
+											aria-invalid={Boolean(publicKeyError)}
+											aria-describedby={
+												publicKeyError ? "connect-public-key-err" : "connect-public-key-help"
+											}
 										/>
-										<p className="text-xs text-muted-foreground">
-											Stored with the Discord application metadata.
-										</p>
+										{publicKeyError ? (
+											<p id="connect-public-key-err" className="text-xs text-destructive">
+												{publicKeyError}
+											</p>
+										) : (
+											<p id="connect-public-key-help" className="text-xs text-muted-foreground">
+												Stored with the Discord application metadata.
+											</p>
+										)}
 									</div>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-guild-id">

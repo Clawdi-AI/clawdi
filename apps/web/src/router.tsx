@@ -5,6 +5,7 @@ export function getRouter() {
 	return createRouter({
 		routeTree,
 		scrollRestoration: true,
+		scrollToTopSelectors: ["#dashboard-scroll-container"],
 	});
 }
 
