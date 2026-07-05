@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
-_SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
+_SUPPORTED_HOSTED_RUNTIMES = {"codex", "hermes", "openclaw"}
 _BRIDGE_SURFACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _BRIDGE_SURFACE_KEYS = {
     "name",

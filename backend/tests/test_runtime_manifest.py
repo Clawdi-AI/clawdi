@@ -1245,7 +1245,7 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_rejects_codex_enabled_runtime_state(
+async def test_runtime_manifest_allows_codex_enabled_runtime_state(
     db_session,
     seed_user,
 ):
@@ -1256,28 +1256,41 @@ async def test_runtime_manifest_rejects_codex_enabled_runtime_state(
         machine_name="Manifest codex runtime",
         agent_type="codex",
     )
-    db_session.add(
-        HostedRuntimeState(
-            environment_id=env.id,
-            deployment_id=f"dep_{uuid4().hex}",
-            app_id="app-test",
-            instance_id=f"hri_{uuid4().hex}",
-            generation=7,
-            provider_id="clawdi-managed-v2",
-            runtimes={
-                "codex": {"enabled": True},
-                "openclaw": {"enabled": False},
-            },
-            system=None,
-            control_plane=None,
-            clawdi_cli=None,
-            live_sync=None,
-            recovery=None,
-            mitm_profiles=None,
-            mcp=None,
-            tools=None,
-            observed=None,
-        )
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-codex",
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                default_model="gpt-5.5",
+                api_mode="openai_responses",
+                auth_type="agent_profile",
+                auth_metadata={"tool": "codex", "profile": "default"},
+                managed_by="user",
+            ),
+            HostedRuntimeState(
+                environment_id=env.id,
+                deployment_id=f"dep_{uuid4().hex}",
+                app_id="app-test",
+                instance_id=f"hri_{uuid4().hex}",
+                generation=7,
+                provider_id="openai-codex",
+                runtimes={
+                    "codex": {"enabled": True},
+                    "openclaw": {"enabled": False},
+                },
+                system=None,
+                control_plane=None,
+                clawdi_cli=None,
+                live_sync=None,
+                recovery=None,
+                mitm_profiles=None,
+                mcp=None,
+                tools=None,
+                observed=None,
+            ),
+        ]
     )
     await db_session.commit()
 
@@ -1286,8 +1299,19 @@ async def test_runtime_manifest_rejects_codex_enabled_runtime_state(
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 409, response.text
-    assert response.json() == {"detail": "unsupported enabled runtime: codex"}
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["providers"]["codex"] == {
+        "kind": "openai-compatible",
+        "type": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-5.5",
+        "apiMode": "openai_responses",
+        "auth": {
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -1723,7 +1747,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
 
 
 @pytest.mark.asyncio
-async def test_admin_runtime_state_rejects_codex_hosted_runtime(
+async def test_admin_runtime_state_accepts_codex_hosted_runtime(
     admin_client,
     db_session,
     seed_user,
@@ -1750,5 +1774,5 @@ async def test_admin_runtime_state_rejects_codex_hosted_runtime(
         json=body,
     )
 
-    assert response.status_code == 422, response.text
-    assert "unsupported runtime desired state" in response.text
+    assert response.status_code == 200, response.text
+    assert response.json()["environment_id"] == str(env.id)
