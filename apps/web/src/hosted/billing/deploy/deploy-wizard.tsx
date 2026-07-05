@@ -89,6 +89,7 @@ type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
+const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 /** Sentinel for the managed-AI choice. Underscores keep it outside the
  * provider-id charset so no user provider_id can ever collide with it. */
 const MANAGED_AI_CHOICE = "__managed__";
@@ -312,7 +313,8 @@ export function DeployWizard() {
 			? !!perfPlan && !!perfOfferSelection
 			: !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const canSubmit = planReady && !submitting;
+	const hasExecutionEngine = enginesSelected.length > 0;
+	const canSubmit = planReady && hasExecutionEngine && !submitting;
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -394,10 +396,11 @@ export function DeployWizard() {
 
 	function toggleEngine(engine: Engine) {
 		setEngines((prev) => {
+			const selectedCount = (Object.keys(prev) as Engine[]).filter((key) => prev[key]).length;
+			if (prev[engine] && selectedCount <= 1) return prev;
 			if (dualAllowed) {
 				return { ...prev, [engine]: !prev[engine] };
 			}
-			if (prev[engine]) return { ...prev, [engine]: false };
 			return { openclaw: engine === "openclaw", hermes: engine === "hermes" };
 		});
 	}
@@ -516,10 +519,9 @@ export function DeployWizard() {
 		aiChoice === MANAGED_AI_CHOICE
 			? "Managed AI"
 			: (providerList.find((p) => p.provider_id === aiChoice)?.label ?? "Your provider");
-	const runtimeSummary = [
-		runtimeDisplayName("codex"),
-		...enginesSelected.map((engine) => runtimeDisplayName(engine)),
-	].join(" + ");
+	const runtimeSummary =
+		enginesSelected.map((engine) => runtimeDisplayName(engine)).join(" + ") ||
+		"No execution engine selected";
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Free"} compute`,
 		aiSummary,
@@ -561,25 +563,18 @@ export function DeployWizard() {
 			<div className="flex flex-col gap-6 sm:pb-24">
 				<PageHeader
 					title="Deploy an Agent"
-					description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
+					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
 
 				<SettingsSection
 					title="Runtimes"
 					description={
 						dualAllowed
-							? "Codex stays on. Performance can also run OpenClaw and Hermes together."
-							: "Codex stays on. Free can add one optional runtime."
+							? "Performance can run OpenClaw and Hermes together."
+							: "Free runs one execution engine at a time."
 					}
 				>
-					<div className={THREE_TILE_GRID_CLASS}>
-						<EntityChoiceCard
-							selected
-							icon={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
-							title={runtimeDisplayName("codex")}
-							description={runtimeBlurb("codex")}
-							badge={<Badge variant="outline">Always on</Badge>}
-						/>
+					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
 							selected={engines.openclaw}
 							onClick={() => toggleEngine("openclaw")}
@@ -712,7 +707,7 @@ export function DeployWizard() {
 												? "Free slot check unavailable"
 												: freePlan
 													? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active deployment`
-													: "$0 · Codex included"
+													: "$0 · one active deployment"
 								}
 								badge={<Badge variant="secondary">$0</Badge>}
 								disabled={freeSlotUnavailable}

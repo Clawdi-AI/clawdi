@@ -128,7 +128,6 @@ import {
 	type HostedRuntime,
 	OPTIONAL_HOSTED_RUNTIMES,
 	runtimeBlurb,
-	runtimeCanDisable,
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 	runtimeIsConfigured,
@@ -320,10 +319,10 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 }
 
 /**
- * PER-RUNTIME agent detail. A compute (deployment) hosts the always-on Codex
- * runtime plus optional sibling runtimes; each runtime has its own env id, AI
- * provider binding, channel links, sessions, and control UI. Terminal and compute
- * controls are deployment-wide because they attach to the shared hosted compute.
+ * PER-RUNTIME agent detail. A compute (deployment) hosts one or more execution
+ * runtimes; each runtime has its own env id, AI provider binding, channel links,
+ * sessions, and control UI. Terminal and compute controls are deployment-wide
+ * because they attach to the shared hosted compute.
  */
 export function HostedAgentDetail({
 	environmentId,
@@ -1111,16 +1110,6 @@ function AiProviderTab({
 		setPrimaryModel(currentModel);
 	}
 
-	if (runtime === "codex") {
-		return (
-			<EmptyState
-				icon={Info}
-				title="Codex AI access is set at deploy time"
-				description="This hosted runtime is always available. Runtime-specific AI provider changes are available for OpenClaw and Hermes."
-			/>
-		);
-	}
-
 	const dirty = selected !== initial || primaryModel !== currentModel;
 
 	function apply() {
@@ -1716,11 +1705,8 @@ function ComputeSettingsSections({
 	const [termChangeConfirmation, setTermChangeConfirmation] =
 		useState<TermChangeConfirmation | null>(null);
 	const envs = ci?.clawdi_cloud_environments ?? {};
-	const optionalEnabledCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
+	const enabledRuntimeCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
 		runtimeIsEnabled(ci, runtimeId),
-	).length;
-	const enabledRuntimeCount = RUNTIMES.filter((runtimeItem) =>
-		runtimeIsEnabled(ci, runtimeItem.id),
 	).length;
 	const restartNeedsConfirmation = enabledRuntimeCount > 1;
 	const runtimePending = setEnabled.isPending || onboard.isPending;
@@ -1947,7 +1933,7 @@ function ComputeSettingsSections({
 			>
 				<div className="flex flex-col gap-4">
 					<LiveNote>
-						Codex stays on by default. Optional runtime changes apply live, no restart.
+						Runtime changes apply live, no restart. Keep at least one runtime active.
 					</LiveNote>
 					<div className="flex flex-col">
 						{RUNTIMES.map((r, index) => {
@@ -1955,9 +1941,8 @@ function ComputeSettingsSections({
 							const isConfigured = runtimeIsConfigured(ci, r.id);
 							const isCurrent = r.id === runtime;
 							const siblingEnv = envs[r.id];
-							const canDisable = runtimeCanDisable(r.id);
-							const blockedByPlan =
-								canDisable && !isPerformance && !enabled && optionalEnabledCount >= 1;
+							const blockedByPlan = !isPerformance && !enabled && enabledRuntimeCount >= 1;
+							const blockedByLastRuntime = enabled && enabledRuntimeCount <= 1;
 							return (
 								<Fragment key={r.id}>
 									{index > 0 ? <Separator /> : null}
@@ -1967,7 +1952,6 @@ function ComputeSettingsSections({
 											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
 												{r.label}
 												{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
-												{canDisable ? null : <Badge variant="outline">Always on</Badge>}
 											</div>
 											<div className="text-xs text-muted-foreground">{r.blurb}</div>
 										</div>
@@ -1989,16 +1973,21 @@ function ComputeSettingsSections({
 													<ArrowUpRight className="size-3.5" />
 												</Button>
 											) : null}
-											{!canDisable ? null : isConfigured ? (
+											{isConfigured ? (
 												<Switch
 													checked={enabled}
-													disabled={runtimePending || blockedByPlan}
+													disabled={runtimePending || blockedByPlan || blockedByLastRuntime}
 													onCheckedChange={(next) =>
 														void runAction(() => setRuntimeEnabled(r.id, next)).catch(
 															() => undefined,
 														)
 													}
 													aria-label={`Toggle ${r.label}`}
+													title={
+														blockedByLastRuntime
+															? "At least one runtime must stay active"
+															: undefined
+													}
 												/>
 											) : (
 												<Button
@@ -2029,8 +2018,7 @@ function ComputeSettingsSections({
 						})}
 					</div>
 					<p className="text-xs text-muted-foreground">
-						Codex is always available. Free can add one optional runtime; Performance can add both
-						OpenClaw and Hermes.
+						Free can run one runtime; Performance can run OpenClaw and Hermes together.
 					</p>
 				</div>
 			</SettingsSection>
