@@ -44,6 +44,11 @@ import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import {
+	removeDeletedSkillQueries,
+	skillDetailQueryKey,
+	skillDetailQueryPrefix,
+} from "@/pages/dashboard/skills/skill-query-cache";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
 // renderer doesn't show "name:" / "description:" lines (already
@@ -101,7 +106,7 @@ export function SkillDetailContent({
 		error,
 		refetch,
 	} = useQuery({
-		queryKey: ["skill", skillKey, selectedProjectId],
+		queryKey: skillDetailQueryKey(skillKey, selectedProjectId),
 		// An empty key would interpolate to `GET /v1/skills/`, which the
 		// backend's `{skill_key:path}` catch-all rejects with a 422.
 		// Nothing useful can load without a key, so don't fire at all.
@@ -237,7 +242,7 @@ export function SkillDetailContent({
 			setIsEditing(false);
 			setDraft("");
 			setEditingHash(null);
-			queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
+			queryClient.invalidateQueries({ queryKey: skillDetailQueryPrefix(skillKey) });
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
 		onError: (e) => {
@@ -252,7 +257,7 @@ export function SkillDetailContent({
 					description:
 						"Another edit landed while you were typing. Reload to see the latest, then re-apply your change.",
 				});
-				queryClient.invalidateQueries({ queryKey: ["skill", skillKey] });
+				queryClient.invalidateQueries({ queryKey: skillDetailQueryPrefix(skillKey) });
 				return;
 			}
 			toast.error("Couldn't save skill", { description: errorMessage(e) });
@@ -268,13 +273,13 @@ export function SkillDetailContent({
 				}),
 			);
 		},
-		onSuccess: () => {
+		onSuccess: async () => {
 			toast.success("Skill Uninstalled", {
 				description: skillAgentLabel
 					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
 					: "Removed from this agent. Other agents keep their copies.",
 			});
-			queryClient.invalidateQueries({ queryKey: ["skills"] });
+			await removeDeletedSkillQueries(queryClient, skillKey);
 			void router.navigate({ href: skillListHref });
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),

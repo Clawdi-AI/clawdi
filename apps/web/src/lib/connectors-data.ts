@@ -83,6 +83,7 @@ export function connectionsQueryOptions(api: ApiClient) {
 	return {
 		queryKey: ["connections"] as const,
 		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
+		refetchOnWindowFocus: "always" as const,
 	};
 }
 
@@ -155,7 +156,6 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 
 export function useConnect() {
 	const api = useApi();
-	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async ({ appName, redirectUrl }: { appName: string; redirectUrl?: string }) =>
 			unwrap(
@@ -164,7 +164,6 @@ export function useConnect() {
 					body: redirectUrl ? { redirect_url: redirectUrl } : {},
 				}),
 			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
 	});
 }
 

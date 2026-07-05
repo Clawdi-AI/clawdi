@@ -3,6 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
+import {
+	channelKeys as keys,
+	removeDeletedChannelQueries,
+} from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 
@@ -12,17 +16,6 @@ import { toastApiError, unwrap, useApi } from "@/lib/api";
  * `/v1/channels/*`; mutations invalidate the affected queries and surface
  * recoverable errors as toasts.
  */
-
-const keys = {
-	list: ["channels"] as const,
-	pool: ["channel-bot-pool"] as const,
-	health: ["channel-health"] as const,
-	channel: (id: string) => ["channel", id] as const,
-	agentLinks: (id: string) => ["channel-agent-links", id] as const,
-	bindings: (id: string) => ["channel-bindings", id] as const,
-	activity: (id: string) => ["channel-activity", id] as const,
-	whatsappCreds: (id: string) => ["whatsapp-tenant-creds", id] as const,
-};
 
 export function useChannels() {
 	const api = useApi();
@@ -137,10 +130,8 @@ export function useDeleteChannel() {
 					params: { path: { account_id: id } },
 				}),
 			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.list });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			qc.invalidateQueries({ queryKey: keys.health });
+		onSuccess: async (_data, id) => {
+			await removeDeletedChannelQueries(qc, id);
 			toast.success("Channel removed");
 		},
 		onError: toastApiError("Couldn't remove channel"),
