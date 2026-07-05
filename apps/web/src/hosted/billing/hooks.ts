@@ -244,17 +244,42 @@ export function useResumeSubscription() {
 }
 
 export function useCheckoutReturnRefresh() {
-	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useCallback(async () => {
-		const [deploymentsResult] = await Promise.allSettled([
-			qc.fetchQuery({ queryKey: billingKeys.deployments, queryFn: () => client.listDeployments() }),
-			qc.fetchQuery({ queryKey: billingKeys.wallet, queryFn: () => client.getWallet() }),
-			qc.invalidateQueries({ queryKey: billingKeys.plans }),
-			qc.invalidateQueries({ queryKey: ["agents"] }),
-		]);
-		return deploymentsResult.status === "fulfilled" ? deploymentsResult.value : undefined;
-	}, [client, qc]);
+	return useCallback(() => refreshCheckoutReturnQueries(qc), [qc]);
+}
+
+export async function refreshCheckoutReturnQueries(
+	qc: QueryClient,
+): Promise<HostedDeployment[] | undefined> {
+	const [deploymentsResult] = await Promise.allSettled([
+		(async () => {
+			await qc.invalidateQueries({
+				queryKey: billingKeys.deployments,
+				exact: true,
+				refetchType: "none",
+			});
+			await qc.refetchQueries(
+				{ queryKey: billingKeys.deployments, exact: true, type: "all" },
+				{ throwOnError: true },
+			);
+		})(),
+		(async () => {
+			await qc.invalidateQueries({
+				queryKey: billingKeys.wallet,
+				exact: true,
+				refetchType: "none",
+			});
+			await qc.refetchQueries(
+				{ queryKey: billingKeys.wallet, exact: true, type: "all" },
+				{ throwOnError: true },
+			);
+		})(),
+		qc.invalidateQueries({ queryKey: billingKeys.plans }),
+		qc.invalidateQueries({ queryKey: ["agents"] }),
+	]);
+	return deploymentsResult.status === "fulfilled"
+		? qc.getQueryData<HostedDeployment[]>(billingKeys.deployments)
+		: undefined;
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────

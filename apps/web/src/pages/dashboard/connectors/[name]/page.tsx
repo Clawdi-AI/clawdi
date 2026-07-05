@@ -99,8 +99,9 @@ function ConnectorDetail({ name }: { name: string }) {
 	// programmatic and block them) and points it at the OAuth URL once
 	// the backend responds. The popup eventually lands on this same
 	// detail page via the `redirect_url` we send to Composio; React
-	// Query's window-focus refetch picks up the new ACTIVE connection
-	// when the user returns to this tab. No polling loop needed.
+	// Query's per-connection window-focus refetch always checks for the
+	// new ACTIVE connection when the user returns to this tab. No polling
+	// loop needed.
 	const connectMutation = useConnect();
 
 	// Per-row disconnect single-flight guard.
@@ -215,8 +216,8 @@ function ConnectorDetail({ name }: { name: string }) {
 		// Send our detail page URL as `redirect_url` so Composio sends the
 		// user back here after OAuth instead of its default callback.
 		// Lets us drop a polling loop — the popup eventually navigates
-		// back to our origin and React Query's window-focus refetch
-		// reflects the new ACTIVE connection.
+		// back to our origin and the connections query force-refetches on
+		// window focus to reflect the new ACTIVE connection.
 		const redirectUrl = window.location.href;
 		connectMutation.mutate(
 			{ appName: name, redirectUrl },
