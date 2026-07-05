@@ -6,6 +6,7 @@
 @import "@fontsource/geist-mono/latin-600.css";
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 @import "@clawdi/shared/style/theme.css";
 @import "@xterm/xterm/css/xterm.css";
 

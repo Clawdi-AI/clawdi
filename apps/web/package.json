@@ -66,6 +66,7 @@
 		"@types/react-dom": "catalog:",
 		"@vercel/nft": "^1.10.2",
 		"@vitejs/plugin-react": "^6.0.3",
+		"shadcn": "4.13.0",
 		"tailwindcss": "catalog:",
 		"typescript": "catalog:",
 		"vite": "^8.1.3"
