@@ -43,7 +43,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: "openai_chat",
 		defaultRuntimeEnv: "OPENAI_API_KEY",
-		modelPlaceholder: "gpt-4o",
+		modelPlaceholder: "gpt-5.5",
 		oauth: true,
 	},
 	anthropic: {
@@ -54,7 +54,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["anthropic_messages"],
 		defaultApiMode: "anthropic_messages",
 		defaultRuntimeEnv: "ANTHROPIC_API_KEY",
-		modelPlaceholder: "claude-sonnet-4-5",
+		modelPlaceholder: "claude-sonnet-5",
 	},
 	openrouter: {
 		id: "openrouter",
@@ -64,7 +64,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat"],
 		defaultApiMode: "openai_chat",
 		defaultRuntimeEnv: "OPENROUTER_API_KEY",
-		modelPlaceholder: "anthropic/claude-3.7-sonnet",
+		modelPlaceholder: "anthropic/claude-sonnet-5",
 	},
 	gemini: {
 		id: "gemini",
@@ -74,7 +74,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["google_generate_content"],
 		defaultApiMode: "google_generate_content",
 		defaultRuntimeEnv: "GEMINI_API_KEY",
-		modelPlaceholder: "gemini-2.0-flash",
+		modelPlaceholder: "gemini-3.5-flash",
 	},
 	mistral: {
 		id: "mistral",

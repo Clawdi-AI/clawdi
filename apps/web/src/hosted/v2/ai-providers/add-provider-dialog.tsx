@@ -158,6 +158,8 @@ export function AddProviderDialog({
 	const createdFreshRef = useRef(false);
 
 	const meta = providerTypeMeta(type);
+	const runtimeEnvForSubmit = runtimeEnv.trim() || meta.defaultRuntimeEnv;
+	const showRuntimeEnvField = authMethod === "api_key" && meta.custom === true;
 
 	// Initialize when (re)opened.
 	useEffect(() => {
@@ -310,7 +312,7 @@ export function AddProviderDialog({
 			api_mode: apiMode,
 			auth,
 			managed_by: "user" as const,
-			runtime_env_name: keyBacked ? runtimeEnv.trim() || null : null,
+			runtime_env_name: keyBacked ? runtimeEnvForSubmit : null,
 		};
 		const created = await upsert.mutateAsync(body).catch(() => null);
 		if (!created) return;
@@ -323,7 +325,7 @@ export function AddProviderDialog({
 				.mutateAsync({
 					providerId,
 					value: apiKey.trim(),
-					runtime_env_name: runtimeEnv.trim() || undefined,
+					runtime_env_name: runtimeEnvForSubmit,
 				})
 				.catch(() => null);
 			if (!keyStored) {
@@ -738,18 +740,32 @@ export function AddProviderDialog({
 											</p>
 										) : null}
 									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-env">Runtime env var</Label>
-										<Input
-											id="provider-env"
-											name="provider-env"
-											value={runtimeEnv}
-											onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
-											placeholder="OPENAI_API_KEY"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-									</div>
+									{showRuntimeEnvField ? (
+										<details
+											className="rounded-md border bg-muted/30 p-3"
+											open={isEdit || undefined}
+										>
+											<summary className="cursor-pointer text-sm font-medium text-foreground">
+												Advanced
+											</summary>
+											<div className="mt-3 flex flex-col gap-1.5">
+												<Label htmlFor="provider-env">Runtime env var</Label>
+												<Input
+													id="provider-env"
+													name="provider-env"
+													value={runtimeEnv}
+													onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
+													placeholder="OPENAI_API_KEY"
+													autoComplete="off"
+													spellCheck={false}
+												/>
+												<p className="text-xs text-muted-foreground">
+													Environment variable your endpoint's API key is exposed under to the
+													agent, e.g. OPENAI_API_KEY.
+												</p>
+											</div>
+										</details>
+									) : null}
 								</>
 							) : null}
 
