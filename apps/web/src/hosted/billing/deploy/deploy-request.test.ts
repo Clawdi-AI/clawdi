@@ -49,4 +49,34 @@ describe("buildHostedDeployRequest", () => {
 			}),
 		).toThrow("Select at least one execution engine.");
 	});
+
+	test("preserves provider pool and structured primary model fields", () => {
+		const request = buildHostedDeployRequest({
+			computePlanSlug: "compute_performance",
+			engines: { openclaw: true, hermes: true },
+			persona: {
+				language: "",
+				timezone: "",
+			},
+			aiFields: {
+				ai_provider_id: "anthropic-prod",
+				ai_provider_auth_kind: "api_key",
+				provider_ids: ["openai-prod", "anthropic-prod"],
+				primary_model: {
+					provider_id: "anthropic-prod",
+					model: "claude-sonnet-5",
+				},
+			},
+		});
+
+		expect(request).toMatchObject({
+			ai_provider_id: "anthropic-prod",
+			ai_provider_auth_kind: "api_key",
+			provider_ids: ["openai-prod", "anthropic-prod"],
+			primary_model: {
+				provider_id: "anthropic-prod",
+				model: "claude-sonnet-5",
+			},
+		});
+	});
 });

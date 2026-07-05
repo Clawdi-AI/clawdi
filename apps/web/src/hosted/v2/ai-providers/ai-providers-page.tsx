@@ -113,7 +113,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 	const del = useDeleteProvider();
 	const validate = useValidateProvider();
 	const providerLabel = provider.label ?? provider.provider_id;
-	const modelId = provider.models?.[0]?.id;
+	const modelSummary = modelCatalogSummary(provider);
 
 	function runValidate() {
 		validate.mutate(provider.provider_id, {
@@ -132,7 +132,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				title={providerLabel}
 				titleAdornment={<AuthBadge auth={provider.auth} />}
 				meta={[
-					`${meta.label}${modelId ? ` · ${formatModelLabel(modelId)}` : ""}${
+					`${meta.label} · ${modelSummary}${
 						provider.api_mode
 							? ` · ${API_MODE_LABEL[provider.api_mode as ApiMode] ?? provider.api_mode}`
 							: ""
@@ -182,6 +182,13 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 			</div>
 		</div>
 	);
+}
+
+function modelCatalogSummary(provider: AiProvider): string {
+	const modelIds = (provider.models ?? []).map((model) => model.id).filter(Boolean);
+	if (modelIds.length === 0) return "No catalog models";
+	const visible = modelIds.slice(0, 2).map(formatModelLabel).join(", ");
+	return modelIds.length > 2 ? `${visible} +${modelIds.length - 2} more` : visible;
 }
 
 function ProviderCardSkeleton() {

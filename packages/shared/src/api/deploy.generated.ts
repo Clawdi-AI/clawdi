@@ -437,17 +437,26 @@ export interface components {
             evm_wallet_address?: string | null;
             capabilities: components["schemas"]["V1UserProductCapabilities"];
         };
+        /** V2AiProviderPrimaryModelRef */
+        V2AiProviderPrimaryModelRef: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
+        };
         /** V2AiProviderBindingInfo */
         V2AiProviderBindingInfo: {
             /** Provider Id */
             provider_id: string;
+            /** Provider Ids */
+            provider_ids?: string[];
             /**
              * Auth Kind
              * @enum {string}
              */
             auth_kind: "managed" | "api_key" | "codex_oauth";
             /** Primary Model */
-            primary_model?: string | null;
+            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
         };
         /** V2BillingOfferResponse */
         V2BillingOfferResponse: {
@@ -605,7 +614,7 @@ export interface components {
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
             /** Primary Model */
-            primary_model?: string | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -649,7 +658,7 @@ export interface components {
              */
             compute_plan_slug: "compute_free" | "compute_performance";
             /** Primary Model */
-            primary_model?: string | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -687,6 +696,8 @@ export interface components {
             deploy_request_id?: string | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
+            /** Ai Provider Ids */
+            provider_ids?: string[] | null;
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
             /** Ai Provider Bootstrap */
@@ -876,7 +887,7 @@ export interface components {
              */
             agent_type: "openclaw" | "hermes";
             /** Primary Model */
-            primary_model?: string | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Assistant Name */
             assistant_name?: string | null;
             /** Personality */
@@ -887,6 +898,8 @@ export interface components {
             timezone?: string | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
+            /** Ai Provider Ids */
+            provider_ids?: string[] | null;
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
             /** Ai Provider Bootstrap */
@@ -947,9 +960,11 @@ export interface components {
         /** V2RebindAgentAiProviderRequest */
         V2RebindAgentAiProviderRequest: {
             /** Primary Model */
-            primary_model?: string | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
+            /** Ai Provider Ids */
+            provider_ids?: string[] | null;
             /**
              * Ai Provider Auth Kind
              * @enum {string}

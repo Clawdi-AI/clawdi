@@ -24,6 +24,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import {
 	type AuthMethod,
 	apiKeyEditState,
@@ -58,7 +59,7 @@ import {
 	providerTypeMeta,
 	toProviderId,
 } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 function isApiMode(value: string | null): value is ApiMode {
 	return (
@@ -95,6 +96,28 @@ function providerTypeDescription(type: ProviderTypeId): string {
 	return "Custom endpoint";
 }
 
+function modelsToText(models: AiProvider["models"]): string {
+	return (models ?? []).map((model) => model.id).join("\n");
+}
+
+function parseModelIds(input: string): string[] {
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	for (const raw of input.split(/[,\n]/)) {
+		const id = raw.trim();
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+	return ids;
+}
+
+function modelsFromText(input: string, existing: AiProvider["models"]): AiProviderUpsert["models"] {
+	const existingById = new Map((existing ?? []).map((model) => [model.id, model]));
+	const models = parseModelIds(input).map((id) => existingById.get(id) ?? { id });
+	return models.length > 0 ? models : null;
+}
+
 export function AddProviderDialog({
 	open,
 	onOpenChange,
@@ -119,7 +142,7 @@ export function AddProviderDialog({
 	const [type, setType] = useState<ProviderTypeId>("openai");
 	const [label, setLabel] = useState("");
 	const [baseUrl, setBaseUrl] = useState("");
-	const [defaultModel, setDefaultModel] = useState("");
+	const [modelsText, setModelsText] = useState("");
 	const [apiMode, setApiMode] = useState<ApiMode>("openai_chat");
 	const [runtimeEnv, setRuntimeEnv] = useState("");
 	const [authMethod, setAuthMethod] = useState<AuthMethod>("api_key");
@@ -171,7 +194,7 @@ export function AddProviderDialog({
 			setType(editing.type as ProviderTypeId);
 			setLabel(editing.label ?? "");
 			setBaseUrl(editing.base_url);
-			setDefaultModel(editing.models?.[0]?.id ?? "");
+			setModelsText(modelsToText(editing.models));
 			setApiMode(editing.api_mode ?? m.defaultApiMode);
 			setRuntimeEnv(editing.runtime_env_name ?? m.defaultRuntimeEnv);
 			setAuthMethod(
@@ -186,7 +209,7 @@ export function AddProviderDialog({
 			setType("openai");
 			setLabel("");
 			setBaseUrl(m.defaultBaseUrl);
-			setDefaultModel("");
+			setModelsText("");
 			setApiMode(m.defaultApiMode);
 			setRuntimeEnv(m.defaultRuntimeEnv);
 			setAuthMethod("api_key");
@@ -198,7 +221,7 @@ export function AddProviderDialog({
 		setType(next);
 		const m = providerTypeMeta(next);
 		setBaseUrl(m.defaultBaseUrl);
-		setDefaultModel("");
+		setModelsText("");
 		setApiMode(m.defaultApiMode);
 		setRuntimeEnv(m.defaultRuntimeEnv);
 		setApiKey("");
@@ -245,9 +268,7 @@ export function AddProviderDialog({
 				(p) => p.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 			);
 			if (!existingCodex) {
-				const codexCreated = await upsertQuiet
-					.mutateAsync(codexProviderBody(defaultModel))
-					.catch(() => null);
+				const codexCreated = await upsertQuiet.mutateAsync(codexProviderBody()).catch(() => null);
 				if (!codexCreated) return; // upsertQuiet.onError already toasts
 				createdFreshRef.current = true;
 			} else {
@@ -299,7 +320,7 @@ export function AddProviderDialog({
 			type,
 			label: label.trim() || null,
 			base_url: baseUrl.trim(),
-			models: defaultModel.trim() ? [{ id: defaultModel.trim() }] : null,
+			models: modelsFromText(modelsText, editing?.models),
 			api_mode: apiMode,
 			auth,
 			managed_by: "user" as const,
@@ -780,16 +801,20 @@ export function AddProviderDialog({
 
 								<div className="grid gap-3 sm:grid-cols-2">
 									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-model">Default model</Label>
-										<Input
-											id="provider-model"
-											name="provider-model"
-											value={defaultModel}
-											onChange={(e) => setDefaultModel(e.target.value)}
+										<Label htmlFor="provider-models">Model catalog</Label>
+										<Textarea
+											id="provider-models"
+											name="provider-models"
+											value={modelsText}
+											onChange={(e) => setModelsText(e.target.value)}
 											placeholder={meta.modelPlaceholder}
 											autoComplete="off"
 											spellCheck={false}
+											className="min-h-24 resize-y"
 										/>
+										<p className="text-xs text-muted-foreground">
+											Optional. Enter one model id per line, or separate ids with commas.
+										</p>
 									</div>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-mode">API mode</Label>

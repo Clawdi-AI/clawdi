@@ -33,11 +33,23 @@ export function buildAiProviderBootstrap(
 	provider: AiProvider,
 	authKind: RuntimeAiProviderAuthKind,
 ): RuntimeAiProviderBootstrap {
-	const runtimeProvider = toRuntimeAiProvider(provider);
+	return buildAiProviderPoolBootstrap([provider], provider.provider_id, authKind);
+}
+
+export function buildAiProviderPoolBootstrap(
+	providers: readonly AiProvider[],
+	selectedProviderId: string,
+	authKind: RuntimeAiProviderAuthKind,
+): RuntimeAiProviderBootstrap {
+	const runtimeProviders = providers.map((provider) => toRuntimeAiProvider(provider));
+	const selectedProvider = runtimeProviders.find((provider) => provider.id === selectedProviderId);
+	if (!selectedProvider) {
+		throw new Error("Selected AI provider is not in the provider pool.");
+	}
 	const catalog: AiProviderCatalog = {
 		schema_version: 1,
-		providers: [runtimeProvider],
-		defaults: { chat_provider_id: runtimeProvider.id },
+		providers: runtimeProviders,
+		defaults: { chat_provider_id: selectedProvider.id },
 	};
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
@@ -45,7 +57,7 @@ export function buildAiProviderBootstrap(
 	}
 	return {
 		schema_version: 1,
-		selected_provider_id: runtimeProvider.id,
+		selected_provider_id: selectedProvider.id,
 		auth_kind: authKind,
 		catalog,
 	};
