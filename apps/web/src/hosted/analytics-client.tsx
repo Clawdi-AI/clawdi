@@ -16,7 +16,7 @@ export function HostedAnalyticsClient() {
 		setMounted(true);
 	}, []);
 
-	if (!mounted) return <span data-hosted="true" hidden aria-hidden="true" />;
+	if (!mounted) return null;
 	return <HostedAnalyticsIdentity />;
 }
 
@@ -69,5 +69,5 @@ function HostedAnalyticsIdentity() {
 		});
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
 
-	return <span data-hosted="true" hidden aria-hidden="true" />;
+	return null;
 }

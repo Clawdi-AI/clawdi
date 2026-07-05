@@ -182,9 +182,15 @@ describe("hosted/ directory invariants", () => {
 	test('every .tsx file sets data-hosted="true" on its root', () => {
 		const files = listTsx(HOSTED_DIR);
 		expect(files.length).toBeGreaterThan(0);
+		// Effect-only hosted modules should render no DOM instead of a tagged sentinel.
+		const rootlessEffectOnlyFiles = new Set(["hosted/analytics-client.tsx"]);
 
 		for (const file of files) {
+			const rel = relative(SRC_DIR, file);
 			const src = stripComments(readFileSync(file, "utf8"));
+			if (rootlessEffectOnlyFiles.has(rel) && /\breturn\s+null\b/.test(src)) {
+				continue;
+			}
 			// Tight match: explicit `data-hosted="true"` or `data-hosted={"true"}`.
 			// Rejects `data-hosted="false"`, typos, and arbitrary expression forms
 			// that would slip past the original looser pattern. Source has had
@@ -193,9 +199,7 @@ describe("hosted/ directory invariants", () => {
 			// required.
 			const hasDataHosted = /\bdata-hosted=(?:"true"|\{"true"\})/.test(src);
 			if (!hasDataHosted) {
-				throw new Error(
-					`${relative(SRC_DIR, file)}: hosted .tsx must set data-hosted="true" on its rendered root`,
-				);
+				throw new Error(`${rel}: hosted .tsx must set data-hosted="true" on its rendered root`);
 			}
 		}
 	});
