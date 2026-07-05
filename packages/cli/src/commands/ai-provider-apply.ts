@@ -516,7 +516,7 @@ async function writeAiProviderSecretMaterial(
 	const source = catalog.providers.find(
 		(provider) => provider.id === secretWrite.source_provider_id,
 	);
-	if (!source || source.auth.type !== "agent_profile" || source.auth.tool !== "codex") {
+	if (source?.auth.type !== "agent_profile" || source.auth.tool !== "codex") {
 		throw new Error(
 			`AI Provider ${secretWrite.source_provider_id} is not a Codex auth profile source.`,
 		);

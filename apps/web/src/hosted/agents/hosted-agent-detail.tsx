@@ -399,7 +399,6 @@ export function HostedAgentDetail({
 		) : consoleUrl ? (
 			<Button
 				render={
-					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
 					<a
 						href={consoleUrl}
 						target="_blank"
@@ -775,7 +774,6 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			action={
 				<Button
 					render={
-						// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
 						<a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open full screen" />
 					}
 					nativeButton={false}
@@ -803,7 +801,6 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 				</p>
 				<Button
 					render={
-						// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
 						<a
 							href={url}
 							target="_blank"
