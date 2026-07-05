@@ -328,7 +328,6 @@ export function AgentSettingsPanel({
 							variant="outline"
 							size="sm"
 							render={
-								// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from Button.
 								<a
 									href={legacyDashboardUrl}
 									target="_blank"

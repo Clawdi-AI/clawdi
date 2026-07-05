@@ -310,7 +310,7 @@ function SidebarNavSection({
 								<SidebarMenuButton
 									render={
 										item.external ? (
-											// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from SidebarMenuButton.
+											// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholder; SidebarMenuButton supplies the accessible label.
 											<a
 												href={item.href}
 												target="_blank"
@@ -1298,7 +1298,6 @@ function HelpMenuItems() {
 		<DropdownMenuGroup>
 			<DropdownMenuItem
 				render={
-					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
 					<a
 						href="https://deepwiki.com/Clawdi-AI/clawdi"
 						target="_blank"
@@ -1313,7 +1312,6 @@ function HelpMenuItems() {
 			</DropdownMenuItem>
 			<DropdownMenuItem
 				render={
-					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
 					<a
 						href="https://github.com/Clawdi-AI/clawdi"
 						target="_blank"
@@ -1326,18 +1324,12 @@ function HelpMenuItems() {
 				GitHub
 				<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
 			</DropdownMenuItem>
-			<DropdownMenuItem
-				render={
-					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
-					<a href="mailto:support@clawdi.ai" aria-label="Email support" />
-				}
-			>
+			<DropdownMenuItem render={<a href="mailto:support@clawdi.ai" aria-label="Email support" />}>
 				<Mail />
 				support@clawdi.ai
 			</DropdownMenuItem>
 			<DropdownMenuItem
 				render={
-					// biome-ignore lint/a11y/useAnchorContent: Base UI render placeholders receive children from DropdownMenuItem.
 					<a
 						href="https://t.me/clawdiofficial"
 						target="_blank"
