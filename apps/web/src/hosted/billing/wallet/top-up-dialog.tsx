@@ -17,13 +17,14 @@ import { Spinner } from "@/components/ui/spinner";
 import type { WalletState } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCents, formatCredits } from "@/hosted/billing/format";
-import { billingKeys, useTopUp } from "@/hosted/billing/hooks";
+import { useTopUp } from "@/hosted/billing/hooks";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import { completeTopup, handleTopupStartResult } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
 	TOPUP_MAX_CENTS,
 	TOPUP_MIN_CENTS,
@@ -92,13 +93,18 @@ export function TopUpDialog({
 				body: { amount_cents: amountCents },
 				idempotencyKey: topupKeyRef.current,
 			});
-			if (result.flow_type === "payment_intent" && result.client_secret) {
-				setClientSecret(result.client_secret);
-				setStep("pay");
-				return;
-			}
-			toast.error("Couldn’t start top-up", {
-				description: "No payment was returned. Please try again.",
+			handleTopupStartResult(result, {
+				queryClient: qc,
+				resetAttempt: () => {
+					topupKeyRef.current = null;
+				},
+				closeDialog: () => close(false),
+				toastSuccess: toast.success,
+				toastError: toast.error,
+				startPayment: (nextClientSecret) => {
+					setClientSecret(nextClientSecret);
+					setStep("pay");
+				},
 			});
 		} catch (e) {
 			toast.error("Couldn’t start top-up", { description: normalizeBillingError(e) });
@@ -109,18 +115,14 @@ export function TopUpDialog({
 	// inline by StripePaymentForm, which keeps the dialog open until it settles
 	// rather than closing on an unconfirmed payment.
 	function onPaid(status: PaymentOutcome) {
-		qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
-		if (status === "succeeded") {
-			toast.success("Top-up complete", {
-				description: "Your credits will appear in a moment.",
-			});
-		} else {
-			toast.success("Top-up processing", {
-				description: "We’ll credit your wallet once the payment settles.",
-			});
-		}
-		close(false);
+		completeTopup(status === "succeeded" ? "succeeded" : "processing", {
+			queryClient: qc,
+			resetAttempt: () => {
+				topupKeyRef.current = null;
+			},
+			closeDialog: () => close(false),
+			toastSuccess: toast.success,
+		});
 	}
 
 	return (

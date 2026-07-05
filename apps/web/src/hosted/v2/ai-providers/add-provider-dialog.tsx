@@ -25,6 +25,12 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
+	type AuthMethod,
+	apiKeyEditState,
+	isAuthMethod,
+	providerAuthForSubmit,
+} from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
+import {
 	useAiProviders,
 	useDeleteProviderQuiet,
 	useOAuthComplete,
@@ -52,13 +58,7 @@ import {
 	providerTypeMeta,
 	toProviderId,
 } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
-
-type AuthMethod = "api_key" | "oauth" | "none";
-
-function isAuthMethod(value: string | null): value is AuthMethod {
-	return value === "api_key" || value === "oauth" || value === "none";
-}
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 function isApiMode(value: string | null): value is ApiMode {
 	return (
@@ -67,12 +67,6 @@ function isApiMode(value: string | null): value is ApiMode {
 		value === "anthropic_messages" ||
 		value === "google_generate_content"
 	);
-}
-
-function authFor(method: AuthMethod): AiProviderAuth {
-	if (method === "api_key") return { type: "api_key", source: "managed" };
-	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
-	return { type: "none" };
 }
 
 // Backend rule (_validate_base_url): `none` auth is only allowed for a loopback
@@ -215,16 +209,10 @@ export function AddProviderDialog({
 	const providerId = isEdit ? (editing?.provider_id ?? "") : toProviderId(label || meta.label);
 	// `none` auth only works with a loopback/private base_url (backend rule).
 	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
-	const canKeepManagedApiKey =
-		authMethod === "api_key" && isEdit && editing?.auth.type === "api_key";
-	const existingSecretRefAuth =
-		isEdit && editing?.auth.type === "secret_ref" && editing.auth.ref ? editing.auth : null;
-	const canKeepLegacySecretRef = authMethod === "api_key" && Boolean(existingSecretRefAuth);
-	const canKeepExistingKey = canKeepManagedApiKey || canKeepLegacySecretRef;
-	// A key is required for api_key unless this provider is already using a
-	// managed API key. Legacy secret_ref edits can keep the existing ref, but
-	// new providers and auth-method switches still need a managed key.
-	const keyRequired = authMethod === "api_key" && !canKeepExistingKey;
+	const apiKeyState = isEdit
+		? apiKeyEditState(authMethod, editing?.auth)
+		: apiKeyEditState(authMethod, null);
+	const { keyRequired, labelSuffix: apiKeyLabelSuffix, helpText: apiKeyHelpText } = apiKeyState;
 	const canSubmit =
 		Boolean(providerId) &&
 		Boolean(baseUrl.trim()) &&
@@ -297,10 +285,13 @@ export function AddProviderDialog({
 			return;
 		}
 
-		let auth = authFor(authMethod);
 		const isApiKeySubmit = authMethod === "api_key";
 		const hasNewManagedKey = isApiKeySubmit && Boolean(apiKey.trim());
-		if (isApiKeySubmit && existingSecretRefAuth) auth = existingSecretRefAuth;
+		const auth = providerAuthForSubmit({
+			authMethod,
+			editingAuth: editing?.auth,
+			hasNewManagedKey,
+		});
 
 		const keyBacked = auth.type === "api_key" || auth.type === "secret_ref";
 		const body = {
@@ -721,9 +712,7 @@ export function AddProviderDialog({
 								{authMethod === "api_key" ? (
 									<>
 										<div className="flex flex-col gap-1.5">
-											<Label htmlFor="provider-key">
-												API key{canKeepExistingKey ? " (leave blank to keep)" : ""}
-											</Label>
+											<Label htmlFor="provider-key">API key{apiKeyLabelSuffix}</Label>
 											<Input
 												id="provider-key"
 												name="provider-key"
@@ -734,11 +723,7 @@ export function AddProviderDialog({
 												autoComplete="off"
 												spellCheck={false}
 											/>
-											<p className="text-xs text-muted-foreground">
-												{canKeepLegacySecretRef
-													? "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth."
-													: "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again."}
-											</p>
+											<p className="text-xs text-muted-foreground">{apiKeyHelpText}</p>
 											{keyRequired && isEdit && !apiKey.trim() ? (
 												<p className="text-xs text-destructive">
 													Enter a key to switch this provider to managed API-key auth.

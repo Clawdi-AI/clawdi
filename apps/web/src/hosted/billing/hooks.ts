@@ -22,17 +22,10 @@ import type {
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
+import { billingKeys } from "@/hosted/billing/query-keys";
 import { shouldPollDeployments } from "@/hosted/deployment-status";
 
-export const billingKeys = {
-	wallet: ["billing", "wallet"] as const,
-	ledger: (limit: number) => ["billing", "ledger", limit] as const,
-	plans: ["billing", "plans"] as const,
-	deployments: ["billing", "deployments"] as const,
-	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
-	me: ["billing", "me"] as const,
-	usage: ["billing", "usage"] as const,
-};
+export { billingKeys } from "@/hosted/billing/query-keys";
 
 type CheckoutMutationVariables = {
 	body: CheckoutRequest;

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
+import { channelHealthQueryOptions } from "@/hosted/v2/channels/channel-health-query";
 import {
 	channelKeys as keys,
 	removeDeletedChannelQueries,
@@ -35,10 +36,9 @@ export function useBotPool() {
 
 export function useChannelHealth() {
 	const api = useApi();
-	return useQuery({
-		queryKey: keys.health,
-		queryFn: async () => unwrap(await api.GET("/v1/channels/health")),
-	});
+	return useQuery(
+		channelHealthQueryOptions(async () => unwrap(await api.GET("/v1/channels/health"))),
+	);
 }
 
 export function useChannel(id: string) {
