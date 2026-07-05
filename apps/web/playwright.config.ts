@@ -1,10 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
+const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3200";
+const serverPort = new URL(baseURL).port || "3200";
 
 export default defineConfig({
 	testDir: "./e2e",
 	testMatch: "**/*.pw.ts",
+	testIgnore: "**/hosted-smoke.pw.ts",
 	timeout: 30_000,
 	expect: {
 		timeout: 5_000,
@@ -16,7 +18,7 @@ export default defineConfig({
 		trace: "on-first-retry",
 	},
 	webServer: {
-		command: "bun run dev -- --host 127.0.0.1",
+		command: `bun run dev -- --host 127.0.0.1 --port ${serverPort} --strictPort`,
 		url: baseURL,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,

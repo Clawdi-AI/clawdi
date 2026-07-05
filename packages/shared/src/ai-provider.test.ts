@@ -135,7 +135,7 @@ describe("validateAiProviderCatalog", () => {
 				},
 			],
 			defaults: { chat_provider_id: "custom-openai" },
-		});
+		} as never);
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(

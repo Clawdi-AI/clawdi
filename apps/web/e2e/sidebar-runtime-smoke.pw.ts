@@ -148,11 +148,13 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await page.goto("/");
 	await expect(page.getByTestId("app-sidebar")).toBeVisible();
 	await expect(page.getByTestId("app-sidebar-agent-rail")).toBeVisible();
-	await expect(page.getByTestId("app-sidebar-agent-tiles")).toBeVisible();
-	await expect(page.getByTestId("app-sidebar-agent-tile")).toHaveCount(1);
+	const agentTiles = page.getByTestId("app-sidebar-agent-tiles");
+	await expect(agentTiles).toBeVisible();
+	const agentTile = agentTiles.getByRole("link", { name: /Smoke Codex.*Codex/ });
+	await expect(agentTile).toHaveCount(1);
 	await expectNoBrowserErrors(page, browserErrors, "dashboard render");
 
-	await page.getByTestId("app-sidebar-agent-tile").hover();
+	await agentTile.hover();
 	await expect(
 		page.locator('[data-slot="tooltip-content"]').filter({ hasText: "Smoke Codex" }),
 	).toBeVisible();
