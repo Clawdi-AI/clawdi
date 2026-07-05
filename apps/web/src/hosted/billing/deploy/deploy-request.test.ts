@@ -35,4 +35,18 @@ describe("buildHostedDeployRequest", () => {
 		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in (request.config ?? {})).toBe(false);
 	});
+
+	test("rejects deploys without an execution engine", () => {
+		expect(() =>
+			buildHostedDeployRequest({
+				computePlanSlug: "compute_free",
+				engines: { openclaw: false, hermes: false },
+				persona: {
+					language: "",
+					timezone: "",
+				},
+				aiFields: { ai_provider_auth_kind: "managed" },
+			}),
+		).toThrow("Select at least one execution engine.");
+	});
 });

@@ -23,6 +23,10 @@ export function buildHostedDeployRequest({
 	persona: DeployPersona;
 	aiFields: Partial<DeployRequest>;
 }): DeployRequest {
+	if (!engines.openclaw && !engines.hermes) {
+		throw new Error("Select at least one execution engine.");
+	}
+
 	const personaFields = {
 		language: persona.language || null,
 		timezone: persona.timezone || null,

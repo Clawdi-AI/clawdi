@@ -48,7 +48,7 @@ function configInfo(
 }
 
 describe("deploymentRuntimes", () => {
-	test("always includes Codex before enabled runtime environments", () => {
+	test("returns enabled execution runtime environments", () => {
 		expect(
 			deploymentRuntimes(
 				deployment(
@@ -61,7 +61,7 @@ describe("deploymentRuntimes", () => {
 					}),
 				),
 			),
-		).toEqual(["codex", "openclaw", "hermes"]);
+		).toEqual(["openclaw", "hermes"]);
 	});
 
 	test("does not surface disabled runtimes just because they remain configured", () => {
@@ -80,7 +80,7 @@ describe("deploymentRuntimes", () => {
 					}),
 				),
 			),
-		).toEqual(["codex", "openclaw"]);
+		).toEqual(["openclaw"]);
 	});
 
 	test("falls back to legacy enable flags when explicit runtime lists are absent", () => {
@@ -96,6 +96,23 @@ describe("deploymentRuntimes", () => {
 					}),
 				),
 			),
-		).toEqual(["codex", "hermes"]);
+		).toEqual(["hermes"]);
+	});
+
+	test("does not surface Codex from stale hosted environment mappings", () => {
+		expect(
+			deploymentRuntimes(
+				deployment(
+					configInfo({
+						enable_openclaw: true,
+						enable_hermes: false,
+						clawdi_cloud_environments: {
+							codex: "env-codex",
+							openclaw: "env-openclaw",
+						},
+					}),
+				),
+			),
+		).toEqual(["openclaw"]);
 	});
 });

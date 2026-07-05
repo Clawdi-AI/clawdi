@@ -43,10 +43,10 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 function env(overrides: Partial<Env> = {}): Env {
 	return {
 		id: "11111111-1111-4111-8111-111111111111",
-		name: "hosted-codex",
-		default_name: "hosted-codex",
-		machine_name: "hosted-codex",
-		agent_type: "codex",
+		name: "hosted-openclaw",
+		default_name: "hosted-openclaw",
+		machine_name: "hosted-openclaw",
+		agent_type: "openclaw",
 		agent_version: null,
 		os: "linux",
 		last_seen_at: null,
@@ -133,7 +133,7 @@ describe("deploymentToTiles", () => {
 			[openclawEnv],
 		);
 
-		expect(tiles.map((tile) => tile.agentType)).toEqual(["codex"]);
+		expect(tiles.map((tile) => tile.agentType)).toEqual([]);
 		expect(tiles.some((tile) => tile.id === "dep_123:openclaw")).toBe(false);
 		expect(tiles.some((tile) => tile.id === "dep_123:hermes")).toBe(false);
 	});
