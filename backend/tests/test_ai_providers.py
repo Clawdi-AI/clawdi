@@ -34,7 +34,7 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
             "provider_id": "openai-main",
             "type": "openai",
             "base_url": "https://api.openai.com/v1",
-            "default_model": "gpt-5.2",
+            "models": [{"id": "gpt-5.2"}],
             "api_mode": "openai_responses",
             "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
             "runtime_env_name": "OPENAI_API_KEY",
@@ -60,12 +60,13 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
     patched = await client.patch(
         "/v1/ai-providers/openai-main",
         json={
-            "default_model": "gpt-5.3",
+            "models": [{"id": "gpt-5.3"}],
             "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
         },
     )
     assert patched.status_code == 200, patched.text
-    assert patched.json()["default_model"] == "gpt-5.3"
+    assert patched.json()["models"] == [{"id": "gpt-5.3"}]
+    assert "default_model" not in patched.json()
     assert patched.json()["auth"] == {
         "type": "agent_profile",
         "tool": "codex",
@@ -109,7 +110,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "custom-openai",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "gpt-5.5",
+            "models": [{"id": "gpt-5.5"}],
             "api_mode": "codex_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "user",
@@ -125,7 +126,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "legacy-model",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "openai-codex/gpt-5.5",
+            "models": [{"id": "openai-codex/gpt-5.5"}],
             "api_mode": "openai_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "user",
@@ -141,7 +142,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "clawdi-managed-v2",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "gpt-5.5",
+            "models": [{"id": "gpt-5.5"}],
             "api_mode": "openai_chat",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
@@ -151,6 +152,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert managed.status_code == 200, managed.text
     assert managed.json()["provider_id"] == "clawdi-managed-v2"
     assert managed.json()["api_mode"] == "openai_chat"
+    assert managed.json()["models"] == [{"id": "gpt-5.5"}]
 
     v1_managed = await client.post(
         "/v1/ai-providers",
@@ -158,7 +160,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "clawdi-managed",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "openai-codex/gpt-5.5",
+            "models": [{"id": "openai-codex/gpt-5.5"}],
             "api_mode": "openai_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
@@ -175,7 +177,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "provider_id": "clawdi-managed",
             "type": "custom_openai_compatible",
             "base_url": "https://managed.example/v1",
-            "default_model": "openai-codex/gpt-5.5",
+            "models": [{"id": "openai-codex/gpt-5.5"}],
             "api_mode": "openai_chat",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",

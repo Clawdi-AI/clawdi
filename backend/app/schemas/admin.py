@@ -199,7 +199,7 @@ class AdminManagedAiProviderResponse(BaseModel):
     api_mode: str
     runtime_env_name: str
     base_url: str
-    default_model: str | None = None
+    models: list[dict[str, Any]] | None = None
     has_api_key: bool
 
 

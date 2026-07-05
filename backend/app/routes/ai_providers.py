@@ -29,6 +29,7 @@ from app.schemas.ai_provider import (
     AiProviderDeleteResponse,
     AiProviderListResponse,
     AiProviderManagedApiKeyRequest,
+    AiProviderModel,
     AiProviderOAuthCompleteRequest,
     AiProviderOAuthStartRequest,
     AiProviderOAuthStartResponse,
@@ -153,6 +154,8 @@ async def patch_ai_provider(
     for key, value in update.items():
         if key == "auth" and isinstance(value, dict):
             value = AiProviderAuth.model_validate(value)
+        if key == "models" and isinstance(value, list):
+            value = [AiProviderModel.model_validate(item) for item in value]
         setattr(merged, key, value)
     errors = _validate_provider(merged)
     if errors:
@@ -782,13 +785,19 @@ def _apply_provider_body(provider: AiProvider, body: AiProviderUpsert) -> None:
     provider.type = body.type
     provider.label = body.label
     provider.base_url = body.base_url
-    provider.default_model = body.default_model
     provider.api_mode = body.api_mode
     provider.capabilities = body.capabilities
+    provider.models = _provider_models_payload(body.models)
     provider.managed_by = body.managed_by
     provider.runtime_env_name = body.runtime_env_name
     provider.auth_type = body.auth.type
     provider.auth_ref, provider.auth_metadata = _split_auth(body.auth)
+
+
+def _provider_models_payload(models: list[AiProviderModel] | None) -> list[dict] | None:
+    if models is None:
+        return None
+    return [model.model_dump(exclude_none=True) for model in models]
 
 
 def _split_auth(auth: AiProviderAuth) -> tuple[str | None, dict | None]:
@@ -849,12 +858,12 @@ def _to_response(provider: AiProvider) -> AiProviderResponse:
         type=provider.type,
         label=provider.label,
         base_url=provider.base_url,
-        default_model=provider.default_model,
         api_mode=provider.api_mode,
         auth=_to_auth(provider),
         managed_by=provider.managed_by,
         runtime_env_name=provider.runtime_env_name,
         capabilities=provider.capabilities,
+        models=provider.models,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
@@ -866,12 +875,12 @@ def _response_to_upsert(provider: AiProvider) -> AiProviderUpsert:
         type=provider.type,
         label=provider.label,
         base_url=provider.base_url,
-        default_model=provider.default_model,
         api_mode=provider.api_mode,
         auth=_to_auth(provider),
         managed_by=provider.managed_by,
         runtime_env_name=provider.runtime_env_name,
         capabilities=provider.capabilities,
+        models=provider.models,
     )
 
 
@@ -880,14 +889,7 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
-    if (
-        body.default_model
-        and body.default_model.startswith("openai-codex/")
-        and not _is_legacy_managed_provider(body)
-    ):
-        errors.append(
-            "default_model must use the OpenAI model id without the legacy openai-codex prefix"
-        )
+    errors.extend(_validate_provider_models(body))
     allowed_modes = ALLOWED_API_MODES[body.type]
     if body.api_mode is not None and body.api_mode not in allowed_modes:
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")
@@ -895,6 +897,28 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
         errors.append("custom_openai_compatible requires api_mode")
     errors.extend(_validate_managed_provider_contract(body))
     errors.extend(_validate_auth(body.provider_id, body.auth))
+    return errors
+
+
+def _validate_provider_models(body: AiProviderUpsert) -> list[str]:
+    if not body.models:
+        return []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for model in body.models:
+        model_id = model.id.strip()
+        if not model_id:
+            errors.append("models must include non-empty model ids")
+            continue
+        if model_id in seen:
+            errors.append(f"duplicate model id: {model_id}")
+        seen.add(model_id)
+        if model_id.startswith("openai-codex/") and body.provider_id not in MANAGED_AI_PROVIDER_IDS:
+            errors.append(
+                "model ids must use the OpenAI model id without the legacy openai-codex prefix"
+            )
+        if model.api_mode is not None and model.api_mode not in ALLOWED_API_MODES[body.type]:
+            errors.append(f"model {model_id} api_mode is incompatible with type {body.type}")
     return errors
 
 
@@ -921,12 +945,6 @@ def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
             f"managed Clawdi provider must use runtime_env_name {MANAGED_AI_PROVIDER_RUNTIME_ENV}"
         )
     return errors
-
-
-def _is_legacy_managed_provider(body: AiProviderUpsert) -> bool:
-    return managed_provider_api_mode(body.provider_id) == "openai_responses" and (
-        body.managed_by == "clawdi"
-    )
 
 
 def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:

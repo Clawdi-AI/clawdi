@@ -171,7 +171,7 @@ export function AddProviderDialog({
 			setType(editing.type as ProviderTypeId);
 			setLabel(editing.label ?? "");
 			setBaseUrl(editing.base_url);
-			setDefaultModel(editing.default_model ?? "");
+			setDefaultModel(editing.models?.[0]?.id ?? "");
 			setApiMode(editing.api_mode ?? m.defaultApiMode);
 			setRuntimeEnv(editing.runtime_env_name ?? m.defaultRuntimeEnv);
 			setAuthMethod(
@@ -299,7 +299,7 @@ export function AddProviderDialog({
 			type,
 			label: label.trim() || null,
 			base_url: baseUrl.trim(),
-			default_model: defaultModel.trim() || null,
+			models: defaultModel.trim() ? [{ id: defaultModel.trim() }] : null,
 			api_mode: apiMode,
 			auth,
 			managed_by: "user" as const,

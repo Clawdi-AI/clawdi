@@ -1192,28 +1192,31 @@ function AiProviderTab({
 						</p>
 					</button>
 				) : null}
-				{list.map((p) => (
-					<button
-						key={p.provider_id}
-						type="button"
-						onClick={() => setSelected(p.provider_id)}
-						className={`flex items-center gap-3 ${selectableCard(selected === p.provider_id)}`}
-					>
-						<ProviderTypeChip type={p.type} />
-						<span className="min-w-0 flex-1">
-							<span className="flex items-center gap-2">
-								<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
-								<AuthBadge auth={p.auth} />
-							</span>
-							{p.default_model ? (
-								<span className="block text-xs text-muted-foreground">
-									{formatModelLabel(p.default_model)}
+				{list.map((p) => {
+					const modelId = p.models?.[0]?.id;
+					return (
+						<button
+							key={p.provider_id}
+							type="button"
+							onClick={() => setSelected(p.provider_id)}
+							className={`flex items-center gap-3 ${selectableCard(selected === p.provider_id)}`}
+						>
+							<ProviderTypeChip type={p.type} />
+							<span className="min-w-0 flex-1">
+								<span className="flex items-center gap-2">
+									<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
+									<AuthBadge auth={p.auth} />
 								</span>
-							) : null}
-						</span>
-						{p.provider_id === inUseSlug ? <Badge variant="secondary">In use</Badge> : null}
-					</button>
-				))}
+								{modelId ? (
+									<span className="block text-xs text-muted-foreground">
+										{formatModelLabel(modelId)}
+									</span>
+								) : null}
+							</span>
+							{p.provider_id === inUseSlug ? <Badge variant="secondary">In use</Badge> : null}
+						</button>
+					);
+				})}
 				<Button
 					render={<Link to="/ai-providers" />}
 					nativeButton={false}

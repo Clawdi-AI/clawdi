@@ -632,7 +632,7 @@ export function DeployWizard() {
 								onClick={() => setAiChoice(provider.provider_id)}
 								icon={<ProviderTypeChip type={provider.type} />}
 								title={provider.label ?? provider.provider_id}
-								description={provider.default_model ?? providerTypeLabelFallback(provider)}
+								description={provider.models?.[0]?.id ?? providerTypeLabelFallback(provider)}
 								badge={<AuthBadge auth={provider.auth} />}
 							/>
 						))}

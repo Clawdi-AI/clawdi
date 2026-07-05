@@ -35,6 +35,14 @@ const runtimeSchema = z
 		install: installSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
+		provider_ids: z.array(z.string().min(1)).optional(),
+		primary_model: z
+			.object({
+				provider_id: z.string().min(1),
+				model: z.string().min(1),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 
@@ -151,6 +159,28 @@ const hostedRuntimeEntrySchema = z
 		install: hostedRuntimeInstallSchema.optional(),
 		run: runtimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
+		provider_ids: z.array(z.string().min(1)).optional(),
+		providerIds: z.array(z.string().min(1)).optional(),
+		primary_model: z
+			.union([
+				z.string().min(1),
+				z
+					.object({
+						provider_id: z.string().min(1).optional(),
+						providerId: z.string().min(1).optional(),
+						model: z.string().min(1),
+					})
+					.passthrough(),
+			])
+			.optional(),
+		primaryModel: z
+			.object({
+				provider_id: z.string().min(1).optional(),
+				providerId: z.string().min(1).optional(),
+				model: z.string().min(1),
+			})
+			.passthrough()
+			.optional(),
 		paths: z
 			.object({
 				home: z.string().min(1).optional(),
@@ -222,6 +252,7 @@ export const hostedRuntimeManifestSchema = z
 						type: z.string().min(1).optional(),
 						baseUrl: z.string().url().optional(),
 						model: z.string().min(1).optional(),
+						models: z.array(z.unknown()).optional(),
 						apiMode: z.string().min(1).optional(),
 						runtimeEnvName: z.string().min(1).optional(),
 						apiKeySecretRef: z.string().min(1).nullable().optional(),

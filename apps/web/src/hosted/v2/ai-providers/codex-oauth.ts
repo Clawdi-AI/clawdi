@@ -43,7 +43,7 @@ export function codexProviderBody(defaultModel?: string): AiProviderUpsert {
 		type: "openai",
 		label: "Codex (ChatGPT)",
 		base_url: "https://api.openai.com/v1",
-		default_model: defaultModel?.trim() || CODEX_DEFAULT_MODEL,
+		models: [{ id: defaultModel?.trim() || CODEX_DEFAULT_MODEL }],
 		api_mode: "openai_responses",
 		auth: { type: "agent_profile", tool: "codex", profile: "default" },
 		managed_by: "user",

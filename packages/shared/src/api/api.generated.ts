@@ -2647,6 +2647,31 @@ export interface components {
             /** Runtime Env Name */
             runtime_env_name?: string | null;
         };
+        /** AiProviderModel */
+        AiProviderModel: {
+            /** Id */
+            id: string;
+            /** Label */
+            label?: string | null;
+            /** Api Mode */
+            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            /** Input Modalities */
+            input_modalities?: ("text" | "image" | "video" | "audio")[] | null;
+            /** Supports Reasoning */
+            supports_reasoning?: boolean | null;
+            /** Context Window */
+            context_window?: number | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Cost */
+            cost?: {
+                [key: string]: unknown;
+            } | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -2691,8 +2716,6 @@ export interface components {
             label?: string | null;
             /** Base Url */
             base_url?: string | null;
-            /** Default Model */
-            default_model?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth?: components["schemas"]["AiProviderAuth"] | null;
@@ -2704,6 +2727,8 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Models */
+            models?: components["schemas"]["AiProviderModel"][] | null;
         };
         /** AiProviderResponse */
         AiProviderResponse: {
@@ -2716,8 +2741,6 @@ export interface components {
             label?: string | null;
             /** Base Url */
             base_url: string;
-            /** Default Model */
-            default_model?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth: components["schemas"]["AiProviderAuth"];
@@ -2733,6 +2756,8 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Models */
+            models?: components["schemas"]["AiProviderModel"][] | null;
             /** Id */
             id: string;
             /** Provider Id */
@@ -2761,8 +2786,6 @@ export interface components {
             label?: string | null;
             /** Base Url */
             base_url: string;
-            /** Default Model */
-            default_model?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             auth: components["schemas"]["AiProviderAuth"];
@@ -2778,6 +2801,8 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Models */
+            models?: components["schemas"]["AiProviderModel"][] | null;
             /** Provider Id */
             provider_id: string;
         };

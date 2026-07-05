@@ -113,6 +113,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 	const del = useDeleteProvider();
 	const validate = useValidateProvider();
 	const providerLabel = provider.label ?? provider.provider_id;
+	const modelId = provider.models?.[0]?.id;
 
 	function runValidate() {
 		validate.mutate(provider.provider_id, {
@@ -131,7 +132,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				title={providerLabel}
 				titleAdornment={<AuthBadge auth={provider.auth} />}
 				meta={[
-					`${meta.label}${provider.default_model ? ` · ${formatModelLabel(provider.default_model)}` : ""}${
+					`${meta.label}${modelId ? ` · ${formatModelLabel(modelId)}` : ""}${
 						provider.api_mode
 							? ` · ${API_MODE_LABEL[provider.api_mode as ApiMode] ?? provider.api_mode}`
 							: ""

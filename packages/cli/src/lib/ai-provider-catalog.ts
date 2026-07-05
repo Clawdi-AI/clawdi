@@ -97,11 +97,29 @@ export function coerceAiProviderCatalog(input: unknown): AiProviderCatalog {
 	}
 	return {
 		schema_version: source.schema_version,
-		providers: source.providers,
+		providers: source.providers.map(coerceAiProvider),
 		defaults: isRecord(source.defaults) ? source.defaults : undefined,
-	} as AiProviderCatalog;
+	};
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {
 	return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+function coerceAiProvider(input: unknown): AiProvider {
+	if (!isRecord(input)) return input as AiProvider;
+	const { default_model: legacyDefaultModel, models: rawModels, ...rest } = input;
+	const models = Array.isArray(rawModels) ? [...rawModels] : [];
+	if (typeof legacyDefaultModel === "string" && legacyDefaultModel.trim()) {
+		const modelId = legacyDefaultModel.trim();
+		const hasModel = models.some((model) => {
+			if (!isRecord(model)) return false;
+			return model.id === modelId;
+		});
+		if (!hasModel) models.unshift({ id: modelId });
+	}
+	return {
+		...rest,
+		...(models.length > 0 ? { models } : {}),
+	} as AiProvider;
 }

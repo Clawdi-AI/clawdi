@@ -127,7 +127,7 @@ describe("validateAiProviderCatalog", () => {
 					id: "custom-openai",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "gpt-5.5",
+					models: [{ id: "gpt-5.5" }],
 					api_mode: "codex_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "user",
@@ -151,7 +151,6 @@ describe("validateAiProviderCatalog", () => {
 					id: "custom-openai",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "openai-codex/gpt-5.5",
 					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "user",
@@ -163,9 +162,6 @@ describe("validateAiProviderCatalog", () => {
 		});
 
 		expect(result.valid).toBe(false);
-		expect(result.errors).toContain(
-			"Provider custom-openai default_model must use the OpenAI model id without the legacy openai-codex prefix.",
-		);
 		expect(result.errors).toContain(
 			"Provider custom-openai model openai-codex/gpt-5.5 must use the OpenAI model id without the legacy openai-codex prefix.",
 		);
@@ -179,7 +175,7 @@ describe("validateAiProviderCatalog", () => {
 					id: "clawdi-managed-v2",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "gpt-5.5",
+					models: [{ id: "gpt-5.5" }],
 					api_mode: "openai_chat",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
@@ -201,7 +197,7 @@ describe("validateAiProviderCatalog", () => {
 					id: "clawdi-managed",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "openai-codex/gpt-5.5",
+					models: [{ id: "gpt-5.5" }],
 					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
@@ -223,7 +219,7 @@ describe("validateAiProviderCatalog", () => {
 					id: "clawdi-managed-v2",
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
-					default_model: "gpt-5.5",
+					models: [{ id: "gpt-5.5" }],
 					api_mode: "openai_responses",
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",

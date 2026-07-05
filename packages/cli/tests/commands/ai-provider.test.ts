@@ -990,7 +990,7 @@ describe("ai-provider commands", () => {
 		).toHaveLength(3);
 		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(codexProfile).toContain('model_provider = "openai"');
-		expect(codexProfile).not.toContain('model = "');
+		expect(codexProfile).toContain('model = "gpt-5.2"');
 		const codexAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(codexAuth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		const hermesConfig = parseYaml(readFileSync(join(hermesDir, "config.yaml"), "utf-8"));
@@ -1209,7 +1209,7 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain('model_provider = \\"openai\\"');
-		expect(output()).not.toContain('model = \\"');
+		expect(output()).toContain('model = \\"gpt-5.2\\"');
 		expect(output()).not.toContain("env_key");
 		expect(output()).not.toContain("[model_providers");
 	});
@@ -1234,7 +1234,7 @@ describe("ai-provider commands", () => {
 
 		const profile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(profile).toContain('model_provider = "openai"');
-		expect(profile).not.toContain('model = "');
+		expect(profile).toContain('model = "gpt-5.2"');
 		const auth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
 		expect(auth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
 		expect(auth.tokens.refresh_token).toBe(FAKE_CODEX_REFRESH_TOKEN);
@@ -1284,9 +1284,8 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(output()).toContain("Provider anthropic-main skipped for codex");
-		expect(output()).toContain("Default provider anthropic-main cannot be applied to codex");
 		expect(output()).toContain('model_provider = \\"openai\\"');
-		expect(output()).not.toContain('model = \\"');
+		expect(output()).toContain('model = \\"gpt-5.2\\"');
 	});
 
 	it("dry-runs Hermes apply without mutating config.yaml or printing existing inline secrets", async () => {
@@ -1391,7 +1390,6 @@ describe("ai-provider commands", () => {
 		expect(mergedConfig).toContain("openai-main:");
 		expect(mergedConfig).toContain("api: https://api.openai.com/v1");
 		expect(mergedConfig).toContain("transport: codex_responses");
-		expect(mergedConfig).toContain("default_model: gpt-5.2");
 		expect(mergedConfig).toContain("key_env: OPENAI_API_KEY");
 		expect(mergedConfig).toContain("extra_body:");
 		expect(mergedConfig).toContain("keep: true");
@@ -1440,13 +1438,11 @@ describe("ai-provider commands", () => {
 		expect(parsed.providers["openai-main"]).toMatchObject({
 			api: "https://api.openai.com/v1",
 			transport: "codex_responses",
-			default_model: "gpt-5.2",
 			key_env: "OPENAI_API_KEY",
 		});
 		expect(parsed.providers["anthropic-main"]).toMatchObject({
 			api: "https://api.anthropic.com",
 			transport: "anthropic_messages",
-			default_model: "claude-opus-4-6",
 			key_env: "ANTHROPIC_API_KEY",
 		});
 		expect(parsed.providers["local-legacy"]).toMatchObject({
@@ -1566,7 +1562,7 @@ describe("ai-provider commands", () => {
 		});
 	});
 
-	it("requires default_model before ai-provider apply", async () => {
+	it("requires a primary model before ai-provider apply", async () => {
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -1576,7 +1572,7 @@ describe("ai-provider commands", () => {
 			});
 			await expect(
 				aiProviderApplyCommand({ target: "codex", dryRun: true, json: true }),
-			).rejects.toThrow("requires default_model");
+			).rejects.toThrow("No primary model is configured");
 		} finally {
 			restore();
 		}
@@ -1785,10 +1781,55 @@ describe("ai-provider commands", () => {
 		expect(patch).toContain('provider: "custom:clawdi-managed-v2"');
 		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
 		expect(patch).toContain('transport: "chat_completions"');
-		expect(patch).toContain('default_model: "gpt-5.5"');
 		expect(patch).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
 		expect(patch).not.toContain("chatgpt.com");
 		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
+	});
+
+	it("uses agent primary_model with provider catalogs that have no default_model", () => {
+		const catalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "openai-main",
+					type: "custom_openai_compatible",
+					base_url: "https://main.example.test/v1",
+					api_mode: "openai_responses",
+					auth: { type: "secret_ref", ref: "env:OPENAI_MAIN_API_KEY" },
+					models: [{ id: "gpt-5.2" }],
+				},
+				{
+					id: "openai-fast",
+					type: "custom_openai_compatible",
+					base_url: "https://fast.example.test/v1",
+					api_mode: "openai_responses",
+					auth: { type: "secret_ref", ref: "env:OPENAI_FAST_API_KEY" },
+					models: [{ id: "gpt-5.5" }],
+				},
+			],
+		} as const;
+		const primaryModel = { provider_id: "openai-fast", model: "gpt-5.5" };
+
+		const openClawProjection = buildAgentTargetProjection("openclaw", catalog, primaryModel);
+		const openClawPatch = JSON.parse(openClawProjection.files[0]?.content ?? "{}");
+		expect(openClawProjection.provider_ids).toEqual(["openai-main", "openai-fast"]);
+		expect(openClawPatch.agents.defaults.model.primary).toBe("openai-fast/gpt-5.5");
+		expect(Object.keys(openClawPatch.models.providers)).toEqual(["openai-main", "openai-fast"]);
+
+		const hermesProjection = buildAgentTargetProjection("hermes", catalog, primaryModel);
+		const hermesPatch = hermesProjection.files[0]?.content ?? "";
+		expect(hermesPatch).toContain('provider: "custom:openai-fast"');
+		expect(hermesPatch).toContain('default: "gpt-5.5"');
+		expect(hermesPatch).toContain('"openai-main":');
+		expect(hermesPatch).toContain('"openai-fast":');
+		expect(hermesPatch).not.toContain("default_model");
+
+		const codexProjection = buildAgentTargetProjection("codex", catalog, primaryModel);
+		const codexPatch = codexProjection.files[0]?.content ?? "";
+		expect(codexPatch).toContain('model = "gpt-5.5"');
+		expect(codexPatch).toContain('model_provider = "openai-fast"');
+		expect(codexPatch).toContain('[model_providers."openai-main"]');
+		expect(codexPatch).toContain('[model_providers."openai-fast"]');
 	});
 
 	it("projects user BYOK Responses providers directly to OpenClaw", async () => {
@@ -1854,7 +1895,7 @@ describe("ai-provider commands", () => {
 			restore();
 		}
 
-		expect(output()).not.toContain('"models"');
+		expect(output()).not.toContain('"agents"');
 		expect(output()).not.toContain("native-failed");
 	});
 
@@ -2015,7 +2056,7 @@ describe("ai-provider commands", () => {
 		expect(catalog.providers[0]).toMatchObject({
 			id: "custom-openai",
 			type: "openai",
-			default_model: "gpt-5.5",
+			models: [{ id: "gpt-5.5" }],
 			api_mode: "openai_responses",
 			auth: { type: "secret_ref", ref: "env:CUSTOM_OPENAI_API_KEY" },
 		});
@@ -2060,20 +2101,21 @@ describe("ai-provider commands", () => {
 			id: "openai-main",
 			type: "openai",
 			base_url: "https://api.openai.com/v1",
-			default_model: "gpt-5.2",
 			api_mode: "openai_responses",
 			auth: { type: "secret_ref", ref: "env:OPENAI_API_KEY" },
 			runtime_env_name: "OPENAI_API_KEY",
 		});
+		expect(catalog.providers[0]).not.toHaveProperty("default_model");
 		expect(catalog.providers[1]).toMatchObject({
 			id: "anthropic-main",
 			type: "anthropic",
 			base_url: "https://api.anthropic.com",
-			default_model: "claude-opus-4-6",
 			api_mode: "anthropic_messages",
 			auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
+			models: [{ id: "claude-opus-4-6" }],
 			runtime_env_name: "ANTHROPIC_API_KEY",
 		});
+		expect(catalog.providers[1]).not.toHaveProperty("default_model");
 	});
 
 	it("imports provider catalog envelopes from hosted materialization payloads", async () => {

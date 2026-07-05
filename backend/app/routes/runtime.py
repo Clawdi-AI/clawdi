@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -32,9 +33,17 @@ router = APIRouter(prefix="/runtime", tags=["runtime"])
 
 @dataclass(frozen=True)
 class _RuntimeProviderBinding:
-    provider_id: str | None
-    model: str | None
-    explicit_provider_id: bool
+    provider_ids: tuple[str | None, ...]
+    primary_provider_id: str | None
+    primary_model: str | None
+    explicit_provider_ids: bool
+
+
+@dataclass(frozen=True)
+class _RuntimeProviderManifestBinding:
+    provider_ids: tuple[str, ...]
+    primary_provider_id: str | None
+    primary_model: str | None
 
 
 _SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
@@ -85,7 +94,12 @@ async def get_runtime_manifest(
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Hosted runtime state not found")
 
-    providers, secret_values, provider_version_sources = await _provider_projection(
+    (
+        providers,
+        secret_values,
+        provider_version_sources,
+        runtime_provider_bindings,
+    ) = await _provider_projection(
         db, auth=auth, state=state
     )
     issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
@@ -99,7 +113,7 @@ async def get_runtime_manifest(
         "system": state.system or _default_system(),
         "controlPlane": _control_plane(state.control_plane),
         "clawdiCli": state.clawdi_cli or _default_clawdi_cli(),
-        "runtimes": state.runtimes,
+        "runtimes": _runtime_manifest_runtimes(state.runtimes, runtime_provider_bindings),
         "providers": providers,
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
@@ -200,69 +214,182 @@ async def _provider_projection(
     *,
     auth: AuthContext,
     state: HostedRuntimeState,
-) -> tuple[dict[str, Any], dict[str, str], list[Any]]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, str],
+    list[Any],
+    dict[str, _RuntimeProviderManifestBinding],
+]:
     bindings = _runtime_provider_bindings(state)
     providers: dict[str, Any] = {}
     secret_values: dict[str, str] = {}
     version_sources: list[Any] = []
     provider_cache: dict[str | None, AiProvider | None] = {}
     secret_cache: dict[str, tuple[str | None, AiProviderAuthPayload | None]] = {}
+    manifest_bindings: dict[str, _RuntimeProviderManifestBinding] = {}
 
     for runtime_name, binding in sorted(bindings.items()):
-        provider = await _select_provider_for_binding(
-            db,
-            auth=auth,
-            provider_id=binding.provider_id,
-            allow_default_fallback=not binding.explicit_provider_id,
-            provider_cache=provider_cache,
-        )
-        if provider is None:
-            providers[runtime_name] = _unhealthy_provider_manifest_entry(
-                provider_id=binding.provider_id,
-                model=binding.model,
-                code="provider_not_found",
-                message="explicit runtime provider is missing or archived",
-            )
-            continue
-
-        if provider.provider_id not in secret_cache:
-            secret_cache[provider.provider_id] = await _provider_secret(
+        resolved_providers: list[AiProvider] = []
+        missing_provider_ids: list[str] = []
+        for provider_id in binding.provider_ids:
+            provider = await _select_provider_for_binding(
                 db,
                 auth=auth,
-                provider=provider,
+                provider_id=provider_id,
+                allow_default_fallback=not binding.explicit_provider_ids,
+                provider_cache=provider_cache,
             )
-        secret, payload = secret_cache[provider.provider_id]
-        secret_ref = _provider_secret_ref(runtime_name) if secret else None
-        missing_required_secret = _provider_requires_secret(provider) and not secret_ref
-        providers[runtime_name] = _provider_manifest_entry(
-            provider,
-            model=binding.model,
-            secret_ref=secret_ref,
-            error=(
-                {
-                    "code": "provider_secret_unavailable",
-                    "message": (
-                        "provider requires an API key but no runtime secret value is available"
-                    ),
-                }
-                if missing_required_secret
-                else None
-            ),
-        )
-        if secret and secret_ref:
-            secret_values[secret_ref] = secret
-        if provider not in version_sources:
-            version_sources.append(provider)
-        if payload is not None and payload not in version_sources:
-            version_sources.append(payload)
+            if provider is None:
+                if provider_id is not None:
+                    missing_provider_ids.append(provider_id)
+                continue
+            if provider.provider_id not in {entry.provider_id for entry in resolved_providers}:
+                resolved_providers.append(provider)
 
-    return providers, secret_values, version_sources
+        if (
+            not resolved_providers
+            and not missing_provider_ids
+            and not binding.explicit_provider_ids
+        ):
+            provider = await _select_provider_for_binding(
+                db,
+                auth=auth,
+                provider_id=None,
+                allow_default_fallback=True,
+                provider_cache=provider_cache,
+            )
+            if provider is not None:
+                resolved_providers.append(provider)
+
+        primary_provider = _primary_provider_for_binding(binding, resolved_providers)
+        primary_model = binding.primary_model or _managed_provider_catalog_model(primary_provider)
+        manifest_provider_ids = _manifest_provider_ids(binding, resolved_providers)
+        manifest_primary_provider_id = (
+            primary_provider.provider_id
+            if primary_provider is not None
+            else binding.primary_provider_id
+        )
+        manifest_bindings[runtime_name] = _RuntimeProviderManifestBinding(
+            provider_ids=manifest_provider_ids,
+            primary_provider_id=manifest_primary_provider_id,
+            primary_model=primary_model,
+        )
+
+        for missing_provider_id in missing_provider_ids:
+            providers.setdefault(
+                missing_provider_id,
+                _unhealthy_provider_manifest_entry(
+                    provider_id=missing_provider_id,
+                    code="provider_not_found",
+                    message="explicit runtime provider is missing or archived",
+                ),
+            )
+
+        for provider in resolved_providers:
+            if provider.provider_id in providers:
+                continue
+            if provider.provider_id not in secret_cache:
+                secret_cache[provider.provider_id] = await _provider_secret(
+                    db,
+                    auth=auth,
+                    provider=provider,
+                )
+            secret, payload = secret_cache[provider.provider_id]
+            secret_ref = _provider_secret_ref(provider.provider_id) if secret else None
+            missing_required_secret = _provider_requires_secret(provider) and not secret_ref
+            providers[provider.provider_id] = _provider_manifest_entry(
+                provider,
+                secret_ref=secret_ref,
+                error=(
+                    {
+                        "code": "provider_secret_unavailable",
+                        "message": (
+                            "provider requires an API key but no runtime secret value is available"
+                        ),
+                    }
+                    if missing_required_secret
+                    else None
+                ),
+            )
+            if secret and secret_ref:
+                secret_values[secret_ref] = secret
+            if provider not in version_sources:
+                version_sources.append(provider)
+            if payload is not None and payload not in version_sources:
+                version_sources.append(payload)
+
+    return providers, secret_values, version_sources, manifest_bindings
+
+
+def _primary_provider_for_binding(
+    binding: _RuntimeProviderBinding,
+    providers: list[AiProvider],
+) -> AiProvider | None:
+    if binding.primary_provider_id:
+        for provider in providers:
+            if provider.provider_id == binding.primary_provider_id:
+                return provider
+    return providers[0] if providers else None
+
+
+def _manifest_provider_ids(
+    binding: _RuntimeProviderBinding,
+    providers: list[AiProvider],
+) -> tuple[str, ...]:
+    provider_ids = (
+        tuple(provider_id for provider_id in binding.provider_ids if provider_id is not None)
+        if binding.explicit_provider_ids
+        else tuple(provider.provider_id for provider in providers)
+    )
+    if not provider_ids:
+        provider_ids = tuple(provider.provider_id for provider in providers)
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for provider_id in (*provider_ids, *(provider.provider_id for provider in providers)):
+        if provider_id in seen:
+            continue
+        seen.add(provider_id)
+        normalized.append(provider_id)
+    return tuple(normalized)
+
+
+def _managed_provider_catalog_model(provider: AiProvider | None) -> str | None:
+    if provider is None or not _is_clawdi_managed_provider(provider):
+        return None
+    for model in provider.models or []:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if isinstance(model_id, str) and model_id.strip():
+            return model_id.strip()
+    return None
+
+
+def _runtime_manifest_runtimes(
+    runtimes: dict | None,
+    bindings: dict[str, _RuntimeProviderManifestBinding],
+) -> dict[str, Any]:
+    manifest_runtimes = deepcopy(runtimes or {})
+    for runtime_name, binding in bindings.items():
+        raw_entry = manifest_runtimes.get(runtime_name)
+        entry = dict(raw_entry) if isinstance(raw_entry, dict) else {}
+        for legacy_key in ("provider_id", "providerId", "model"):
+            entry.pop(legacy_key, None)
+        entry["provider_ids"] = list(binding.provider_ids)
+        if binding.primary_provider_id and binding.primary_model:
+            entry["primary_model"] = {
+                "provider_id": binding.primary_provider_id,
+                "model": binding.primary_model,
+            }
+        else:
+            entry.pop("primary_model", None)
+        manifest_runtimes[runtime_name] = entry
+    return manifest_runtimes
 
 
 def _provider_manifest_entry(
     provider: AiProvider,
     *,
-    model: str | None,
     secret_ref: str | None,
     error: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -277,11 +404,10 @@ def _provider_manifest_entry(
     if is_managed:
         api_mode = managed_provider_api_mode(provider.provider_id) or provider.api_mode
         runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
-    selected_model = model or provider.default_model
-    if selected_model:
-        projection["model"] = selected_model
     if api_mode:
         projection["apiMode"] = api_mode
+    if provider.models:
+        projection["models"] = provider.models
     if runtime_env_name:
         projection["runtimeEnvName"] = runtime_env_name
     if _provider_requires_secret(provider) and not secret_ref:
@@ -300,7 +426,6 @@ def _provider_manifest_entry(
 def _unhealthy_provider_manifest_entry(
     *,
     provider_id: str | None,
-    model: str | None,
     code: str,
     message: str,
 ) -> dict[str, Any]:
@@ -311,8 +436,6 @@ def _unhealthy_provider_manifest_entry(
     }
     if provider_id:
         projection["providerId"] = provider_id
-    if model:
-        projection["model"] = model
     return projection
 
 
@@ -360,42 +483,83 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
                 status.HTTP_409_CONFLICT,
                 f"unsupported enabled runtime: {runtime_key}",
             )
-        raw_provider_id = runtime.get("provider_id", runtime.get("providerId"))
-        explicit_provider_id = raw_provider_id is not None
-        if raw_provider_id is None:
-            provider_id = state.provider_id
-        elif isinstance(raw_provider_id, str) and raw_provider_id.strip():
-            provider_id = raw_provider_id.strip()
-        else:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "enabled runtime provider id must be a non-empty string",
-            )
-        if provider_id is not None:
-            if not isinstance(provider_id, str) or not provider_id.strip():
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "runtime state provider id must be a non-empty string",
-                )
-            provider_id = provider_id.strip()
-        model = runtime.get("model", runtime.get("primary_model"))
-        if model is not None and (not isinstance(model, str) or not model.strip()):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "enabled runtime provider model must be a non-empty string",
-            )
+        provider_ids, explicit_provider_ids = _runtime_provider_ids(runtime, state.provider_id)
+        primary_provider_id, primary_model = _runtime_primary_model(runtime)
+        if primary_provider_id and primary_provider_id not in provider_ids:
+            provider_ids = (*provider_ids, primary_provider_id)
+            explicit_provider_ids = True
+        if primary_provider_id is None and len(provider_ids) == 1:
+            primary_provider_id = provider_ids[0]
         bindings[runtime_key] = _RuntimeProviderBinding(
-            provider_id=provider_id,
-            model=model.strip() if isinstance(model, str) else None,
-            explicit_provider_id=explicit_provider_id,
+            provider_ids=provider_ids,
+            primary_provider_id=primary_provider_id,
+            primary_model=primary_model,
+            explicit_provider_ids=explicit_provider_ids,
         )
     if not bindings and state.provider_id:
         bindings["default"] = _RuntimeProviderBinding(
-            provider_id=state.provider_id,
-            model=None,
-            explicit_provider_id=False,
+            provider_ids=(state.provider_id,),
+            primary_provider_id=state.provider_id,
+            primary_model=None,
+            explicit_provider_ids=False,
         )
     return bindings
+
+
+def _runtime_provider_ids(
+    runtime: dict[str, Any],
+    state_provider_id: str | None,
+) -> tuple[tuple[str | None, ...], bool]:
+    raw_provider_ids = runtime.get("provider_ids", runtime.get("providerIds"))
+    if raw_provider_ids is not None:
+        if not isinstance(raw_provider_ids, list) or not raw_provider_ids:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "enabled runtime provider_ids must be a non-empty array",
+            )
+        provider_ids = tuple(_runtime_provider_id(value) for value in raw_provider_ids)
+        return provider_ids, True
+
+    raw_provider_id = runtime.get("provider_id", runtime.get("providerId"))
+    if raw_provider_id is not None:
+        return (_runtime_provider_id(raw_provider_id),), True
+    if state_provider_id is not None:
+        return (_runtime_provider_id(state_provider_id),), False
+    return (None,), False
+
+
+def _runtime_provider_id(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        "runtime state provider id must be a non-empty string",
+    )
+
+
+def _runtime_primary_model(runtime: dict[str, Any]) -> tuple[str | None, str | None]:
+    raw_primary = runtime.get("primary_model", runtime.get("primaryModel"))
+    if isinstance(raw_primary, dict):
+        raw_provider_id = raw_primary.get("provider_id", raw_primary.get("providerId"))
+        raw_model = raw_primary.get("model")
+        provider_id = _runtime_provider_id(raw_provider_id) if raw_provider_id is not None else None
+        model = _runtime_model(raw_model)
+        return provider_id, model
+    if raw_primary is not None:
+        return None, _runtime_model(raw_primary)
+    raw_model = runtime.get("model")
+    if raw_model is not None:
+        return None, _runtime_model(raw_model)
+    return None, None
+
+
+def _runtime_model(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        "enabled runtime provider model must be a non-empty string",
+    )
 
 
 async def _select_provider_for_binding(

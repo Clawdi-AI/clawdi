@@ -71,9 +71,9 @@ async def upsert_clawdi_managed_provider(
     provider.type = MANAGED_AI_PROVIDER_TYPE
     provider.label = label or MANAGED_AI_PROVIDER_LABEL
     provider.base_url = normalized_base_url
-    provider.default_model = default_model
     provider.api_mode = MANAGED_AI_PROVIDER_API_MODE
     provider.capabilities = capabilities
+    provider.models = [{"id": default_model}] if default_model else None
     provider.auth_type = "api_key"
     provider.auth_ref = None
     provider.auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}

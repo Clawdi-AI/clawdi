@@ -26,7 +26,7 @@ import type {
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
 import { z } from "zod";
-import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	mergeHermesConfig,
 	mergeHermesMcpServer,
@@ -286,6 +286,7 @@ function writeProviderHealthStatus(
 			kind: stringValue(provider.kind),
 			baseUrl: stringValue(provider.baseUrl),
 			model: stringValue(provider.model),
+			models: Array.isArray(provider.models) ? provider.models : undefined,
 			apiKeySecretRef,
 			secretAvailable,
 			reasons,
@@ -341,7 +342,7 @@ function providerHealthReasons(
 			reasons.push("base_url_invalid");
 		}
 	}
-	if (!stringValue(provider.model)) {
+	if (!stringValue(provider.model) && !providerHasModels(provider)) {
 		reasons.push("model_missing");
 	}
 	const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
@@ -362,6 +363,16 @@ function providerHealthReasons(
 		reasons.push("api_key_secret_ref_missing");
 	}
 	return reasons;
+}
+
+function providerHasModels(provider: Record<string, unknown>): boolean {
+	return (
+		Array.isArray(provider.models) &&
+		provider.models.some((model) => {
+			const entry = recordValue(model);
+			return Boolean(entry && stringValue(entry.id));
+		})
+	);
 }
 
 function isOpenAiCompatibleMode(apiMode: string | null): boolean {
@@ -769,50 +780,65 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
-): AiProviderCatalog | null {
+): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
-	const rawEntries = hostedProviderEntries(providers, runtimeName);
+	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
+	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
+	if (!primaryModel) return null;
 	const entries = rawEntries
 		.map(([id, raw]) => {
 			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
 			const input = raw as Record<string, unknown>;
 			const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl : undefined;
-			const model = typeof input.model === "string" ? input.model : undefined;
 			const apiMode = hostedProviderApiMode(input);
 			const apiKeySecretRef =
 				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
 			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input);
 			if (hostedProviderUnhealthy(input)) return null;
-			if (!baseUrl || !model) return null;
+			if (!baseUrl) return null;
 			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
 			if (!auth) return null;
+			const models = hostedProviderModels(
+				input,
+				id === primaryModel.provider_id ? primaryModel : null,
+			);
 			return {
 				id,
 				type: hostedProviderType(input),
 				base_url: baseUrl,
-				default_model: model,
 				api_mode: apiMode,
 				auth,
 				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
-				models: [{ id: model, api_mode: apiMode }],
+				models,
 			};
 		})
 		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 	if (entries.length === 0) return null;
 	return {
-		schema_version: 1,
-		providers: entries,
-		defaults: { chat_provider_id: entries[0]?.id },
+		catalog: {
+			schema_version: 1,
+			providers: entries,
+			defaults: { chat_provider_id: primaryModel.provider_id },
+		},
+		primaryModel,
 	};
 }
 
 function hostedProviderEntries(
 	providers: Record<string, unknown>,
 	runtimeName?: string,
+	manifest?: RuntimeManifest,
 ): Array<[string, unknown]> {
 	if (!runtimeName) {
 		return Object.entries(providers).sort(([left], [right]) => left.localeCompare(right));
+	}
+	const runtime = manifest?.runtimes?.[runtimeName];
+	if (runtime) {
+		const providerIds = runtime.provider_ids?.filter((id) => Object.hasOwn(providers, id));
+		if (providerIds && providerIds.length > 0) {
+			return providerIds.map((providerId) => [providerId, providers[providerId]]);
+		}
 	}
 	if (Object.hasOwn(providers, runtimeName)) {
 		return [[runtimeName, providers[runtimeName]]];
@@ -821,6 +847,57 @@ function hostedProviderEntries(
 		return [["default", providers.default]];
 	}
 	return [];
+}
+
+function hostedRuntimePrimaryModel(
+	manifest: RuntimeManifest,
+	runtimeName: string | undefined,
+	rawEntries: Array<[string, unknown]>,
+): AgentPrimaryModel | null {
+	const runtime = runtimeName ? manifest.runtimes[runtimeName] : undefined;
+	const primary = runtime?.primary_model;
+	if (primary) return primary;
+	for (const [providerId, raw] of rawEntries) {
+		const provider = recordValue(raw);
+		const model = provider ? stringValue(provider.model) : null;
+		if (model) return { provider_id: providerId, model };
+	}
+	const firstProvider = rawEntries[0];
+	if (!firstProvider) return null;
+	const provider = recordValue(firstProvider[1]);
+	const model = hostedProviderModels(provider ?? {}, null)[0]?.id;
+	return model ? { provider_id: firstProvider[0], model } : null;
+}
+
+function hostedProviderModels(
+	input: Record<string, unknown>,
+	primaryModel: AgentPrimaryModel | null,
+): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
+	const rawModels = Array.isArray(input.models) ? input.models : [];
+	const models = rawModels
+		.map((model) => (recordValue(model) ? (model as Record<string, unknown>) : null))
+		.filter((model): model is Record<string, unknown> => model !== null)
+		.map((model) => {
+			const id = stringValue(model.id);
+			if (!id) return null;
+			const apiMode = stringValue(model.api_mode);
+			return {
+				...model,
+				id,
+				...(apiMode && isAiProviderApiMode(apiMode) ? { api_mode: apiMode } : {}),
+			};
+		})
+		.filter((model): model is NonNullable<typeof model> => model !== null);
+	const legacyModel = stringValue(input.model);
+	if (legacyModel && !models.some((model) => model.id === legacyModel)) {
+		models.unshift({ id: legacyModel, api_mode: hostedProviderApiMode(input) });
+	}
+	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
+		models.unshift({ id: primaryModel.model, api_mode: hostedProviderApiMode(input) });
+	}
+	return models.filter(
+		(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
+	);
 }
 
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
@@ -891,7 +968,7 @@ function hostedProviderSecretEnv(
 	const providers = recordValue(manifest.projection?.providers);
 	if (!providers) return {};
 	const env: Record<string, string> = {};
-	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName)) {
+	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
 		const provider = recordValue(raw);
 		if (!provider) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
@@ -973,11 +1050,15 @@ function applyHostedAiProviderProjection(
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return null;
 	}
-	const catalog = hostedAiProviderCatalog(manifest, name);
-	if (!catalog) return null;
+	const projectionInput = hostedAiProviderCatalog(manifest, name);
+	if (!projectionInput) return null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
-		const projection = buildAgentTargetProjection("hermes", catalog);
+		const projection = buildAgentTargetProjection(
+			"hermes",
+			projectionInput.catalog,
+			projectionInput.primaryModel,
+		);
 		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
 		const configPath = join(home, ".hermes", "config.yaml");
@@ -986,7 +1067,11 @@ function applyHostedAiProviderProjection(
 		return configPath;
 	}
 	if (name === "openclaw") {
-		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const projection = buildAgentTargetProjection(
+			"openclaw",
+			projectionInput.catalog,
+			projectionInput.primaryModel,
+		);
 		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 		runRuntimeUserCommand(

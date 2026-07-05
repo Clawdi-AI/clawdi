@@ -13,7 +13,7 @@ const provider: AiProvider = {
 	type: "openai",
 	label: "ChatGPT",
 	base_url: "https://api.openai.com/v1",
-	default_model: "gpt-5.1",
+	models: [{ id: "gpt-5.1" }],
 	api_mode: "openai_responses",
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
 	managed_by: "user",
@@ -38,7 +38,7 @@ describe("AI provider runtime bootstrap", () => {
 		const runtimeProvider = toRuntimeAiProvider({
 			...provider,
 			label: null,
-			default_model: null,
+			models: null,
 			api_mode: null,
 			runtime_env_name: null,
 		});

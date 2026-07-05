@@ -154,6 +154,7 @@ interface AiProviderCompleteOAuthOptions {
 interface AiProviderBackendResponse {
 	provider_id: string;
 	auth: AiProviderAuth;
+	models?: AiProvider["models"] | null;
 	runtime_env_name?: string | null;
 }
 
@@ -202,10 +203,10 @@ export async function aiProviderListCommand(opts: AiProviderListOptions = {}): P
 		provider.id,
 		provider.type,
 		hostOf(provider.base_url),
-		provider.default_model ?? "-",
+		modelsSummary(provider),
 		describeAuth(provider.auth),
 	]);
-	printTable(["ID", "TYPE", "HOST", "DEFAULT MODEL", "AUTH"], rows);
+	printTable(["ID", "TYPE", "HOST", "MODELS", "AUTH"], rows);
 }
 
 export async function aiProviderAddCommand(
@@ -376,7 +377,7 @@ export async function aiProviderTestCommand(
 		provider_id: provider.id,
 		base_url: provider.base_url,
 		auth: publicAiProviderAuthStatus(authStatus),
-		model: opts.model ?? provider.default_model ?? null,
+		model: opts.model ?? firstProviderModel(provider) ?? null,
 		provider_probe: providerProbe,
 	};
 	if (opts.json) {
@@ -926,12 +927,12 @@ function providerToBackendUpsert(provider: AiProvider): Record<string, unknown> 
 		type: provider.type,
 		label: provider.label,
 		base_url: provider.base_url,
-		default_model: provider.default_model,
 		api_mode: provider.api_mode,
 		auth: provider.auth,
 		managed_by: provider.managed_by ?? "user",
 		runtime_env_name: provider.runtime_env_name,
 		capabilities: provider.capabilities,
+		models: provider.models,
 	};
 }
 
@@ -945,6 +946,9 @@ function providerFromBackendResponse(
 	};
 	if (response.runtime_env_name !== undefined && response.runtime_env_name !== null) {
 		next.runtime_env_name = response.runtime_env_name;
+	}
+	if (response.models !== undefined && response.models !== null) {
+		next.models = response.models;
 	}
 	return next;
 }
@@ -973,8 +977,9 @@ function buildProvider(
 		auth,
 	};
 	if (opts.label ?? existing?.label) provider.label = opts.label ?? existing?.label;
-	if (opts.defaultModel ?? existing?.default_model) {
-		provider.default_model = opts.defaultModel ?? existing?.default_model;
+	const models = providerModels(opts.defaultModel, existing?.models);
+	if (models) {
+		provider.models = models;
 	}
 	if (apiMode) provider.api_mode = apiMode;
 	const agentEnv =
@@ -1337,7 +1342,7 @@ function catalogFromOpenClawConfig(input: unknown): AiProviderCatalog {
 			base_url: baseUrl,
 			auth: keyEnv ? { type: "secret_ref", ref: `env:${keyEnv}` } : { type: "none" },
 		};
-		if (modelId) provider.default_model = modelId;
+		if (modelId) provider.models = [{ id: modelId }];
 		provider.api_mode = apiMode ?? defaultAiProviderApiMode(type);
 		if (keyEnv) provider.runtime_env_name = keyEnv;
 		providers.push(provider);
@@ -1427,7 +1432,7 @@ function providerFromHermesEntry(
 		stringField(provider, "default_model") ??
 		stringField(provider, "model") ??
 		stringField(provider, "default");
-	if (model) entry.default_model = model;
+	if (model) entry.models = [{ id: model }];
 	const apiMode = parseApiMode(
 		aiApiModeFromHermesTransport(stringField(provider, "transport")) ??
 			stringField(provider, "api_mode") ??
@@ -1566,6 +1571,29 @@ function describeAuth(auth: AiProviderAuth): string {
 	if (auth.type === "oauth_profile") return `oauth:${auth.provider}/${auth.profile}`;
 	if (auth.type === "agent_profile") return `agent:${auth.tool}/${auth.profile}`;
 	return "none";
+}
+
+function providerModels(
+	model: string | undefined,
+	existing: AiProvider["models"] | undefined,
+): AiProvider["models"] | undefined {
+	const normalizedModel = model?.trim();
+	const models = existing ? [...existing] : [];
+	if (normalizedModel && !models.some((entry) => entry.id === normalizedModel)) {
+		models.unshift({ id: normalizedModel });
+	}
+	return models.length > 0 ? models : undefined;
+}
+
+function firstProviderModel(provider: AiProvider): string | undefined {
+	return provider.models?.find((model) => model.id.trim())?.id;
+}
+
+function modelsSummary(provider: AiProvider): string {
+	const models = provider.models?.map((model) => model.id).filter(Boolean) ?? [];
+	if (models.length === 0) return "-";
+	if (models.length <= 2) return models.join(", ");
+	return `${models.slice(0, 2).join(", ")} +${models.length - 2}`;
 }
 
 function redactRef(ref: string): string {
