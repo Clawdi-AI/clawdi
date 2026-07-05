@@ -65,7 +65,7 @@
 		"chalk": "^5.4.0",
 		"commander": "^13.0.0",
 		"openapi-fetch": "^0.17.0",
-		"tar": "^7.5.13",
+		"tar": "^7.5.19",
 		"typescript": "catalog:",
 		"yaml": "^2.9.0",
 		"zod": "catalog:"

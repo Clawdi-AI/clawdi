@@ -10,7 +10,11 @@
 		"./api": "./src/api/index.ts",
 		"./style/theme.css": "./src/style/theme.css"
 	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
 	"devDependencies": {
+		"@types/bun": "^1.3.14",
 		"typescript": "catalog:"
 	}
 }
