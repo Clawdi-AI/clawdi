@@ -45,7 +45,7 @@ export const HERO_STRETCHED_LINK_CLASS =
 export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
 	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
-/** Meta line — array items render middot-separated; truncates per item. */
+/** Meta line — array items render middot-separated on one truncating line. */
 export function EntityMeta({
 	items,
 	className,
@@ -64,14 +64,14 @@ export function EntityMeta({
 	return (
 		<div
 			className={cn(
-				"mt-0.5 flex min-w-0 flex-wrap items-center gap-y-0.5 text-sm text-muted-foreground",
+				"mt-0.5 flex min-w-0 items-center overflow-hidden text-sm text-muted-foreground",
 				className,
 			)}
 		>
 			{arr.map((item, i) => (
 				<span key={keyFor(item, i)} className="inline-flex min-w-0 items-center">
-					{i > 0 ? <span className="mx-1.5 text-muted-foreground/40">·</span> : null}
-					<span className="truncate">{item}</span>
+					{i > 0 ? <span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span> : null}
+					<span className="min-w-0 truncate">{item}</span>
 				</span>
 			))}
 		</div>
