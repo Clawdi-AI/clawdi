@@ -8,7 +8,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	if (isDevAuthBypass) return <>{children}</>;
 
 	return (
-		<ClerkProvider appearance={shadcn} publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}>
+		<ClerkProvider
+			appearance={shadcn}
+			publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}
+			signInFallbackRedirectUrl="/"
+			signInUrl="/sign-in"
+			signUpFallbackRedirectUrl="/"
+			signUpUrl="/sign-up"
+		>
 			{children}
 		</ClerkProvider>
 	);

@@ -19,6 +19,7 @@ export type ApiKey = Schemas["ApiKeyResponse"];
 export type ApiKeyCreated = Schemas["ApiKeyCreated"];
 export type ApiKeyCreate = Schemas["ApiKeyCreate"];
 export type ApiKeyRevoked = Schemas["ApiKeyRevokeResponse"];
+export type DeviceLookupResponse = Schemas["DeviceLookupResponse"];
 
 // ── Dashboard ────────────────────────────────────────────────────────────
 export type DashboardStats = Schemas["DashboardStatsResponse"];

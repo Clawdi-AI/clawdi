@@ -1,22 +1,33 @@
 "use client";
 
+import type { DeviceLookupResponse } from "@clawdi/shared/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useState } from "react";
+import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 
-interface DeviceLookup {
-	user_code: string;
-	client_label: string | null;
-	status: "pending" | "approved" | "denied" | "expired" | "consumed";
-	expires_at: string;
-}
+const CLI_AUTHORIZE_ERROR_NORMALIZER: ApiErrorNormalizer = {
+	isAuthError: isApiAuthError,
+	normalizeError: (error) => {
+		if (error instanceof ApiError) {
+			if (error.status === 404) {
+				return "We don't recognize this authorization code. It may have expired. Start over with `clawdi auth login`.";
+			}
+			if (error.status === 410) {
+				return "This authorization code has expired. Run `clawdi auth login` again to get a new one.";
+			}
+		}
+		return normalizeApiError(error);
+	},
+};
 
 // Keep the URL-state body under Suspense and preserve the existing loading shell.
 export default function CliAuthorizePage() {
@@ -46,12 +57,12 @@ function CliAuthorizeContent() {
 	const lookup = useQuery({
 		enabled: code.length > 0,
 		queryKey: ["cli-authorize", code],
-		queryFn: async (): Promise<DeviceLookup> =>
+		queryFn: async (): Promise<DeviceLookupResponse> =>
 			unwrap(
 				await api.GET("/v1/cli/auth/lookup", {
 					params: { query: { code } },
 				}),
-			) as DeviceLookup,
+			),
 	});
 
 	const approve = useMutation({
@@ -94,22 +105,13 @@ function CliAuthorizeContent() {
 	}
 
 	if (lookup.error) {
-		const status = lookup.error instanceof ApiError ? lookup.error.status : 0;
-		const message =
-			status === 404
-				? "We don't recognize this authorization code. It may have expired — start over with `clawdi auth login`."
-				: status === 410
-					? "This authorization code has expired. Run `clawdi auth login` again to get a new one."
-					: lookup.error instanceof Error
-						? lookup.error.message
-						: "Authorization request unavailable. Run `clawdi auth login` again.";
 		return (
 			<Shell>
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Authorization request unavailable</AlertTitle>
-					<AlertDescription>{message}</AlertDescription>
-				</Alert>
+				<ApiErrorPanel
+					error={lookup.error}
+					normalizer={CLI_AUTHORIZE_ERROR_NORMALIZER}
+					title="Authorization request unavailable"
+				/>
 			</Shell>
 		);
 	}
@@ -204,14 +206,7 @@ function CliAuthorizeContent() {
 					</div>
 
 					{(approve.error || deny.error) && (
-						<Alert variant="destructive">
-							<AlertCircle />
-							<AlertDescription>
-								{(approve.error || deny.error) instanceof Error
-									? (approve.error || deny.error)?.message
-									: "Action failed. Please retry."}
-							</AlertDescription>
-						</Alert>
+						<ApiErrorPanel error={approve.error || deny.error} title="Action failed" />
 					)}
 				</CardContent>
 			</Card>
