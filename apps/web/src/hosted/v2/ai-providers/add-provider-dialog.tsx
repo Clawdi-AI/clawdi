@@ -158,6 +158,8 @@ export function AddProviderDialog({
 	const createdFreshRef = useRef(false);
 
 	const meta = providerTypeMeta(type);
+	const runtimeEnvForSubmit = runtimeEnv.trim() || meta.defaultRuntimeEnv;
+	const showRuntimeEnvField = authMethod === "api_key" && meta.custom === true;
 
 	// Initialize when (re)opened.
 	useEffect(() => {
@@ -310,7 +312,7 @@ export function AddProviderDialog({
 			api_mode: apiMode,
 			auth,
 			managed_by: "user" as const,
-			runtime_env_name: keyBacked ? runtimeEnv.trim() || null : null,
+			runtime_env_name: keyBacked ? runtimeEnvForSubmit : null,
 		};
 		const created = await upsert.mutateAsync(body).catch(() => null);
 		if (!created) return;
@@ -323,7 +325,7 @@ export function AddProviderDialog({
 				.mutateAsync({
 					providerId,
 					value: apiKey.trim(),
-					runtime_env_name: runtimeEnv.trim() || undefined,
+					runtime_env_name: runtimeEnvForSubmit,
 				})
 				.catch(() => null);
 			if (!keyStored) {
@@ -548,93 +550,95 @@ export function AddProviderDialog({
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
+				className="flex max-h-[min(90vh,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
 			>
 				{oauth ? (
 					<>
-						<DialogHeader>
+						<DialogHeader className="shrink-0 px-6 pt-6">
 							<DialogTitle>Sign in with ChatGPT</DialogTitle>
 							<DialogDescription>
 								Finish signing in in the ChatGPT window — we’ll connect Codex automatically when it
 								returns.
 							</DialogDescription>
 						</DialogHeader>
-						<div className="flex flex-col gap-3">
-							<Button
-								variant="outline"
-								className="w-full"
-								onClick={() => {
-									// An issue means the prior link is stale — mint a fresh one. With no
-									// issue the popup just opened on a still-valid link; reopening is fine.
-									if (oauthIssue) void restartSignIn();
-									else openSignIn(oauth.authUrl);
-								}}
-								disabled={oauthStart.isPending}
-							>
-								{oauthIssue ? "Restart ChatGPT sign-in" : "Open ChatGPT sign-in"}
-								{oauthStart.isPending ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<ExternalLink className="size-3.5" />
-								)}
-							</Button>
-							{oauthIssue === "expired" ? (
-								<p className="flex items-center gap-2 text-xs text-destructive">
-									<CircleAlert className="size-3.5" /> This sign-in link expired. Restart to get a
-									fresh one.
-								</p>
-							) : oauthIssue === "blocked" ? (
-								<p className="flex items-center gap-2 text-xs text-destructive">
-									<CircleAlert className="size-3.5" /> Pop-up blocked. Allow pop-ups, then restart
-									sign-in — or paste the address below.
-								</p>
-							) : oauthIssue === "closed" ? (
-								<p className="flex items-center gap-2 text-xs text-muted-foreground">
-									<CircleAlert className="size-3.5" /> The sign-in window closed before finishing.
-									Restart it, or paste the address below.
-								</p>
-							) : oauthComplete.isPending ? (
-								<p className="flex items-center gap-2 text-xs text-muted-foreground">
-									<Spinner className="size-3.5" /> Connecting Codex…
-								</p>
-							) : (
-								<p className="flex items-center gap-2 text-xs text-muted-foreground">
-									<Spinner className="size-3.5" /> Waiting for sign-in to finish…
-								</p>
-							)}
-							<details className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-								<summary className="cursor-pointer font-medium text-foreground">
-									Didn’t return automatically?
-								</summary>
-								<div className="mt-2 flex flex-col gap-2">
-									<p>Paste the full address from the OpenAI page after signing in.</p>
-									<Label htmlFor="provider-oauth-callback" className="sr-only">
-										OAuth callback URL
-									</Label>
-									<Input
-										id="provider-oauth-callback"
-										name="provider-oauth-callback"
-										value={oauthCode}
-										onChange={(e) => setOauthCode(e.target.value)}
-										placeholder="https://…/callback?code=…&state=…"
-										autoComplete="off"
-										spellCheck={false}
-									/>
-									<Button
-										size="sm"
-										onClick={submitPastedCallback}
-										disabled={!oauthCode.trim() || oauthComplete.isPending}
-									>
-										{oauthComplete.isPending ? "Finishing…" : "Finish sign-in"}
-									</Button>
-									<p>
-										If it never returns, an admin may need to register this app’s callback URL in
-										the Codex OAuth config.
+						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+							<div className="flex flex-col gap-3">
+								<Button
+									variant="outline"
+									className="w-full"
+									onClick={() => {
+										// An issue means the prior link is stale — mint a fresh one. With no
+										// issue the popup just opened on a still-valid link; reopening is fine.
+										if (oauthIssue) void restartSignIn();
+										else openSignIn(oauth.authUrl);
+									}}
+									disabled={oauthStart.isPending}
+								>
+									{oauthIssue ? "Restart ChatGPT sign-in" : "Open ChatGPT sign-in"}
+									{oauthStart.isPending ? (
+										<Spinner className="size-3.5" />
+									) : (
+										<ExternalLink className="size-3.5" />
+									)}
+								</Button>
+								{oauthIssue === "expired" ? (
+									<p className="flex items-center gap-2 text-xs text-destructive">
+										<CircleAlert className="size-3.5" /> This sign-in link expired. Restart to get a
+										fresh one.
 									</p>
-								</div>
-							</details>
+								) : oauthIssue === "blocked" ? (
+									<p className="flex items-center gap-2 text-xs text-destructive">
+										<CircleAlert className="size-3.5" /> Pop-up blocked. Allow pop-ups, then restart
+										sign-in — or paste the address below.
+									</p>
+								) : oauthIssue === "closed" ? (
+									<p className="flex items-center gap-2 text-xs text-muted-foreground">
+										<CircleAlert className="size-3.5" /> The sign-in window closed before finishing.
+										Restart it, or paste the address below.
+									</p>
+								) : oauthComplete.isPending ? (
+									<p className="flex items-center gap-2 text-xs text-muted-foreground">
+										<Spinner className="size-3.5" /> Connecting Codex…
+									</p>
+								) : (
+									<p className="flex items-center gap-2 text-xs text-muted-foreground">
+										<Spinner className="size-3.5" /> Waiting for sign-in to finish…
+									</p>
+								)}
+								<details className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+									<summary className="cursor-pointer font-medium text-foreground">
+										Didn’t return automatically?
+									</summary>
+									<div className="mt-2 flex flex-col gap-2">
+										<p>Paste the full address from the OpenAI page after signing in.</p>
+										<Label htmlFor="provider-oauth-callback" className="sr-only">
+											OAuth callback URL
+										</Label>
+										<Input
+											id="provider-oauth-callback"
+											name="provider-oauth-callback"
+											value={oauthCode}
+											onChange={(e) => setOauthCode(e.target.value)}
+											placeholder="https://…/callback?code=…&state=…"
+											autoComplete="off"
+											spellCheck={false}
+										/>
+										<Button
+											size="sm"
+											onClick={submitPastedCallback}
+											disabled={!oauthCode.trim() || oauthComplete.isPending}
+										>
+											{oauthComplete.isPending ? "Finishing…" : "Finish sign-in"}
+										</Button>
+										<p>
+											If it never returns, an admin may need to register this app’s callback URL in
+											the Codex OAuth config.
+										</p>
+									</div>
+								</details>
+							</div>
 						</div>
-						<DialogFooter>
+						<DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
 							<Button variant="outline" onClick={() => requestClose(false)}>
 								Cancel
 							</Button>
@@ -642,173 +646,191 @@ export function AddProviderDialog({
 					</>
 				) : (
 					<>
-						<DialogHeader>
+						<DialogHeader className="shrink-0 px-6 pt-6">
 							<DialogTitle>{isEdit ? "Edit provider" : "Add a provider"}</DialogTitle>
 							<DialogDescription>
 								Route inference through your own account by API key, sign-in, or a custom endpoint.
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex flex-col gap-4">
-							<div className="flex flex-col gap-1.5">
-								<Label>Provider</Label>
-								<div className="grid grid-cols-2 gap-2">
-									{PROVIDER_TYPES.map((t) => {
-										const option = providerTypeMeta(t);
-										return (
-											<EntityChoiceCard
-												key={t}
-												selected={type === t}
-												onClick={isEdit ? undefined : () => changeType(t)}
-												disabled={isEdit}
-												icon={<EntityIcon kind="provider" id={t} label={option.label} size="sm" />}
-												title={option.label}
-												description={providerTypeDescription(t)}
-											/>
-										);
-									})}
-								</div>
-							</div>
-
-							<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-								<ProviderTypeChip type={type} />
-								<div className="min-w-0 text-xs text-muted-foreground">
-									Saved as <code className="font-mono">{providerId || "—"}</code>
-								</div>
-							</div>
-
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="provider-label">Name</Label>
-								<Input
-									id="provider-label"
-									name="provider-label"
-									value={label}
-									onChange={(e) => setLabel(e.target.value)}
-									placeholder={`${meta.label} (my key)`}
-									autoComplete="off"
-								/>
-							</div>
-
-							{/* Auth method */}
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="provider-auth">Authentication</Label>
-								<Select
-									value={authMethod}
-									onValueChange={(value) => {
-										if (isAuthMethod(value)) setAuthMethod(value);
-									}}
-								>
-									<SelectTrigger id="provider-auth">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="api_key">API key</SelectItem>
-										{meta.oauth ? (
-											<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
-										) : null}
-										{meta.custom ? <SelectItem value="none">No auth (local)</SelectItem> : null}
-									</SelectContent>
-								</Select>
-							</div>
-
-							{authMethod === "api_key" ? (
-								<>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-key">
-											API key{canKeepExistingKey ? " (leave blank to keep)" : ""}
-										</Label>
-										<Input
-											id="provider-key"
-											name="provider-key"
-											type="password"
-											value={apiKey}
-											onChange={(e) => setApiKey(e.target.value)}
-											placeholder="sk-…"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-										<p className="text-xs text-muted-foreground">
-											{canKeepLegacySecretRef
-												? "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth."
-												: "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again."}
-										</p>
-										{keyRequired && isEdit && !apiKey.trim() ? (
-											<p className="text-xs text-destructive">
-												Enter a key to switch this provider to managed API-key auth.
-											</p>
-										) : null}
-									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-env">Runtime env var</Label>
-										<Input
-											id="provider-env"
-											name="provider-env"
-											value={runtimeEnv}
-											onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
-											placeholder="OPENAI_API_KEY"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-									</div>
-								</>
-							) : null}
-
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="provider-base">Base URL</Label>
-								<Input
-									id="provider-base"
-									name="provider-base"
-									value={baseUrl}
-									onChange={(e) => setBaseUrl(e.target.value)}
-									placeholder="https://api.example.com/v1"
-									autoComplete="off"
-									spellCheck={false}
-								/>
-								{authMethod === "none" && baseUrl.trim() && !noneAuthOk ? (
-									<p className="text-xs text-destructive">
-										No-auth providers must use a loopback or private-network URL (e.g.
-										http://127.0.0.1:11434/v1).
-									</p>
-								) : null}
-							</div>
-
-							<div className="grid gap-3 sm:grid-cols-2">
+						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+							<div className="flex flex-col gap-4">
 								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="provider-model">Default model</Label>
+									<Label>Provider</Label>
+									<div className="grid gap-2 sm:grid-cols-2">
+										{PROVIDER_TYPES.map((t) => {
+											const option = providerTypeMeta(t);
+											return (
+												<EntityChoiceCard
+													key={t}
+													selected={type === t}
+													onClick={isEdit ? undefined : () => changeType(t)}
+													disabled={isEdit}
+													icon={
+														<EntityIcon kind="provider" id={t} label={option.label} size="sm" />
+													}
+													title={option.label}
+													description={providerTypeDescription(t)}
+												/>
+											);
+										})}
+									</div>
+								</div>
+
+								<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
+									<ProviderTypeChip type={type} />
+									<div className="min-w-0 text-xs text-muted-foreground">
+										Saved as <code className="font-mono">{providerId || "—"}</code>
+									</div>
+								</div>
+
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="provider-label">Name</Label>
 									<Input
-										id="provider-model"
-										name="provider-model"
-										value={defaultModel}
-										onChange={(e) => setDefaultModel(e.target.value)}
-										placeholder={meta.modelPlaceholder}
+										id="provider-label"
+										name="provider-label"
+										value={label}
+										onChange={(e) => setLabel(e.target.value)}
+										placeholder={`${meta.label} (my key)`}
 										autoComplete="off"
-										spellCheck={false}
 									/>
 								</div>
+
+								{/* Auth method */}
 								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="provider-mode">API mode</Label>
+									<Label htmlFor="provider-auth">Authentication</Label>
 									<Select
-										value={apiMode}
+										value={authMethod}
 										onValueChange={(value) => {
-											if (isApiMode(value)) setApiMode(value);
+											if (isAuthMethod(value)) setAuthMethod(value);
 										}}
 									>
-										<SelectTrigger id="provider-mode">
+										<SelectTrigger id="provider-auth">
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
-											{meta.apiModes.map((m) => (
-												<SelectItem key={m} value={m}>
-													{API_MODE_LABEL[m]}
-												</SelectItem>
-											))}
+											<SelectItem value="api_key">API key</SelectItem>
+											{meta.oauth ? (
+												<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
+											) : null}
+											{meta.custom ? <SelectItem value="none">No auth (local)</SelectItem> : null}
 										</SelectContent>
 									</Select>
+								</div>
+
+								{authMethod === "api_key" ? (
+									<>
+										<div className="flex flex-col gap-1.5">
+											<Label htmlFor="provider-key">
+												API key{canKeepExistingKey ? " (leave blank to keep)" : ""}
+											</Label>
+											<Input
+												id="provider-key"
+												name="provider-key"
+												type="password"
+												value={apiKey}
+												onChange={(e) => setApiKey(e.target.value)}
+												placeholder="sk-…"
+												autoComplete="off"
+												spellCheck={false}
+											/>
+											<p className="text-xs text-muted-foreground">
+												{canKeepLegacySecretRef
+													? "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth."
+													: "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again."}
+											</p>
+											{keyRequired && isEdit && !apiKey.trim() ? (
+												<p className="text-xs text-destructive">
+													Enter a key to switch this provider to managed API-key auth.
+												</p>
+											) : null}
+										</div>
+										{showRuntimeEnvField ? (
+											<details
+												className="rounded-md border bg-muted/30 p-3"
+												open={isEdit || undefined}
+											>
+												<summary className="cursor-pointer text-sm font-medium text-foreground">
+													Advanced
+												</summary>
+												<div className="mt-3 flex flex-col gap-1.5">
+													<Label htmlFor="provider-env">Runtime env var</Label>
+													<Input
+														id="provider-env"
+														name="provider-env"
+														value={runtimeEnv}
+														onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
+														placeholder="OPENAI_API_KEY"
+														autoComplete="off"
+														spellCheck={false}
+													/>
+													<p className="text-xs text-muted-foreground">
+														Environment variable your endpoint's API key is exposed under to the
+														agent, e.g. OPENAI_API_KEY.
+													</p>
+												</div>
+											</details>
+										) : null}
+									</>
+								) : null}
+
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="provider-base">Base URL</Label>
+									<Input
+										id="provider-base"
+										name="provider-base"
+										value={baseUrl}
+										onChange={(e) => setBaseUrl(e.target.value)}
+										placeholder="https://api.example.com/v1"
+										autoComplete="off"
+										spellCheck={false}
+									/>
+									{authMethod === "none" && baseUrl.trim() && !noneAuthOk ? (
+										<p className="text-xs text-destructive">
+											No-auth providers must use a loopback or private-network URL (e.g.
+											http://127.0.0.1:11434/v1).
+										</p>
+									) : null}
+								</div>
+
+								<div className="grid gap-3 sm:grid-cols-2">
+									<div className="flex flex-col gap-1.5">
+										<Label htmlFor="provider-model">Default model</Label>
+										<Input
+											id="provider-model"
+											name="provider-model"
+											value={defaultModel}
+											onChange={(e) => setDefaultModel(e.target.value)}
+											placeholder={meta.modelPlaceholder}
+											autoComplete="off"
+											spellCheck={false}
+										/>
+									</div>
+									<div className="flex flex-col gap-1.5">
+										<Label htmlFor="provider-mode">API mode</Label>
+										<Select
+											value={apiMode}
+											onValueChange={(value) => {
+												if (isApiMode(value)) setApiMode(value);
+											}}
+										>
+											<SelectTrigger id="provider-mode">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{meta.apiModes.map((m) => (
+													<SelectItem key={m} value={m}>
+														{API_MODE_LABEL[m]}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
 								</div>
 							</div>
 						</div>
 
-						<DialogFooter>
+						<DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
 							<Button variant="outline" onClick={() => requestClose(false)}>
 								Cancel
 							</Button>

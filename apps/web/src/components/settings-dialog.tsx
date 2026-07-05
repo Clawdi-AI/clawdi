@@ -152,47 +152,50 @@ export function SettingsDialog({
 								<div className="truncate text-xs text-muted-foreground">Clawdi preferences</div>
 							</div>
 						</div>
-						<nav
-							aria-label="Settings sections"
-							className="flex gap-1 overflow-x-auto px-2 pb-2 md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-3 md:pb-3"
-						>
-							{items.map((item) => {
-								const Icon = item.icon;
-								const active = activeSection === item.id;
-								return (
-									<Button
-										key={item.id}
-										ref={active ? activeButtonRef : undefined}
-										type="button"
-										variant="ghost"
-										aria-current={active ? "page" : undefined}
-										data-active={active}
-										onClick={() => onSectionChange(item.id)}
-										className={cn(
-											"h-auto min-w-44 shrink-0 justify-start gap-3 whitespace-normal rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-background/70 hover:text-foreground md:min-w-0",
-											"data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs",
-										)}
-									>
-										<IconChip
-											size="sm"
-											tint={
-												active
-													? "bg-primary text-primary-foreground"
-													: "bg-background text-foreground"
-											}
+						<div className="relative min-w-0 md:min-h-0 md:flex-1">
+							<nav
+								aria-label="Settings sections"
+								className="flex gap-1 overflow-x-auto px-3 pb-3 [scrollbar-width:thin] md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-3 md:pb-3"
+							>
+								{items.map((item) => {
+									const Icon = item.icon;
+									const active = activeSection === item.id;
+									return (
+										<Button
+											key={item.id}
+											ref={active ? activeButtonRef : undefined}
+											type="button"
+											variant="ghost"
+											aria-current={active ? "page" : undefined}
+											data-active={active}
+											onClick={() => onSectionChange(item.id)}
+											className={cn(
+												"h-auto min-w-28 shrink-0 justify-start gap-2 rounded-md px-2.5 py-2 text-left text-sm text-muted-foreground hover:bg-background/70 hover:text-foreground md:min-w-0 md:gap-3 md:px-3",
+												"data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs",
+											)}
 										>
-											<Icon />
-										</IconChip>
-										<span className="grid min-w-0 flex-1 leading-tight">
-											<span className="truncate font-medium">{item.label}</span>
-											<span className="truncate text-xs text-muted-foreground">
-												{item.description}
+											<IconChip
+												size="sm"
+												tint={
+													active
+														? "bg-primary text-primary-foreground"
+														: "bg-background text-foreground"
+												}
+											>
+												<Icon />
+											</IconChip>
+											<span className="grid min-w-0 flex-1 leading-tight">
+												<span className="truncate font-medium">{item.label}</span>
+												<span className="hidden truncate text-xs text-muted-foreground md:block">
+													{item.description}
+												</span>
 											</span>
-										</span>
-									</Button>
-								);
-							})}
-						</nav>
+										</Button>
+									);
+								})}
+							</nav>
+							<div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-muted/30 to-transparent md:hidden" />
+						</div>
 					</aside>
 
 					<section className="min-h-0 overflow-y-auto py-6 md:py-8">

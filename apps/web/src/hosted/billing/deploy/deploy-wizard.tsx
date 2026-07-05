@@ -558,258 +558,268 @@ export function DeployWizard() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-			<PageHeader
-				title="Deploy an Agent"
-				description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
-			/>
+			<div className="flex flex-col gap-6 sm:pb-24">
+				<PageHeader
+					title="Deploy an Agent"
+					description="Codex is included by default. Add optional runtimes and choose the AI provider for this hosted deployment."
+				/>
 
-			<SettingsSection
-				title="Runtimes"
-				description={
-					dualAllowed
-						? "Codex stays on. Performance can also run OpenClaw and Hermes together."
-						: "Codex stays on. Free can add one optional runtime."
-				}
-			>
-				<div className={THREE_TILE_GRID_CLASS}>
-					<EntityChoiceCard
-						selected
-						icon={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
-						title={runtimeDisplayName("codex")}
-						description={runtimeBlurb("codex")}
-						badge={<Badge variant="outline">Always on</Badge>}
-					/>
-					<EntityChoiceCard
-						selected={engines.openclaw}
-						onClick={() => toggleEngine("openclaw")}
-						icon={
-							<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
-						}
-						title={runtimeDisplayName("openclaw")}
-						description={runtimeBlurb("openclaw")}
-					/>
-					<EntityChoiceCard
-						selected={engines.hermes}
-						onClick={() => toggleEngine("hermes")}
-						icon={<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />}
-						title={runtimeDisplayName("hermes")}
-						description={runtimeBlurb("hermes")}
-					/>
-				</div>
-			</SettingsSection>
-
-			<SettingsSection
-				title="AI provider"
-				description="Managed AI bills your wallet, or route through one of your own providers."
-			>
-				<div className={TWO_TILE_GRID_CLASS}>
-					<EntityChoiceCard
-						selected={aiChoice === MANAGED_AI_CHOICE}
-						onClick={() => setAiChoice(MANAGED_AI_CHOICE)}
-						icon={
-							<IconChip tint="bg-primary/10 text-primary">
-								<Sparkles />
-							</IconChip>
-						}
-						title="Managed by Clawdi"
-						description="AI Credits from your wallet."
-						badge={<Badge variant="secondary">Default</Badge>}
-					/>
-					{aiProviders.isLoading ? (
-						<Skeleton className="h-[74px] w-full rounded-lg" />
-					) : aiProviders.error ? (
-						<div className="sm:col-span-2">
-							<ApiErrorPanel
-								title="Couldn't load providers"
-								error={aiProviders.error}
-								onRetry={() => aiProviders.refetch()}
-								normalizer={aiProviderErrorNormalizer}
-							/>
-						</div>
-					) : null}
-					{providerList.map((provider) => (
+				<SettingsSection
+					title="Runtimes"
+					description={
+						dualAllowed
+							? "Codex stays on. Performance can also run OpenClaw and Hermes together."
+							: "Codex stays on. Free can add one optional runtime."
+					}
+				>
+					<div className={THREE_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							key={provider.provider_id}
-							selected={aiChoice === provider.provider_id}
-							onClick={() => setAiChoice(provider.provider_id)}
-							icon={<ProviderTypeChip type={provider.type} />}
-							title={provider.label ?? provider.provider_id}
-							description={provider.default_model ?? providerTypeLabelFallback(provider)}
-							badge={<AuthBadge auth={provider.auth} />}
-						/>
-					))}
-					<AddTile
-						title="Add a provider"
-						description="Connect OpenAI, Anthropic, or another endpoint."
-						onClick={() => setAddProviderOpen(true)}
-					/>
-				</div>
-			</SettingsSection>
-
-			<SettingsSection
-				title={
-					<>
-						Channels <span className="font-normal text-muted-foreground">· optional</span>
-					</>
-				}
-				description="Prepare a bot now, then link it from the agent page once deployment finishes."
-			>
-				<div className={TWO_TILE_GRID_CLASS}>
-					<EntityChoiceCard
-						selected
-						icon={
-							<IconChip tint="bg-muted text-muted-foreground">
-								<CalendarClock />
-							</IconChip>
-						}
-						title="Link after deploy"
-						description="Channel links need the agent identity created during provisioning."
-						badge={<Badge variant="secondary">Default</Badge>}
-					/>
-					{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
-					{channels.error ? (
-						<div className="flex min-h-[74px] flex-col items-start justify-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:col-span-2">
-							<p>Couldn’t load your channels. You can still deploy and link later.</p>
-							<Button size="sm" variant="outline" onClick={() => channels.refetch()}>
-								<RefreshCw /> Retry
-							</Button>
-						</div>
-					) : (
-						channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)
-					)}
-					<AddTile
-						title="Connect a channel"
-						description="Prepare a bot; link it after provisioning."
-						onClick={() => setConnectChannelOpen(true)}
-					/>
-				</div>
-			</SettingsSection>
-
-			<SettingsSection
-				title="Compute"
-				description="Free gives one active hosted deployment. Performance is billed per deployment and can run both optional runtimes."
-			>
-				<div className="flex flex-col gap-3">
-					<div className="grid gap-2 sm:grid-cols-2">
-						<EntityChoiceCard
-							selected={compute === "free"}
-							onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
-							icon={
-								<IconChip tint="bg-identity-3-bg text-identity-3-fg">
-									<Cpu />
-								</IconChip>
-							}
-							title="Free"
-							description={
-								freeSlotUsed
-									? "Free slot already in use"
-									: freeSlotPending
-										? "Checking Free slot…"
-										: deployments.error
-											? "Free slot check unavailable"
-											: freePlan
-												? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active deployment`
-												: "$0 · Codex included"
-							}
-							badge={<Badge variant="secondary">$0</Badge>}
-							disabled={freeSlotUnavailable}
+							selected
+							icon={<EntityIcon kind="framework" id="codex" label={runtimeDisplayName("codex")} />}
+							title={runtimeDisplayName("codex")}
+							description={runtimeBlurb("codex")}
+							badge={<Badge variant="outline">Always on</Badge>}
 						/>
 						<EntityChoiceCard
-							selected={compute === "performance"}
-							onClick={perfPlan ? () => setComputeTier("performance") : undefined}
+							selected={engines.openclaw}
+							onClick={() => toggleEngine("openclaw")}
 							icon={
-								<IconChip tint="bg-identity-8-bg text-identity-8-fg">
-									<Zap />
-								</IconChip>
+								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
 							}
-							title="Performance"
-							description={
-								perfPlan
-									? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
-									: "Performance plan unavailable"
+							title={runtimeDisplayName("openclaw")}
+							description={runtimeBlurb("openclaw")}
+						/>
+						<EntityChoiceCard
+							selected={engines.hermes}
+							onClick={() => toggleEngine("hermes")}
+							icon={
+								<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
 							}
-							badge={
-								<Badge>
-									{perfOffer
-										? `${formatCentsCompact(perfOffer.effective_monthly_price_cents)}/mo`
-										: perfPlan
-											? `${formatCentsCompact(perfPlan.price_cents)}/mo`
-											: "Unavailable"}
-								</Badge>
-							}
-							disabled={!perfPlan}
+							title={runtimeDisplayName("hermes")}
+							description={runtimeBlurb("hermes")}
 						/>
 					</div>
-					{compute === "performance" && perfOffers.length > 1 ? (
-						<div className="flex flex-col gap-2">
-							<TermSwitcher offers={perfOffers} value={perfBillingTermMonths} onChange={setTerm} />
-						</div>
-					) : null}
-					<ComputeStatusLine
-						compute={compute}
-						freeSlotPending={freeSlotPending}
-						freeSlotUsed={freeSlotUsed}
-						deploymentsError={deployments.error}
-						freePlan={freePlan}
-						perfOffer={perfOffer}
-					/>
-				</div>
-			</SettingsSection>
+				</SettingsSection>
 
-			<SettingsSection
-				title={
-					<>
-						Personalize <span className="font-normal text-muted-foreground">· optional</span>
-					</>
-				}
-				description="Choose the agent's language and timezone."
-			>
-				<div className="flex max-w-2xl flex-col gap-4">
-					<div className="grid gap-4 sm:grid-cols-2">
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
-								Language
-							</label>
-							<Select
-								value={language || "default"}
-								onValueChange={(v) => {
-									setLanguage(v === null || v === "default" ? "" : v);
-								}}
-							>
-								<SelectTrigger id="agent-language">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="default">Default</SelectItem>
-									{LANGUAGE_OPTIONS.map((l) => (
-										<SelectItem key={l.code} value={l.code}>
-											{l.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
+				<SettingsSection
+					title="AI provider"
+					description="Managed AI bills your wallet, or route through one of your own providers."
+				>
+					<div className={TWO_TILE_GRID_CLASS}>
+						<EntityChoiceCard
+							selected={aiChoice === MANAGED_AI_CHOICE}
+							onClick={() => setAiChoice(MANAGED_AI_CHOICE)}
+							icon={
+								<IconChip tint="bg-primary/10 text-primary">
+									<Sparkles />
+								</IconChip>
+							}
+							title="Managed by Clawdi"
+							description="AI Credits from your wallet."
+							badge={<Badge variant="secondary">Default</Badge>}
+						/>
+						{aiProviders.isLoading ? (
+							<Skeleton className="h-[74px] w-full rounded-lg" />
+						) : aiProviders.error ? (
+							<div className="sm:col-span-2">
+								<ApiErrorPanel
+									title="Couldn't load providers"
+									error={aiProviders.error}
+									onRetry={() => aiProviders.refetch()}
+									normalizer={aiProviderErrorNormalizer}
+								/>
+							</div>
+						) : null}
+						{providerList.map((provider) => (
+							<EntityChoiceCard
+								key={provider.provider_id}
+								selected={aiChoice === provider.provider_id}
+								onClick={() => setAiChoice(provider.provider_id)}
+								icon={<ProviderTypeChip type={provider.type} />}
+								title={provider.label ?? provider.provider_id}
+								description={provider.default_model ?? providerTypeLabelFallback(provider)}
+								badge={<AuthBadge auth={provider.auth} />}
+							/>
+						))}
+						<AddTile
+							title="Add a provider"
+							description="Connect OpenAI, Anthropic, or another endpoint."
+							onClick={() => setAddProviderOpen(true)}
+						/>
 					</div>
-					{tzOptions.length > 0 ? (
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
-								Timezone
-							</label>
-							<TimezoneCombobox
-								id="agent-timezone"
-								value={timezone}
-								onValueChange={setTimezone}
-								options={tzOptions}
+				</SettingsSection>
+
+				<SettingsSection
+					title={
+						<>
+							Channels <span className="font-normal text-muted-foreground">· optional</span>
+						</>
+					}
+					description="Prepare a bot now, then link it from the agent page once deployment finishes."
+				>
+					<div className={TWO_TILE_GRID_CLASS}>
+						<EntityChoiceCard
+							selected
+							icon={
+								<IconChip tint="bg-muted text-muted-foreground">
+									<CalendarClock />
+								</IconChip>
+							}
+							title="Link after deploy"
+							description="Channel links need the agent identity created during provisioning."
+							badge={<Badge variant="secondary">Default</Badge>}
+						/>
+						{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
+						{channels.error ? (
+							<div className="flex min-h-[74px] flex-col items-start justify-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:col-span-2">
+								<p>Couldn’t load your channels. You can still deploy and link later.</p>
+								<Button size="sm" variant="outline" onClick={() => channels.refetch()}>
+									<RefreshCw /> Retry
+								</Button>
+							</div>
+						) : (
+							channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)
+						)}
+						<AddTile
+							title="Connect a channel"
+							description="Prepare a bot; link it after provisioning."
+							onClick={() => setConnectChannelOpen(true)}
+						/>
+					</div>
+				</SettingsSection>
+
+				<SettingsSection
+					title="Compute"
+					description="Free gives one active hosted deployment. Performance is billed per deployment and can run both optional runtimes."
+				>
+					<div className="flex flex-col gap-3">
+						<div className="grid gap-2 sm:grid-cols-2">
+							<EntityChoiceCard
+								selected={compute === "free"}
+								onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
+								icon={
+									<IconChip tint="bg-identity-3-bg text-identity-3-fg">
+										<Cpu />
+									</IconChip>
+								}
+								title="Free"
+								description={
+									freeSlotUsed
+										? "Free slot already in use"
+										: freeSlotPending
+											? "Checking Free slot…"
+											: deployments.error
+												? "Free slot check unavailable"
+												: freePlan
+													? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active deployment`
+													: "$0 · Codex included"
+								}
+								badge={<Badge variant="secondary">$0</Badge>}
+								disabled={freeSlotUnavailable}
+							/>
+							<EntityChoiceCard
+								selected={compute === "performance"}
+								onClick={perfPlan ? () => setComputeTier("performance") : undefined}
+								icon={
+									<IconChip tint="bg-identity-8-bg text-identity-8-fg">
+										<Zap />
+									</IconChip>
+								}
+								title="Performance"
+								description={
+									perfPlan
+										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
+										: "Performance plan unavailable"
+								}
+								badge={
+									<Badge>
+										{perfOffer
+											? `${formatCentsCompact(perfOffer.effective_monthly_price_cents)}/mo`
+											: perfPlan
+												? `${formatCentsCompact(perfPlan.price_cents)}/mo`
+												: "Unavailable"}
+									</Badge>
+								}
+								disabled={!perfPlan}
 							/>
 						</div>
-					) : null}
-				</div>
-			</SettingsSection>
+						{compute === "performance" && perfOffers.length > 1 ? (
+							<div className="flex flex-col gap-2">
+								<TermSwitcher
+									offers={perfOffers}
+									value={perfBillingTermMonths}
+									onChange={setTerm}
+								/>
+							</div>
+						) : null}
+						<ComputeStatusLine
+							compute={compute}
+							freeSlotPending={freeSlotPending}
+							freeSlotUsed={freeSlotUsed}
+							deploymentsError={deployments.error}
+							freePlan={freePlan}
+							perfOffer={perfOffer}
+						/>
+					</div>
+				</SettingsSection>
+
+				<SettingsSection
+					title={
+						<>
+							Personalize <span className="font-normal text-muted-foreground">· optional</span>
+						</>
+					}
+					description="Choose the agent's language and timezone."
+				>
+					<div className="flex max-w-2xl flex-col gap-4">
+						<div className="grid gap-4 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5">
+								<label htmlFor="agent-language" className="text-sm text-muted-foreground">
+									Language
+								</label>
+								<Select
+									value={language || "default"}
+									onValueChange={(v) => {
+										setLanguage(v === null || v === "default" ? "" : v);
+									}}
+								>
+									<SelectTrigger id="agent-language">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="default">Default</SelectItem>
+										{LANGUAGE_OPTIONS.map((l) => (
+											<SelectItem key={l.code} value={l.code}>
+												{l.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
+						{tzOptions.length > 0 ? (
+							<div className="flex flex-col gap-1.5">
+								<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
+									Timezone
+								</label>
+								<TimezoneCombobox
+									id="agent-timezone"
+									value={timezone}
+									onValueChange={setTimezone}
+									options={tzOptions}
+								/>
+							</div>
+						) : null}
+					</div>
+				</SettingsSection>
+			</div>
 
 			{/* Sticky action bar */}
-			<div className="sticky bottom-0 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6">
+			<div className="-mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur sm:sticky sm:bottom-0 lg:-mx-6 lg:px-6">
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-					<p className="min-w-0 truncate text-sm text-muted-foreground">{summaryLine}</p>
+					<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
+						{summaryLine}
+					</p>
 					<Button
 						size="lg"
 						onClick={() => runAction(onDeploy)}

@@ -131,13 +131,13 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 		// the user is typing in a form field other than our own search input;
 		// cmdk already grabs focus inside the dialog so we just need to open it.
 		const handler = (e: KeyboardEvent) => {
-			if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+			if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				setOpenInternal((prev) => !prev);
 			}
 		};
-		window.addEventListener("keydown", handler);
-		return () => window.removeEventListener("keydown", handler);
+		document.addEventListener("keydown", handler, true);
+		return () => document.removeEventListener("keydown", handler, true);
 	}, []);
 
 	const value = useMemo(() => ({ open, setOpen }), [open, setOpen]);

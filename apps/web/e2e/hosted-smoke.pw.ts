@@ -34,6 +34,8 @@ async function stubHostedApi(page: Page) {
 		if (p === "/v1/agents") return fulfillJson(r, []);
 		if (p === "/v1/ai-providers") return fulfillJson(r, []);
 		if (p === "/v1/channels") return fulfillJson(r, []);
+		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
+		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
 		if (p === "/v1/projects") return fulfillJson(r, []);
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
@@ -60,6 +62,13 @@ function collectBrowserErrors(page: Page): string[] {
 	return errors;
 }
 
+async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
+	const box = await locator.boundingBox();
+	expect(box, `${label} should render a layout box`).not.toBeNull();
+	expect(box?.width, `${label} width`).toBeGreaterThan(0);
+	expect(box?.height, `${label} height`).toBeGreaterThan(0);
+}
+
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);
@@ -79,6 +88,19 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("command palette opens with Ctrl+K", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page);
+	await page.goto("/channels");
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	await page.waitForLoadState("networkidle");
+
+	await page.keyboard.press("Control+K");
+	await expect(page.locator('[data-slot="command"]')).toBeVisible();
+	await page.waitForTimeout(150);
+	expect(errors, `command palette: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("channels connect dialog opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);
@@ -88,6 +110,11 @@ test("channels connect dialog opens without browser errors", async ({ page }) =>
 	await expect(connect).toBeVisible();
 	await page.waitForTimeout(150);
 	expect(errors, `channels render: ${errors.join(" | ")}`).toEqual([]);
+
+	await expect(page.locator('[data-slot="tabs-list"]')).toHaveCount(0);
+	await expect(page.getByText("Your channels").first()).toBeVisible();
+	await expect(page.getByText("Shared bots").first()).toBeVisible();
+	await expectNonZeroBox(page.locator('[data-sidebar="separator"]').first(), "sidebar separator");
 
 	// Open the Base UI Dialog + interact with its provider picker.
 	await connect.click();

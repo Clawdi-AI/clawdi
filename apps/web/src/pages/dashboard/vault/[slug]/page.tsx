@@ -391,8 +391,8 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 			{/* Keys */}
 			<section className="space-y-3">
-				<div className="flex items-end justify-between gap-2">
-					<div>
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">Keys</h2>
 							{keys.error ? (
@@ -409,17 +409,17 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							Values are write-only here — agents read them at runtime through the CLI.
 						</p>
 					</div>
-					<div className="flex shrink-0 items-center gap-2">
+					<div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
 						{keyNames.length > 0 ? (
 							<>
-								<div className="relative">
+								<div className="relative w-full sm:w-auto">
 									<Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 									<Input
 										value={search}
 										onChange={(e) => setSearch(e.target.value)}
 										placeholder="Search keys…"
 										aria-label="Search keys"
-										className="h-8 w-40 pl-8 text-sm sm:w-52"
+										className="h-8 w-full pl-8 text-sm sm:w-52"
 									/>
 								</div>
 								{isOwner ? (
@@ -433,6 +433,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 											});
 										}}
 										aria-pressed={selectMode}
+										className="w-full sm:w-auto"
 									>
 										<ListChecks className="size-3.5" />
 										{selectMode ? "Done" : "Select"}
@@ -449,7 +450,12 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 						) : null}
 						{isOwner ? (
 							<AddKeysDialog vaultSlug={slug}>
-								<Button variant="outline" size="sm" disabled={!anyProjectId}>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={!anyProjectId}
+									className="w-full sm:w-auto"
+								>
 									<Plus className="size-3.5" />
 									Add keys
 								</Button>
@@ -616,8 +622,8 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 			{/* Projects */}
 			<section className="space-y-3">
-				<div className="flex items-end justify-between gap-2">
-					<div>
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">Projects</h2>
 							{projects.isLoading ? null : (
@@ -708,14 +714,18 @@ function AttachProjectPicker({
 	const [value, setValue] = useState("");
 	if (projects.length === 0) return null;
 	return (
-		<div className="flex items-center gap-2">
+		<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
 			<Select
 				value={value}
 				onValueChange={(nextValue) => {
 					if (nextValue !== null) setValue(nextValue);
 				}}
 			>
-				<SelectTrigger size="sm" className="w-44" aria-label="Project to add this vault to">
+				<SelectTrigger
+					size="sm"
+					className="w-full sm:w-44"
+					aria-label="Project to add this vault to"
+				>
 					<SelectValue placeholder="Add to Project…" />
 				</SelectTrigger>
 				<SelectContent>
@@ -730,6 +740,7 @@ function AttachProjectPicker({
 				size="sm"
 				variant="outline"
 				disabled={!value || isPending}
+				className="w-full sm:w-auto"
 				onClick={() => {
 					onAttach(value);
 					setValue("");
