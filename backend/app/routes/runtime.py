@@ -99,9 +99,7 @@ async def get_runtime_manifest(
         secret_values,
         provider_version_sources,
         runtime_provider_bindings,
-    ) = await _provider_projection(
-        db, auth=auth, state=state
-    )
+    ) = await _provider_projection(db, auth=auth, state=state)
     issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
