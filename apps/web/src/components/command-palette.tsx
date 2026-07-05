@@ -103,6 +103,9 @@ const TYPE_LABEL: Record<SearchHit["type"], string> = {
 	vault: "Vaults",
 };
 
+const COMMAND_RESULT_ROW_CLASS = "items-start gap-2 py-2.5";
+const COMMAND_RESULT_TEXT_CLASS = "flex min-w-0 flex-col gap-0.5";
+
 interface PaletteContextValue {
 	open: boolean;
 	setOpen: (open: boolean) => void;
@@ -256,7 +259,7 @@ function CommandPalette({
 			title="Search"
 			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 		>
-			<Command shouldFilter={false}>
+			<Command label="Global search" shouldFilter={false}>
 				<div className="relative">
 					<CommandInput
 						value={query}
@@ -289,10 +292,10 @@ function CommandPalette({
 									key={s.href}
 									value={s.searchText}
 									onSelect={() => jump(s.href)}
-									className="gap-2"
+									className={COMMAND_RESULT_ROW_CLASS}
 								>
-									<s.icon className="size-4 shrink-0" />
-									<div className="flex min-w-0 flex-col">
+									<s.icon className="mt-0.5 size-4 shrink-0" />
+									<div className={COMMAND_RESULT_TEXT_CLASS}>
 										<span className="truncate">{s.label}</span>
 										<span className="truncate text-xs text-muted-foreground">{s.subtitle}</span>
 									</div>
@@ -315,10 +318,10 @@ function CommandPalette({
 													key={`${hit.type}-${hit.id}`}
 													value={`${hit.type}-${hit.id}`}
 													onSelect={() => jump(hit.href)}
-													className="gap-2"
+													className={COMMAND_RESULT_ROW_CLASS}
 												>
-													<Icon className="size-4 shrink-0 text-muted-foreground" />
-													<div className="flex min-w-0 flex-col">
+													<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+													<div className={COMMAND_RESULT_TEXT_CLASS}>
 														<span className="truncate">{hit.title}</span>
 														{hit.subtitle ? (
 															<span className="truncate text-xs text-muted-foreground">

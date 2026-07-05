@@ -1408,7 +1408,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 							if (value !== null) setAccountId(value);
 						}}
 					>
-						<SelectTrigger className="flex-1">
+						<SelectTrigger aria-label="Link a channel" className="flex-1">
 							<SelectValue placeholder="Choose a channel…" />
 						</SelectTrigger>
 						<SelectContent>

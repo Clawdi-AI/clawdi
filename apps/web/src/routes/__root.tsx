@@ -36,7 +36,11 @@ export const Route = createRootRoute({
 			{ rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
 		],
 	}),
-	errorComponent: ({ error, reset }) => <RootError error={error} reset={reset} />,
+	errorComponent: ({ error, reset }) => (
+		<RootDocument>
+			<RootError error={error} reset={reset} />
+		</RootDocument>
+	),
 	notFoundComponent: () => (
 		<div className="flex min-h-dvh items-center justify-center bg-background p-6">
 			<div className="space-y-2 text-center">

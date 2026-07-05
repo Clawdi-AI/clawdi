@@ -80,7 +80,7 @@ export function TimezoneCombobox({
 					<ChevronsUpDown className="opacity-50" />
 				</PopoverTrigger>
 				<PopoverContent align="start" className="w-(--anchor-width) p-0">
-					<Command>
+					<Command label="Timezone options">
 						<CommandInput placeholder="Search timezones…" />
 						<CommandList className="max-h-72">
 							<CommandEmpty>No timezone found.</CommandEmpty>

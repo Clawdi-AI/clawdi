@@ -115,7 +115,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 						{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
 						    dashboard-01's inset variant. Keep the scroll container inside
 						    the inset so the sticky SiteHeader pins correctly. */}
-						<SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-y-auto">
+						<SidebarInset
+							id="dashboard-scroll-container"
+							data-scroll-restoration-id="dashboard-scroll-container"
+							className="md:h-[calc(100svh-1rem)] md:overflow-y-auto"
+						>
 							<SiteHeader />
 							<div className="flex flex-1 flex-col">
 								<div className="@container/main flex flex-1 flex-col gap-2">
