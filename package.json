@@ -17,7 +17,7 @@
 		"@tailwindcss/postcss": "^4.3.2",
 		"@tailwindcss/vite": "^4.3.2",
 		"@tanstack/react-query": "^5.101.2",
-		"lucide-react": "^1.22.0",
+		"lucide-react": "^1.23.0",
 		"tailwind-merge": "^3.6.0",
 		"clsx": "^2.1.1"
 	},
@@ -35,8 +35,8 @@
 		"prepare": "node scripts/install-git-hooks.mjs"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.12",
-		"lefthook": "^2.1.6",
+		"@biomejs/biome": "^2.5.2",
+		"lefthook": "^2.1.9",
 		"openapi-typescript": "^7.13.0",
 		"turbo": "^2.10.3",
 		"typescript": "catalog:"
