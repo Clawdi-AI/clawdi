@@ -65,6 +65,7 @@ export interface RuntimeBootStatus {
 		managedConfig: string;
 		syncState: string;
 		manifestLastGood: string;
+		managedSecretCacheFile: string;
 		runConfigRoot: string;
 		mitmProfileRoot: string;
 		mitmProfileBundle: string;
@@ -81,6 +82,7 @@ export interface RuntimeBootStatus {
 		runRoot: string;
 		managedSecretRoot: string;
 		managedSecretFile: string;
+		runtimeSecretFileRoot: string;
 		daemonAuthToken: string;
 		instanceData: string;
 		sensitiveInstanceData: string;
@@ -107,6 +109,7 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		managedConfig: paths.managedConfig,
 		syncState: paths.syncState,
 		manifestLastGood: paths.manifestLastGood,
+		managedSecretCacheFile: paths.managedSecretCacheFile,
 		runConfigRoot: paths.runConfigRoot,
 		mitmProfileRoot: paths.mitmProfileRoot,
 		mitmProfileBundle: paths.mitmProfileBundle,
@@ -123,6 +126,7 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		runRoot: paths.runRoot,
 		managedSecretRoot: paths.managedSecretRoot,
 		managedSecretFile: paths.managedSecretFile,
+		runtimeSecretFileRoot: paths.runtimeSecretFileRoot,
 		daemonAuthToken: paths.daemonAuthToken,
 		instanceData: paths.instanceData,
 		sensitiveInstanceData: paths.sensitiveInstanceData,
@@ -183,6 +187,8 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		dirname(paths.managedConfig),
 		dirname(paths.syncState),
 		paths.runRoot,
+		paths.managedSecretRoot,
+		paths.runtimeSecretFileRoot,
 	]) {
 		mkdirSync(dir, { recursive: true });
 	}

@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import { buildMitmSidecarEnv } from "./mitm-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
+import { runtimeSecretValue } from "./secret-values";
 
 export const runtimeNameSchema = z
 	.string()
@@ -305,18 +305,4 @@ function runtimeSecretEnv(
 		env[envName] = value;
 	}
 	return env;
-}
-
-function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
-	const normalized = normalizeSecretRef(ref);
-	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
-	const candidates = [ref, normalized, raw].filter(
-		(candidate, index, values): candidate is string =>
-			Boolean(candidate) && values.indexOf(candidate) === index,
-	);
-	for (const candidate of candidates) {
-		const value = secrets[candidate];
-		if (typeof value === "string" && value.length > 0) return value;
-	}
-	return null;
 }

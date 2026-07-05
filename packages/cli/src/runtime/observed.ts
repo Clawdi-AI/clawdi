@@ -176,7 +176,10 @@ function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
 	const providers = recordValue(projection?.providers);
 	if (!providers || Object.keys(providers).length === 0) return null;
 
-	const secrets = readJsonRecord(join(paths.runRoot, "mitm", "secrets.json")) ?? {};
+	const secrets =
+		readJsonRecord(paths.managedSecretFile) ??
+		readJsonRecord(join(paths.runRoot, "mitm", "secrets.json")) ??
+		{};
 	const observed: JsonRecord = {};
 	for (const providerId of Object.keys(providers).sort()) {
 		const provider = recordValue(providers[providerId]);
@@ -206,6 +209,15 @@ function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
 
 function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {
 	const reasons: string[] = [];
+	const status = stringValue(provider.status);
+	if (status && status !== "ok") {
+		reasons.push(`provider_${status}`);
+	}
+	const error = recordValue(provider.error);
+	const errorCode = error ? stringValue(error.code) : null;
+	if (errorCode) {
+		reasons.push(errorCode);
+	}
 	const baseUrl = stringValue(provider.baseUrl);
 	if (!baseUrl) {
 		reasons.push("base_url_missing");
@@ -225,6 +237,9 @@ function providerReasons(provider: JsonRecord, secretAvailable: boolean | null):
 	}
 	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
 		reasons.push("secret_missing");
+	}
+	if (provider.apiKeyRequired === true && !stringValue(provider.apiKeySecretRef)) {
+		reasons.push("api_key_secret_ref_missing");
 	}
 	return reasons;
 }
