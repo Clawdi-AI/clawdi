@@ -31,6 +31,24 @@ const FORMAT_MEDIA_TYPE: Record<string, string> = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function publicSessionExportErrorMessage(status: number): string {
+	switch (status) {
+		case 401:
+			return "Authentication required.";
+		case 403:
+			return "You do not have access to this shared session.";
+		case 404:
+			return "Not found";
+		case 410:
+			return "This shared session link has expired.";
+		default:
+			if (status >= 500) {
+				return "The service is having trouble right now. Please try again in a moment.";
+			}
+			return "Unable to export this shared session.";
+	}
+}
+
 export async function GET(
 	_request: Request,
 	{ id, format }: { id: string; format: string },
@@ -57,7 +75,7 @@ export async function GET(
 				});
 
 	if (result.error !== undefined) {
-		return new Response(String(result.error), {
+		return new Response(publicSessionExportErrorMessage(result.response.status), {
 			status: result.response.status,
 			headers: { "content-type": "text/plain; charset=utf-8" },
 		});

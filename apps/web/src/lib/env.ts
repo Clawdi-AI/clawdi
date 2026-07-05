@@ -17,17 +17,27 @@ const metaEnv = ((import.meta as ImportMeta & { env?: RawEnv }).env ?? {}) as Ra
 const processEnv: RawEnv = typeof process === "undefined" ? {} : process.env;
 const runtimeEnv: RawEnv = typeof process === "undefined" ? metaEnv : { ...metaEnv, ...processEnv };
 
-function readRawEnv(key: string): string | undefined {
-	const value = runtimeEnv[key];
+function readRawEnvValue(rawEnv: RawEnv, key: string): string | undefined {
+	const value = rawEnv[key];
 	return typeof value === "string" ? value : undefined;
 }
 
-function readMode(): string {
-	return readRawEnv("MODE") ?? readRawEnv("NODE_ENV") ?? "development";
+function readRawEnv(key: string): string | undefined {
+	return readRawEnvValue(runtimeEnv, key);
 }
 
-const isLocalDevAuthBypass =
-	readRawEnv("VITE_DEV_AUTH_BYPASS") === "true" && readMode() !== "production";
+export function isProductionRuntime(rawEnv: RawEnv = runtimeEnv): boolean {
+	return (
+		readRawEnvValue(rawEnv, "NODE_ENV") === "production" ||
+		readRawEnvValue(rawEnv, "MODE") === "production"
+	);
+}
+
+export function isDevAuthBypassEnabled(rawEnv: RawEnv = runtimeEnv): boolean {
+	return readRawEnvValue(rawEnv, "VITE_DEV_AUTH_BYPASS") === "true" && !isProductionRuntime(rawEnv);
+}
+
+const isLocalDevAuthBypass = isDevAuthBypassEnabled();
 
 /**
  * Typed, validated environment variables.
@@ -74,7 +84,7 @@ export const env = createEnv({
 		VITE_DEV_AUTH_BYPASS: z
 			.string()
 			.optional()
-			.transform((v) => v === "true" && readMode() !== "production"),
+			.transform((v) => v === "true" && !isProductionRuntime()),
 		VITE_DEV_AUTH_TOKEN: z.string().min(1).default("dev-bypass"),
 		// Cosmetic identity for the bypass user so a local preview can
 		// mirror the signed-in account it impersonates (DEV_AUTH_CLERK_ID
