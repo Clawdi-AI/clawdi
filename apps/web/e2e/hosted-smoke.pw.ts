@@ -43,21 +43,13 @@ async function stubHostedApi(page: Page) {
 	});
 }
 
-// This smoke guards against Base UI RUNTIME crashes (e.g. the MenuGroupContext
-// error that unmounted the sidebar). React hydration-mismatch warnings are a
-// separate, pre-existing SSR-nondeterminism concern (not introduced by the Base
-// UI migration and unrelated to it), so they are excluded from the assertion.
-function isIgnorableWarning(text: string): boolean {
-	return /hydrat|didn't match|server rendered HTML/i.test(text);
-}
-
 function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {
-		if (m.type() === "error" && !isIgnorableWarning(m.text())) errors.push(m.text());
+		if (m.type() === "error") errors.push(m.text());
 	});
 	page.on("pageerror", (e) => {
-		if (!isIgnorableWarning(e.message)) errors.push(e.message);
+		errors.push(e.message);
 	});
 	return errors;
 }
