@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
+	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -60,26 +61,30 @@ function ExportMenu({ url }: { url: string }) {
 	const { copy: copyJson } = useCopyToClipboard(jsonUrl, "JSON URL");
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button
-					variant="outline"
-					size="icon"
-					className="size-9 sm:size-8"
-					aria-label="More options"
-					title="More options"
-				>
-					<MoreHorizontal className="size-3.5" />
-				</Button>
+			<DropdownMenuTrigger
+				render={
+					<Button
+						variant="outline"
+						size="icon"
+						className="size-9 sm:size-8"
+						aria-label="More options"
+						title="More options"
+					/>
+				}
+			>
+				<MoreHorizontal className="size-3.5" />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-52">
-				<DropdownMenuItem onClick={copyMd}>
-					<FileText className="size-3.5" />
-					Copy Markdown URL
-				</DropdownMenuItem>
-				<DropdownMenuItem onClick={copyJson}>
-					<FileJson className="size-3.5" />
-					Copy JSON URL
-				</DropdownMenuItem>
+				<DropdownMenuGroup>
+					<DropdownMenuItem onClick={copyMd}>
+						<FileText className="size-3.5" />
+						Copy Markdown URL
+					</DropdownMenuItem>
+					<DropdownMenuItem onClick={copyJson}>
+						<FileJson className="size-3.5" />
+						Copy JSON URL
+					</DropdownMenuItem>
+				</DropdownMenuGroup>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

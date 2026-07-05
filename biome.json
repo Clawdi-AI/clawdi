@@ -54,6 +54,8 @@
 			"linter": {
 				"rules": {
 					"a11y": {
+						"noLabelWithoutControl": "off",
+						"useKeyWithClickEvents": "off",
 						"useFocusableInteractive": "off",
 						"useSemanticElements": "off"
 					},

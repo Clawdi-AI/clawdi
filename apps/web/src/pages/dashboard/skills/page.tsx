@@ -46,6 +46,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
+	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -552,42 +553,44 @@ function SkillsPageInner() {
 							))}
 							{overflowProjects.length > 0 ? (
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<button type="button" className={filterChipClass(overflowActive)}>
-											{overflowActive && targetProject ? (
-												<>
-													<span aria-hidden className="select-none">
-														{identityFor(displayProjectName(targetProject)).emoji}
-													</span>
-													{displayProjectName(targetProject)}
-												</>
-											) : (
-												<>Agent projects</>
-											)}
-											<span className="text-muted-foreground tabular-nums">
-												{overflowProjects.length}
-											</span>
-											<ChevronDown className="size-3.5" />
-										</button>
+									<DropdownMenuTrigger
+										render={<button type="button" className={filterChipClass(overflowActive)} />}
+									>
+										{overflowActive && targetProject ? (
+											<>
+												<span aria-hidden className="select-none">
+													{identityFor(displayProjectName(targetProject)).emoji}
+												</span>
+												{displayProjectName(targetProject)}
+											</>
+										) : (
+											<>Agent projects</>
+										)}
+										<span className="text-muted-foreground tabular-nums">
+											{overflowProjects.length}
+										</span>
+										<ChevronDown className="size-3.5" />
 									</DropdownMenuTrigger>
 									<DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-										{overflowProjects.map((p) => (
-											<DropdownMenuItem
-												key={p.id}
-												onSelect={() => {
-													void setProjectParam(p.id);
-													void setTargetEnvId("");
-												}}
-											>
-												<span aria-hidden className="select-none">
-													{identityFor(displayProjectName(p)).emoji}
-												</span>
-												<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
-												<span className="text-xs text-muted-foreground tabular-nums">
-													{skillCountByProject.get(p.id) ?? 0}
-												</span>
-											</DropdownMenuItem>
-										))}
+										<DropdownMenuGroup>
+											{overflowProjects.map((p) => (
+												<DropdownMenuItem
+													key={p.id}
+													onSelect={() => {
+														void setProjectParam(p.id);
+														void setTargetEnvId("");
+													}}
+												>
+													<span aria-hidden className="select-none">
+														{identityFor(displayProjectName(p)).emoji}
+													</span>
+													<span className="min-w-0 flex-1 truncate">{displayProjectName(p)}</span>
+													<span className="text-xs text-muted-foreground tabular-nums">
+														{skillCountByProject.get(p.id) ?? 0}
+													</span>
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuGroup>
 									</DropdownMenuContent>
 								</DropdownMenu>
 							) : null}

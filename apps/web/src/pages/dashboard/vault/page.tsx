@@ -3,7 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactElement, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -286,11 +286,9 @@ function VaultCard({
 				keyCount === null ? "…" : `${keyCount} ${keyCount === 1 ? "key" : "keys"}`,
 				usedBy.length > 0 ? (
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="truncate">
-								used by {usedBy.slice(0, 2).join(", ")}
-								{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
-							</span>
+						<TooltipTrigger render={<span className="truncate" />}>
+							used by {usedBy.slice(0, 2).join(", ")}
+							{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
 						</TooltipTrigger>
 						<TooltipContent>{usedBy.join(", ")}</TooltipContent>
 					</Tooltip>
@@ -322,7 +320,7 @@ function VaultCardSkeleton() {
 	);
 }
 
-function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
+function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
@@ -383,6 +381,12 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
+	const triggerElement = trigger ?? (
+		<Button size="sm">
+			<Plus className="size-3.5" />
+			New vault
+		</Button>
+	);
 
 	return (
 		<Dialog
@@ -392,14 +396,7 @@ function NewVaultDialog({ trigger }: { trigger?: React.ReactNode }) {
 				if (!next) setName("");
 			}}
 		>
-			<DialogTrigger asChild>
-				{trigger ?? (
-					<Button size="sm">
-						<Plus className="size-3.5" />
-						New vault
-					</Button>
-				)}
-			</DialogTrigger>
+			<DialogTrigger render={triggerElement} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>New vault</DialogTitle>

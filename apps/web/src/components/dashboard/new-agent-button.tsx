@@ -83,7 +83,7 @@ export function NewAgentButton({
 		<SidebarMenuItem className={className}>
 			{compact && showTooltip ? (
 				<Tooltip>
-					<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+					<TooltipTrigger render={trigger} />
 					<TooltipContent side="right" align="center">
 						New agent
 					</TooltipContent>

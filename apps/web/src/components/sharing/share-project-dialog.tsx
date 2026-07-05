@@ -14,7 +14,7 @@ import {
 	UserMinus,
 	Users,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactElement, useState } from "react";
 import { toast } from "sonner";
 import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -73,7 +73,7 @@ interface ShareProjectDialogProps {
 	projectId: string;
 	projectName: string;
 	projectKind?: string;
-	children?: React.ReactNode;
+	children?: ReactElement;
 }
 
 export function ShareProjectDialog({
@@ -84,16 +84,16 @@ export function ShareProjectDialog({
 }: ShareProjectDialogProps) {
 	const [open, setOpen] = useState(false);
 	const isShareableProject = isCustomProject({ kind: projectKind });
+	const trigger = children ?? (
+		<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
+			<Share2 className="mr-2 size-4" />
+			Share Project
+		</Button>
+	);
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger asChild>
-				{children ?? (
-					<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
-						<Share2 className="mr-2 size-4" />
-						Share Project
-					</Button>
-				)}
-			</DialogTrigger>
+			<DialogTrigger render={trigger} />
 			{/* `sm:` prefix is load-bearing: the primitive's base classes include
 			    `sm:max-w-lg`, so an unprefixed `max-w-2xl` loses at sm+ and the
 			    content gets clipped at 512px wide. */}
@@ -445,16 +445,18 @@ function LinkRow({
 				</div>
 				{!revoked ? (
 					<AlertDialog>
-						<AlertDialogTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon"
-								disabled={revoking}
-								title="Turn off link"
-								aria-label={`Turn off share link ${link.prefix}`}
-							>
-								<Trash2 className="size-3.5 text-destructive" />
-							</Button>
+						<AlertDialogTrigger
+							render={
+								<Button
+									variant="ghost"
+									size="icon"
+									disabled={revoking}
+									title="Turn off link"
+									aria-label={`Turn off share link ${link.prefix}`}
+								/>
+							}
+						>
+							<Trash2 className="size-3.5 text-destructive" />
 						</AlertDialogTrigger>
 						<AlertDialogContent>
 							<AlertDialogHeader>
@@ -617,16 +619,18 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 								</div>
 							</div>
 							<AlertDialog>
-								<AlertDialogTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										disabled={cancel.isPending && cancel.variables === inv.id}
-										title="Cancel invitation"
-										aria-label={`Cancel invitation for ${inv.invitee_email}`}
-									>
-										<Trash2 className="size-3.5 text-destructive" />
-									</Button>
+								<AlertDialogTrigger
+									render={
+										<Button
+											variant="ghost"
+											size="icon"
+											disabled={cancel.isPending && cancel.variables === inv.id}
+											title="Cancel invitation"
+											aria-label={`Cancel invitation for ${inv.invitee_email}`}
+										/>
+									}
+								>
+									<Trash2 className="size-3.5 text-destructive" />
 								</AlertDialogTrigger>
 								<AlertDialogContent>
 									<AlertDialogHeader>
@@ -724,15 +728,17 @@ function MembersPanel({ projectId }: { projectId: string }) {
 					</p>
 				</div>
 				<AlertDialog>
-					<AlertDialogTrigger asChild>
-						<Button
-							variant="destructive"
-							size="sm"
-							disabled={unshare.isPending}
-							aria-label="Stop all sharing for this Project"
-						>
-							{unshare.isPending ? "Stopping…" : "Stop all sharing"}
-						</Button>
+					<AlertDialogTrigger
+						render={
+							<Button
+								variant="destructive"
+								size="sm"
+								disabled={unshare.isPending}
+								aria-label="Stop all sharing for this Project"
+							/>
+						}
+					>
+						{unshare.isPending ? "Stopping…" : "Stop all sharing"}
 					</AlertDialogTrigger>
 					<AlertDialogContent>
 						<AlertDialogHeader>
@@ -789,16 +795,18 @@ function MembersPanel({ projectId }: { projectId: string }) {
 									</div>
 								</div>
 								<AlertDialog>
-									<AlertDialogTrigger asChild>
-										<Button
-											variant="ghost"
-											size="icon"
-											disabled={remove.isPending}
-											title="Remove member"
-											aria-label={`Remove member ${label}`}
-										>
-											<UserMinus className="size-3.5 text-destructive" />
-										</Button>
+									<AlertDialogTrigger
+										render={
+											<Button
+												variant="ghost"
+												size="icon"
+												disabled={remove.isPending}
+												title="Remove member"
+												aria-label={`Remove member ${label}`}
+											/>
+										}
+									>
+										<UserMinus className="size-3.5 text-destructive" />
 									</AlertDialogTrigger>
 									<AlertDialogContent>
 										<AlertDialogHeader>
