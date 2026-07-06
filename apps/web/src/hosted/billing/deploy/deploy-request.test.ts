@@ -34,7 +34,7 @@ describe("buildHostedDeployRequest", () => {
 		expect("personality" in (request.config ?? {})).toBe(false);
 	});
 
-	test("preserves provider pool and structured primary model fields", () => {
+	test("serializes backend provider pool contract at the deploy body boundary", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
@@ -63,5 +63,7 @@ describe("buildHostedDeployRequest", () => {
 				model: "claude-sonnet-5",
 			},
 		});
+		expect("provider_ids" in (request.config ?? {})).toBe(false);
+		expect("ai_provider_id" in (request.config ?? {})).toBe(false);
 	});
 });
