@@ -18,6 +18,8 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
 
+const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
+
 const installSchema = z
 	.object({
 		authority: z.literal("official"),
@@ -118,6 +120,7 @@ const runtimeDesiredStateShape = {
 	issuedAt: z.string().min(1),
 	expiresAt: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
+	runtime: hostedRuntimeChoiceSchema.optional(),
 	controlPlane: z
 		.object({
 			apiUrl: z.string().url(),
@@ -214,6 +217,7 @@ const hostedProviderAuthSchema = z.discriminatedUnion("type", [
 export const hostedRuntimeManifestSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+		runtime: hostedRuntimeChoiceSchema,
 		deploymentId: z.string().min(1),
 		environmentId: z.string().min(1).optional(),
 		appId: z.string().min(1).optional(),
@@ -282,7 +286,64 @@ export const hostedRuntimeManifestSchema = z
 			.passthrough()
 			.optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((manifest, ctx) => {
+		const runtimeKeys = Object.keys(manifest.runtimes);
+		const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
+		if (!manifest.runtimes[manifest.runtime]) {
+			ctx.addIssue({
+				code: "custom",
+				message: `runtimes.${manifest.runtime} must be present for selected runtime`,
+				path: ["runtimes", manifest.runtime],
+			});
+		}
+		for (const key of unexpectedRuntimeKeys) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hosted runtime manifests must declare exactly one selected runtime",
+				path: ["runtimes", key],
+			});
+		}
+		if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
+			ctx.addIssue({
+				code: "custom",
+				message: "selected runtime must be enabled",
+				path: ["runtimes", manifest.runtime, "enabled"],
+			});
+		}
+		const surfaces = manifest.bridge?.surfaces ?? [];
+		if (manifest.runtime === "openclaw" && surfaces.length > 0) {
+			ctx.addIssue({
+				code: "custom",
+				message: "openclaw is exposed natively and must not declare bridge surfaces",
+				path: ["bridge", "surfaces"],
+			});
+		}
+		if (manifest.runtime === "hermes") {
+			if (surfaces.length !== 1) {
+				ctx.addIssue({
+					code: "custom",
+					message: "hermes must declare exactly one bridge surface",
+					path: ["bridge", "surfaces"],
+				});
+				return;
+			}
+			const surface = surfaces.at(0);
+			if (
+				surface?.name !== "hermes" ||
+				surface?.kind !== "control-ui" ||
+				surface?.listenPort !== 28793 ||
+				surface?.upstreamHost !== "127.0.0.1" ||
+				surface?.upstreamPort !== 9119
+			) {
+				ctx.addIssue({
+					code: "custom",
+					message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
+					path: ["bridge", "surfaces", 0],
+				});
+			}
+		}
+	});
 
 export const hostedRuntimeManifestResponseSchema = z
 	.object({

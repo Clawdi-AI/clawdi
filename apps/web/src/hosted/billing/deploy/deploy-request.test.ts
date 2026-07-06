@@ -5,7 +5,7 @@ describe("buildHostedDeployRequest", () => {
 	test("serializes v2 hosted deploys without legacy deploy profile", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
-			engines: { openclaw: true, hermes: false },
+			runtime: "openclaw",
 			persona: {
 				language: "en",
 				timezone: "America/Los_Angeles",
@@ -19,15 +19,13 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_performance",
 			channel: null,
-			enable_openclaw: true,
-			enable_hermes: false,
+			runtime: "openclaw",
 			language: "en",
 			timezone: "America/Los_Angeles",
 			ai_provider_auth_kind: "managed",
 			config: {
 				channel: null,
-				enable_openclaw: true,
-				enable_hermes: false,
+				runtime: "openclaw",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
@@ -36,24 +34,10 @@ describe("buildHostedDeployRequest", () => {
 		expect("personality" in (request.config ?? {})).toBe(false);
 	});
 
-	test("rejects deploys without an execution engine", () => {
-		expect(() =>
-			buildHostedDeployRequest({
-				computePlanSlug: "compute_free",
-				engines: { openclaw: false, hermes: false },
-				persona: {
-					language: "",
-					timezone: "",
-				},
-				aiFields: { ai_provider_auth_kind: "managed" },
-			}),
-		).toThrow("Select at least one execution engine.");
-	});
-
 	test("preserves provider pool and structured primary model fields", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
-			engines: { openclaw: true, hermes: true },
+			runtime: "hermes",
 			persona: {
 				language: "",
 				timezone: "",
@@ -70,6 +54,7 @@ describe("buildHostedDeployRequest", () => {
 		});
 
 		expect(request).toMatchObject({
+			runtime: "hermes",
 			ai_provider_id: "anthropic-prod",
 			ai_provider_auth_kind: "api_key",
 			provider_ids: ["openai-prod", "anthropic-prod"],

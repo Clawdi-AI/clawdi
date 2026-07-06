@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import type { RuntimeRunSettings } from "./run-config";
+import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
@@ -202,6 +202,89 @@ describe("runtime manifest services", () => {
 			false,
 		);
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes+dashboard"))).toBe(false);
+	});
+
+	test("renders the Hermes single-runtime gateway, dashboard service, and bridge surface", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			runtime: "hermes",
+			deploymentId: "hdep_hermes_single",
+			environmentId: "env_hermes_single",
+			instanceId: "hri_hermes_single",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			workspaceRoot: join(paths.userHome, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				hermes: {
+					enabled: true,
+					run: runSettings("hermes", ["gateway", "run", "--replace"]),
+					services: {
+						dashboard: runSettings("hermes", [
+							"dashboard",
+							"--host",
+							"127.0.0.1",
+							"--port",
+							"9119",
+							"--no-open",
+						]),
+					},
+				},
+			},
+			bridge: {
+				surfaces: [
+					{
+						name: "hermes",
+						kind: "control-ui",
+						listenPort: 28793,
+						upstreamHost: "127.0.0.1",
+						upstreamPort: 9119,
+					},
+				],
+			},
+			recovery: {},
+		};
+		const load: RuntimeManifestLoad = {
+			manifest,
+			source: "fixture-file",
+			sourcePath: "inline-hermes-single",
+			offline: false,
+		};
+
+		const result = convergeRuntimeManifest(load, paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.enabledRuntimes).toEqual(["hermes"]);
+		expect(result.outputs.runConfigs.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"hermes+dashboard.json",
+			"hermes.json",
+		]);
+		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"clawdi-hermes-dashboard.service",
+			"clawdi-runtime-sidecar.service",
+			"hermes-gateway.service",
+		]);
+		expect(readUserServiceConfig(paths, "hermes-gateway")).toContain(
+			'ExecStart="hermes" "gateway" "run" "--replace"',
+		);
+		const dashboardUnit = readFileSync(
+			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
+			"utf8",
+		);
+		expect(dashboardUnit).toContain(
+			'ExecStart="hermes" "dashboard" "--host" "127.0.0.1" "--port" "9119" "--no-open"',
+		);
+		const sidecarEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+			"utf8",
+		);
+		expect(sidecarEnv).toContain("CLAWDI_RUNTIME_BRIDGE_SURFACES=");
+		expect(sidecarEnv).toContain('\\"name\\":\\"hermes\\"');
+		expect(sidecarEnv).toContain('\\"listenPort\\":28793');
+		expect(sidecarEnv).not.toContain('\\"name\\":\\"openclaw\\"');
+		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 	});
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {

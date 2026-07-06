@@ -36,6 +36,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
+	isEnvSecretRef,
 	normalizeSecretValues,
 	runtimeSecretValue as resolveRuntimeSecretValue,
 } from "./secret-values";
@@ -249,6 +250,7 @@ function scopedSecretValues(
 	const normalizedValues = normalizeSecretValues(secretValues);
 	const scoped: Record<string, string> = {};
 	for (const ref of refs) {
+		if (isEnvSecretRef(ref)) continue;
 		const value = resolveRuntimeSecretValue(normalizedValues, ref);
 		if (!value) continue;
 		scoped[ref] = value;
@@ -720,7 +722,7 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 		} satisfies RuntimeInstallObservation;
 	}
 	if (!runtime.install) {
-		if (runtime.run?.command?.trim()) {
+		if (runtime.run?.command?.trim() || isSupportedRuntimeName(name)) {
 			return {
 				runtime: name,
 				enabled: true,
@@ -997,6 +999,30 @@ function writeRuntimeProviderSecretFile(
 		paths,
 		"runtime-user",
 	);
+}
+
+function mergeRuntimeSecretEnv(
+	runtimeName: string,
+	runtime: RuntimeManifest["runtimes"][string],
+	providerSecretEnv: Record<string, string>,
+): Record<string, string> {
+	const merged = { ...providerSecretEnv };
+	const runtimeSecretEnv = runtime.run?.secretEnv ?? {};
+	for (const [envName, ref] of Object.entries(runtimeSecretEnv)) {
+		const existing = merged[envName];
+		if (existing !== undefined && existing !== ref) {
+			throw new Error(
+				`runtime ${runtimeName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
+			);
+		}
+		merged[envName] = ref;
+	}
+	for (const envName of Object.keys(runtime.run?.env ?? {})) {
+		if (merged[envName] !== undefined) {
+			throw new Error(`runtime ${runtimeName} defines ${envName} in both env and secretEnv`);
+		}
+	}
+	return merged;
 }
 
 function mitmSecretFilePath(paths: RuntimePaths): string {
@@ -2607,7 +2633,9 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
-		const secretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+		const secretEnv = runtime.enabled
+			? mergeRuntimeSecretEnv(name, runtime, hostedProviderSecretEnv(manifest, name))
+			: {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
 			load.secretValues,
@@ -2657,7 +2685,7 @@ export function convergeRuntimeManifest(
 				workspaceRoot,
 				settings: serviceSettings,
 				secretFilePath: null,
-				secretEnv: {},
+				secretEnv: serviceSettings.secretEnv,
 			});
 			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
 			runConfigs.push(serviceRunConfigPath);

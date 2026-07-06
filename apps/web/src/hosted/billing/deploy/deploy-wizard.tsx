@@ -67,7 +67,7 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
+import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -97,7 +97,6 @@ import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
-type Engine = "openclaw" | "hermes";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
@@ -273,10 +272,7 @@ export function DeployWizard() {
 		null,
 	);
 
-	const [engines, setEngines] = useState<Record<Engine, boolean>>({
-		openclaw: true,
-		hermes: false,
-	});
+	const [runtime, setRuntime] = useState<HostedRuntime>("openclaw");
 	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
 	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
@@ -311,8 +307,6 @@ export function DeployWizard() {
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 
-	const dualAllowed = compute === "performance";
-	const enginesSelected = (Object.keys(engines) as Engine[]).filter((e) => engines[e]);
 	const providerList = useMemo(
 		() =>
 			(aiProviders.data?.providers ?? []).filter(
@@ -326,8 +320,7 @@ export function DeployWizard() {
 			? !!perfPlan && !!perfOfferSelection
 			: !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const hasExecutionEngine = enginesSelected.length > 0;
-	const canSubmit = planReady && hasExecutionEngine && !submitting;
+	const canSubmit = planReady && !submitting;
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -360,7 +353,6 @@ export function DeployWizard() {
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
 		setCompute("free");
-		setEngines((prev) => (prev.openclaw && prev.hermes ? { openclaw: true, hermes: false } : prev));
 	}, [compute, plans.isSuccess, perfPlan]);
 
 	useEffect(() => {
@@ -426,22 +418,8 @@ export function DeployWizard() {
 		setCompute("performance");
 	}, [compute, freeSlotUsed, perfPlan]);
 
-	function toggleEngine(engine: Engine) {
-		setEngines((prev) => {
-			const selectedCount = (Object.keys(prev) as Engine[]).filter((key) => prev[key]).length;
-			if (prev[engine] && selectedCount <= 1) return prev;
-			if (dualAllowed) {
-				return { ...prev, [engine]: !prev[engine] };
-			}
-			return { openclaw: engine === "openclaw", hermes: engine === "hermes" };
-		});
-	}
-
 	function setComputeTier(next: Compute) {
 		setCompute(next);
-		if (next === "free" && engines.openclaw && engines.hermes) {
-			setEngines({ openclaw: true, hermes: false });
-		}
 	}
 
 	function providerUnavailable(description = "Refresh providers or choose Managed by Clawdi.") {
@@ -543,7 +521,7 @@ export function DeployWizard() {
 			compute === "performance" ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_FREE_SLUG;
 		return buildHostedDeployRequest({
 			computePlanSlug,
-			engines,
+			runtime,
 			persona: {
 				language,
 				timezone,
@@ -623,9 +601,7 @@ export function DeployWizard() {
 	const aiSummary = `${providerChoiceLabel(primaryProviderChoice, providerList)}${
 		selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
 	}`;
-	const runtimeSummary =
-		enginesSelected.map((engine) => runtimeDisplayName(engine)).join(" + ") ||
-		"No execution engine selected";
+	const runtimeSummary = runtimeDisplayName(runtime);
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Free"} compute`,
 		aiSummary,
@@ -672,16 +648,12 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="Runtimes"
-					description={
-						dualAllowed
-							? "Performance can run OpenClaw and Hermes together."
-							: "Free runs one execution engine at a time."
-					}
+					description="Choose one execution engine for this hosted compute."
 				>
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={engines.openclaw}
-							onClick={() => toggleEngine("openclaw")}
+							selected={runtime === "openclaw"}
+							onClick={() => setRuntime("openclaw")}
 							icon={
 								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
 							}
@@ -689,8 +661,8 @@ export function DeployWizard() {
 							description={runtimeBlurb("openclaw")}
 						/>
 						<EntityChoiceCard
-							selected={engines.hermes}
-							onClick={() => toggleEngine("hermes")}
+							selected={runtime === "hermes"}
+							onClick={() => setRuntime("hermes")}
 							icon={
 								<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
 							}
@@ -811,7 +783,7 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="Compute"
-					description="Free gives one active hosted deployment. Performance is billed per deployment and can run both optional runtimes."
+					description="Free gives one active hosted deployment. Performance is billed per deployment with higher resources."
 				>
 					<div className="flex flex-col gap-3">
 						<div className="grid gap-2 sm:grid-cols-2">

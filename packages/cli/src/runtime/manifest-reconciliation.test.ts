@@ -129,6 +129,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hostedResponse = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
 				environmentId: "env_normalize",
 				instanceId: "hri_normalize",
@@ -148,31 +149,26 @@ describe("runtime manifest reconciliation invariants", () => {
 						install: { source: "official", channel: "stable" },
 						run: {
 							command: "openclaw",
-							args: ["gateway", "run"],
+							args: [
+								"gateway",
+								"run",
+								"--allow-unconfigured",
+								"--auth",
+								"token",
+								"--bind",
+								"lan",
+								"--force",
+							],
 							env: { OPENCLAW_TEST: "1" },
+							secretEnv: {
+								OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+							},
 							prependPath: [],
 						},
 						paths: { home: "/home/clawdi-test", workspace: "/workspace/openclaw" },
 					},
-					hermes: {
-						enabled: true,
-						install: { source: "official", channel: "stable" },
-						run: {
-							command: "hermes",
-							args: ["gateway", "run"],
-							env: {},
-							prependPath: ["/opt/hermes/bin"],
-						},
-						services: {
-							dashboard: {
-								command: "hermes",
-								args: ["dashboard", "--host", "127.0.0.1", "--no-open"],
-								env: {},
-								prependPath: [],
-							},
-						},
-					},
 				},
+				bridge: { surfaces: [] },
 				providers: {
 					default: {
 						kind: "openai-compatible",
@@ -227,15 +223,28 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
 		expect(normalized.manifest).toEqual(hostedManifestToRuntimeManifest(hostedManifest));
 		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
+		expect(normalized.manifest.runtime).toBe("openclaw");
+		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
 		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBe("stable");
 		expect(normalized.manifest.runtimes.openclaw.install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
 		expect(normalized.manifest.runtimes.openclaw.install?.args).toEqual(
 			OFFICIAL_INSTALL_ARGS.openclaw,
 		);
-		expect(normalized.manifest.runtimes.hermes.enabled).toBe(true);
-		expect(normalized.manifest.runtimes.hermes.install?.url).toBe(OFFICIAL_INSTALL_URLS.hermes);
-		expect(normalized.manifest.runtimes.hermes.install?.args).toEqual(OFFICIAL_INSTALL_ARGS.hermes);
+		expect(normalized.manifest.runtimes.openclaw.run?.args).toEqual([
+			"gateway",
+			"run",
+			"--allow-unconfigured",
+			"--auth",
+			"token",
+			"--bind",
+			"lan",
+			"--force",
+		]);
+		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
+		expect(normalized.manifest.bridge?.surfaces).toEqual([]);
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
 		expect(normalized.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"api-proxy",
@@ -246,6 +255,108 @@ describe("runtime manifest reconciliation invariants", () => {
 			"providers/default/api-key": "sk-normalized",
 			"secret://providers/default/api-key": "sk-normalized",
 		});
+	});
+
+	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
+		expect(() =>
+			hostedRuntimeManifestSchema.parse({
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
+				deploymentId: "hdep_multi",
+				environmentId: "env_multi",
+				instanceId: "hri_multi",
+				generation: 1,
+				issuedAt: "2026-07-01T00:00:00.000Z",
+				controlPlane: {
+					cloudApiUrl: "https://cloud-api.example.test",
+				},
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						run: { command: "openclaw", args: ["gateway", "run"] },
+					},
+					hermes: {
+						enabled: true,
+						run: { command: "hermes", args: ["gateway", "run"] },
+					},
+				},
+				bridge: { surfaces: [] },
+			}),
+		).toThrow("hosted runtime manifests must declare exactly one selected runtime");
+	});
+
+	test("converges OpenClaw native token auth from env secret refs", () => {
+		const paths = tempRuntimePaths();
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: {
+						command: "openclaw",
+						args: [
+							"gateway",
+							"run",
+							"--allow-unconfigured",
+							"--auth",
+							"token",
+							"--bind",
+							"lan",
+							"--force",
+						],
+						env: {},
+						secretEnv: {
+							OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+						},
+						prependPath: [],
+					},
+					services: {},
+				},
+			},
+			{ runtime: "openclaw", bridge: { surfaces: [] } },
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-openclaw"), paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.enabledRuntimes).toEqual(["openclaw"]);
+		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1))).toEqual([
+			"openclaw-gateway.service",
+		]);
+		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
+			defaultArgs?: string[];
+			secretEnv?: Record<string, string>;
+			secretFilePath?: string | null;
+		};
+		expect(runConfig.defaultArgs).toEqual([
+			"gateway",
+			"run",
+			"--allow-unconfigured",
+			"--auth",
+			"token",
+			"--bind",
+			"lan",
+			"--force",
+		]);
+		expect(runConfig.secretEnv).toEqual({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
+		expect(runConfig.secretFilePath).toBeNull();
+		expect(runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN")).toBe("gateway-token");
+		const unit = readFileSync(
+			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+			"utf8",
+		);
+		expect(unit).toContain(
+			'ExecStart="openclaw" "gateway" "run" "--allow-unconfigured" "--auth" "token" "--bind" "lan" "--force"',
+		);
+		const envFile = readFileSync(
+			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+			"utf8",
+		);
+		expect(envFile).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
 	});
 
 	test("includes secret values in runtime and sidecar program revisions", () => {

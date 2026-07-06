@@ -112,11 +112,6 @@ export interface AgentTile {
 	 * the same shape; hosted deployments without a registered env leave
 	 * this null. */
 	env?: Env | null;
-	/** Hosted only: the compute (deployment) this runtime-agent belongs to.
-	 * Lets the /agents index group sibling runtime-agents under their shared
-	 * deployment. Self-managed tiles leave these undefined. */
-	computeId?: string;
-	computeName?: string;
 }
 
 export interface AgentFleetSummary {

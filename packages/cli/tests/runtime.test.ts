@@ -152,6 +152,80 @@ echo "seeded clawdi"
 	);
 }
 
+type HostedRunFixture = {
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	secretEnv?: Record<string, string>;
+	cwd?: string;
+	prependPath?: string[];
+};
+
+type HostedRuntimeFixtureEntry = {
+	enabled: boolean;
+	install?: { source: "official"; channel?: string; args?: string[] };
+	run?: HostedRunFixture;
+	services?: Record<string, HostedRunFixture>;
+	paths?: { home?: string; workspace?: string };
+	provider_ids?: string[];
+	primary_model?: unknown;
+};
+
+function hostedOpenClawRuntime(
+	overrides: Partial<HostedRuntimeFixtureEntry> = {},
+): HostedRuntimeFixtureEntry {
+	return {
+		enabled: true,
+		run: {
+			args: [
+				"gateway",
+				"run",
+				"--allow-unconfigured",
+				"--auth",
+				"token",
+				"--bind",
+				"lan",
+				"--force",
+			],
+			env: {},
+			prependPath: [],
+		},
+		services: {},
+		...overrides,
+	};
+}
+
+function hostedHermesRuntime(
+	overrides: Partial<HostedRuntimeFixtureEntry> = {},
+): HostedRuntimeFixtureEntry {
+	return {
+		enabled: true,
+		run: {
+			args: ["gateway", "run", "--replace"],
+			env: {},
+			prependPath: [],
+		},
+		services: {
+			dashboard: {
+				args: ["dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open"],
+				env: {},
+				prependPath: [],
+			},
+		},
+		...overrides,
+	};
+}
+
+function hostedHermesBridgeSurface() {
+	return {
+		name: "hermes",
+		kind: "control-ui",
+		listenPort: 28793,
+		upstreamHost: "127.0.0.1",
+		upstreamPort: 9119,
+	};
+}
+
 function systemdUnitFileName(name: string): string {
 	return `${name}.service`;
 }
@@ -559,6 +633,7 @@ describe("runtime manifest datasource", () => {
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_test",
 							environmentId: "env_test",
 							appId: "app_test",
@@ -581,16 +656,10 @@ describe("runtime manifest datasource", () => {
 								userEditableConfig: false,
 							},
 							runtimes: {
-								openclaw: {
-									enabled: true,
+								openclaw: hostedOpenClawRuntime({
 									install: { source: "official", channel: "stable" },
 									paths: { home },
-								},
-								hermes: {
-									enabled: false,
-									install: { source: "official", channel: "stable" },
-									paths: { home },
-								},
+								}),
 							},
 							providers: {
 								default: {
@@ -664,35 +733,28 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("recovers hosted bridge token from pid1 env for runtime-watch and runtime sidecar bridge module", async () => {
+	it("recovers hosted bridge token from pid1 env for Hermes runtime bridge exposure", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
 		const pid1EnvPath = join(root, "pid1-environ");
-		const openclawInstaller = join(root, "install-openclaw.sh");
+		const hermesInstaller = join(root, "install-hermes.sh");
 		mkdirSync(home, { recursive: true });
 		writeFileSync(pid1EnvPath, `PATH=/usr/bin\0${RUNTIME_BRIDGE_TOKEN_ENV}=bridge-token\0`);
 		writeFileSync(
-			openclawInstaller,
+			hermesInstaller,
 			`#!/usr/bin/env bash
 set -euo pipefail
-install -d "$HOME/.openclaw/bin"
-cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
+install -d "$HOME/.local/bin"
+cat > "$HOME/.local/bin/hermes" <<'SH'
 #!/usr/bin/env bash
-if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
-  cat >/dev/null
-  exit 0
-fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  exit 0
-fi
 exit 0
 SH
-chmod +x "$HOME/.openclaw/bin/openclaw"
+chmod +x "$HOME/.local/bin/hermes"
 `,
 		);
-		chmodSync(openclawInstaller, 0o700);
+		chmodSync(hermesInstaller, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -700,7 +762,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
+		process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER = hermesInstaller;
 		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH = pid1EnvPath;
 		writeFileSync(
 			sourcePath,
@@ -719,6 +781,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "hermes",
 							deploymentId: "dep_runtime_bridge",
 							environmentId: "env_runtime_bridge",
 							appId: "app_runtime_bridge",
@@ -731,26 +794,13 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: {
-									enabled: true,
+								hermes: hostedHermesRuntime({
 									install: { source: "official", channel: "stable" },
 									paths: { home },
-								},
-								hermes: {
-									enabled: false,
-									install: { source: "official", channel: "stable" },
-									paths: { home },
-								},
+								}),
 							},
 							bridge: {
-								surfaces: [
-									{
-										name: "openclaw",
-										kind: "control-ui",
-										listenPort: 28789,
-										upstreamPort: 18789,
-									},
-								],
+								surfaces: [hostedHermesBridgeSurface()],
 							},
 							providers: {
 								default: {
@@ -777,16 +827,16 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			const convergence = convergeRuntimeManifest(loaded, paths);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
-			const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
+			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
 
 			expect(watchEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
 			expect(
 				convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 			).not.toContain("clawdi-runtime-bridge.service");
-			expect(openclawEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
-			expect(openclawEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
-			expect(readSystemdUserServiceConfig(paths, "openclaw-gateway")).not.toContain("sk-runtime");
+			expect(hermesEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
+			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
+			expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toContain("sk-runtime");
 		} finally {
 			restore();
 		}
@@ -811,6 +861,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_chat_provider",
 							environmentId: "env_chat_provider",
 							appId: "app_chat_provider",
@@ -823,8 +874,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: hostedOpenClawRuntime(),
 							},
 							providers: {
 								default: {
@@ -879,6 +929,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_codex_provider",
 							environmentId: "env_codex_provider",
 							appId: "app_codex_provider",
@@ -891,8 +942,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: hostedOpenClawRuntime(),
 							},
 							providers: {
 								default: {
@@ -1440,6 +1490,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
 					deploymentId: "dep_hosted_provider_secret",
 					environmentId: "env_hosted_provider_secret",
 					instanceId: "iid_hosted_provider_secret",
@@ -1448,8 +1499,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
+						openclaw: hostedOpenClawRuntime(),
 					},
 					providers: {
 						default: {
@@ -1587,6 +1637,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
 					deploymentId: "dep_bridge_token",
 					environmentId: "env_bridge_token",
 					instanceId: "iid_bridge_token",
@@ -1595,7 +1646,7 @@ exit 64
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
+						openclaw: hostedOpenClawRuntime(),
 					},
 				},
 				secretValues: {},
@@ -1610,11 +1661,11 @@ exit 64
 		expect(loaded.manifest.runtimes).not.toHaveProperty("hermes");
 	});
 
-	it("keeps Hermes disabled when a hosted-runtime manifest explicitly disables it", async () => {
+	it("rejects hosted-runtime manifests that declare a disabled sibling runtime", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const manifestPath = join(root, "hosted-bridge-token-hermes-disabled.json");
+		const manifestPath = join(root, "hosted-runtime-disabled-sibling.json");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -1626,6 +1677,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
 					deploymentId: "dep_bridge_token_explicit",
 					environmentId: "env_bridge_token_explicit",
 					instanceId: "iid_bridge_token_explicit",
@@ -1634,7 +1686,7 @@ exit 64
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: true, install: { source: "official" }, paths: { home } },
+						openclaw: hostedOpenClawRuntime(),
 						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
 					},
 				},
@@ -1644,10 +1696,12 @@ exit 64
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 
-		expect("manifest" in loaded).toBe(true);
-		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.runtimes.hermes.enabled).toBe(false);
-		expect(loaded.manifest.runtimes.hermes.install).toBeUndefined();
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.errors.join("\n")).toContain(
+			"hosted runtime manifests must declare exactly one selected runtime",
+		);
 	});
 
 	it("honors the auth env declared by the runtime source", async () => {
@@ -1679,13 +1733,15 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "hermes",
 							deploymentId: "dep_custom_auth",
 							instanceId: "iid_custom_auth",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-							runtimes: { hermes: { enabled: false } },
+							runtimes: { hermes: hostedHermesRuntime() },
+							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
 						secretValues: {},
 					}),
@@ -1829,7 +1885,8 @@ exit 64
 	it("projects an empty runtime channel list as an empty projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "openclaw",
 				deploymentId: "dep_empty_channels",
 				environmentId: "env_empty_channels",
 				instanceId: "iid_empty_channels",
@@ -1839,7 +1896,6 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: { enabled: true },
-					hermes: { enabled: false },
 				},
 			},
 			source: "remote-datasource",
@@ -1863,7 +1919,8 @@ exit 64
 	it("removes stale channel-driven MITM profiles when runtime channels are disabled", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "openclaw",
 				deploymentId: "dep_stale_channels",
 				environmentId: "env_stale_channels",
 				instanceId: "iid_stale_channels",
@@ -1873,7 +1930,6 @@ exit 64
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: { enabled: true },
-					hermes: { enabled: false },
 				},
 				mitmProfiles: {
 					profiles: [
@@ -2100,6 +2156,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_watch",
 								environmentId: "env_watch",
 								instanceId: "iid_watch",
@@ -2108,8 +2165,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: hostedOpenClawRuntime(),
 								},
 							},
 							secretValues: {},
@@ -2161,7 +2217,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdApply).toEqual({
 				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
-				userUnitsChanged: [],
+				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(
 				readFileSync(join(state, "status", "runtime-watch.json"), "utf-8"),
@@ -2237,6 +2293,7 @@ exit 42
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_watch_systemd_failure",
 								environmentId: "env_watch_systemd_failure",
 								instanceId: "iid_watch_systemd_failure",
@@ -2245,8 +2302,7 @@ exit 42
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: hostedOpenClawRuntime(),
 								},
 							},
 							secretValues: {},
@@ -2306,6 +2362,7 @@ exit 42
 		const hostedPayload = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
 				deploymentId: "dep_watch_secret",
 				environmentId: "env_watch_secret",
 				instanceId: "iid_watch_secret",
@@ -2314,12 +2371,10 @@ exit 42
 				system: { home, workspace: join(home, "clawdi") },
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				runtimes: {
-					openclaw: {
-						enabled: true,
+					openclaw: hostedOpenClawRuntime({
 						install: { source: "official", channel: "stable" },
 						paths: { home },
-					},
-					hermes: { enabled: false },
+					}),
 				},
 				providers: {
 					default: {
@@ -2556,6 +2611,7 @@ exit 64
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_watch_recovery",
 								environmentId: "env_watch_recovery",
 								instanceId: "iid_watch_recovery",
@@ -2563,7 +2619,7 @@ exit 64
 								issuedAt: "2026-06-06T00:00:00Z",
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-								runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+								runtimes: { openclaw: hostedOpenClawRuntime() },
 							},
 							secretValues: {},
 						}),
@@ -3125,6 +3181,7 @@ chmod +x "$prefix/bin/clawdi"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_cli_update",
 								environmentId: "env_cli_update",
 								instanceId: "iid_cli_update",
@@ -3137,8 +3194,7 @@ chmod +x "$prefix/bin/clawdi"
 									packageSpec: "clawdi@0.13.1-beta.0",
 								},
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: hostedOpenClawRuntime(),
 								},
 							},
 							secretValues: {},
@@ -3195,7 +3251,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdApply).toEqual({
 				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
-				userUnitsChanged: [],
+				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 		} finally {
 			restore();
@@ -3260,6 +3316,7 @@ chmod +x "$prefix/bin/clawdi"
 			const result = applyRuntimeCliDesiredState(
 				{
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
 					deploymentId: "dep_floating_cli_tag",
 					environmentId: "env_floating_cli_tag",
 					instanceId: "iid_floating_cli_tag",
@@ -3268,7 +3325,7 @@ chmod +x "$prefix/bin/clawdi"
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
-					runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+					runtimes: { openclaw: hostedOpenClawRuntime() },
 				},
 				paths,
 			);
@@ -3379,6 +3436,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_cli_update_converge_failure",
 								environmentId: "env_cli_update_converge_failure",
 								instanceId: "iid_cli_update_converge_failure",
@@ -3388,8 +3446,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.3-beta.0" },
 								runtimes: {
-									openclaw: { enabled: true },
-									hermes: { enabled: false },
+									openclaw: hostedOpenClawRuntime({
+										install: { source: "official", channel: "stable" },
+										paths: { home },
+									}),
 								},
 							},
 							secretValues: {},
@@ -3489,6 +3549,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_cli_update_failure",
 								environmentId: "env_cli_update_failure",
 								instanceId: "iid_cli_update_failure",
@@ -3498,8 +3559,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.4-beta.0" },
 								runtimes: {
-									openclaw: { enabled: false },
-									hermes: { enabled: false },
+									openclaw: hostedOpenClawRuntime(),
 								},
 							},
 							secretValues: {},
@@ -3537,7 +3597,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(event.systemdApply).toEqual({
 				applied: false,
 				systemUnitsChanged: ["clawdi-runtime-watch.service"],
-				userUnitsChanged: [],
+				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
 				'"etag-cli-failed"\n',
@@ -3894,6 +3954,7 @@ exit 64
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
 								deploymentId: "dep_init",
 								environmentId: "env_init",
 								instanceId: "iid_init",
@@ -3902,11 +3963,9 @@ exit 64
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								runtimes: {
-									openclaw: {
-										enabled: true,
+									openclaw: hostedOpenClawRuntime({
 										install: { source: "official", args: [] },
-									},
-									hermes: { enabled: false },
+									}),
 								},
 							},
 							secretValues: {},
@@ -4285,6 +4344,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "hermes",
 							deploymentId: "dep_workspace",
 							instanceId: "iid_workspace",
 							generation: 1,
@@ -4292,8 +4352,9 @@ exit 64
 							system: { home, workspace },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							runtimes: {
-								hermes: { enabled: false },
+								hermes: hostedHermesRuntime(),
 							},
+							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
 						secretValues: {},
 					}),
@@ -4401,6 +4462,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "hermes",
 					deploymentId: "dep_legacy_api_url",
 					instanceId: "iid_legacy_api_url",
 					generation: 1,
@@ -4408,8 +4470,9 @@ exit 64
 					system: { home },
 					controlPlane: { apiUrl: "https://api.test" },
 					runtimes: {
-						hermes: { enabled: false },
+						hermes: hostedHermesRuntime(),
 					},
+					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 				},
 				secretValues: {},
 			}),
@@ -4439,6 +4502,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "hermes",
 					deploymentId: "dep_runtime_workspace",
 					instanceId: "iid_runtime_workspace",
 					generation: 1,
@@ -4446,11 +4510,11 @@ exit 64
 					system: { home, workspace: join(home, "system-workspace") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						hermes: {
-							enabled: false,
+						hermes: hostedHermesRuntime({
 							paths: { workspace: runtimeWorkspace },
-						},
+						}),
 					},
+					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 				},
 				secretValues: {},
 			}),
@@ -4463,10 +4527,22 @@ exit 64
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
+		const hermesDashboardRunConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "hermes+dashboard.json"), "utf-8"),
+		);
 
 		expect(convergence.outputs.workspaceRoot).toBe(join(home, "system-workspace"));
 		expect(hermesRunConfig.cwd).toBe(runtimeWorkspace);
-		expect(hermesRunConfig.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
+		expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run", "--replace"]);
+		expect(hermesDashboardRunConfig.cwd).toBe(runtimeWorkspace);
+		expect(hermesDashboardRunConfig.defaultArgs).toEqual([
+			"dashboard",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			"9119",
+			"--no-open",
+		]);
 	});
 
 	it("projects hosted MCP desired state into OpenClaw and Hermes config", async () => {
@@ -4959,12 +5035,17 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const cachePath = join(state, "cache", "manifest.last-good.json");
+		const failingInstaller = join(root, "install-openclaw.sh");
 		mkdirSync(dirname(cachePath), { recursive: true });
 		mkdirSync(home, { recursive: true });
+		writeFileSync(failingInstaller, "#!/usr/bin/env bash\nexit 42\n");
+		chmodSync(failingInstaller, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = failingInstaller;
 		const previousManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_last_good_floor",
@@ -4981,7 +5062,19 @@ exit 64
 			manifest: {
 				...previousManifest,
 				generation: 2,
-				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: { enabled: false },
+				},
 			} as RuntimeManifest,
 			source: "fixture-file",
 			sourcePath: "test://install-error",
@@ -4991,9 +5084,7 @@ exit 64
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
-		expect(convergence.installErrors).toEqual([
-			"runtime openclaw is enabled but missing install metadata",
-		]);
+		expect(convergence.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
 		expect(convergence.outputs.manifestLastGood).toBeNull();
 		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
 	});
@@ -5171,6 +5262,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_manifest_only",
 							instanceId: "iid_manifest_only",
 							generation: 1,
@@ -5180,8 +5272,7 @@ exit 64
 								manifestUrl: "https://runtime-source.test/v1/desired-state/",
 							},
 							runtimes: {
-								openclaw: { enabled: false },
-								hermes: { enabled: false },
+								openclaw: hostedOpenClawRuntime(),
 							},
 						},
 						secretValues: {},
@@ -5218,6 +5309,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_test",
 							appId: "app_test",
 							instanceId: "iid_remote",
@@ -5229,8 +5321,7 @@ exit 64
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-								hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+								openclaw: hostedOpenClawRuntime(),
 							},
 							providers: {
 								default: {
@@ -5261,7 +5352,9 @@ exit 64
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			]);
-			expect(convergence.outputs.systemdUserUnits).toEqual([]);
+			expect(convergence.outputs.systemdUserUnits).toEqual([
+				join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			]);
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
@@ -5475,6 +5568,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
 							deploymentId: "dep_sync",
 							appId: "app_sync",
 							instanceId: "iid_sync",
@@ -5486,8 +5580,7 @@ exit 64
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
-								openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-								hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+								openclaw: hostedOpenClawRuntime(),
 							},
 							liveSync: {
 								enabled: true,
@@ -5562,6 +5655,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
 					deploymentId: "dep_no_secret_ref",
 					appId: "app_no_secret_ref",
 					instanceId: "iid_no_secret_ref",
@@ -5570,8 +5664,7 @@ exit 64
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						openclaw: { enabled: false, install: { source: "official" }, paths: { home } },
-						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+						openclaw: hostedOpenClawRuntime(),
 					},
 					providers: {
 						default: { kind: "openai-compatible", baseUrl: "https://sub2api.test/v1" },
@@ -5599,6 +5692,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "hermes",
 					deploymentId: "dep_bad_mitm",
 					appId: "app_bad_mitm",
 					instanceId: "iid_bad_mitm",
@@ -5607,8 +5701,9 @@ exit 64
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					runtimes: {
-						hermes: { enabled: false },
+						hermes: hostedHermesRuntime(),
 					},
+					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 					mitmProfiles: {
 						profiles: [
 							{

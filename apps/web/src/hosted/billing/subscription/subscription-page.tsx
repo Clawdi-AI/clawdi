@@ -86,8 +86,8 @@ export function SubscriptionPage() {
 				</CardHeader>
 				<CardContent className="space-y-4">
 					<p className="text-sm text-muted-foreground">
-						Upgrade, runtime availability, lifecycle, and delete controls live in that agent’s
-						Settings page. Wallet balance and managed-AI usage stay account-wide.
+						Upgrade, lifecycle, and delete controls live in that agent’s Settings page. Wallet
+						balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
 						<Button onClick={() => void router.navigate({ href: "/deploy" })}>

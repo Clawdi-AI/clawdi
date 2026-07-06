@@ -1,9 +1,5 @@
-import type { DeployRequest, OpenClawConfigRequest } from "@/hosted/billing/contracts";
-
-type EngineSelection = {
-	openclaw: boolean;
-	hermes: boolean;
-};
+import type { DeployRequest, HostedConfigRequest } from "@/hosted/billing/contracts";
+import type { HostedRuntime } from "@/hosted/runtimes";
 
 type DeployPersona = {
 	language: string;
@@ -14,34 +10,28 @@ type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 
 export function buildHostedDeployRequest({
 	computePlanSlug,
-	engines,
+	runtime,
 	persona,
 	aiFields,
 }: {
 	computePlanSlug: ComputePlanSlug;
-	engines: EngineSelection;
+	runtime: HostedRuntime;
 	persona: DeployPersona;
 	aiFields: Partial<DeployRequest>;
 }): DeployRequest {
-	if (!engines.openclaw && !engines.hermes) {
-		throw new Error("Select at least one execution engine.");
-	}
-
 	const personaFields = {
 		language: persona.language || null,
 		timezone: persona.timezone || null,
 	};
-	const config: OpenClawConfigRequest = {
+	const config: HostedConfigRequest = {
 		channel: null,
-		enable_openclaw: engines.openclaw,
-		enable_hermes: engines.hermes,
+		runtime,
 		...personaFields,
 	};
 	return {
 		compute_plan_slug: computePlanSlug,
 		channel: null,
-		enable_openclaw: engines.openclaw,
-		enable_hermes: engines.hermes,
+		runtime,
 		config,
 		...personaFields,
 		...aiFields,
