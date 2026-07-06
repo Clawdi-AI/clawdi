@@ -134,15 +134,6 @@ export function useBillingClient() {
 					}),
 				),
 
-			setAgentEnabled: async (id: string, agentType: string, enabled: boolean) =>
-				unwrapDeploy(
-					await api.PATCH("/v2/deployments/{deployment_id}/agents/{agent_type}", {
-						params: {
-							path: { deployment_id: id, agent_type: runtimeAgentType(agentType) },
-						},
-						body: { enabled },
-					}),
-				),
 			setAgentLanguageTimezone: async (
 				id: string,
 				agentType: string,
@@ -169,15 +160,6 @@ export function useBillingClient() {
 						body,
 					}),
 				),
-			onboardAgent: async (id: string, agentType: string) => {
-				const runtime = runtimeAgentType(agentType);
-				return unwrapDeploy(
-					await api.POST("/v2/deployments/{deployment_id}/onboard-agent", {
-						params: { path: { deployment_id: id } },
-						body: { agent_type: runtime },
-					}),
-				);
-			},
 			createTerminalSession: async (id: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments/{deployment_id}/terminal", {

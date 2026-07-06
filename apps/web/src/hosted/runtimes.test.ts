@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { deploymentRuntimes } from "@/hosted/runtimes";
+import { deploymentRuntime, deploymentRuntimes, runtimeConsoleUrl } from "@/hosted/runtimes";
 
 function deployment(configInfo: HostedDeployment["config_info"]): HostedDeployment {
 	return {
@@ -35,8 +35,7 @@ function configInfo(
 		ai_provider_id: null,
 		ai_provider_auth_kind: "managed",
 		public_ports: [],
-		enable_openclaw: true,
-		enable_hermes: false,
+		runtime: "openclaw",
 		onboarded_agents: ["openclaw"],
 		configured_agents: ["openclaw"],
 		clawdi_cloud_environments: {},
@@ -47,30 +46,28 @@ function configInfo(
 	};
 }
 
-describe("deploymentRuntimes", () => {
-	test("returns enabled execution runtime environments", () => {
+describe("deploymentRuntime", () => {
+	test("returns the selected execution runtime", () => {
 		expect(
-			deploymentRuntimes(
+			deploymentRuntime(
 				deployment(
 					configInfo({
-						enable_hermes: true,
+						runtime: "hermes",
 						clawdi_cloud_environments: {
 							hermes: "env-hermes",
-							openclaw: "env-openclaw",
 						},
 					}),
 				),
 			),
-		).toEqual(["openclaw", "hermes"]);
+		).toBe("hermes");
 	});
 
-	test("does not surface disabled runtimes just because they remain configured", () => {
+	test("does not infer extra runtimes from stale environment mappings", () => {
 		expect(
 			deploymentRuntimes(
 				deployment(
 					configInfo({
-						enable_openclaw: true,
-						enable_hermes: false,
+						runtime: "openclaw",
 						onboarded_agents: ["openclaw"],
 						configured_agents: ["openclaw", "hermes"],
 						clawdi_cloud_environments: {
@@ -83,29 +80,12 @@ describe("deploymentRuntimes", () => {
 		).toEqual(["openclaw"]);
 	});
 
-	test("falls back to legacy enable flags when explicit runtime lists are absent", () => {
-		expect(
-			deploymentRuntimes(
-				deployment(
-					configInfo({
-						enable_openclaw: false,
-						enable_hermes: true,
-						onboarded_agents: [],
-						configured_agents: [],
-						clawdi_cloud_environments: {},
-					}),
-				),
-			),
-		).toEqual(["hermes"]);
-	});
-
 	test("does not surface Codex from stale hosted environment mappings", () => {
 		expect(
 			deploymentRuntimes(
 				deployment(
 					configInfo({
-						enable_openclaw: true,
-						enable_hermes: false,
+						runtime: "openclaw",
 						clawdi_cloud_environments: {
 							codex: "env-codex",
 							openclaw: "env-openclaw",
@@ -114,5 +94,22 @@ describe("deploymentRuntimes", () => {
 				),
 			),
 		).toEqual(["openclaw"]);
+	});
+
+	test("selects the dashboard URL for the chosen runtime", () => {
+		expect(
+			runtimeConsoleUrl({
+				...deployment(configInfo({ runtime: "openclaw" })),
+				openclaw_control_ui_url: "https://app-18789.example/control/#token=abc",
+				hermes_control_ui_url: "https://app-9119.example/?t=bridge",
+			}),
+		).toBe("https://app-18789.example/control/#token=abc");
+		expect(
+			runtimeConsoleUrl({
+				...deployment(configInfo({ runtime: "hermes" })),
+				openclaw_control_ui_url: "https://app-18789.example/control/#token=abc",
+				hermes_control_ui_url: "https://app-9119.example/?t=bridge",
+			}),
+		).toBe("https://app-9119.example/?t=bridge");
 	});
 });

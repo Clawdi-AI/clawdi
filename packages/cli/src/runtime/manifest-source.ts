@@ -14,7 +14,7 @@ import {
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { normalizeSecretValues } from "./secret-values";
+import { envSecretRefName, normalizeSecretValues } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -476,6 +476,8 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
 	const home = hosted.system?.home || "/home/clawdi";
 	const workspaceRoot = hosted.system?.workspace || join(home, "clawdi");
+	const selectedRuntime = hosted.runtime;
+	const runtime = hosted.runtimes[selectedRuntime];
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
@@ -485,6 +487,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
 		workspaceRoot,
+		runtime: selectedRuntime,
 		controlPlane: {
 			apiUrl: hostedControlPlaneApiUrl(hosted),
 		},
@@ -495,33 +498,30 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
 				}
 			: { ...DEFAULT_CLAWDI_CLI_POLICY },
-		runtimes: Object.fromEntries(
-			Object.entries(hosted.runtimes).map(([name, runtime]) => [
-				name,
-				{
-					enabled: runtime.enabled,
-					updateChannel: runtime.install?.channel,
-					install:
-						runtime.enabled && OFFICIAL_INSTALL_URLS[name]
-							? {
-									authority: "official" as const,
-									method: "official-installer" as const,
-									url: OFFICIAL_INSTALL_URLS[name] ?? "",
-									home: runtime.paths?.home || home,
-									args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[name] ?? [],
-								}
-							: undefined,
-					run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
-					services: Object.fromEntries(
-						Object.entries(runtime.services ?? {}).map(([service, run]) => [
-							service,
-							hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
-						]),
-					),
-					...hostedRuntimeProviderBinding(runtime),
-				},
-			]),
-		),
+		runtimes: {
+			[selectedRuntime]: {
+				enabled: runtime.enabled,
+				updateChannel: runtime.install?.channel,
+				install:
+					runtime.enabled && runtime.install && OFFICIAL_INSTALL_URLS[selectedRuntime]
+						? {
+								authority: "official" as const,
+								method: "official-installer" as const,
+								url: OFFICIAL_INSTALL_URLS[selectedRuntime] ?? "",
+								home: runtime.paths?.home || home,
+								args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[selectedRuntime] ?? [],
+							}
+						: undefined,
+				run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
+				services: Object.fromEntries(
+					Object.entries(runtime.services ?? {}).map(([service, run]) => [
+						service,
+						hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
+					]),
+				),
+				...hostedRuntimeProviderBinding(runtime),
+			},
+		},
 		bridge: hosted.bridge,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
@@ -590,6 +590,7 @@ function hostedRuntimeRunSettings(
 	};
 	if (run?.command !== undefined) settings.command = run.command;
 	if (run?.args !== undefined) settings.args = run.args;
+	if (run?.secretEnv !== undefined) settings.secretEnv = run.secretEnv;
 	return settings;
 }
 
@@ -662,6 +663,39 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 	if (manifest.workspaceRoot && !isAbsolute(manifest.workspaceRoot)) {
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
 	}
+	if (manifest.runtime) {
+		const runtime = manifest.runtime;
+		const runtimeKeys = Object.keys(manifest.runtimes);
+		if (!runtimeKeys.includes(runtime)) {
+			errors.push(`manifest runtime ${runtime} must have a matching runtimes.${runtime} entry`);
+		}
+		for (const key of runtimeKeys) {
+			if (key !== runtime) {
+				errors.push(`single-runtime manifest must not declare runtimes.${key}`);
+			}
+		}
+		if (manifest.runtimes[runtime]?.enabled !== true) {
+			errors.push(`manifest runtime ${runtime} must be enabled`);
+		}
+		const surfaces = manifest.bridge?.surfaces ?? [];
+		if (runtime === "openclaw" && surfaces.length > 0) {
+			errors.push("openclaw runtime must not declare runtime bridge surfaces");
+		}
+		if (runtime === "hermes") {
+			const surface = surfaces[0];
+			if (
+				surfaces.length !== 1 ||
+				!surface ||
+				surface.name !== "hermes" ||
+				surface.kind !== "control-ui" ||
+				surface.listenPort !== 28793 ||
+				surface.upstreamHost !== "127.0.0.1" ||
+				surface.upstreamPort !== 9119
+			) {
+				errors.push("hermes runtime must declare bridge surface 28793 -> 127.0.0.1:9119");
+			}
+		}
+	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		if (!runtime.enabled) continue;
 		const runCommand = runtime.run?.command?.trim();
@@ -678,7 +712,7 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 			}
 			continue;
 		}
-		if (!runtime.install && !runCommand) {
+		if (!runtime.install && !runCommand && !isSupportedRuntimeName(name)) {
 			errors.push(`runtime ${name} is enabled but missing install metadata`);
 			continue;
 		}
@@ -921,7 +955,11 @@ function manifestSecretRefsMissingValues(
 	secretValues: Record<string, string> | undefined,
 ): string[] {
 	const normalizedValues = normalizeSecretValues(secretValues ?? {});
-	return manifestSecretRefs(manifest).filter((ref) => normalizedValues[ref] === undefined);
+	return manifestSecretRefs(manifest).filter((ref) => {
+		const envName = envSecretRefName(ref);
+		if (envName) return !process.env[envName]?.trim();
+		return normalizedValues[ref] === undefined;
+	});
 }
 
 function collectSecretRefs(value: unknown, refs: Set<string>): void {
@@ -933,6 +971,11 @@ function collectSecretRefs(value: unknown, refs: Set<string>): void {
 	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
 		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
 			refs.add(entry);
+		}
+		if (key === "secretEnv" && entry && typeof entry === "object" && !Array.isArray(entry)) {
+			for (const ref of Object.values(entry as Record<string, unknown>)) {
+				if (typeof ref === "string") refs.add(ref);
+			}
 		}
 		collectSecretRefs(entry, refs);
 	}

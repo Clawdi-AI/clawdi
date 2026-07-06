@@ -214,10 +214,8 @@ export function HostedSecondaryCTA({
 }
 
 /**
- * The /agents index list: each runtime is a SEPARATE agent, grouped under its
- * shared compute deployment. Hosted runtime-agents are bucketed by `computeId`;
- * self-managed (connected) agents get their own section. Mirrors the per-runtime
- * model the agent-detail page enforces.
+ * The /agents index list. Hosted deployments render as one Clawdi Cloud agent
+ * each; self-managed and legacy hosted agents get their own section.
  */
 export function HostedAgentsByCompute({
 	selfManagedTiles,
@@ -258,20 +256,6 @@ export function HostedAgentsByCompute({
 	const hostedTiles = hosted.tiles;
 	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
 
-	// Bucket hosted runtime-tiles by their shared compute, preserving order.
-	const groups: { key: string; name: string; tiles: AgentTile[] }[] = [];
-	const byKey = new Map<string, { key: string; name: string; tiles: AgentTile[] }>();
-	for (const tile of hostedTiles) {
-		const key = tile.computeId ?? tile.id;
-		let group = byKey.get(key);
-		if (!group) {
-			group = { key, name: tile.computeName ?? tile.name, tiles: [] };
-			byKey.set(key, group);
-			groups.push(group);
-		}
-		group.tiles.push(tile);
-	}
-
 	const isEmptyState =
 		!envsLoading &&
 		!selfManagedError &&
@@ -289,7 +273,11 @@ export function HostedAgentsByCompute({
 		);
 	}
 
-	if ((envsLoading || ownershipLoading) && groups.length === 0 && connectedTiles.length === 0) {
+	if (
+		(envsLoading || ownershipLoading) &&
+		hostedTiles.length === 0 &&
+		connectedTiles.length === 0
+	) {
 		return (
 			<div data-hosted="true">
 				<AgentsCard agents={[]} isLoading />
@@ -299,17 +287,17 @@ export function HostedAgentsByCompute({
 
 	return (
 		<div data-hosted="true" className="space-y-6">
-			{groups.map((group) => (
-				<section key={group.key} className="space-y-2">
+			{hostedTiles.length > 0 ? (
+				<section className="space-y-2">
 					<SectionLabel
 						leading={<AgentSourceBadge source="hosted" compact />}
-						count={`${group.tiles.length} runtime${group.tiles.length === 1 ? "" : "s"}`}
+						count={`${hostedTiles.length} agent${hostedTiles.length === 1 ? "" : "s"}`}
 					>
-						{group.name}
+						Clawdi Cloud
 					</SectionLabel>
-					<AgentTileGrid tiles={group.tiles} />
+					<AgentTileGrid tiles={hostedTiles} />
 				</section>
-			))}
+			) : null}
 
 			{connectedTiles.length > 0 ? (
 				<section className="space-y-2">

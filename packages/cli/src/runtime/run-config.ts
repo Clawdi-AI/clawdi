@@ -29,6 +29,7 @@ export const runtimeRunSettingsSchema = z
 		command: z.string().min(1).optional(),
 		args: z.array(z.string()).optional(),
 		env: z.record(envKeySchema, z.string()).default({}),
+		secretEnv: z.record(envKeySchema, z.string().min(1)).optional(),
 		cwd: z.string().min(1).optional(),
 		prependPath: z.array(z.string().min(1)).default([]),
 	})
@@ -281,21 +282,25 @@ function runtimeSecretEnv(
 ): Record<string, string> {
 	const entries = Object.entries(secretEnv);
 	if (entries.length === 0) return {};
-	if (!secretFilePath) {
+	const fileBackedEntries = entries.filter(([, ref]) => !ref.startsWith("env://"));
+	if (fileBackedEntries.length > 0 && !secretFilePath) {
 		throw new Error("Runtime run config references secrets but has no secret file.");
 	}
-	let rawSecrets: unknown;
-	try {
-		rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));
-	} catch (error) {
-		throw new Error(
-			`Runtime secret file is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-		);
+	let secrets: Record<string, unknown> = {};
+	if (fileBackedEntries.length > 0 && secretFilePath) {
+		let rawSecrets: unknown;
+		try {
+			rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));
+		} catch (error) {
+			throw new Error(
+				`Runtime secret file is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		if (!rawSecrets || typeof rawSecrets !== "object" || Array.isArray(rawSecrets)) {
+			throw new Error("Runtime secret file must contain a JSON object.");
+		}
+		secrets = rawSecrets as Record<string, unknown>;
 	}
-	if (!rawSecrets || typeof rawSecrets !== "object" || Array.isArray(rawSecrets)) {
-		throw new Error("Runtime secret file must contain a JSON object.");
-	}
-	const secrets = rawSecrets as Record<string, unknown>;
 	const env: Record<string, string> = {};
 	for (const [envName, ref] of entries) {
 		const value = runtimeSecretValue(secrets, ref);

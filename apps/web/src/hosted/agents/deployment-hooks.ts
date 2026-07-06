@@ -10,38 +10,9 @@ import type {
 } from "@/hosted/billing/contracts";
 import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
+import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
-
-type AiProviderRebindFailure = {
-	agentType: string;
-	error: unknown;
-};
-
-class AiProviderRebindError extends Error {
-	constructor(
-		readonly succeeded: string[],
-		readonly failures: AiProviderRebindFailure[],
-	) {
-		super("AI provider rebind failed for one or more runtimes");
-		this.name = "AiProviderRebindError";
-	}
-}
-
-type AgentLanguageTimezoneFailure = {
-	agentType: string;
-	error: unknown;
-};
-
-class AgentLanguageTimezoneError extends Error {
-	constructor(
-		readonly succeeded: string[],
-		readonly failures: AgentLanguageTimezoneFailure[],
-	) {
-		super("Language and timezone update failed for one or more runtimes");
-		this.name = "AgentLanguageTimezoneError";
-	}
-}
 
 function invalidateDeploymentSnapshots(qc: QueryClient) {
 	qc.invalidateQueries({ queryKey: billingKeys.deployments });
@@ -57,17 +28,6 @@ function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 	}
 }
 
-function runtimeLabel(agentType: string): string {
-	if (agentType === "codex") return "Codex";
-	if (agentType === "openclaw") return "OpenClaw";
-	if (agentType === "hermes") return "Hermes";
-	return agentType;
-}
-
-function listRuntimeLabels(agentTypes: readonly string[]): string {
-	return agentTypes.map(runtimeLabel).join(", ");
-}
-
 function isLifecycleStateConflict(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
 	return (
@@ -79,42 +39,12 @@ function isLifecycleStateConflict(error: unknown): boolean {
 }
 
 function toastAiProviderRebindError(error: unknown) {
-	if (!(error instanceof AiProviderRebindError)) {
-		toastBillingError("Couldn't update provider")(error);
-		return;
-	}
-
-	const failed = listRuntimeLabels(error.failures.map((failure) => failure.agentType));
-	const reason = normalizeBillingError(error.failures[0]?.error);
-	if (error.succeeded.length > 0) {
-		toast.error("Provider updated for some runtimes", {
-			description: `Couldn't update ${failed}. ${reason}`,
-		});
-		return;
-	}
-
-	toast.error("Couldn't update provider", {
-		description: `Couldn't update ${failed}. ${reason}`,
-	});
+	toast.error("Couldn't update provider", { description: normalizeBillingError(error) });
 }
 
 function toastAgentLanguageTimezoneError(error: unknown) {
-	if (!(error instanceof AgentLanguageTimezoneError)) {
-		toastBillingError("Couldn't update language and timezone")(error);
-		return;
-	}
-
-	const failed = listRuntimeLabels(error.failures.map((failure) => failure.agentType));
-	const reason = normalizeBillingError(error.failures[0]?.error);
-	if (error.succeeded.length > 0) {
-		toast.error("Language and timezone updated for some runtimes", {
-			description: `Couldn't update ${failed}. ${reason}`,
-		});
-		return;
-	}
-
 	toast.error("Couldn't update language and timezone", {
-		description: `Couldn't update ${failed}. ${reason}`,
+		description: normalizeBillingError(error),
 	});
 }
 
@@ -146,8 +76,8 @@ export function useAgentDeployment(environmentId: string) {
 	// minted env ids yet.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
-		const envs = match.deployment.config_info?.clawdi_cloud_environments ?? {};
-		return envs.codex || environmentId;
+		const runtime = deploymentRuntime(match.deployment);
+		return runtimeEnvironmentId(match.deployment.config_info, runtime) || environmentId;
 	}, [match, environmentId]);
 
 	return {
@@ -161,60 +91,22 @@ export function useAgentDeployment(environmentId: string) {
 	};
 }
 
-export function useSetAgentEnabled() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { id: string; agentType: string; enabled: boolean }) =>
-			client.setAgentEnabled(vars.id, vars.agentType, vars.enabled),
-		onSuccess: (_d, vars) => {
-			invalidateDeploymentSnapshots(qc);
-			scheduleDeploymentSettlingRefresh(qc);
-			toast.success(vars.enabled ? "Runtime enabled" : "Runtime disabled");
-		},
-		onError: toastBillingError("Couldn't update runtime"),
-	});
-}
-
 export function useSetAgentLanguageTimezone() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async (vars: {
 			id: string;
-			agentTypes: string[];
-			enabledByAgentType: Record<string, boolean>;
+			agentType: string;
 			language: string;
 			timezone: string;
 		}) => {
-			const succeeded: string[] = [];
-			const failures: AgentLanguageTimezoneFailure[] = [];
-			let last: Awaited<ReturnType<typeof client.setAgentLanguageTimezone>> | undefined;
-			for (const agentType of vars.agentTypes) {
-				const enabled = vars.enabledByAgentType[agentType];
-				if (typeof enabled !== "boolean") {
-					failures.push({
-						agentType,
-						error: new BillingApiError(400, `Missing enabled state for ${runtimeLabel(agentType)}`),
-					});
-					continue;
-				}
-				const body: SetAgentEnabledRequest = {
-					enabled,
-					language: vars.language || null,
-					timezone: vars.timezone || null,
-				};
-				try {
-					last = await client.setAgentLanguageTimezone(vars.id, agentType, body);
-					succeeded.push(agentType);
-				} catch (error) {
-					failures.push({ agentType, error });
-				}
-			}
-			if (failures.length > 0) {
-				throw new AgentLanguageTimezoneError(succeeded, failures);
-			}
-			return last;
+			const body: SetAgentEnabledRequest = {
+				enabled: true,
+				language: vars.language || null,
+				timezone: vars.timezone || null,
+			};
+			return client.setAgentLanguageTimezone(vars.id, vars.agentType, body);
 		},
 		onSuccess: () => {
 			invalidateDeploymentSnapshots(qc);
@@ -235,24 +127,10 @@ export function useSetAgentAiProvider() {
 	return useMutation({
 		mutationFn: async (vars: {
 			id: string;
-			agentTypes: string[];
+			agentType: string;
 			body: RebindAgentAiProviderRequest;
 		}) => {
-			const succeeded: string[] = [];
-			const failures: AiProviderRebindFailure[] = [];
-			let last: Awaited<ReturnType<typeof client.setAgentAiProvider>> | undefined;
-			for (const agentType of vars.agentTypes) {
-				try {
-					last = await client.setAgentAiProvider(vars.id, agentType, vars.body);
-					succeeded.push(agentType);
-				} catch (error) {
-					failures.push({ agentType, error });
-				}
-			}
-			if (failures.length > 0) {
-				throw new AiProviderRebindError(succeeded, failures);
-			}
-			return last;
+			return client.setAgentAiProvider(vars.id, vars.agentType, vars.body);
 		},
 		onSuccess: () => {
 			invalidateDeploymentSnapshots(qc);
@@ -261,21 +139,6 @@ export function useSetAgentAiProvider() {
 			invalidateDeploymentSnapshots(qc);
 			toastAiProviderRebindError(error);
 		},
-	});
-}
-
-export function useOnboardAgent() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { id: string; agentType: string }) =>
-			client.onboardAgent(vars.id, vars.agentType),
-		onSuccess: () => {
-			invalidateDeploymentSnapshots(qc);
-			scheduleDeploymentSettlingRefresh(qc);
-			toast.success("Runtime added");
-		},
-		onError: toastBillingError("Couldn't add runtime"),
 	});
 }
 

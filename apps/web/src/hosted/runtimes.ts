@@ -3,8 +3,6 @@ import type { DeploymentDetailsInfo, HostedDeployment } from "@/hosted/billing/c
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
 
-export const OPTIONAL_HOSTED_RUNTIMES = HOSTED_RUNTIMES;
-
 const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
 );
@@ -42,52 +40,34 @@ export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
 	);
 }
 
-export function runtimeIsEnabled(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
-): boolean {
-	if (runtime === "openclaw") return configInfo?.enable_openclaw === true;
-	return configInfo?.enable_hermes === true;
+export function configRuntime(configInfo: DeploymentDetailsInfo | null | undefined): HostedRuntime {
+	const runtime = configInfo?.runtime;
+	return runtime && isHostedRuntime(runtime) ? runtime : "openclaw";
 }
 
-export function runtimeIsConfigured(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
-): boolean {
-	return new Set(configInfo?.configured_agents ?? []).has(runtime);
+export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
+	return configRuntime(deployment.config_info);
 }
 
 export function runtimeEnvironmentId(
 	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime,
+	runtime: HostedRuntime = configRuntime(configInfo),
 ): string | undefined {
 	return configInfo?.clawdi_cloud_environments?.[runtime];
 }
 
 export function runtimeConsoleUrl(
 	deployment: HostedDeployment,
-	runtime: HostedRuntime,
+	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | null | undefined {
 	if (runtime === "openclaw") return deployment.openclaw_control_ui_url;
 	return deployment.hermes_control_ui_url;
 }
 
 export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[] {
-	const configInfo = deployment.config_info;
-	const explicit = sortHostedRuntimes([
-		...Object.keys(configInfo?.clawdi_cloud_environments ?? {}),
-		...(configInfo?.onboarded_agents ?? []),
-	]);
-	if (explicit.length > 0) {
-		return explicit.filter((runtime) => runtimeIsEnabled(configInfo, runtime));
-	}
-
-	const fallback = new Set<HostedRuntime>();
-	if (runtimeIsEnabled(configInfo, "openclaw")) fallback.add("openclaw");
-	if (runtimeIsEnabled(configInfo, "hermes")) fallback.add("hermes");
-	return sortHostedRuntimes(fallback);
+	return [deploymentRuntime(deployment)];
 }
 
 export function defaultDeploymentRuntime(deployment: HostedDeployment): HostedRuntime {
-	return deploymentRuntimes(deployment)[0] ?? HOSTED_RUNTIMES[0];
+	return deploymentRuntime(deployment);
 }

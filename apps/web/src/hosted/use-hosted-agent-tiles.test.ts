@@ -90,8 +90,7 @@ function deployment(
 			ai_provider_id: null,
 			ai_provider_auth_kind: "managed",
 			public_ports: [],
-			enable_openclaw: true,
-			enable_hermes: false,
+			runtime: "openclaw",
 			onboarded_agents: ["openclaw"],
 			configured_agents: ["openclaw"],
 			clawdi_cloud_environments: {},
@@ -107,7 +106,7 @@ function deployment(
 }
 
 describe("deploymentToTiles", () => {
-	test("omits disabled optional runtimes even when stale environment mappings remain", () => {
+	test("renders only the selected runtime even when stale environment mappings remain", () => {
 		const openclawEnv = env({
 			id: "33333333-3333-4333-8333-333333333333",
 			name: "hosted-openclaw",
@@ -120,8 +119,7 @@ describe("deploymentToTiles", () => {
 			deployment(
 				{},
 				{
-					enable_openclaw: false,
-					enable_hermes: false,
+					runtime: "openclaw",
 					onboarded_agents: ["openclaw", "hermes"],
 					configured_agents: ["openclaw", "hermes"],
 					clawdi_cloud_environments: {
@@ -133,9 +131,8 @@ describe("deploymentToTiles", () => {
 			[openclawEnv],
 		);
 
-		expect(tiles.map((tile) => tile.agentType)).toEqual([]);
-		expect(tiles.some((tile) => tile.id === "dep_123:openclaw")).toBe(false);
-		expect(tiles.some((tile) => tile.id === "dep_123:hermes")).toBe(false);
+		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
+		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
 	});
 });
 

@@ -173,7 +173,7 @@ export function PlanComparison({
 							) : null}
 						</div>
 						<CardDescription className="mt-2">
-							More compute, dual engines, and higher burst for demanding agents.
+							More compute, larger disk, and public-port entitlement for demanding agents.
 							{annualOffer && annualOffer.discount_percent > 0
 								? ` Save ${annualOffer.discount_percent}% on annual.`
 								: ""}
@@ -196,7 +196,7 @@ export function PlanComparison({
 								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
 							</FeatureRow>
 							<FeatureRow>One subscription per Performance agent</FeatureRow>
-							<FeatureRow>Run two engines at once (OpenClaw + Hermes)</FeatureRow>
+							<FeatureRow>Public-port entitlement for runtime-owned services</FeatureRow>
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
 							</FeatureRow>

@@ -30,7 +30,7 @@ import {
 	shouldPollDeployments,
 } from "@/hosted/deployment-status";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
-import { deploymentRuntimes, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { normalizeAgentEnvId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 
@@ -116,9 +116,8 @@ export function claimedEnvIdsFromDeployments(
 ): Set<string> {
 	const s = new Set<string>();
 	for (const d of deployments) {
-		for (const envId of Object.values(d.config_info?.clawdi_cloud_environments ?? {})) {
-			if (envId) s.add(envId.toLowerCase());
-		}
+		const envId = runtimeEnvironmentId(d.config_info);
+		if (envId) s.add(envId.toLowerCase());
 	}
 	return s;
 }
@@ -218,44 +217,29 @@ export function useHostedAgentTiles({
 }
 
 /**
- * One deployment fans out to one tile per hosted execution runtime.
- *
- * Runtime resolution priority (see `deploymentRuntimes`):
- *   1. Enabled runtimes named by `clawdi_cloud_environments` keys. Each key
- *      corresponds to a live cloud-api env binding.
- *   2. Enabled `onboarded_agents`, when it names recognizable runtimes.
- *   3. Enabled legacy runtime flags for older payloads.
+ * One deployment renders as one hosted agent tile. The selected runtime decides
+ * which cloud-api environment is joined for daemon sync state and detail links.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
-	const runtimes = deploymentRuntimes(d);
+	const runtime = deploymentRuntime(d);
 	const slug = deploymentDisplayName(d.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	return runtimes.map((runtime) => {
-		// Hosted env join: each hosted runtime registers a cloud-api env
-		// via the admin endpoint. Match by agent_type → environment_id
-		// so the tile picks up daemon sync state (last_sync_at, queue
-		// depth, status badge) from cloud-api, and the primary click
-		// target points at the in-app env detail page — same UX as a
-		// self-managed agent. Lifecycle ops (Restart/Stop/Delete) live
-		// in that detail page's Settings section.
-		//
-		// If there is no registered env yet, route by deployment id.
-		// `AgentHome` resolves deployment ids without pretending they are
-		// cloud-api environment ids, so the tile still has a useful
-		// in-app place to click. Lifecycle operations live in Settings.
-		const envId = runtimeEnvironmentId(d.config_info, runtime);
-		const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
-		const detailHref = matchedEnv
-			? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
-			: agentSectionHref(d.id);
-		const settingsHref = matchedEnv
-			? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
-			: agentSectionHref(d.id, "settings");
-		const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
-		const contextLabel = slug !== name ? slug : null;
-		const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
-		return {
-			id: `${d.id}:${runtime}`,
+	// Hosted env join: the selected hosted runtime registers one cloud-api env
+	// via the admin endpoint. If it is not minted yet, route by deployment id.
+	const envId = runtimeEnvironmentId(d.config_info, runtime);
+	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+	const detailHref = matchedEnv
+		? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
+		: agentSectionHref(d.id);
+	const settingsHref = matchedEnv
+		? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
+		: agentSectionHref(d.id, "settings");
+	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
+	const contextLabel = slug !== name ? slug : null;
+	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
+	return [
+		{
+			id: d.id,
 			source: "on-clawdi" as const,
 			name,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
@@ -264,12 +248,6 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			contextLabel,
 			statusLabel: runtimeStatus.primary.label,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
-			// `?source=on-clawdi` is the breadcrumb the agent detail page
-			// reads so its sync badge can mirror the hosted-aware copy
-			// we render here. A user who bookmarks/shares this URL keeps
-			// that intent; a self-managed user who happens to navigate
-			// to the same env without the param defaults to the standard
-			// self-managed badge.
 			href: detailHref,
 			external: false,
 			manageHref: settingsHref,
@@ -286,11 +264,8 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 					}
 				: null,
 			env: matchedEnv ?? null,
-			// Group sibling runtime-agents under their shared compute on /agents.
-			computeId: d.id,
-			computeName: slug,
-		};
-	});
+		},
+	];
 }
 
 export function hostedAgentTileStatus(rawStatus: string): { label: string; active: boolean } {

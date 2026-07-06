@@ -56,13 +56,13 @@ describe("idempotencyFingerprint", () => {
 		expect(
 			idempotencyFingerprint({
 				plan_slug: "compute_performance",
-				deploy_config: { enable_hermes: true, enable_openclaw: true },
+				deploy_config: { runtime: "hermes" },
 				billing_term_months: 12,
 			}),
 		).toBe(
 			idempotencyFingerprint({
 				billing_term_months: 12,
-				deploy_config: { enable_openclaw: true, enable_hermes: true },
+				deploy_config: { runtime: "hermes" },
 				plan_slug: "compute_performance",
 			}),
 		);
@@ -71,7 +71,7 @@ describe("idempotencyFingerprint", () => {
 	test("changes when launch-critical request body fields change", () => {
 		const baseBody = {
 			plan_slug: "compute_performance",
-			deploy_config: { enable_hermes: true, enable_openclaw: true },
+			deploy_config: { runtime: "hermes" },
 			billing_term_months: 1,
 		};
 		const baseFingerprint = idempotencyFingerprint(baseBody);
@@ -79,7 +79,7 @@ describe("idempotencyFingerprint", () => {
 		for (const changedBody of [
 			{ ...baseBody, plan_slug: "compute_basic" },
 			{ ...baseBody, billing_term_months: 12 },
-			{ ...baseBody, deploy_config: { ...baseBody.deploy_config, enable_hermes: false } },
+			{ ...baseBody, deploy_config: { ...baseBody.deploy_config, runtime: "openclaw" } },
 		]) {
 			expect(idempotencyFingerprint(changedBody)).not.toBe(baseFingerprint);
 		}

@@ -640,15 +640,11 @@ export interface components {
             /** Public Ports */
             public_ports?: number[] | null;
             /**
-             * Enable Openclaw
-             * @default true
+             * Runtime
+             * @default openclaw
+             * @enum {string}
              */
-            enable_openclaw: boolean;
-            /**
-             * Enable Hermes
-             * @default false
-             */
-            enable_hermes: boolean;
+            runtime: "openclaw" | "hermes";
         };
         /** V2HostedDeployRequest */
         V2HostedDeployRequest: {
@@ -685,13 +681,12 @@ export interface components {
             timezone?: string | null;
             /** Public Ports */
             public_ports?: number[] | null;
-            /** Enable Openclaw */
-            enable_openclaw?: boolean | null;
             /**
-             * Enable Hermes
-             * @default false
+             * Runtime
+             * @default openclaw
+             * @enum {string}
              */
-            enable_hermes: boolean;
+            runtime: "openclaw" | "hermes";
             /** Deploy Request Id */
             deploy_request_id?: string | null;
             /** Ai Provider Id */
@@ -772,15 +767,11 @@ export interface components {
             /** Public Ports */
             public_ports?: number[];
             /**
-             * Enable Openclaw
-             * @default true
+             * Runtime
+             * @default openclaw
+             * @enum {string}
              */
-            enable_openclaw: boolean;
-            /**
-             * Enable Hermes
-             * @default false
-             */
-            enable_hermes: boolean;
+            runtime: "openclaw" | "hermes";
             /** Onboarded Agents */
             onboarded_agents?: string[];
             /** Configured Agents */

@@ -5,7 +5,6 @@ import type { components } from "@clawdi/shared/api";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
-	ArrowUpRight,
 	Cpu,
 	CreditCard,
 	ExternalLink,
@@ -24,11 +23,10 @@ import {
 	Trash2,
 	Zap,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
@@ -58,18 +56,14 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
-	useOnboardAgent,
 	useSetAgentAiProvider,
-	useSetAgentEnabled,
 	useSetAgentLanguageTimezone,
 } from "@/hosted/agents/deployment-hooks";
 import {
@@ -123,16 +117,7 @@ import {
 	isRunningStatus,
 	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
-import {
-	HOSTED_RUNTIMES,
-	type HostedRuntime,
-	OPTIONAL_HOSTED_RUNTIMES,
-	runtimeBlurb,
-	runtimeConsoleUrl,
-	runtimeDisplayName,
-	runtimeIsConfigured,
-	runtimeIsEnabled,
-} from "@/hosted/runtimes";
+import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -193,11 +178,6 @@ type HostedAgentTab =
 	| "ai"
 	| "channels"
 	| "settings";
-const RUNTIMES = HOSTED_RUNTIMES.map((id) => ({
-	id,
-	label: runtimeDisplayName(id),
-	blurb: runtimeBlurb(id),
-})) satisfies { id: Runtime; label: string; blurb: string }[];
 const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"overview",
 	"console",
@@ -240,7 +220,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Link2,
 	},
 	settings: {
-		description: "Profile, compute, lifecycle, and runtime availability.",
+		description: "Profile, compute, and lifecycle controls.",
 		icon: Settings,
 	},
 };
@@ -283,8 +263,8 @@ function RestartComputeAction({ deployment }: { deployment: HostedDeployment }) 
 	const canRestart = canRestartDeployment(status);
 	return (
 		<ConfirmAction
-			title="Restart shared compute?"
-			description={<p>This restarts every enabled runtime on this compute.</p>}
+			title="Restart compute?"
+			description={<p>This restarts this hosted agent.</p>}
 			confirmLabel="Restart compute"
 			onConfirm={() =>
 				runAction(async () => {
@@ -337,10 +317,9 @@ function redirectToCheckout(url: string | null | undefined): boolean {
 }
 
 /**
- * PER-RUNTIME agent detail. A compute (deployment) hosts one or more execution
- * runtimes; each runtime has its own env id, AI provider binding, channel links,
- * sessions, and control UI. Terminal and compute controls are deployment-wide
- * because they attach to the shared hosted compute.
+ * Hosted agent detail. A compute (deployment) hosts one selected execution
+ * runtime, with one env id, AI provider binding, channel links, sessions, and
+ * control UI. Terminal and compute controls attach to that same hosted compute.
  */
 export function HostedAgentDetail({
 	environmentId,
@@ -738,8 +717,8 @@ function OverviewTab({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 /**
- * Live agent browser UI embedded inline. The deployment's per-runtime UI URLs
- * point at owner-only runtime bridge URLs. When the runtime
+ * Live agent browser UI embedded inline. The deployment's selected runtime UI
+ * URL points at owner-only exposure. When the runtime
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
  * the full-screen link is the alternate path.
  */
@@ -1140,8 +1119,7 @@ function AiProviderTab({
 		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
 		[list],
 	);
-	// PER-RUNTIME binding (not the deployment-level field): each runtime binds
-	// its own provider in ai_provider_bindings[runtime].
+	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
 	const binding = ci?.ai_provider_bindings?.[runtime];
 	const legacyProviderRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
 	const rawProviderRefs =
@@ -1297,9 +1275,8 @@ function AiProviderTab({
 				return;
 			}
 		}
-		// Scope the edit to THIS runtime only — not every enabled runtime.
 		setProvider.mutate(
-			{ id: deployment.id, agentTypes: [runtime], body },
+			{ id: deployment.id, agentType: runtime, body },
 			{
 				onSuccess: () =>
 					toast.success("Provider updated", { description: "Updating the runtime…" }),
@@ -1798,20 +1775,21 @@ function HostedAgentSettingsTab({
 	return (
 		<div className="flex flex-col gap-10">
 			<AgentSettingsPanel environmentId={environmentId} />
-			<LanguageTimezoneSettingsSection deployment={deployment} />
-			<ComputeSettingsSections
-				deployment={deployment}
-				isPerformance={isPerformance}
-				runtime={runtime}
-			/>
+			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
+			<ComputeSettingsSections deployment={deployment} isPerformance={isPerformance} />
 		</div>
 	);
 }
 
-function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDeployment }) {
+function LanguageTimezoneSettingsSection({
+	deployment,
+	runtime,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+}) {
 	const setLanguageTimezone = useSetAgentLanguageTimezone();
 	const runAction = useActionLock();
-	const ci = deployment.config_info;
 	// Generated V2HostedDeploymentDetailsInfo currently exposes no language/timezone fields.
 	const configLanguage = "";
 	const configTimezone = "";
@@ -1833,21 +1811,15 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 		if (timezone && !all.includes(timezone)) return [timezone, ...all];
 		return all;
 	}, [timezone]);
-	const targetRuntimes = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
-		runtimeIsEnabled(ci, runtimeId),
-	);
-	const targetRuntimeLabels = targetRuntimes.map(runtimeDisplayName).join(", ");
+	const runtimeLabel = runtimeDisplayName(runtime);
 	const dirty = language !== savedLanguage || timezone !== savedTimezone;
-	const canSave = dirty && targetRuntimes.length > 0 && !setLanguageTimezone.isPending;
+	const canSave = dirty && !setLanguageTimezone.isPending;
 
 	async function saveLanguageTimezone() {
 		if (!canSave) return;
 		await setLanguageTimezone.mutateAsync({
 			id: deployment.id,
-			agentTypes: targetRuntimes,
-			enabledByAgentType: Object.fromEntries(
-				targetRuntimes.map((runtimeId) => [runtimeId, runtimeIsEnabled(ci, runtimeId)]),
-			),
+			agentType: runtime,
 			language,
 			timezone,
 		});
@@ -1863,14 +1835,10 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Set locale context for enabled hosted runtimes."
+			description="Set locale context for this hosted agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>
-					{targetRuntimes.length > 0
-						? `Changes apply live to ${targetRuntimeLabels}.`
-						: "Add OpenClaw or Hermes before saving language and timezone."}
-				</LiveNote>
+				<LiveNote>{`Changes apply live to ${runtimeLabel}.`}</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="settings-agent-language">Language</Label>
@@ -1936,18 +1904,14 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 function ComputeSettingsSections({
 	deployment,
 	isPerformance,
-	runtime,
 }: {
 	deployment: HostedDeployment;
 	isPerformance: boolean;
-	runtime: Runtime;
 }) {
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const lifecycle = useDeploymentLifecycle();
 	const del = useDeleteDeployment();
-	const setEnabled = useSetAgentEnabled();
-	const onboard = useOnboardAgent();
 	const plans = usePlans();
 	const checkout = useCheckout();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
@@ -1957,7 +1921,6 @@ function ComputeSettingsSections({
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
-	const ci = deployment.config_info;
 	const deploymentStatus = parseDeploymentStatus(deployment.status);
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
@@ -1969,12 +1932,6 @@ function ComputeSettingsSections({
 	const [term, setTerm] = useState(currentBillingTerm);
 	const [termChangeConfirmation, setTermChangeConfirmation] =
 		useState<TermChangeConfirmation | null>(null);
-	const envs = ci?.clawdi_cloud_environments ?? {};
-	const enabledRuntimeCount = OPTIONAL_HOSTED_RUNTIMES.filter((runtimeId) =>
-		runtimeIsEnabled(ci, runtimeId),
-	).length;
-	const restartNeedsConfirmation = enabledRuntimeCount > 1;
-	const runtimePending = setEnabled.isPending || onboard.isPending;
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
 	const perfOfferSelection = useMemo(
@@ -2146,14 +2103,6 @@ function ComputeSettingsSections({
 		}
 	}
 
-	async function setRuntimeEnabled(agentType: Runtime, enabled: boolean) {
-		await setEnabled.mutateAsync({ id: deployment.id, agentType, enabled });
-	}
-
-	async function addRuntime(agentType: Runtime) {
-		await onboard.mutateAsync({ id: deployment.id, agentType });
-	}
-
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
 		await lifecycle.mutateAsync({ id: deployment.id, action });
 	}
@@ -2192,106 +2141,7 @@ function ComputeSettingsSections({
 				</DialogContent>
 			</Dialog>
 
-			<SettingsSection
-				title="Runtime availability"
-				description="Choose which runtimes are active on this hosted compute."
-			>
-				<div className="flex flex-col gap-4">
-					<LiveNote>
-						Runtime changes apply live, no restart. Keep at least one runtime active.
-					</LiveNote>
-					<div className="flex flex-col">
-						{RUNTIMES.map((r, index) => {
-							const enabled = runtimeIsEnabled(ci, r.id);
-							const isConfigured = runtimeIsConfigured(ci, r.id);
-							const isCurrent = r.id === runtime;
-							const siblingEnv = envs[r.id];
-							const blockedByPlan = !isPerformance && !enabled && enabledRuntimeCount >= 1;
-							const blockedByLastRuntime = enabled && enabledRuntimeCount <= 1;
-							return (
-								<Fragment key={r.id}>
-									{index > 0 ? <Separator /> : null}
-									<div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
-										<AgentIcon agent={r.id} size="md" />
-										<div className="min-w-0 flex-1">
-											<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-												{r.label}
-												{isCurrent ? <Badge variant="secondary">This agent</Badge> : null}
-											</div>
-											<div className="text-xs text-muted-foreground">{r.blurb}</div>
-										</div>
-										<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-											{!isCurrent && enabled && siblingEnv ? (
-												<Button
-													render={
-														<Link
-															to="/agents/$id"
-															params={{ id: siblingEnv }}
-															search={{ source: "on-clawdi" }}
-														/>
-													}
-													nativeButton={false}
-													variant="ghost"
-													size="sm"
-												>
-													Open
-													<ArrowUpRight className="size-3.5" />
-												</Button>
-											) : null}
-											{isConfigured ? (
-												<Switch
-													checked={enabled}
-													disabled={runtimePending || blockedByPlan || blockedByLastRuntime}
-													onCheckedChange={(next) =>
-														void runAction(() => setRuntimeEnabled(r.id, next)).catch(
-															() => undefined,
-														)
-													}
-													aria-label={`Toggle ${r.label}`}
-													title={
-														blockedByLastRuntime
-															? "At least one runtime must stay active"
-															: undefined
-													}
-												/>
-											) : (
-												<Button
-													size="sm"
-													variant="outline"
-													disabled={runtimePending || blockedByPlan}
-													title={
-														blockedByPlan
-															? "Performance compute is required to run both runtimes"
-															: undefined
-													}
-													onClick={() =>
-														void runAction(() => addRuntime(r.id)).catch(() => undefined)
-													}
-												>
-													{onboard.isPending && onboard.variables?.agentType === r.id ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Plus className="size-3.5" />
-													)}
-													Add
-												</Button>
-											)}
-										</div>
-									</div>
-								</Fragment>
-							);
-						})}
-					</div>
-					<p className="text-xs text-muted-foreground">
-						Free can run one runtime; Performance can run OpenClaw and Hermes together.
-					</p>
-				</div>
-			</SettingsSection>
-
-			<SettingsSection
-				title="Compute plan"
-				description="Compute is shared by every runtime in this deployment."
-			>
+			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
 					<div className="min-w-0 flex-1">
 						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
@@ -2440,46 +2290,28 @@ function ComputeSettingsSections({
 				description="Restart, stop, or start the whole hosted compute."
 			>
 				<div className="flex flex-wrap gap-2.5">
-					{restartNeedsConfirmation ? (
-						<ConfirmAction
-							title="Restart shared compute?"
-							description={<p>This restarts every enabled runtime on this compute.</p>}
-							confirmLabel="Restart compute"
-							onConfirm={() => runAction(() => runLifecycleAction("restart"))}
-						>
-							<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
-								{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<RefreshCw className="size-3.5" />
-								)}
-								Restart
-							</Button>
-						</ConfirmAction>
-					) : (
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={lifecycle.isPending || !canRestart}
-							onClick={() =>
-								void runAction(() => runLifecycleAction("restart")).catch(() => undefined)
-							}
-						>
-							{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<RefreshCw className="size-3.5" />
-							)}
-							Restart
-						</Button>
-					)}
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={lifecycle.isPending || !canRestart}
+						onClick={() =>
+							void runAction(() => runLifecycleAction("restart")).catch(() => undefined)
+						}
+					>
+						{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+						Restart
+					</Button>
 					{canStop ? (
 						<ConfirmAction
-							title="Stop shared compute?"
+							title="Stop compute?"
 							description={
 								<p>
-									This stops the shared compute for every enabled runtime. Runtime UIs, terminal
-									access, sessions, and channels pause until you start it again.
+									This stops the hosted agent. Runtime UI, terminal access, sessions, and channels
+									pause until you start it again.
 								</p>
 							}
 							confirmLabel="Stop compute"
@@ -2518,21 +2350,19 @@ function ComputeSettingsSections({
 
 			<SettingsSection
 				title="Danger zone"
-				description="Tear down this hosted compute and every runtime agent on it."
+				description="Tear down this hosted compute and its agent runtime."
 				variant="destructive"
 			>
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 					<div>
 						<div className="text-sm font-medium">Delete this compute</div>
 						<p className="text-xs text-muted-foreground">
-							Tears down this deployment and every runtime agent on it. This can’t be undone.
+							Tears down this deployment and its agent runtime. This can’t be undone.
 						</p>
 					</div>
 					<ConfirmAction
 						title={`Delete ${deploymentDisplayName(deployment.name)}?`}
-						description={
-							<p>The hosted runtime and all its agents are torn down. This can’t be undone.</p>
-						}
+						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
 						confirmLabel="Delete compute"
 						destructive
 						onConfirm={() => runAction(deleteCompute)}

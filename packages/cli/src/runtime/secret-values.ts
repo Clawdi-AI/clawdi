@@ -1,5 +1,18 @@
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 
+const ENV_SECRET_REF_PREFIX = "env://";
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function envSecretRefName(ref: string): string | null {
+	if (!ref.startsWith(ENV_SECRET_REF_PREFIX)) return null;
+	const envName = ref.slice(ENV_SECRET_REF_PREFIX.length);
+	return ENV_KEY_RE.test(envName) ? envName : null;
+}
+
+export function isEnvSecretRef(ref: string): boolean {
+	return envSecretRefName(ref) !== null;
+}
+
 export function normalizeSecretValues(
 	secretValues: Record<string, string> | undefined,
 ): Record<string, string> {
@@ -15,6 +28,11 @@ export function normalizeSecretValues(
 }
 
 export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
+	const envName = envSecretRefName(ref);
+	if (envName) {
+		const value = process.env[envName]?.trim();
+		return value ? value : null;
+	}
 	const normalized = normalizeSecretRef(ref);
 	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
 	const candidates = [ref, normalized, raw].filter(
