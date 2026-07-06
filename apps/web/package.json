@@ -19,7 +19,7 @@
 	"dependencies": {
 		"@base-ui/react": "^1.6.0",
 		"@clawdi/shared": "workspace:*",
-		"@clerk/tanstack-react-start": "^1.4.12",
+		"@clerk/tanstack-react-start": "^1.4.13",
 		"@clerk/themes": "^2.4.57",
 		"@dnd-kit/core": "^6.3.1",
 		"@dnd-kit/sortable": "^10.0.0",
@@ -44,7 +44,7 @@
 		"nitro": "^3.0.260610-beta",
 		"nuqs": "^2.9.0",
 		"openapi-fetch": "^0.17.0",
-		"posthog-js": "^1.396.6",
+		"posthog-js": "^1.398.0",
 		"react": "catalog:",
 		"react-dom": "catalog:",
 		"react-markdown": "^10.1.0",
