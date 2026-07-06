@@ -692,7 +692,7 @@ export interface components {
             /** Ai Provider Id */
             ai_provider_id?: string | null;
             /** Ai Provider Ids */
-            provider_ids?: string[] | null;
+            provider_ids?: string[];
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
             /** Ai Provider Bootstrap */
@@ -890,7 +890,7 @@ export interface components {
             /** Ai Provider Id */
             ai_provider_id?: string | null;
             /** Ai Provider Ids */
-            provider_ids?: string[] | null;
+            provider_ids?: string[];
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
             /** Ai Provider Bootstrap */
