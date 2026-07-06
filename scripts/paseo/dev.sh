@@ -93,7 +93,7 @@ trap 'cleanup; exit 143' TERM
     VITE_CLAWDI_DEPLOY_API_URL="$VITE_CLAWDI_DEPLOY_API_URL" \
     VITE_DEV_AUTH_BYPASS="${VITE_DEV_AUTH_BYPASS:-}" \
     VITE_DEV_AUTH_TOKEN="${VITE_DEV_AUTH_TOKEN:-}" \
-    bun run dev -- --hostname "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
+    bun run dev -- --host "$WEB_BIND_HOST" --port "$WEB_RUNTIME_PORT"
 ) &
 pids+=("$!")
 
