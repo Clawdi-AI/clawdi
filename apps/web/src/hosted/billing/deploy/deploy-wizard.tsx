@@ -91,7 +91,6 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
-import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
@@ -280,7 +279,6 @@ export function DeployWizard() {
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
-	const [connectChannelOpen, setConnectChannelOpen] = useState(false);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 
@@ -748,7 +746,7 @@ export function DeployWizard() {
 							Channels <span className="font-normal text-muted-foreground">· optional</span>
 						</>
 					}
-					description="Prepare a bot now, then link it from the agent page once deployment finishes."
+					description="Deploy first, then link a native channel from the agent page once provisioning creates the agent identity."
 				>
 					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
@@ -773,11 +771,6 @@ export function DeployWizard() {
 						) : (
 							channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)
 						)}
-						<AddTile
-							title="Connect a channel"
-							description="Prepare a bot; link it after provisioning."
-							onClick={() => setConnectChannelOpen(true)}
-						/>
 					</div>
 				</SettingsSection>
 
@@ -925,14 +918,12 @@ export function DeployWizard() {
 				</div>
 			</div>
 
-			{/* Create a provider / channel WITHOUT leaving the wizard — the lists
-			    refetch on success so the new one appears as a choice above. */}
+			{/* Create a provider without leaving the wizard. */}
 			<AddProviderDialog
 				open={addProviderOpen}
 				onOpenChange={setAddProviderOpen}
 				onCreated={selectCreatedProvider}
 			/>
-			<ConnectBotDialog open={connectChannelOpen} onOpenChange={setConnectChannelOpen} />
 		</div>
 	);
 }
