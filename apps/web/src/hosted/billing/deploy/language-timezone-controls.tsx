@@ -27,6 +27,11 @@ export const LANGUAGE_OPTIONS = [
 	{ code: "pt", label: "Português" },
 ] as const;
 
+export const LANGUAGE_SELECT_ITEMS = [
+	{ value: "default", label: "Default" },
+	...LANGUAGE_OPTIONS.map((option) => ({ value: option.code, label: option.label })),
+] as const;
+
 // Static IANA timezone list keeps SSR and client markup deterministic.
 const TIMEZONE_OPTIONS = `
 Africa/Abidjan

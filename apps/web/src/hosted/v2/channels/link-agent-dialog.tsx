@@ -88,6 +88,17 @@ export function LinkAgentDialog({
 	}
 
 	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
+	const agentItems = useMemo(
+		() =>
+			agents.map((env) => {
+				const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
+				return {
+					value: env.id,
+					label: agentTextLabel(env, { ownershipKind }),
+				};
+			}),
+		[agents, ownership],
+	);
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,6 +141,7 @@ export function LinkAgentDialog({
 							Agent
 						</Label>
 						<Select
+							items={agentItems}
 							value={agentId}
 							onValueChange={(value) => {
 								if (value !== null) setAgentId(value);

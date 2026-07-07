@@ -38,6 +38,7 @@ import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request
 import {
 	browserTimezone,
 	LANGUAGE_OPTIONS,
+	LANGUAGE_SELECT_ITEMS,
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
@@ -46,6 +47,7 @@ import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
+	checkoutReturnWasCanceled,
 	useCheckout,
 	useCheckoutReturnRefresh,
 	useCreateDeployment,
@@ -334,6 +336,12 @@ export function DeployWizard() {
 		if (!marker || checkoutReturnRef.current === marker) return;
 		checkoutReturnRef.current = marker;
 		void refreshCheckoutReturn().then(() => {
+			if (checkoutReturnWasCanceled(searchStr)) {
+				toast.message("Checkout canceled", {
+					description: "You were not charged. Your agent was not deployed.",
+				});
+				return;
+			}
 			const deploymentId = checkoutReturnDeploymentId(searchStr);
 			if (deploymentId) {
 				void router.navigate({
@@ -864,6 +872,7 @@ export function DeployWizard() {
 									Language
 								</label>
 								<Select
+									items={LANGUAGE_SELECT_ITEMS}
 									value={language || "default"}
 									onValueChange={(v) => {
 										setLanguage(v === null || v === "default" ? "" : v);
@@ -960,12 +969,28 @@ function PrimaryModelPicker({
 }) {
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	const primaryProviderItems = [
+		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
+			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			: []),
+		...customProviders
+			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+			.map((provider) => ({
+				value: provider.provider_id,
+				label: provider.label ?? provider.provider_id,
+			})),
+	];
+	const catalogModelItems = [
+		...catalogModelIds.map((model) => ({ value: model, label: model })),
+		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+	];
 	return (
 		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
 			<div className="grid gap-3 sm:grid-cols-2">
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="deploy-primary-provider">Primary provider</Label>
 					<Select
+						items={primaryProviderItems}
 						value={primaryProviderChoice}
 						onValueChange={(value) => {
 							if (value) onPrimaryProviderChange(value);
@@ -992,6 +1017,7 @@ function PrimaryModelPicker({
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="deploy-catalog-model">Catalog model</Label>
 						<Select
+							items={catalogModelItems}
 							value={modelChoice}
 							onValueChange={(value) => {
 								if (!value) return;

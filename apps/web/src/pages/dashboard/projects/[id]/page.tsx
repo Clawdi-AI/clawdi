@@ -861,6 +861,10 @@ function UseProjectWithAgentDialog({
 		() => [...environments].sort(compareEnvironmentsForUse),
 		[environments],
 	);
+	const agentItems = orderedEnvironments.map((env) => ({
+		value: env.id,
+		label: displayAgentName(env),
+	}));
 	const selectedEnv = orderedEnvironments.find((env) => env.id === selectedAgentId) ?? null;
 	const projectIsHome = selectedEnv?.default_project_id === project.id;
 	const selectedBindings = useQuery({
@@ -943,6 +947,7 @@ function UseProjectWithAgentDialog({
 						<div className="space-y-2">
 							<div className="text-sm font-medium">Agent</div>
 							<Select
+								items={agentItems}
 								value={selectedAgentId}
 								onValueChange={(value) => {
 									if (value !== null) setSelectedAgentId(value);

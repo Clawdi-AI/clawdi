@@ -4,6 +4,8 @@ import type { ComputeSubscriptionActionResult, HostedDeployment } from "@/hosted
 import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
+	checkoutReturnMarker,
+	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
 
@@ -131,5 +133,18 @@ describe("refreshCheckoutReturnQueries", () => {
 		);
 		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
+	});
+});
+
+describe("checkout return parsing", () => {
+	test("recognizes Stripe cancel returns as checkout markers", () => {
+		expect(checkoutReturnWasCanceled("?checkout=cancel")).toBe(true);
+		expect(checkoutReturnWasCanceled("?settings=billing-plan&checkout=cancel")).toBe(true);
+		expect(checkoutReturnMarker("?checkout=cancel")).toBe("checkout=cancel");
+	});
+
+	test("does not treat passive checkout success copy as a refresh marker", () => {
+		expect(checkoutReturnWasCanceled("?checkout=success")).toBe(false);
+		expect(checkoutReturnMarker("?checkout=success")).toBeNull();
 	});
 });

@@ -246,6 +246,12 @@ export function ProjectScopePicker({
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
 	const selectedAgent = selectedProject ? projectAgentFor(selectedProject, agentsById) : null;
 	const groupedProjects = projectPickerGroups(projects);
+	const projectItems = [
+		...(allowAll ? [{ value: "all", label: allLabel }] : []),
+		...projects.flatMap((project) =>
+			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
+		),
+	];
 	const isStacked = layout === "stacked";
 	return (
 		<div
@@ -267,6 +273,7 @@ export function ProjectScopePicker({
 				</span>
 			) : null}
 			<Select
+				items={projectItems}
 				value={value}
 				onValueChange={(nextValue) => {
 					if (nextValue !== null) onValueChange(nextValue);
@@ -351,8 +358,15 @@ export function ProjectCompactPicker({
 }) {
 	const selectedProject = projects.find((project) => project.id === value) ?? null;
 	const agentsById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
+	const projectItems = [
+		...(allowAll ? [{ value: "all", label: allLabel }] : []),
+		...projects.flatMap((project) =>
+			project.id ? [{ value: project.id, label: displayProjectName(project) }] : [],
+		),
+	];
 	return (
 		<Select
+			items={projectItems}
 			value={value}
 			onValueChange={(nextValue) => {
 				if (nextValue !== null) onValueChange(nextValue);
