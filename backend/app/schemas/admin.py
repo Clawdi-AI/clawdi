@@ -15,6 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
+AdminAiProviderApiMode = Literal[
+    "openai_chat",
+    "openai_responses",
+    "anthropic_messages",
+    "google_generate_content",
+]
+AdminAiProviderInputModality = Literal["text", "image", "video", "audio"]
 _SUPPORTED_HOSTED_RUNTIMES = {"codex", "hermes", "openclaw"}
 _BRIDGE_SURFACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _BRIDGE_SURFACE_KEYS = {
@@ -179,6 +186,16 @@ class AdminRuntimeStateResponse(BaseModel):
     generation: int
 
 
+class AdminManagedAiProviderModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    id: str = Field(min_length=1, max_length=300)
+    api_mode: AdminAiProviderApiMode | None = None
+    input_modalities: list[AdminAiProviderInputModality] | None = None
+    context_window: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, ge=0)
+
+
 class AdminManagedAiProviderUpsert(BaseModel):
     """Create or rotate the first-party managed AI provider for a user."""
 
@@ -188,6 +205,7 @@ class AdminManagedAiProviderUpsert(BaseModel):
     base_url: str = Field(min_length=1, max_length=1000)
     api_key: SecretStr = Field(min_length=1)
     default_model: str | None = Field(default=None, max_length=300)
+    models: list[AdminManagedAiProviderModel] | None = None
     label: str | None = Field(default=None, max_length=200)
     capabilities: dict[str, Any] | None = None
 

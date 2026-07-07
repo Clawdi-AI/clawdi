@@ -1163,6 +1163,14 @@ chmod +x "$HOME/.local/bin/hermes"
 							kind: "openai-compatible",
 							baseUrl: "https://openclaw-provider.example.test/v1",
 							model: "gpt-5.5",
+							models: [
+								{
+									id: "gpt-5.5",
+									context_window: 272000,
+									max_tokens: 128000,
+									input_modalities: ["text", "image"],
+								},
+							],
 							apiMode: "openai_responses",
 							runtimeEnvName: "OPENCLAW_PROVIDER_API_KEY",
 							apiKeySecretRef: "provider.openclaw.apiKey",
@@ -1190,6 +1198,13 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(patch.models.providers.openclaw.baseUrl).toBe(
 			"https://openclaw-provider.example.test/v1",
 		);
+		expect(patch.models.providers.openclaw.models[0]).toMatchObject({
+			id: "gpt-5.5",
+			contextWindow: 272000,
+			maxTokens: 128000,
+			input: ["text", "image"],
+			api: "openai-responses",
+		});
 		expect(JSON.stringify(patch)).not.toContain("hermes-provider.example.test");
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("provider: custom:hermes");

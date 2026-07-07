@@ -264,6 +264,11 @@ async def admin_upsert_clawdi_managed_ai_provider(
             base_url=body.base_url,
             api_key=body.api_key.get_secret_value(),
             default_model=body.default_model,
+            models=(
+                [model.model_dump(exclude_none=True) for model in body.models]
+                if body.models is not None
+                else None
+            ),
             label=body.label,
             capabilities=body.capabilities,
         )

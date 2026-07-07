@@ -47,6 +47,7 @@ async def upsert_clawdi_managed_provider(
     base_url: str,
     api_key: str,
     default_model: str | None = None,
+    models: list[dict] | None = None,
     label: str | None = None,
     capabilities: dict | None = None,
 ) -> AiProvider:
@@ -73,7 +74,10 @@ async def upsert_clawdi_managed_provider(
     provider.base_url = normalized_base_url
     provider.api_mode = MANAGED_AI_PROVIDER_API_MODE
     provider.capabilities = capabilities
-    provider.models = [{"id": default_model}] if default_model else None
+    if models is not None:
+        provider.models = models
+    else:
+        provider.models = [{"id": default_model}] if default_model else None
     provider.auth_type = "api_key"
     provider.auth_ref = None
     provider.auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
