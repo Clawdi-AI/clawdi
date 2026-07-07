@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Legacy Agent Environments */
+        /** List V1 Agent Environments */
         get: operations["list_v1_agent_environments_agent_environments_get"];
         put?: never;
         post?: never;
@@ -120,23 +120,6 @@ export interface paths {
         put?: never;
         /** Create V2 Deployment Terminal Session */
         post: operations["create_v2_deployment_terminal_session_v2_deployments__deployment_id__terminal_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/deployments/{deployment_id}/onboard-agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Onboard V2 Agent */
-        post: operations["onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -437,13 +420,6 @@ export interface components {
             evm_wallet_address?: string | null;
             capabilities: components["schemas"]["V1UserProductCapabilities"];
         };
-        /** V2AiProviderPrimaryModelRef */
-        V2AiProviderPrimaryModelRef: {
-            /** Provider Id */
-            provider_id: string;
-            /** Model */
-            model: string;
-        };
         /** V2AiProviderBindingInfo */
         V2AiProviderBindingInfo: {
             /** Provider Id */
@@ -455,8 +431,14 @@ export interface components {
              * @enum {string}
              */
             auth_kind: "managed" | "api_key" | "codex_oauth";
-            /** Primary Model */
-            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef-Output"] | null;
+        };
+        /** V2AiProviderPrimaryModelRef */
+        "V2AiProviderPrimaryModelRef-Output": {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
         };
         /** V2BillingOfferResponse */
         V2BillingOfferResponse: {
@@ -614,7 +596,7 @@ export interface components {
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
             /** Primary Model */
-            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["app__v2__hosted__schemas__V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -654,7 +636,7 @@ export interface components {
              */
             compute_plan_slug: "compute_free" | "compute_performance";
             /** Primary Model */
-            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["app__v2__hosted__schemas__V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -681,17 +663,13 @@ export interface components {
             timezone?: string | null;
             /** Public Ports */
             public_ports?: number[] | null;
-            /**
-             * Runtime
-             * @default openclaw
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
+            /** Runtime */
+            runtime?: ("openclaw" | "hermes") | null;
             /** Deploy Request Id */
             deploy_request_id?: string | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
-            /** Ai Provider Ids */
+            /** Provider Ids */
             provider_ids?: string[];
             /** Ai Provider Auth Kind */
             ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
@@ -772,10 +750,6 @@ export interface components {
              * @enum {string}
              */
             runtime: "openclaw" | "hermes";
-            /** Onboarded Agents */
-            onboarded_agents?: string[];
-            /** Configured Agents */
-            configured_agents?: string[];
             /** Clawdi Cloud Environments */
             clawdi_cloud_environments?: {
                 [key: string]: string;
@@ -814,8 +788,6 @@ export interface components {
             status: string;
             /** Endpoints */
             endpoints?: string[];
-            /** Gateway Token */
-            gateway_token?: string | null;
             /** Openclaw Control Ui Url */
             openclaw_control_ui_url?: string | null;
             /** Hermes Control Ui Url */
@@ -870,34 +842,6 @@ export interface components {
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
         };
-        /** V2OnboardAgentRequest */
-        V2OnboardAgentRequest: {
-            /**
-             * Agent Type
-             * @enum {string}
-             */
-            agent_type: "openclaw" | "hermes";
-            /** Primary Model */
-            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
-            /** Assistant Name */
-            assistant_name?: string | null;
-            /** Personality */
-            personality?: string | null;
-            /** Language */
-            language?: string | null;
-            /** Timezone */
-            timezone?: string | null;
-            /** Ai Provider Id */
-            ai_provider_id?: string | null;
-            /** Ai Provider Ids */
-            provider_ids?: string[];
-            /** Ai Provider Auth Kind */
-            ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
-            /** Ai Provider Bootstrap */
-            ai_provider_bootstrap?: {
-                [key: string]: unknown;
-            } | null;
-        };
         /** V2PlanResponse */
         V2PlanResponse: {
             /** Slug */
@@ -951,11 +895,11 @@ export interface components {
         /** V2RebindAgentAiProviderRequest */
         V2RebindAgentAiProviderRequest: {
             /** Primary Model */
-            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["app__v2__api_schemas__V2AiProviderPrimaryModelRef"] | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
-            /** Ai Provider Ids */
-            provider_ids?: string[] | null;
+            /** Provider Ids */
+            provider_ids?: string[];
             /**
              * Ai Provider Auth Kind
              * @enum {string}
@@ -983,6 +927,8 @@ export interface components {
             assistant_name?: string | null;
             /** Name */
             name?: string | null;
+            /** Runtime */
+            runtime?: ("openclaw" | "hermes") | null;
         };
         /** V2WalletAutoReloadActionResponse */
         V2WalletAutoReloadActionResponse: {
@@ -1087,6 +1033,20 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** V2AiProviderPrimaryModelRef */
+        app__v2__api_schemas__V2AiProviderPrimaryModelRef: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
+        };
+        /** V2AiProviderPrimaryModelRef */
+        app__v2__hosted__schemas__V2AiProviderPrimaryModelRef: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
         };
     };
     responses: never;
@@ -1377,41 +1337,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2DeploymentTerminalSessionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    onboard_v2_agent_v2_deployments__deployment_id__onboard_agent_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2OnboardAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2HostedDeploymentResponse"];
                 };
             };
             /** @description Validation Error */

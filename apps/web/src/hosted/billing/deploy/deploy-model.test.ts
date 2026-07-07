@@ -24,8 +24,6 @@ function deployment(
 			kobb_available: false,
 			ai_provider_auth_kind: "managed",
 			runtime: "openclaw",
-			onboarded_agents: ["openclaw"],
-			configured_agents: ["openclaw"],
 			clawdi_cloud_environments: {},
 			ai_provider_bindings: {},
 			public_ports: [],

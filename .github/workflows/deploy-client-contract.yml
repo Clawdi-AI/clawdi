@@ -1,0 +1,98 @@
+name: Deploy Client Contract
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/package.json"
+      - "apps/web/src/hosted/**"
+      - "packages/shared/src/api/deploy.generated.ts"
+      - "packages/shared/src/api/deploy.ts"
+      - "scripts/filter-deploy-openapi.py"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/deploy-client-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/package.json"
+      - "apps/web/src/hosted/**"
+      - "packages/shared/src/api/deploy.generated.ts"
+      - "packages/shared/src/api/deploy.ts"
+      - "scripts/filter-deploy-openapi.py"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/deploy-client-contract.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: deploy-client-contract-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.3.14"
+  CLAWDI_HOSTED_READ_TOKEN: ${{ secrets.CLAWDI_HOSTED_READ_TOKEN }}
+
+jobs:
+  generated-client-current:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require hosted checkout token
+        run: |
+          if [ -z "$CLAWDI_HOSTED_READ_TOKEN" ]; then
+            echo "CLAWDI_HOSTED_READ_TOKEN is required to checkout Clawdi-AI/clawdi-hosted." >&2
+            exit 1
+          fi
+
+      - name: Checkout clawdi
+        uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Checkout clawdi-hosted
+        uses: actions/checkout@v6
+        with:
+          repository: Clawdi-AI/clawdi-hosted
+          ref: main
+          path: clawdi-hosted
+          fetch-depth: 1
+          token: ${{ env.CLAWDI_HOSTED_READ_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: clawdi-hosted/backend/uv.lock
+
+      - name: Install hosted backend dependencies
+        working-directory: clawdi-hosted/backend
+        run: uv sync --frozen --no-install-project
+
+      - name: Generate deploy client from hosted OpenAPI
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          CLERK_PEM_PUBLIC_KEY: test-key
+          ENCRYPTION_KEY: test-encryption-key-for-openapi
+          PHALA_API_KEY: test-phala-key
+          STRIPE_SECRET_KEY: sk_test_fake
+          STRIPE_WEBHOOK_SECRET: whsec_test_fake
+          SUB2API_BASE_URL: http://fake-sub2api:8080
+          SUB2API_ADMIN_API_KEY: fake-s2a-key
+          COMPOSIO_API_KEY: test-composio-key
+          CONNECTOR_CATALOG_BOOTSTRAP_ON_STARTUP: "false"
+        run: |
+          tmp_spec="$(mktemp)"
+          (
+            cd clawdi-hosted/backend
+            uv run python -c 'import json; from app.main import app; print(json.dumps(app.openapi()))' > "$tmp_spec"
+          )
+          python3 scripts/filter-deploy-openapi.py < "$tmp_spec" \
+            | bun x openapi-typescript /dev/stdin \
+              -o packages/shared/src/api/deploy.generated.ts
+          rm -f "$tmp_spec"
+
+      - name: Check generated deploy client drift
+        run: git diff --exit-code -- packages/shared/src/api/deploy.generated.ts
