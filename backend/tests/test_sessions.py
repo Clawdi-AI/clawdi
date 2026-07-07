@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -357,6 +358,65 @@ async def test_session_batch_upserts_and_returns_needs_content(client: httpx.Asy
     listing = (await client.get("/v1/sessions")).json()
     assert listing["total"] == 2
     assert {s["local_session_id"] for s in listing["items"]} == {"sess-abc", "sess-xyz"}
+
+
+@pytest.mark.asyncio
+async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
+    client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    env_id = await _register_env(client)
+    started = datetime(2026, 1, 1, 12, 0, tzinfo=UTC).isoformat()
+    ended = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC).isoformat()
+    payload = {
+        "sessions": [
+            {
+                "environment_id": env_id,
+                "local_session_id": "sess-clock-skew",
+                "started_at": started,
+                "ended_at": started,
+                "duration_seconds": -3,
+                "message_count": 1,
+                "content_hash": "c" * 64,
+            },
+            {
+                "environment_id": env_id,
+                "local_session_id": "sess-normal-duration",
+                "started_at": started,
+                "ended_at": ended,
+                "duration_seconds": 5,
+                "message_count": 1,
+                "content_hash": "d" * 64,
+            },
+        ]
+    }
+    caplog.set_level(logging.WARNING, logger="app.routes.sessions")
+
+    r = await client.post(
+        "/v1/sessions/batch",
+        json=payload,
+        headers={"user-agent": "clawdi-cli/0.12.9"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] == 2
+    assert body["rejected"] == []
+
+    listing = (await client.get("/v1/sessions")).json()
+    by_local_id = {s["local_session_id"]: s for s in listing["items"]}
+    assert by_local_id["sess-clock-skew"]["duration_seconds"] == 0
+    assert by_local_id["sess-normal-duration"]["duration_seconds"] == 5
+
+    clamp_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.routes.sessions"
+        and record.getMessage().startswith("session_batch_duration_clamped")
+    ]
+    assert len(clamp_logs) == 1
+    assert "user_agent='clawdi-cli/0.12.9'" in clamp_logs[0]
+    assert "count=1" in clamp_logs[0]
+    assert "sess-clock-skew" in clamp_logs[0]
 
 
 @pytest.mark.asyncio
