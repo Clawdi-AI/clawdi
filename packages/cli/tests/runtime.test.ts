@@ -2198,6 +2198,113 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("projects WhatsApp tenant credentials as secret-backed auth state", () => {
+		const accountId = "00000000-0000-0000-0000-000000000001";
+		const linkId = "link-whatsapp-1";
+		const credentialId = "credential-whatsapp-1";
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "openclaw",
+				deploymentId: "dep_whatsapp_creds_projection",
+				environmentId: "env_whatsapp_creds_projection",
+				instanceId: "iid_whatsapp_creds_projection",
+				generation: 5,
+				issuedAt: "2026-06-14T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+				},
+				projection: {
+					system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			secretValues: {},
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [
+				{
+					id: accountId,
+					provider: "whatsapp",
+					name: "Hosted WhatsApp",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: linkId,
+							account_id: accountId,
+							agent_id: "env_whatsapp_creds_projection",
+							status: "active",
+							agent_token: "wa-agent-token",
+						},
+					],
+					runtime_credentials: [
+						{
+							id: credentialId,
+							account_id: accountId,
+							agent_link_id: linkId,
+							agent_id: "env_whatsapp_creds_projection",
+							provider: "whatsapp",
+							kind: "whatsapp_baileys_auth_state",
+							created_at: "2026-07-07T00:00:00Z",
+							jid: "15551234567:1@s.whatsapp.net",
+							identity_pub_key_hex: "aabbcc",
+							material: {
+								schemaVersion: "clawdi.whatsappBaileysAuthState.v1",
+								creds: {
+									advSecretKey: "wa-adv-secret",
+									me: { id: "15551234567:1@s.whatsapp.net" },
+								},
+							},
+						},
+					],
+				},
+			],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: '"whatsapp-creds"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		const accountKey = "clawdi_000000000000";
+		const authDir = join("/home/clawdi", ".openclaw", "credentials", "whatsapp", accountKey);
+		const channelProjection = projected.manifest.projection?.channels as Record<string, unknown>;
+		const whatsapp = channelProjection.whatsapp as {
+			accounts: Record<string, { authDir?: string; token?: string }>;
+		};
+		expect(whatsapp.accounts[accountKey]).toMatchObject({
+			authDir,
+			token: "wa-agent-token",
+		});
+		const credentialProjection = projected.manifest.projection?.channelCredentials;
+		expect(credentialProjection).toEqual([
+			{
+				provider: "whatsapp",
+				kind: "whatsapp_baileys_auth_state",
+				accountId,
+				accountKey,
+				linkId,
+				credentialId,
+				authDir,
+				files: [
+					{
+						path: "creds.json",
+						secretRef: `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`,
+					},
+				],
+			},
+		]);
+		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
+		expect(
+			projected.secretValues?.[
+				`secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`
+			],
+		).toContain("wa-adv-secret");
+	});
+
 	it("removes stale channel-driven MITM profiles when runtime channels are disabled", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
@@ -4659,6 +4766,305 @@ exit 0
 		expect(patchText).toContain('"bluebubbles": null');
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
+	});
+
+	it("materializes, rotates, and cleans up WhatsApp auth state for OpenClaw", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const accountKey = "clawdi_whatsapp_runtime";
+		const accountId = "00000000-0000-0000-0000-000000000001";
+		const authDir = join(home, ".openclaw", "credentials", "whatsapp", accountKey);
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-whatsapp-auth-patch.jsonl");
+		const openclawPluginInstalls = join(root, "openclaw-whatsapp-plugin-installs.txt");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatch}'
+  printf '\\n---\\n' >> '${openclawPatch}'
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const credentialSecretRef = (credentialId: string) =>
+			`secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+		const manifestWithCredential = (
+			credentialId: string,
+			creds: Record<string, unknown>,
+			generation: number,
+		): RuntimeManifestLoad => {
+			const secretRef = credentialSecretRef(credentialId);
+			return {
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_whatsapp_auth_state",
+					environmentId: "env_whatsapp_auth_state",
+					instanceId: "iid_whatsapp_auth_state",
+					generation,
+					issuedAt: "2026-07-07T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: {
+							enabled: true,
+							install: {
+								authority: "official",
+								method: "official-installer",
+								url: "https://openclaw.ai/install-cli.sh",
+								home,
+								args: [],
+							},
+						},
+					},
+					projection: {
+						system: { home, workspace },
+						channels: {
+							whatsapp: {
+								enabled: true,
+								defaultAccount: accountKey,
+								accounts: {
+									[accountKey]: {
+										enabled: true,
+										wsUrl: `wss://cloud-api.test/v1/channels/whatsapp/${accountId}/baileys`,
+										token: "wa-runtime-agent-token",
+										authDir,
+									},
+								},
+							},
+						},
+						channelCredentials: [
+							{
+								provider: "whatsapp",
+								kind: "whatsapp_baileys_auth_state",
+								accountId,
+								accountKey,
+								linkId: "link-whatsapp-runtime",
+								credentialId,
+								authDir,
+								files: [{ path: "creds.json", secretRef }],
+							},
+						],
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: `test://whatsapp-auth-state-${generation}`,
+				offline: false,
+				secretValues: { [secretRef]: JSON.stringify(creds) },
+			};
+		};
+		const unlinkedManifest: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_whatsapp_auth_state",
+				environmentId: "env_whatsapp_auth_state",
+				instanceId: "iid_whatsapp_auth_state",
+				generation: 12,
+				issuedAt: "2026-07-07T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					channels: {},
+					channelCredentials: [],
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://whatsapp-auth-state-unlinked",
+			offline: false,
+			secretValues: {},
+		};
+
+		const initialCreds = {
+			advSecretKey: "wa-materialized-secret",
+			me: { id: "15551234567:1@s.whatsapp.net" },
+			noiseKey: { private: { type: "Buffer", data: "AQID" } },
+		};
+		const rotatedCreds = {
+			advSecretKey: "wa-rotated-secret",
+			me: { id: "15557654321:1@s.whatsapp.net" },
+			noiseKey: { private: { type: "Buffer", data: "BAUG" } },
+		};
+
+		const initial = convergeRuntimeManifest(
+			manifestWithCredential("credential-whatsapp-1", initialCreds, 10),
+			getRuntimePaths(),
+		);
+		const rotated = convergeRuntimeManifest(
+			manifestWithCredential("credential-whatsapp-2", rotatedCreds, 11),
+			getRuntimePaths(),
+		);
+
+		expect(initial.installErrors).toEqual([]);
+		expect(rotated.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(join(authDir, "creds.json"), "utf-8"))).toEqual(rotatedCreds);
+		const markerText = readFileSync(join(authDir, ".clawdi-managed-whatsapp-auth.json"), "utf-8");
+		expect(markerText).toContain("credential-whatsapp-2");
+		expect(markerText).not.toContain("wa-rotated-secret");
+		const patchText = readFileSync(openclawPatch, "utf-8");
+		expect(patchText).toContain('"authDir"');
+		expect(patchText).toContain(authDir);
+		expect(patchText).not.toContain("wa-materialized-secret");
+		expect(patchText).not.toContain("wa-rotated-secret");
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toContain("clawhub:@openclaw/whatsapp");
+		const lastGoodManifest = readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8");
+		expect(lastGoodManifest).toContain("credential-whatsapp-2");
+		expect(lastGoodManifest).not.toContain("wa-rotated-secret");
+		const lastGoodSecrets = readFileSync(
+			join(state, "cache", "runtime-secrets.last-good.json"),
+			"utf-8",
+		);
+		expect(lastGoodSecrets).toContain("wa-rotated-secret");
+
+		const removed = convergeRuntimeManifest(unlinkedManifest, getRuntimePaths());
+
+		expect(removed.installErrors).toEqual([]);
+		expect(existsSync(authDir)).toBe(false);
+	});
+
+	it("fails closed and removes stale WhatsApp auth state when creds secret is missing", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const accountKey = "clawdi_missing_whatsapp";
+		const authDir = join(home, ".openclaw", "credentials", "whatsapp", accountKey);
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-whatsapp-missing-secret-patch.jsonl");
+		const openclawPluginInstalls = join(root, "openclaw-whatsapp-missing-secret-installs.txt");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		mkdirSync(authDir, { recursive: true });
+		writeFileSync(
+			join(authDir, "creds.json"),
+			`${JSON.stringify({ advSecretKey: "stale-whatsapp-secret" })}\n`,
+		);
+		writeFileSync(
+			join(authDir, ".clawdi-managed-whatsapp-auth.json"),
+			`${JSON.stringify({
+				schemaVersion: "clawdi.managedWhatsAppAuth.v1",
+				provider: "whatsapp",
+				accountKey,
+				credentialId: "credential-stale",
+			})}\n`,
+		);
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatch}'
+  printf '\\n---\\n' >> '${openclawPatch}'
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const missingSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/credential-missing/creds-json`;
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_whatsapp_missing_secret",
+				environmentId: "env_whatsapp_missing_secret",
+				instanceId: "iid_whatsapp_missing_secret",
+				generation: 9,
+				issuedAt: "2026-07-07T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					channels: {
+						whatsapp: {
+							enabled: true,
+							defaultAccount: accountKey,
+							accounts: {
+								[accountKey]: {
+									enabled: true,
+									wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/account/baileys",
+									token: "wa-runtime-agent-token",
+									authDir,
+								},
+							},
+						},
+					},
+					channelCredentials: [
+						{
+							provider: "whatsapp",
+							kind: "whatsapp_baileys_auth_state",
+							accountKey,
+							credentialId: "credential-missing",
+							authDir,
+							files: [{ path: "creds.json", secretRef: missingSecretRef }],
+						},
+					],
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://whatsapp-missing-secret",
+			offline: false,
+			secretValues: {},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors.join("\n")).toContain(
+			"runtime channel credential materialization failed: missing WhatsApp auth state secret",
+		);
+		expect(existsSync(authDir)).toBe(false);
+		expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(false);
+		expect(JSON.stringify(convergence.manifest)).not.toContain("stale-whatsapp-secret");
 	});
 
 	it("removes stale native channels when a later projection omits them", () => {

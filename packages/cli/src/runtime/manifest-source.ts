@@ -48,6 +48,19 @@ export interface RuntimeChannelAgentLink {
 	agent_token: string | null;
 }
 
+export interface RuntimeChannelCredential {
+	id: string;
+	account_id: string;
+	agent_link_id: string;
+	agent_id: string;
+	provider: string;
+	kind: string;
+	created_at?: string;
+	jid?: string | null;
+	identity_pub_key_hex?: string | null;
+	material?: unknown;
+}
+
 export interface RuntimeChannelAccount {
 	id: string;
 	provider: "telegram" | "discord" | "whatsapp" | "imessage";
@@ -55,6 +68,7 @@ export interface RuntimeChannelAccount {
 	status: string;
 	visibility: "private" | "public";
 	runtime_links: RuntimeChannelAgentLink[];
+	runtime_credentials: RuntimeChannelCredential[];
 }
 
 export interface RuntimeChannelsLoad {
@@ -129,6 +143,21 @@ const runtimeChannelAgentLinkSchema = z
 		agent_token: link.agent_token ?? null,
 	}));
 
+const runtimeChannelCredentialSchema = z
+	.object({
+		id: z.string().min(1),
+		account_id: z.string().min(1),
+		agent_link_id: z.string().min(1),
+		agent_id: z.string().min(1),
+		provider: z.string().min(1),
+		kind: z.string().min(1),
+		created_at: z.string().min(1).optional(),
+		jid: z.string().min(1).nullable().optional(),
+		identity_pub_key_hex: z.string().min(1).nullable().optional(),
+		material: z.unknown().optional(),
+	})
+	.passthrough();
+
 const runtimeChannelAccountSchema = z
 	.object({
 		id: z.string().min(1),
@@ -137,6 +166,7 @@ const runtimeChannelAccountSchema = z
 		status: z.string().min(1),
 		visibility: z.enum(["private", "public"]).default("private"),
 		runtime_links: z.array(runtimeChannelAgentLinkSchema).default([]),
+		runtime_credentials: z.array(runtimeChannelCredentialSchema).default([]),
 	})
 	.passthrough();
 

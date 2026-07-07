@@ -106,6 +106,7 @@ const runtimeProjectionSchema = z
 		system: z.unknown().nullable().optional(),
 		providers: z.record(z.string().min(1), z.unknown()).optional(),
 		channels: z.record(z.string().min(1), z.unknown()).optional(),
+		channelCredentials: z.array(z.unknown()).optional(),
 		aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 		mcp: z.unknown().optional(),
 		tools: z.unknown().optional(),

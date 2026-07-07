@@ -6,6 +6,7 @@ import {
 	chownSync,
 	constants,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -16,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	AiProviderApiMode,
@@ -206,6 +207,195 @@ function writeSecretValues(
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+interface ManagedWhatsAppAuthCredential {
+	accountKey: string;
+	credentialId: string;
+	authDir: string;
+	credsJsonSecretRef: string;
+}
+
+const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
+const MANAGED_WHATSAPP_AUTH_ROOT = [".openclaw", "credentials", "whatsapp"] as const;
+
+function materializeHostedChannelCredentials(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): void {
+	if (!hostedChannelCredentialsDeclared(manifest)) return;
+	const credentials = hostedWhatsAppAuthCredentials(manifest);
+	const normalizedSecrets = normalizeSecretValues(secretValues);
+	const expectedAuthDirs = new Set<string>();
+	const errors: string[] = [];
+	for (const credential of credentials) {
+		const authDirError = managedWhatsAppAuthDirError(manifest, credential.authDir);
+		if (authDirError) {
+			errors.push(authDirError);
+			continue;
+		}
+		expectedAuthDirs.add(resolve(credential.authDir));
+		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
+		if (!credsJson) {
+			removeManagedWhatsAppAuthDir(credential.authDir);
+			errors.push(
+				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
+			);
+			continue;
+		}
+		try {
+			materializeManagedWhatsAppAuthDir(credential, credsJson);
+		} catch (error) {
+			errors.push(error instanceof Error ? error.message : String(error));
+		}
+	}
+	removeStaleManagedWhatsAppAuthDirs(manifest, expectedAuthDirs);
+	if (errors.length > 0) {
+		throw new Error(errors.join("; "));
+	}
+}
+
+function hostedChannelCredentialsDeclared(manifest: RuntimeManifest): boolean {
+	return Boolean(manifest.projection && Object.hasOwn(manifest.projection, "channelCredentials"));
+}
+
+function hostedWhatsAppAuthCredentials(manifest: RuntimeManifest): ManagedWhatsAppAuthCredential[] {
+	const raw = manifest.projection?.channelCredentials;
+	if (!Array.isArray(raw)) return [];
+	return raw
+		.map(parseManagedWhatsAppAuthCredential)
+		.filter((entry): entry is ManagedWhatsAppAuthCredential => entry !== null)
+		.sort((left, right) =>
+			`${left.accountKey}:${left.credentialId}`.localeCompare(
+				`${right.accountKey}:${right.credentialId}`,
+			),
+		);
+}
+
+function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuthCredential | null {
+	const record = recordValue(value);
+	if (!record) return null;
+	if (record.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") return null;
+	const accountKey = stringValue(record.accountKey);
+	const credentialId = stringValue(record.credentialId);
+	const authDir = stringValue(record.authDir);
+	const files = Array.isArray(record.files) ? record.files : [];
+	const credsFile = files
+		.map(recordValue)
+		.find((file) => file?.path === "creds.json" && typeof file.secretRef === "string");
+	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
+	if (!accountKey || !credentialId || !authDir || !credsJsonSecretRef) {
+		throw new Error("WhatsApp auth credential projection is incomplete");
+	}
+	return { accountKey, credentialId, authDir, credsJsonSecretRef };
+}
+
+function materializeManagedWhatsAppAuthDir(
+	credential: ManagedWhatsAppAuthCredential,
+	credsJson: string,
+): void {
+	let parsedCreds: unknown;
+	try {
+		parsedCreds = JSON.parse(credsJson);
+		if (!recordValue(parsedCreds)) {
+			throw new Error("creds.json must be a JSON object");
+		}
+	} catch (error) {
+		removeManagedWhatsAppAuthDir(credential.authDir);
+		throw new Error(
+			`invalid WhatsApp auth state JSON for ${credential.accountKey}/${credential.credentialId}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
+
+	if (existsSync(credential.authDir) && lstatSync(credential.authDir).isSymbolicLink()) {
+		throw new Error(
+			`refusing to overwrite symlinked WhatsApp auth directory ${credential.authDir}`,
+		);
+	}
+	const existingMarker = readManagedWhatsAppAuthMarker(credential.authDir);
+	if (existingMarker && existingMarker.credentialId !== credential.credentialId) {
+		rmSync(credential.authDir, { recursive: true, force: true });
+	} else if (existsSync(credential.authDir) && !existingMarker) {
+		const entries = readdirSync(credential.authDir);
+		if (entries.length > 0) {
+			throw new Error(
+				`refusing to overwrite unmanaged WhatsApp auth directory ${credential.authDir}`,
+			);
+		}
+	}
+
+	makeRuntimeUserPrivateDir(credential.authDir);
+	writePrivateFileAtomic(
+		join(credential.authDir, "creds.json"),
+		`${JSON.stringify(parsedCreds, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o700,
+		},
+	);
+	makeRuntimeUserOwned(join(credential.authDir, "creds.json"));
+	writeJsonFile(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER), {
+		schemaVersion: "clawdi.managedWhatsAppAuth.v1",
+		provider: "whatsapp",
+		accountKey: credential.accountKey,
+		credentialId: credential.credentialId,
+	});
+	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER));
+}
+
+function managedWhatsAppAuthDirError(manifest: RuntimeManifest, authDir: string): string | null {
+	const root = managedWhatsAppAuthRoot(manifest);
+	if (!root) return "WhatsApp auth credential projection is missing runtime home";
+	const relativePath = relative(root, resolve(authDir));
+	if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+		return `WhatsApp auth directory must be under ${root}`;
+	}
+	return null;
+}
+
+function managedWhatsAppAuthRoot(manifest: RuntimeManifest): string | null {
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	return home ? resolve(home, ...MANAGED_WHATSAPP_AUTH_ROOT) : null;
+}
+
+function readManagedWhatsAppAuthMarker(authDir: string): { credentialId: string } | null {
+	const markerPath = join(authDir, MANAGED_WHATSAPP_AUTH_MARKER);
+	try {
+		if (!lstatSync(markerPath).isFile()) return null;
+		const parsed = JSON.parse(readFileSync(markerPath, "utf-8")) as unknown;
+		const record = recordValue(parsed);
+		const credentialId = record ? stringValue(record.credentialId) : null;
+		return credentialId ? { credentialId } : null;
+	} catch {
+		return null;
+	}
+}
+
+function removeManagedWhatsAppAuthDir(authDir: string): void {
+	if (!readManagedWhatsAppAuthMarker(authDir)) return;
+	rmSync(authDir, { recursive: true, force: true });
+}
+
+function removeStaleManagedWhatsAppAuthDirs(
+	manifest: RuntimeManifest,
+	expected: Set<string>,
+): void {
+	const root = managedWhatsAppAuthRoot(manifest);
+	if (!root) return;
+	if (!existsSync(root)) return;
+	for (const entry of readdirSync(root)) {
+		const authDir = join(root, entry);
+		try {
+			if (!lstatSync(authDir).isDirectory()) continue;
+		} catch {
+			continue;
+		}
+		if (!expected.has(authDir)) {
+			removeManagedWhatsAppAuthDir(authDir);
+		}
+	}
 }
 
 function writeScopedSecretValues(
@@ -2759,6 +2949,15 @@ export function convergeRuntimeManifest(
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	writeSecretValues(load.secretValues, paths);
+	try {
+		materializeHostedChannelCredentials(manifest, load.secretValues);
+	} catch (error) {
+		installErrors.push(
+			`runtime channel credential materialization failed: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
 	const mitmSecretFile = writeMitmSecretFile(manifest, load.secretValues, paths);
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,
