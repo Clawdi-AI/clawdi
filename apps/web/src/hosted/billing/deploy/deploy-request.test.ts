@@ -32,6 +32,12 @@ describe("buildHostedDeployRequest", () => {
 		});
 		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in (request.config ?? {})).toBe(false);
+		expect("telegram_bot_token" in request).toBe(false);
+		expect("telegram_bot_token" in (request.config ?? {})).toBe(false);
+		expect("discord_bot_token" in request).toBe(false);
+		expect("discord_bot_token" in (request.config ?? {})).toBe(false);
+		expect("slack_bot_token" in request).toBe(false);
+		expect("slack_bot_token" in (request.config ?? {})).toBe(false);
 	});
 
 	test("serializes backend provider pool contract at the deploy body boundary", () => {
