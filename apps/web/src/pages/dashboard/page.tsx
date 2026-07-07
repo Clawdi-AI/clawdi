@@ -165,11 +165,11 @@ export default function DashboardPage() {
 		[projects],
 	);
 	const hostedAccessLoading = Boolean(HostedAgentsSection && hostedAccess.isLoading);
-	const hostedAgentsEnabled = Boolean(HostedAgentsSection && hostedAccess.canUseCloudAgents);
+	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsSection);
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
-	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
+	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
 	const greeting = renderGreeting(selfManagedFleetSummary, {
 		agentStatusUnavailable: Boolean(envsError),
 	});
@@ -183,7 +183,7 @@ export default function DashboardPage() {
 					<HostedFleetSummary
 						selfManagedTiles={selfManagedTiles}
 						cloudEnvs={environments ?? []}
-						showCloudDeployments={hostedAgentsEnabled}
+						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					>
 						{(summary) =>
@@ -218,7 +218,7 @@ export default function DashboardPage() {
 								}}
 								selfManagedCount={selfManagedCount}
 								cloudEnvs={environments ?? []}
-								showCloudDeployments={hostedAgentsEnabled}
+								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>
 						</Suspense>
@@ -312,7 +312,7 @@ export default function DashboardPage() {
 								selfManagedCount={selfManagedCount}
 								envsLoading={envsLoading}
 								cloudEnvs={environments ?? []}
-								showCloudDeployments={hostedAgentsEnabled}
+								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>
 						</Suspense>

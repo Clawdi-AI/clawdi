@@ -14,7 +14,6 @@ import {
 } from "@/lib/agent-ownership";
 import { IS_HOSTED } from "@/lib/hosted";
 import { isDeployApiConfigured } from "@/lib/hosted-api";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
 // SidebarInset. Below that width the constraint is inert; above it (27"/4K
@@ -62,32 +61,19 @@ function AppSidebarFallback() {
 }
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
 	const [ownership, setOwnership] = useState<AgentOwnership | null>(null);
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showOwnershipSensor =
-		mounted &&
-		IS_HOSTED &&
-		(hostedAccess.canUseCloudAgents || hostedAccess.canUseLegacyHostedDashboard);
+	const showOwnershipSensor = mounted && IS_HOSTED && isDeployApiConfigured();
 	// `null` strictly means "resolving" (destructive actions wait on it), so
 	// the provider must decide when there is nothing to resolve: OSS builds,
-	// hosted mirrors without a configured deploy API, and hosted users whose
-	// access check SUCCEEDED with no hosted capabilities get the resolved
-	// empty ownership immediately. Everything else — loading, or the access
-	// check erroring — stays `null`: destructive actions fail closed, since a
-	// failed /me cannot distinguish a capability-less user from a legacy user
-	// whose live agents must not expose Disconnect.
-	const noExternalControlPlane =
-		!IS_HOSTED ||
-		!isDeployApiConfigured() ||
-		(mounted &&
-			!hostedAccess.isLoading &&
-			!hostedAccess.error &&
-			!hostedAccess.canUseCloudAgents &&
-			!hostedAccess.canUseLegacyHostedDashboard);
+	// and hosted mirrors without a configured deploy API get resolved empty
+	// ownership immediately. Hosted builds with a deploy API keep resolving
+	// deployment ownership even when new v2 deploys are disabled, because
+	// existing Cloud deployments remain manageable under rollback.
+	const noExternalControlPlane = !IS_HOSTED || !isDeployApiConfigured();
 	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
 
 	return (

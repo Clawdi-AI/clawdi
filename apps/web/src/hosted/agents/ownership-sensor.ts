@@ -65,17 +65,16 @@ export function HostedAgentOwnershipSensor({
 }: {
 	onChange: (ownership: AgentOwnership | null) => void;
 }) {
-	const access = useHostedProductAccess();
-	const cloudQuery = useHostedDeployments({ enabled: access.canUseCloudAgents });
+	const cloudQuery = useHostedDeployments();
 	const legacyEnvIds = useLegacyEnvIds();
 
 	const cloudEnvIds = useMemo(() => {
-		if (!access.canUseCloudAgents || !isDeployApiConfigured()) return EMPTY_ENV_IDS;
+		if (!isDeployApiConfigured()) return EMPTY_ENV_IDS;
 		// Fresh/stale data resolves; errors or pending leave the set
 		// UNRESOLVED so destructive consumers fail closed.
 		if (cloudQuery.data) return claimedEnvIdsFromDeployments(cloudQuery.data);
 		return null;
-	}, [access.canUseCloudAgents, cloudQuery.data, cloudQuery.error, cloudQuery.isPending]);
+	}, [cloudQuery.data, cloudQuery.error, cloudQuery.isPending]);
 
 	const ownership = useMemo<AgentOwnership | null>(() => {
 		if (!cloudEnvIds || !legacyEnvIds) return null;

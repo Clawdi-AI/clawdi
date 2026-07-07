@@ -29,7 +29,7 @@ export function AgentDetailClient({
 	if (AgentHome && hostedAccess.isLoading) {
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
-	if (AgentHome && hostedAccess.canUseCloudAgents) {
+	if (AgentHome) {
 		return (
 			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted />}>
 				<AgentHome environmentId={environmentId} section={section} />
@@ -37,7 +37,7 @@ export function AgentDetailClient({
 		);
 	}
 	const showSourceBadge = IS_HOSTED_BUILD
-		? hostedAccess.canUseCloudAgents || hostedAccess.canUseLegacyHostedDashboard
+		? hostedAccess.canCreateCloudAgents || hostedAccess.canUseLegacyHostedDashboard
 		: true;
 	return (
 		<ConnectedAgentDetail
