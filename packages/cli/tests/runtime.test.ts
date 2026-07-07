@@ -1169,6 +1169,9 @@ chmod +x "$HOME/.local/bin/hermes"
 									context_window: 272000,
 									max_tokens: 128000,
 									input_modalities: ["text", "image"],
+									supports_vision: true,
+									supports_tools: true,
+									supports_reasoning: true,
 								},
 							],
 							apiMode: "openai_responses",
@@ -1179,6 +1182,17 @@ chmod +x "$HOME/.local/bin/hermes"
 							kind: "openai-compatible",
 							baseUrl: "https://hermes-provider.example.test/v1",
 							model: "kimi/kimi-for-coding",
+							models: [
+								{
+									id: "kimi/kimi-for-coding",
+									context_window: 262144,
+									max_tokens: 32768,
+									input_modalities: ["text", "image"],
+									supports_vision: true,
+									supports_tools: true,
+									supports_reasoning: true,
+								},
+							],
 							apiMode: "openai_chat",
 							runtimeEnvName: "HERMES_PROVIDER_API_KEY",
 							apiKeySecretRef: "provider.hermes.apiKey",
@@ -1203,6 +1217,8 @@ chmod +x "$HOME/.local/bin/hermes"
 			contextWindow: 272000,
 			maxTokens: 128000,
 			input: ["text", "image"],
+			reasoning: true,
+			compat: { supportsTools: true },
 			api: "openai-responses",
 		});
 		expect(JSON.stringify(patch)).not.toContain("hermes-provider.example.test");
@@ -1210,6 +1226,11 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(hermesConfig).toContain("provider: custom:hermes");
 		expect(hermesConfig).toContain("api: https://hermes-provider.example.test/v1");
 		expect(hermesConfig).toContain("default: kimi/kimi-for-coding");
+		expect(hermesConfig).toContain("models:");
+		expect(hermesConfig).toContain("kimi/kimi-for-coding:");
+		expect(hermesConfig).toContain("context_length: 262144");
+		expect(hermesConfig).toContain("max_tokens: 32768");
+		expect(hermesConfig).toContain("supports_vision: true");
 		expect(hermesConfig).not.toContain("openclaw-provider.example.test");
 		const openclawRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),

@@ -38,9 +38,11 @@ Supported catalog fields for v1 apply:
 - Declarative metadata: `capabilities`.
 - Optional model metadata through JSON catalog import: `models[].id`,
   `models[].label`, `models[].api_mode`, `models[].input_modalities`,
-  `models[].context_window`, and `models[].max_tokens`. Today this is projected
-  only where the pinned agent contract supports it, such as OpenClaw model
-  entries.
+  `models[].supports_vision`, `models[].supports_tools`,
+  `models[].supports_reasoning`, `models[].context_window`, and
+  `models[].max_tokens`. Today this is projected only where the pinned agent
+  contract supports it, such as OpenClaw model entries and Hermes custom
+  provider model overrides.
 
 Agent apply status:
 

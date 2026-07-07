@@ -2657,6 +2657,10 @@ export interface components {
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             /** Input Modalities */
             input_modalities?: ("text" | "image" | "video" | "audio")[] | null;
+            /** Supports Vision */
+            supports_vision?: boolean | null;
+            /** Supports Tools */
+            supports_tools?: boolean | null;
             /** Supports Reasoning */
             supports_reasoning?: boolean | null;
             /** Context Window */

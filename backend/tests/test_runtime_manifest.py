@@ -1545,6 +1545,9 @@ async def test_runtime_manifest_projects_provider_secret_values(
             "context_window": 272000,
             "max_tokens": 128000,
             "input_modalities": ["text", "image"],
+            "supports_vision": True,
+            "supports_tools": True,
+            "supports_reasoning": True,
         }
     ]
     db_session.add(

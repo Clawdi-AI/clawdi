@@ -470,6 +470,9 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
             "context_window": 272000,
             "max_tokens": 128000,
             "input_modalities": ["text", "image"],
+            "supports_vision": True,
+            "supports_tools": True,
+            "supports_reasoning": True,
         }
     ]
     r = await admin_client.put(
