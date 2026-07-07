@@ -64,8 +64,22 @@ class ChannelRuntimeAgentLinkResponse(BaseModel):
     agent_token: str | None = None
 
 
+class ChannelRuntimeCredentialResponse(BaseModel):
+    id: UUID
+    account_id: UUID
+    agent_link_id: UUID
+    agent_id: UUID
+    provider: str
+    kind: str
+    created_at: datetime
+    jid: str | None = None
+    identity_pub_key_hex: str | None = None
+    material: dict[str, Any] | None = None
+
+
 class ChannelRuntimeAccountResponse(ChannelAccountResponse):
     runtime_links: list[ChannelRuntimeAgentLinkResponse] = Field(default_factory=list)
+    runtime_credentials: list[ChannelRuntimeCredentialResponse] = Field(default_factory=list)
 
 
 class ChannelBotPoolCapabilities(BaseModel):

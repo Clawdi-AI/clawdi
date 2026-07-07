@@ -34,11 +34,13 @@ from app.models.channel import (
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBinding,
     ChannelBotAgentLink,
     ChannelDebugEvent,
     ChannelDelivery,
     ChannelMessage,
+    ChannelWhatsAppAuthCert,
 )
 from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
@@ -69,6 +71,7 @@ from app.schemas.channel import (
     ChannelPairCodeResponse,
     ChannelRuntimeAccountResponse,
     ChannelRuntimeAgentLinkResponse,
+    ChannelRuntimeCredentialResponse,
     ChannelSendMessageRequest,
 )
 from app.services.agent_bindings import get_owned_agent_or_404
@@ -97,6 +100,14 @@ from app.services.channels import (
     sync_channel_commands,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
+from app.services.vault_crypto import decrypt
+from app.services.whatsapp_baileys import (
+    buffer_json,
+    deserialize_creds,
+    encode_buffer_json,
+    whatsapp_agent_websocket_url,
+    whatsapp_media_proxy_base_url,
+)
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -144,7 +155,8 @@ def _runtime_agent_link_response(
     )
 
 
-def _runtime_account_response(
+async def _runtime_account_response(
+    db: AsyncSession,
     account: ChannelAccount,
     link: ChannelBotAgentLink,
 ) -> ChannelRuntimeAccountResponse:
@@ -155,7 +167,66 @@ def _runtime_account_response(
     return ChannelRuntimeAccountResponse(
         **_account_response(account).model_dump(),
         runtime_links=[runtime_link],
+        runtime_credentials=await _runtime_credentials_response(db, account=account, link=link),
     )
+
+
+async def _runtime_credentials_response(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> list[ChannelRuntimeCredentialResponse]:
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+        return []
+    result = await db.execute(
+        select(ChannelAgentCredential, ChannelWhatsAppAuthCert)
+        .outerjoin(
+            ChannelWhatsAppAuthCert,
+            ChannelWhatsAppAuthCert.account_id == ChannelAgentCredential.account_id,
+        )
+        .where(
+            ChannelAgentCredential.account_id == account.id,
+            ChannelAgentCredential.bot_agent_link_id == link.id,
+            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+        .order_by(ChannelAgentCredential.created_at.desc(), ChannelAgentCredential.id.desc())
+        .limit(1)
+    )
+    row = result.first()
+    if row is None:
+        return []
+    credential, auth_cert = row
+    creds = deserialize_creds(
+        decrypt(credential.encrypted_credentials, credential.credential_nonce)
+    )
+    material: dict[str, Any] = {
+        "schemaVersion": "clawdi.whatsappBaileysAuthState.v1",
+        "creds": encode_buffer_json(creds),
+        "websocketUrl": whatsapp_agent_websocket_url(account.id),
+        "mediaProxyBaseUrl": whatsapp_media_proxy_base_url(),
+    }
+    if auth_cert is not None:
+        material["authCert"] = {
+            "SERIAL": auth_cert.serial,
+            "ISSUER": "clawdi",
+            "PUBLIC_KEY": buffer_json(auth_cert.root_public_key),
+        }
+    return [
+        ChannelRuntimeCredentialResponse(
+            id=credential.id,
+            account_id=credential.account_id,
+            agent_link_id=credential.bot_agent_link_id,
+            agent_id=link.agent_id,
+            provider=CHANNEL_PROVIDER_WHATSAPP,
+            kind="whatsapp_baileys_auth_state",
+            created_at=credential.created_at,
+            jid=credential.synthetic_jid,
+            identity_pub_key_hex=credential.identity_public_key.hex(),
+            material=material,
+        )
+    ]
 
 
 def _agent_link_with_account_response(
@@ -300,7 +371,7 @@ async def list_channels(
             )
         )
         payload = [
-            _runtime_account_response(account, link).model_dump(mode="json")
+            (await _runtime_account_response(db, account, link)).model_dump(mode="json")
             for account, link in result.all()
         ]
         etag = strong_json_etag(payload)

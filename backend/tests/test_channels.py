@@ -43,6 +43,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
+    ChannelAgentCredential,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -1974,6 +1975,110 @@ async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
     assert listed_b.json() == []
     assert auth_cert_b.status_code == 200
     assert auth_cert_b.json()["PUBLIC_KEY"] == auth_cert.json()["PUBLIC_KEY"]
+
+
+@pytest.mark.asyncio
+async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credential(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="whatsapp",
+        name=f"runtime-whatsapp-{uuid4().hex}",
+        provider_token="wa-provider-token",
+        config={"phone_number_id": "phone-runtime"},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    user, agent = await _create_user_with_channel_agent(db_session, label="runtime-wa-creds")
+
+    async with _client_for_user(db_session, user) as user_client:
+        first = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_id": str(agent.id), "phone_user": "15551234567"},
+        )
+        second = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_id": str(agent.id), "phone_user": "15557654321"},
+        )
+        browser_list = await user_client.get("/v1/channels")
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert browser_list.status_code == 200, browser_list.text
+    assert "runtime_credentials" not in browser_list.text
+    assert "advSecretKey" not in browser_list.text
+
+    active_credentials = (
+        (
+            await db_session.execute(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.account_id == UUID(account_id),
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [str(credential.id) for credential in active_credentials] == [
+        second.json()["credential_id"]
+    ]
+
+    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
+    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+        listed = await runtime_client.get("/v1/channels")
+
+    assert listed.status_code == 200, listed.text
+    assert "wa-provider-token" not in listed.text
+    assert first.json()["credential_id"] not in listed.text
+    payload = listed.json()
+    assert len(payload) == 1
+    runtime_credentials = payload[0]["runtime_credentials"]
+    assert len(runtime_credentials) == 1
+    runtime_credential = runtime_credentials[0]
+    assert runtime_credential["id"] == second.json()["credential_id"]
+    assert runtime_credential["agent_id"] == str(agent.id)
+    assert runtime_credential["agent_link_id"] == second.json()["agent_link_id"]
+    assert runtime_credential["kind"] == "whatsapp_baileys_auth_state"
+    assert runtime_credential["jid"] == second.json()["jid"]
+    assert runtime_credential["identity_pub_key_hex"] == second.json()["identity_pub_key_hex"]
+    material = runtime_credential["material"]
+    assert material["schemaVersion"] == "clawdi.whatsappBaileysAuthState.v1"
+    assert material["creds"]["advSecretKey"]
+    assert material["creds"]["me"]["id"] == second.json()["jid"]
+    assert material["authCert"]["ISSUER"] == "clawdi"
+    assert material["websocketUrl"].endswith(f"/v1/channels/whatsapp/{account_id}/baileys")
+    assert material["mediaProxyBaseUrl"].endswith("/v1/channels/whatsapp/media")
+
+    async with _client_for_user(db_session, user) as user_client:
+        deleted = await user_client.delete(
+            f"/v1/channels/{account_id}/agent-links/{second.json()['agent_link_id']}"
+        )
+    assert deleted.status_code == 204, deleted.text
+
+    active_credentials_after_unlink = (
+        (
+            await db_session.execute(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.account_id == UUID(account_id),
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert active_credentials_after_unlink == []
+
+    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+        listed_after_unlink = await runtime_client.get("/v1/channels")
+
+    assert listed_after_unlink.status_code == 200, listed_after_unlink.text
+    assert listed_after_unlink.json() == []
 
 
 @pytest.mark.asyncio

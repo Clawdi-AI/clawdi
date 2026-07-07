@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -2182,6 +2182,17 @@ async def mint_whatsapp_agent_credential(
     name: str | None = None,
     self_identity: dict[str, str | None] | None = None,
 ) -> StoredWhatsAppCredential:
+    now = datetime.now(UTC)
+    await db.execute(
+        update(ChannelAgentCredential)
+        .where(
+            ChannelAgentCredential.account_id == account.id,
+            ChannelAgentCredential.bot_agent_link_id == bot_agent_link_id,
+            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
     minted = mint_tenant_creds(
         tenant_id=str(bot_agent_link_id),
         phone_user=phone_user,
