@@ -214,136 +214,151 @@ const hostedProviderAuthSchema = z.discriminatedUnion("type", [
 		.passthrough(),
 ]);
 
-export const hostedRuntimeManifestSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-		runtime: hostedRuntimeChoiceSchema,
-		deploymentId: z.string().min(1),
-		environmentId: z.string().min(1).optional(),
-		appId: z.string().min(1).optional(),
-		instanceId: z.string().min(1),
-		generation: z.number().int().nonnegative(),
-		issuedAt: z.string().min(1),
-		expiresAt: z.string().min(1).optional(),
-		system: z
-			.object({
-				user: z.string().min(1).optional(),
-				home: z.string().min(1).optional(),
-				workspace: z.string().min(1).optional(),
-				persistentPaths: z.array(z.string().min(1)).optional(),
-			})
-			.passthrough()
-			.optional(),
-		controlPlane: z
-			.object({
-				manifestUrl: z.string().url().optional(),
-				cloudApiUrl: z.string().url().optional(),
-			})
-			.passthrough()
-			.refine((value) => !("apiUrl" in value), {
-				message: "hosted runtime controlPlane must use cloudApiUrl",
-				path: ["apiUrl"],
-			}),
-		clawdiCli: cliPayloadPolicySchema.optional(),
-		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
-		bridge: runtimeBridgeSchema.optional(),
-		providers: z
-			.record(
-				z.string().min(1),
-				z
-					.object({
-						kind: z.string().min(1).optional(),
-						type: z.string().min(1).optional(),
-						baseUrl: z.string().url().optional(),
-						model: z.string().min(1).optional(),
-						models: z.array(z.unknown()).optional(),
-						apiMode: z.string().min(1).optional(),
-						runtimeEnvName: z.string().min(1).optional(),
-						apiKeySecretRef: z.string().min(1).nullable().optional(),
-						apiKeyRequired: z.boolean().optional(),
-						status: z.enum(["ok", "error", "disabled"]).optional(),
-						error: z
-							.object({
-								code: z.string().min(1),
-								message: z.string().min(1).optional(),
-							})
-							.passthrough()
-							.optional(),
-						auth: hostedProviderAuthSchema.optional(),
-					})
-					.passthrough(),
-			)
-			.optional(),
-		liveSync: liveSyncSchema.optional(),
-		mitmProfiles: z.unknown().optional(),
-		mcp: z.unknown().optional(),
-		tools: z.unknown().optional(),
-		recovery: z
-			.object({
-				cacheManifest: z.boolean().optional(),
-				allowOfflineBoot: z.boolean().optional(),
-			})
-			.passthrough()
-			.optional(),
-	})
-	.strict()
-	.superRefine((manifest, ctx) => {
-		const runtimeKeys = Object.keys(manifest.runtimes);
-		const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
-		if (!manifest.runtimes[manifest.runtime]) {
-			ctx.addIssue({
-				code: "custom",
-				message: `runtimes.${manifest.runtime} must be present for selected runtime`,
-				path: ["runtimes", manifest.runtime],
-			});
-		}
-		for (const key of unexpectedRuntimeKeys) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hosted runtime manifests must declare exactly one selected runtime",
-				path: ["runtimes", key],
-			});
-		}
-		if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
-			ctx.addIssue({
-				code: "custom",
-				message: "selected runtime must be enabled",
-				path: ["runtimes", manifest.runtime, "enabled"],
-			});
-		}
-		const surfaces = manifest.bridge?.surfaces ?? [];
-		if (manifest.runtime === "openclaw" && surfaces.length > 0) {
-			ctx.addIssue({
-				code: "custom",
-				message: "openclaw is exposed natively and must not declare bridge surfaces",
-				path: ["bridge", "surfaces"],
-			});
-		}
-		if (manifest.runtime === "hermes") {
-			if (surfaces.length !== 1) {
+export const hostedRuntimeManifestSchema = z.preprocess(
+	(value) => {
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+		const manifest = value as Record<string, unknown>;
+		if (manifest.runtime !== undefined) return value;
+		const runtimes = manifest.runtimes;
+		if (typeof runtimes !== "object" || runtimes === null || Array.isArray(runtimes)) return value;
+		const runtimeKeys = Object.keys(runtimes).filter(
+			(runtime) => hostedRuntimeChoiceSchema.safeParse(runtime).success,
+		);
+		if (runtimeKeys.length !== 1) return value;
+		return { ...manifest, runtime: runtimeKeys[0] };
+	},
+	z
+		.object({
+			schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+			runtime: hostedRuntimeChoiceSchema,
+			deploymentId: z.string().min(1),
+			environmentId: z.string().min(1).optional(),
+			appId: z.string().min(1).optional(),
+			instanceId: z.string().min(1),
+			generation: z.number().int().nonnegative(),
+			issuedAt: z.string().min(1),
+			expiresAt: z.string().min(1).optional(),
+			system: z
+				.object({
+					user: z.string().min(1).optional(),
+					home: z.string().min(1).optional(),
+					workspace: z.string().min(1).optional(),
+					persistentPaths: z.array(z.string().min(1)).optional(),
+				})
+				.passthrough()
+				.optional(),
+			controlPlane: z
+				.object({
+					manifestUrl: z.string().url().optional(),
+					cloudApiUrl: z.string().url().optional(),
+				})
+				.passthrough()
+				.refine((value) => !("apiUrl" in value), {
+					message: "hosted runtime controlPlane must use cloudApiUrl",
+					path: ["apiUrl"],
+				}),
+			clawdiCli: cliPayloadPolicySchema.optional(),
+			runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
+			bridge: runtimeBridgeSchema.optional(),
+			providers: z
+				.record(
+					z.string().min(1),
+					z
+						.object({
+							kind: z.string().min(1).optional(),
+							type: z.string().min(1).optional(),
+							baseUrl: z.string().url().optional(),
+							model: z.string().min(1).optional(),
+							models: z.array(z.unknown()).optional(),
+							apiMode: z.string().min(1).optional(),
+							managed_by: z.enum(["user", "clawdi"]).optional(),
+							runtimeEnvName: z.string().min(1).optional(),
+							apiKeySecretRef: z.string().min(1).nullable().optional(),
+							apiKeyRequired: z.boolean().optional(),
+							status: z.enum(["ok", "error", "disabled"]).optional(),
+							error: z
+								.object({
+									code: z.string().min(1),
+									message: z.string().min(1).optional(),
+								})
+								.passthrough()
+								.optional(),
+							auth: hostedProviderAuthSchema.optional(),
+						})
+						.passthrough(),
+				)
+				.optional(),
+			liveSync: liveSyncSchema.optional(),
+			mitmProfiles: z.unknown().optional(),
+			mcp: z.unknown().optional(),
+			tools: z.unknown().optional(),
+			recovery: z
+				.object({
+					cacheManifest: z.boolean().optional(),
+					allowOfflineBoot: z.boolean().optional(),
+				})
+				.passthrough()
+				.optional(),
+		})
+		.strict()
+		.superRefine((manifest, ctx) => {
+			const runtimeKeys = Object.keys(manifest.runtimes);
+			const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
+			if (!manifest.runtimes[manifest.runtime]) {
 				ctx.addIssue({
 					code: "custom",
-					message: "hermes must declare exactly one bridge surface",
+					message: `runtimes.${manifest.runtime} must be present for selected runtime`,
+					path: ["runtimes", manifest.runtime],
+				});
+			}
+			for (const key of unexpectedRuntimeKeys) {
+				ctx.addIssue({
+					code: "custom",
+					message: "hosted runtime manifests must declare exactly one selected runtime",
+					path: ["runtimes", key],
+				});
+			}
+			if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
+				ctx.addIssue({
+					code: "custom",
+					message: "selected runtime must be enabled",
+					path: ["runtimes", manifest.runtime, "enabled"],
+				});
+			}
+			const surfaces = manifest.bridge?.surfaces ?? [];
+			if (manifest.runtime === "openclaw" && surfaces.length > 0) {
+				ctx.addIssue({
+					code: "custom",
+					message: "openclaw is exposed natively and must not declare bridge surfaces",
 					path: ["bridge", "surfaces"],
 				});
-				return;
 			}
-			const surface = surfaces.at(0);
-			if (
-				surface?.name !== "hermes" ||
-				surface?.kind !== "control-ui" ||
-				surface?.listenPort !== 28793 ||
-				surface?.upstreamHost !== "127.0.0.1" ||
-				surface?.upstreamPort !== 9119
-			) {
-				ctx.addIssue({
-					code: "custom",
-					message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
-					path: ["bridge", "surfaces", 0],
-				});
+			if (manifest.runtime === "hermes") {
+				if (surfaces.length !== 1) {
+					ctx.addIssue({
+						code: "custom",
+						message: "hermes must declare exactly one bridge surface",
+						path: ["bridge", "surfaces"],
+					});
+					return;
+				}
+				const surface = surfaces.at(0);
+				if (
+					surface?.name !== "hermes" ||
+					surface?.kind !== "control-ui" ||
+					surface?.listenPort !== 28793 ||
+					surface?.upstreamHost !== "127.0.0.1" ||
+					surface?.upstreamPort !== 9119
+				) {
+					ctx.addIssue({
+						code: "custom",
+						message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
+						path: ["bridge", "surfaces", 0],
+					});
+				}
 			}
-		}
-	});
+		}),
+);
 
 export const hostedRuntimeManifestResponseSchema = z
 	.object({

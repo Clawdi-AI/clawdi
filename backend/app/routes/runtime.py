@@ -404,6 +404,8 @@ def _provider_manifest_entry(
         runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     if api_mode:
         projection["apiMode"] = api_mode
+    if provider.managed_by == "clawdi":
+        projection["managed_by"] = provider.managed_by
     if provider.models:
         projection["models"] = provider.models
     if runtime_env_name:

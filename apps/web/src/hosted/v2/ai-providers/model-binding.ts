@@ -7,7 +7,7 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
-export const MANAGED_PRIMARY_MODEL_FALLBACK = "gpt-5";
+export const MANAGED_PRIMARY_MODEL_FALLBACK = "gpt-5.5";
 
 export type PrimaryModelRef = {
 	provider_id: string;

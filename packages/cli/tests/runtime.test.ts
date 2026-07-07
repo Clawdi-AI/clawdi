@@ -67,6 +67,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
+	"CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES",
 	"CLAWDI_RUNTIME_PID1_ENVIRON_PATH",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
@@ -75,6 +76,7 @@ const ENV_KEYS = [
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
 	"CLAWDI_SYSTEMCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
+	"OPENCLAW_GATEWAY_TOKEN",
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
 	RUNTIME_BRIDGE_SURFACES_ENV,
@@ -828,6 +830,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
+			const hermesDashboardEnv = readSystemdEnvFile(paths, "clawdi-hermes-dashboard");
 
 			expect(watchEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
@@ -836,7 +839,11 @@ chmod +x "$HOME/.local/bin/hermes"
 			).not.toContain("clawdi-runtime-bridge.service");
 			expect(hermesEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
 			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
+			expect(hermesDashboardEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
 			expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toContain("sk-runtime");
+			expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toContain(
+				"sk-runtime",
+			);
 		} finally {
 			restore();
 		}
@@ -979,19 +986,25 @@ chmod +x "$HOME/.local/bin/hermes"
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-provider-patch.json");
+		const openclawOriginsPatch = join(root, "openclaw-origins-patch.json");
 		const openclawCommand = join(root, "openclaw-provider-command.txt");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		writeFileSync(
 			openclawBin,
 			[
 				"#!/bin/sh",
-				`printf '%s\\n' "$*" > '${openclawCommand}'`,
-				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
-				`  cat > '${openclawPatch}'`,
+				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  if [ ! -f '${openclawPatch}' ]; then`,
+				`    cat > '${openclawPatch}'`,
+				"  else",
+				`    cat > '${openclawOriginsPatch}'`,
+				"  fi",
 				"  exit 0",
 				"fi",
 				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
@@ -1033,7 +1046,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				},
 				projection: {
 					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					system: { home },
+					system: {
+						home,
+						openclawControlUiAllowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					},
 					providers: {
 						default: {
 							kind: "openai-compatible",
@@ -1053,10 +1069,23 @@ chmod +x "$HOME/.local/bin/hermes"
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf-8").trim()).toBe(
-			"config patch --stdin --replace-path models.providers",
-		);
+		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
+			"config patch --stdin",
+			"config patch --stdin",
+		]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		expect(JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"))).toEqual({
+			gateway: {
+				auth: {
+					mode: "token",
+					token: "gateway-token",
+				},
+				controlUi: {
+					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					dangerouslyDisableDeviceAuth: true,
+				},
+			},
+		});
 		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
 		expect(patch.secrets).toEqual({
 			providers: {
@@ -1087,6 +1116,223 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
+	it("preserves Clawdi-managed provider ownership when projecting hosted providers", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-managed-provider-patch.json");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  cat > '${openclawPatch}'`,
+				"  exit 0",
+				"fi",
+				"exit 2",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const loaded: RuntimeManifestLoad = {
+			source: "remote-datasource",
+			sourcePath: "https://runtime-source.test/desired-state",
+			offline: false,
+			secretValues: {
+				"provider.default.apiKey": "sk-runtime-provider",
+			},
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_clawdi_managed_provider",
+				environmentId: "env_clawdi_managed_provider",
+				instanceId: "iid_clawdi_managed_provider",
+				generation: 1,
+				issuedAt: "2026-06-22T00:00:00Z",
+				workspaceRoot: join(home, "clawdi"),
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: ["--json", "--no-onboard"],
+						},
+						provider_ids: ["clawdi-managed-v2"],
+						primary_model: {
+							provider_id: "clawdi-managed-v2",
+							model: "gpt-5.5",
+						},
+					},
+				},
+				projection: {
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					system: { home },
+					providers: {
+						"clawdi-managed-v2": {
+							kind: "openai-compatible",
+							baseUrl: "https://ai-gateway.example.test/v1",
+							model: "gpt-5.5",
+							models: [
+								{
+									id: "gpt-5.5",
+									context_window: 272000,
+									max_tokens: 128000,
+									input_modalities: ["text", "image"],
+									supports_vision: true,
+									supports_tools: true,
+									supports_reasoning: true,
+								},
+							],
+							apiMode: "openai_chat",
+							managed_by: "clawdi",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				mitmProfiles: { profiles: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed-v2/gpt-5.5");
+		expect(patch.models.providers["clawdi-managed-v2"].baseUrl).toBe(
+			"https://ai-gateway.example.test/v1",
+		);
+	});
+
+	it("reapplies OpenClaw hosted gateway config after the official gateway installer", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawCommand = join(root, "openclaw-command.log");
+		const patchCount = join(root, "openclaw-patch-count");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/bin/sh",
+				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  count=$(cat '${patchCount}' 2>/dev/null || printf '0')`,
+				"  count=$((count + 1))",
+				`  printf '%s' "$count" > '${patchCount}'`,
+				`  cat > '${root}'/openclaw-patch-"$count".json`,
+				"  exit 0",
+				"fi",
+				'if [ "$1 $2 $3 $4" = "gateway install --force --json" ]; then',
+				"  printf '{\"ok\":true}\\n'",
+				"  exit 0",
+				"fi",
+				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
+				"exit 2",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const loaded: RuntimeManifestLoad = {
+			source: "remote-datasource",
+			sourcePath: "https://runtime-source.test/desired-state",
+			offline: false,
+			secretValues: {
+				"provider.default.apiKey": "sk-runtime-provider",
+				"secret://provider.default.apiKey": "sk-runtime-provider",
+			},
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_openclaw_gateway_repatch",
+				environmentId: "env_openclaw_gateway_repatch",
+				instanceId: "iid_openclaw_gateway_repatch",
+				generation: 1,
+				issuedAt: "2026-06-22T00:00:00Z",
+				workspaceRoot: join(home, "clawdi"),
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: ["--json", "--no-onboard"],
+						},
+					},
+				},
+				projection: {
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					system: {
+						home,
+						openclawControlUiAllowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					},
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							baseUrl: "https://ai-gateway.example.test/v1",
+							model: "gpt-5.4-mini",
+							apiMode: "openai_chat",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "provider.default.apiKey",
+						},
+					},
+				},
+				mitmProfiles: { profiles: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
+			"config patch --stdin",
+			"config patch --stdin",
+			"gateway install --force --json",
+			"config patch --stdin",
+			"config patch --stdin",
+		]);
+		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual(
+			JSON.parse(readFileSync(join(root, "openclaw-patch-3.json"), "utf-8")),
+		);
+		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-2.json"), "utf-8"))).toEqual(
+			JSON.parse(readFileSync(join(root, "openclaw-patch-4.json"), "utf-8")),
+		);
+		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-4.json"), "utf-8"))).toEqual({
+			gateway: {
+				auth: {
+					mode: "token",
+					token: "gateway-token",
+				},
+				controlUi: {
+					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					dangerouslyDisableDeviceAuth: true,
+				},
+			},
+		});
+	});
+
 	it("projects runtime-scoped hosted providers into each enabled agent config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1104,7 +1350,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			openclawBin,
 			[
 				"#!/bin/sh",
-				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
@@ -1263,7 +1509,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			openclawBin,
 			[
 				"#!/bin/sh",
-				'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
@@ -1440,7 +1686,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				openclawBin,
 				[
 					"#!/bin/sh",
-					'if [ "$1 $2 $3 $4 $5" = "config patch --stdin --replace-path models.providers" ]; then',
+					'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 					`  cat > '${openclawPatch}'`,
 					"  exit 0",
 					"fi",
