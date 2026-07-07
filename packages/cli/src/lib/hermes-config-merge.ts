@@ -57,6 +57,20 @@ export function mergeHermesMcpServer(
 	});
 }
 
+export function mergeHermesChannelConfig(
+	configPath: string,
+	platforms: Record<"telegram" | "discord", Record<string, unknown>>,
+): void {
+	const document = readHermesConfig(configPath);
+	for (const [platform, config] of Object.entries(platforms)) {
+		document.set(platform, document.createNode(config));
+	}
+	writePrivateFileAtomic(configPath, String(document), {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
+}
+
 export function removeHermesMcpServer(configPath: string, name: string): void {
 	if (!existsSync(configPath)) return;
 	const document = readHermesConfig(configPath);
