@@ -148,7 +148,7 @@ describe("runtime bridge", () => {
 				{ redirect: "manual" },
 			);
 			expect(redirect.status).toBe(302);
-			expect(redirect.headers.get("location")).toBe("/control?x=1&y=2");
+			expect(redirect.headers.get("location")).toBe("control?x=1&y=2");
 			const setCookie = redirect.headers.get("set-cookie") ?? "";
 			expect(setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=secret-token`);
 			expect(setCookie).toContain("Secure");
@@ -164,6 +164,222 @@ describe("runtime bridge", () => {
 			expect(proxied.headers.get("x-upstream")).toBe("openclaw");
 			expect(await proxied.text()).toBe("upstream:/control?x=1");
 			expect(seen).toEqual([{ url: "/control?x=1", host: `127.0.0.1:${upstreamPort}` }]);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("redirects Hermes dashboard query-token logins back to the dashboard path", async () => {
+		const upstream = createServer((_req, res) => {
+			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("hermes-dashboard");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeBridge({
+			token: "hermes-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const redirect = await fetch(`http://127.0.0.1:${bridgePort}/dashboard?t=hermes-token`, {
+				redirect: "manual",
+			});
+			expect(redirect.status).toBe(302);
+			expect(redirect.headers.get("location")).toBe("dashboard");
+			expect(redirect.headers.get("set-cookie") ?? "").toContain(
+				`${RUNTIME_BRIDGE_COOKIE}=hermes-token`,
+			);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("rewrites root-absolute dashboard asset URLs for path-prefixed public routes", async () => {
+		const upstream = createServer((req, res) => {
+			if (req.url === "/dashboard") {
+				const body =
+					'<html><head><link rel="stylesheet" href="/assets/app.css"></head><body><script src="/assets/app.js"></script></body></html>';
+				res.writeHead(200, {
+					"Content-Type": "text/html; charset=utf-8",
+					"Content-Length": Buffer.byteLength(body),
+				});
+				res.end(body);
+				return;
+			}
+			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("asset");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const upstreamPort = serverPort(upstream);
+		const bridge = await startRuntimeBridge({
+			token: "hermes-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort,
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/dashboard`, {
+				headers: {
+					Cookie: `${RUNTIME_BRIDGE_COOKIE}=hermes-token`,
+					"X-Forwarded-Prefix": "/v2-hermes-9119",
+				},
+			});
+			expect(response.status).toBe(200);
+			const body = await response.text();
+			expect(body).toContain('<script src="./__clawdi_runtime_bridge_prefix.js"></script>');
+			expect(body).toContain('href="./assets/app.css"');
+			expect(body).toContain('src="./assets/app.js"');
+			expect(response.headers.get("content-length")).toBe(String(Buffer.byteLength(body)));
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("leaves wildcard-subdomain HTML bodies unchanged when no public path prefix is present", async () => {
+		const html =
+			'<html><head><link rel="stylesheet" href="/style.css"></head><body><script src="/app.js"></script></body></html>';
+		const upstream = createServer((req, res) => {
+			expect(req.url).toBe("/sessions/foo/");
+			res.writeHead(200, {
+				"Content-Type": "text/html; charset=utf-8",
+				"Content-Length": Buffer.byteLength(html),
+			});
+			res.end(html);
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeBridge({
+			token: "wildcard-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/sessions/foo/`, {
+				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=wildcard-token` },
+			});
+			const body = await response.text();
+
+			expect(response.status).toBe(200);
+			expect(body).toBe(html);
+			expect(body).not.toContain("__clawdi_runtime_bridge_prefix.js");
+			expect(body).not.toContain('href="./style.css"');
+			expect(body).not.toContain('src="./app.js"');
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("passes through chunked text/html responses without body rewriting", async () => {
+		const chunks = [
+			'<html><head><link rel="stylesheet" href="/chunked.css"></head>',
+			'<body><script src="/chunked.js"></script></body></html>',
+		];
+		const upstream = createServer((req, res) => {
+			expect(req.url).toBe("/dashboard");
+			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+			res.write(chunks[0]);
+			setTimeout(() => res.end(chunks[1]), 5);
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeBridge({
+			token: "chunked-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const response = await fetch(`http://127.0.0.1:${bridgePort}/dashboard`, {
+				headers: {
+					Cookie: `${RUNTIME_BRIDGE_COOKIE}=chunked-token`,
+					"X-Forwarded-Prefix": "/v2-hermes-9119",
+				},
+			});
+			const body = await response.text();
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("transfer-encoding")).toBe("chunked");
+			expect(response.headers.get("content-length")).toBeNull();
+			expect(body).toBe(chunks.join(""));
+			expect(body).not.toContain("__clawdi_runtime_bridge_prefix.js");
+			expect(body).not.toContain('href="./chunked.css"');
+			expect(body).not.toContain('src="./chunked.js"');
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("serves the browser path-prefix helper after cookie auth", async () => {
+		const upstream = createServer((_req, res) => {
+			res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("upstream-not-used");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeBridge({
+			token: "prefix-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const unauthorized = await fetch(
+				`http://127.0.0.1:${bridgePort}/__clawdi_runtime_bridge_prefix.js`,
+			);
+			expect(unauthorized.status).toBe(401);
+
+			const response = await fetch(
+				`http://127.0.0.1:${bridgePort}/__clawdi_runtime_bridge_prefix.js`,
+				{ headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=prefix-token` } },
+			);
+			const body = await response.text();
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("content-type")).toBe("application/javascript; charset=utf-8");
+			expect(body).toContain("window.history.pushState");
+			expect(body).toContain("window.fetch");
+			expect(body).toContain("window.WebSocket");
+			expect(body).toContain("window.XMLHttpRequest.prototype.open");
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -423,7 +639,7 @@ describe("runtime bridge", () => {
 				path: "/socket?t=ws-token&x=1",
 			});
 			expect(redirect.statusCode).toBe(302);
-			expect(redirect.location).toBe("/socket?x=1");
+			expect(redirect.location).toBe("socket?x=1");
 			expect(redirect.setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=ws-token`);
 
 			const authorized = await websocketRequest({

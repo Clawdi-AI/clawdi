@@ -257,6 +257,29 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 	});
 
+	test("infers the hosted runtime when the manifest has one runtime entry", () => {
+		const hostedManifest = hostedRuntimeManifestSchema.parse({
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			deploymentId: "hdep_infer_runtime",
+			environmentId: "env_infer_runtime",
+			instanceId: "hri_infer_runtime",
+			generation: 1,
+			issuedAt: "2026-07-07T00:00:00.000Z",
+			controlPlane: {
+				cloudApiUrl: "https://cloud-api.example.test",
+			},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					install: { source: "official" },
+				},
+			},
+		});
+
+		expect(hostedManifest.runtime).toBe("openclaw");
+		expect(hostedManifestToRuntimeManifest(hostedManifest).runtime).toBe("openclaw");
+	});
+
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({

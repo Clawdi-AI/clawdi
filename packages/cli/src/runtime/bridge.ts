@@ -67,6 +67,86 @@ const HEADER_TIMEOUT_MS = 60_000;
 const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
 const HEALTH_CONNECT_TIMEOUT_MS = 1_000;
 const MAX_HEADER_BYTES = 64 * 1024;
+const BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH = "/__clawdi_runtime_bridge_prefix.js";
+const BRIDGE_PUBLIC_PREFIX_SCRIPT = String.raw`
+(() => {
+	const script = document.currentScript;
+	const scriptUrl = script && script.src ? new URL(script.src, window.location.href) : null;
+	const prefix = scriptUrl
+		? scriptUrl.pathname.replace(/\/__clawdi_runtime_bridge_prefix\.js$/, "")
+		: "";
+	if (!prefix || prefix === "/") return;
+
+	const hasPrefix = (path) => path === prefix || path.startsWith(prefix + "/");
+	const prefixPath = (path) => {
+		if (typeof path !== "string") return path;
+		if (!path.startsWith("/") || path.startsWith("//") || hasPrefix(path)) return path;
+		return prefix + path;
+	};
+	const rewriteUrlLike = (value) => {
+		if (typeof value === "string") {
+			if (value.startsWith("/") && !value.startsWith("//")) return prefixPath(value);
+			try {
+				const url = new URL(value, window.location.href);
+				if (url.host !== window.location.host || hasPrefix(url.pathname)) return value;
+				url.pathname = prefixPath(url.pathname);
+				return url.href;
+			} catch {
+				return value;
+			}
+		}
+		if (value instanceof URL && value.host === window.location.host && !hasPrefix(value.pathname)) {
+			const url = new URL(value.href);
+			url.pathname = prefixPath(url.pathname);
+			return url;
+		}
+		return value;
+	};
+
+	const originalPushState = window.history.pushState;
+	window.history.pushState = function pushStateWithBridgePrefix(state, unused, url) {
+		return originalPushState.call(this, state, unused, url === undefined ? url : rewriteUrlLike(url));
+	};
+	const originalReplaceState = window.history.replaceState;
+	window.history.replaceState = function replaceStateWithBridgePrefix(state, unused, url) {
+		return originalReplaceState.call(this, state, unused, url === undefined ? url : rewriteUrlLike(url));
+	};
+
+	const originalFetch = window.fetch;
+	window.fetch = function fetchWithBridgePrefix(input, init) {
+		if (typeof Request !== "undefined" && input instanceof Request) {
+			const rewritten = rewriteUrlLike(input.url);
+			if (typeof rewritten === "string" && rewritten !== input.url) {
+				return originalFetch.call(this, new Request(rewritten, input), init);
+			}
+		}
+		return originalFetch.call(this, rewriteUrlLike(input), init);
+	};
+
+	const OriginalWebSocket = window.WebSocket;
+	window.WebSocket = class WebSocketWithBridgePrefix extends OriginalWebSocket {
+		constructor(url, protocols) {
+			super(rewriteUrlLike(url), protocols);
+		}
+	};
+
+	if (window.EventSource) {
+		const OriginalEventSource = window.EventSource;
+		window.EventSource = class EventSourceWithBridgePrefix extends OriginalEventSource {
+			constructor(url, config) {
+				super(rewriteUrlLike(url), config);
+			}
+		};
+	}
+
+	if (window.XMLHttpRequest) {
+		const originalOpen = window.XMLHttpRequest.prototype.open;
+		window.XMLHttpRequest.prototype.open = function openWithBridgePrefix(method, url, ...rest) {
+			return originalOpen.call(this, method, rewriteUrlLike(url), ...rest);
+		};
+	}
+})();
+`;
 const HOP_BY_HOP_HEADERS = new Set([
 	"connection",
 	"keep-alive",
@@ -275,7 +355,18 @@ function handleParsedRequest(
 		]);
 		return;
 	}
-	proxyRawRequest(surface, frameAncestors, clientSocket, parsed, remaining);
+	if (isBridgePublicPrefixScriptRequest(parsed)) {
+		writeBridgePublicPrefixScriptResponse(clientSocket);
+		return;
+	}
+	proxyRawRequest(
+		surface,
+		frameAncestors,
+		publicPathPrefix(parsed.headers),
+		clientSocket,
+		parsed,
+		remaining,
+	);
 }
 
 async function respondToHealthCheck(
@@ -321,6 +412,7 @@ function canConnectToUpstream(surface: RuntimeBridgeSurface): Promise<boolean> {
 function proxyRawRequest(
 	surface: RuntimeBridgeSurface,
 	frameAncestors: string,
+	publicPrefix: string,
 	clientSocket: Socket,
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
@@ -345,7 +437,9 @@ function proxyRawRequest(
 	upstreamSocket.once("connect", () => {
 		connected = true;
 		clearTimeout(timer);
-		if (!isUpgrade) pipeUpstreamHttpResponse(upstreamSocket, clientSocket, frameAncestors);
+		if (!isUpgrade) {
+			pipeUpstreamHttpResponse(upstreamSocket, clientSocket, frameAncestors, publicPrefix);
+		}
 		upstreamSocket.write(buildProxyRequestHead(parsed, surface));
 		if (remaining.length > 0) upstreamSocket.write(remaining);
 		clientSocket.pipe(upstreamSocket);
@@ -369,6 +463,7 @@ function pipeUpstreamHttpResponse(
 	upstreamSocket: Socket,
 	clientSocket: Socket,
 	frameAncestors: string,
+	publicPrefix: string,
 ): void {
 	let buffer = Buffer.alloc(0);
 	let handled = false;
@@ -388,6 +483,19 @@ function pipeUpstreamHttpResponse(
 		upstreamSocket.off("data", onData);
 		const rawHead = buffer.subarray(0, headerEnd).toString("latin1");
 		const remaining = buffer.subarray(headerEnd + 4);
+		if (shouldRewriteHtmlBody(rawHead, publicPrefix)) {
+			const chunks = [remaining];
+			upstreamSocket.on("data", (nextChunk) => chunks.push(nextChunk));
+			upstreamSocket.once("end", () => {
+				const body = rewriteHtmlBody(Buffer.concat(chunks));
+				const head = rewriteResponseHeadForFrameEmbedding(rawHead, frameAncestors, body.length);
+				clientSocket.end(Buffer.concat([Buffer.from(`${head}\r\n\r\n`, "latin1"), body]));
+			});
+			upstreamSocket.once("close", () => {
+				if (!clientSocket.destroyed && !clientSocket.writableEnded) clientSocket.end();
+			});
+			return;
+		}
 		const head = rewriteResponseHeadForFrameEmbedding(rawHead, frameAncestors);
 		clientSocket.write(Buffer.from(`${head}\r\n\r\n`, "latin1"));
 		if (remaining.length > 0) clientSocket.write(remaining);
@@ -396,7 +504,65 @@ function pipeUpstreamHttpResponse(
 	upstreamSocket.on("data", onData);
 }
 
-function rewriteResponseHeadForFrameEmbedding(rawHead: string, frameAncestors: string): string {
+function shouldRewriteHtmlBody(rawHead: string, publicPrefix: string): boolean {
+	if (!publicPrefix) return false;
+	const lower = rawHead.toLowerCase();
+	return (
+		lower.includes("content-type: text/html") &&
+		!lower.includes("content-encoding:") &&
+		!lower.includes("transfer-encoding:")
+	);
+}
+
+function rewriteHtmlBody(body: Buffer): Buffer {
+	const rewritten = body
+		.toString("utf8")
+		.replace(/\b(href|src)=["']\/(?!\/)/g, (_match, attr: string) => `${attr}="./`);
+	const helperTag = `<script src=".${BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH}"></script>`;
+	if (rewritten.includes(BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH)) {
+		return Buffer.from(rewritten, "utf8");
+	}
+	if (/<head(?:\s[^>]*)?>/i.test(rewritten)) {
+		return Buffer.from(
+			rewritten.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${helperTag}`),
+			"utf8",
+		);
+	}
+	return Buffer.from(`${helperTag}${rewritten}`, "utf8");
+}
+
+function isBridgePublicPrefixScriptRequest(parsed: ParsedHttpRequest): boolean {
+	const url = requestUrl(parsed.requestTarget);
+	return parsed.method === "GET" && url?.pathname === BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH;
+}
+
+function writeBridgePublicPrefixScriptResponse(socket: Socket): void {
+	const payload = Buffer.from(BRIDGE_PUBLIC_PREFIX_SCRIPT, "utf8");
+	const head = [
+		"HTTP/1.1 200 OK",
+		"Connection: close",
+		"Cache-Control: no-store",
+		"Content-Type: application/javascript; charset=utf-8",
+		`Content-Length: ${payload.length}`,
+		"",
+		"",
+	].join("\r\n");
+	socket.end(Buffer.concat([Buffer.from(head, "latin1"), payload]));
+}
+
+function publicPathPrefix(headers: Map<string, string[]>): string {
+	const raw = firstHeaderValue(headers, "x-forwarded-prefix");
+	if (!raw) return "";
+	const prefix = raw.split(",", 1)[0]?.trim().replace(/\/+$/, "") ?? "";
+	if (!prefix || prefix === "/" || !prefix.startsWith("/")) return "";
+	return prefix;
+}
+
+function rewriteResponseHeadForFrameEmbedding(
+	rawHead: string,
+	frameAncestors: string,
+	contentLength?: number,
+): string {
 	const lines = rawHead.split("\r\n");
 	const statusLine = lines.shift();
 	if (!statusLine) return rawHead;
@@ -417,12 +583,14 @@ function rewriteResponseHeadForFrameEmbedding(rawHead: string, frameAncestors: s
 			if (sanitized) cspValues.push(sanitized);
 			continue;
 		}
+		if (contentLength !== undefined && lowerName === "content-length") continue;
 		output.push(line);
 	}
 	for (const value of cspValues) {
 		output.push(`Content-Security-Policy: ${value}`);
 	}
 	output.push(`Content-Security-Policy: frame-ancestors ${frameAncestors}`);
+	if (contentLength !== undefined) output.push(`Content-Length: ${contentLength}`);
 	return output.join("\r\n");
 }
 
@@ -479,12 +647,21 @@ function authenticate(
 	const queryToken = url.searchParams.get("t");
 	if (constantTimeEquals(queryToken, token)) {
 		url.searchParams.delete("t");
-		const redirectLocation = `${url.pathname}${url.search}`;
+		const redirectLocation = relativeRedirectLocation(url);
 		return { status: "query-token", redirectLocation: redirectLocation || "/" };
 	}
 	const cookie = parseCookies(headers.get("cookie")).get(RUNTIME_BRIDGE_COOKIE) ?? null;
 	if (constantTimeEquals(cookie, token)) return { status: "authorized" };
 	return { status: "unauthorized" };
+}
+
+function relativeRedirectLocation(url: URL): string {
+	if (url.pathname.endsWith("/")) {
+		return `.${url.search}`;
+	}
+	const slash = url.pathname.lastIndexOf("/");
+	const basename = url.pathname.slice(slash + 1) || ".";
+	return `${basename}${url.search}`;
 }
 
 function requestUrl(requestTarget: string): URL | null {

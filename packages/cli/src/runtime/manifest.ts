@@ -771,7 +771,7 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 		managedBy: "clawdi runtime init",
 		target:
 			name === "openclaw"
-				? "openclaw config patch --stdin --replace-path models.providers"
+				? "openclaw config patch --stdin"
 				: name === "hermes"
 					? "official Hermes user config"
 					: "clawdi mcp",
@@ -810,6 +810,7 @@ function hostedAiProviderCatalog(
 				type: hostedProviderType(input),
 				base_url: baseUrl,
 				api_mode: apiMode,
+				managed_by: hostedProviderManagedBy(input),
 				auth,
 				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
 				models,
@@ -825,6 +826,13 @@ function hostedAiProviderCatalog(
 		},
 		primaryModel,
 	};
+}
+
+function hostedProviderManagedBy(
+	input: Record<string, unknown>,
+): AiProviderCatalog["providers"][number]["managed_by"] {
+	const value = input.managed_by;
+	return value === "clawdi" || value === "user" ? value : undefined;
 }
 
 function hostedProviderEntries(
@@ -1025,6 +1033,33 @@ function mergeRuntimeSecretEnv(
 	return merged;
 }
 
+function mergeRuntimeServiceSecretEnv(
+	runtimeName: string,
+	serviceName: string,
+	serviceSettings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
+	providerSecretEnv: Record<string, string>,
+): Record<string, string> {
+	const merged = { ...providerSecretEnv };
+	const serviceSecretEnv = serviceSettings.secretEnv ?? {};
+	for (const [envName, ref] of Object.entries(serviceSecretEnv)) {
+		const existing = merged[envName];
+		if (existing !== undefined && existing !== ref) {
+			throw new Error(
+				`runtime ${runtimeName} service ${serviceName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
+			);
+		}
+		merged[envName] = ref;
+	}
+	for (const envName of Object.keys(serviceSettings.env ?? {})) {
+		if (merged[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} service ${serviceName} defines ${envName} in both env and secretEnv`,
+			);
+		}
+	}
+	return merged;
+}
+
 function mitmSecretFilePath(paths: RuntimePaths): string {
 	return join(paths.managedSecretRoot, "mitm-secrets.json");
 }
@@ -1093,23 +1128,108 @@ function applyHostedAiProviderProjection(
 		return configPath;
 	}
 	if (name === "openclaw") {
-		const projection = buildAgentTargetProjection(
-			"openclaw",
-			projectionInput.catalog,
-			projectionInput.primaryModel,
-		);
-		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
-		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-		runRuntimeUserCommand(
+		applyOpenClawHostedProviderProjection(
 			observation.commandPath,
-			["config", "patch", "--stdin", "--replace-path", "models.providers"],
-			file.content,
+			projectionInput,
 			home,
 			workspaceRoot,
 		);
+		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
 		return observation.commandPath;
 	}
 	return null;
+}
+
+function applyOpenClawHostedProviderProjection(
+	command: string,
+	projectionInput: {
+		catalog: AiProviderCatalog;
+		primaryModel: AgentPrimaryModel;
+	},
+	home: string,
+	workspaceRoot: string,
+): void {
+	const projection = buildAgentTargetProjection(
+		"openclaw",
+		projectionInput.catalog,
+		projectionInput.primaryModel,
+	);
+	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+	runRuntimeUserCommand(command, ["config", "patch", "--stdin"], file.content, home, workspaceRoot);
+}
+
+function applyOpenClawHostedProjectionAfterOfficialInstall(
+	command: string,
+	manifest: RuntimeManifest,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
+	if (projectionInput) {
+		applyOpenClawHostedProviderProjection(command, projectionInput, home, workspaceRoot);
+	}
+	applyOpenClawGatewayHostedProjection(command, manifest, home, workspaceRoot);
+}
+
+function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
+	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
+	const gatewayToken = process.env[OPENCLAW_GATEWAY_TOKEN_ENV]?.trim();
+	if (allowedOrigins.length === 0 && !gatewayToken) return null;
+	return {
+		gateway: {
+			...(gatewayToken
+				? {
+						auth: {
+							mode: "token",
+							token: gatewayToken,
+						},
+					}
+				: {}),
+			...(allowedOrigins.length > 0
+				? {
+						controlUi: {
+							allowedOrigins,
+							dangerouslyDisableDeviceAuth: true,
+						},
+					}
+				: {}),
+		},
+	};
+}
+
+function applyOpenClawGatewayHostedProjection(
+	command: string,
+	manifest: RuntimeManifest,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const patch = openClawGatewayHostedPatch(manifest);
+	if (!patch) return;
+	runRuntimeUserCommand(
+		command,
+		["config", "patch", "--stdin"],
+		`${JSON.stringify(patch, null, 2)}\n`,
+		home,
+		workspaceRoot,
+	);
+}
+
+function openClawControlUiAllowedOrigins(manifest: RuntimeManifest): string[] {
+	const system = manifest.projection?.system;
+	if (!isPlainRecord(system)) return [];
+	const raw = system.openclawControlUiAllowedOrigins;
+	if (!Array.isArray(raw)) return [];
+	const seen = new Set<string>();
+	const origins: string[] = [];
+	for (const value of raw) {
+		if (typeof value !== "string") continue;
+		const origin = value.trim();
+		if (!origin || seen.has(origin)) continue;
+		seen.add(origin);
+		origins.push(origin);
+	}
+	return origins;
 }
 
 function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unknown> | null {
@@ -1407,6 +1527,7 @@ const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> 
 };
 
 const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp", "bluebubbles"] as const;
+const OPENCLAW_GATEWAY_TOKEN_ENV = "OPENCLAW_GATEWAY_TOKEN";
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {
 	if (manifest.liveSync?.enabled === false) return [];
@@ -2402,8 +2523,31 @@ function writeSystemdUnits(
 
 	for (const program of runtimePrograms) {
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
+		const attemptedOfficialServiceInstall = Boolean(
+			officialRuntimeServiceInstallArgs(program) && shouldInstallOfficialRuntimeServices(),
+		);
 		const officialServiceInstallError = installOfficialRuntimeUserService(program, paths);
 		if (officialServiceInstallError) serviceInstallErrors.push(officialServiceInstallError);
+		if (
+			program.runtime === "openclaw" &&
+			attemptedOfficialServiceInstall &&
+			!officialServiceInstallError
+		) {
+			try {
+				applyOpenClawHostedProjectionAfterOfficialInstall(
+					program.command,
+					manifest,
+					paths.userHome,
+					workspaceRoot,
+				);
+			} catch (error) {
+				serviceInstallErrors.push(
+					`official ${runtimeSystemdProgramName(program)} hosted gateway projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
 		const runtimeEnvironment = {
 			...commonEnvironment,
 			...program.env,
@@ -2673,6 +2817,9 @@ export function convergeRuntimeManifest(
 		}
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceSecretEnv = runtime.enabled
+				? mergeRuntimeServiceSecretEnv(name, service, serviceSettings, secretEnv)
+				: {};
 			const serviceRunConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
 				service,
@@ -2685,7 +2832,7 @@ export function convergeRuntimeManifest(
 				workspaceRoot,
 				settings: serviceSettings,
 				secretFilePath: null,
-				secretEnv: serviceSettings.secretEnv,
+				secretEnv: serviceSecretEnv,
 			});
 			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
 			runConfigs.push(serviceRunConfigPath);
