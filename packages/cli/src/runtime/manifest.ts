@@ -6,6 +6,7 @@ import {
 	chownSync,
 	constants,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -16,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	AiProviderApiMode,
@@ -206,6 +207,258 @@ function writeSecretValues(
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+interface ManagedWhatsAppAuthCredential {
+	accountKey: string;
+	credentialId: string;
+	authDir: string;
+	credsJsonSecretRef: string;
+	target: "openclaw" | "hermes" | "legacy";
+}
+
+const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
+const MANAGED_WHATSAPP_AUTH_ROOT = [".openclaw", "credentials", "whatsapp"] as const;
+const MANAGED_HERMES_WHATSAPP_AUTH_ROOT = [".hermes", "platforms", "whatsapp"] as const;
+
+function materializeHostedChannelCredentials(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): void {
+	if (!hostedChannelCredentialsDeclared(manifest)) return;
+	const credentials = hostedWhatsAppAuthCredentials(manifest);
+	const normalizedSecrets = normalizeSecretValues(secretValues);
+	const expectedAuthDirs = new Set<string>();
+	const errors: string[] = [];
+	for (const credential of credentials) {
+		const authDirError = managedWhatsAppAuthDirError(manifest, credential);
+		if (authDirError) {
+			errors.push(authDirError);
+			continue;
+		}
+		expectedAuthDirs.add(resolve(credential.authDir));
+		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
+		if (!credsJson) {
+			removeManagedWhatsAppAuthDir(credential.authDir);
+			errors.push(
+				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
+			);
+			continue;
+		}
+		try {
+			materializeManagedWhatsAppAuthDir(credential, credsJson);
+		} catch (error) {
+			errors.push(error instanceof Error ? error.message : String(error));
+		}
+	}
+	removeStaleManagedWhatsAppAuthDirs(manifest, expectedAuthDirs);
+	if (errors.length > 0) {
+		throw new Error(errors.join("; "));
+	}
+}
+
+function hostedChannelCredentialsDeclared(manifest: RuntimeManifest): boolean {
+	return Boolean(manifest.projection && Object.hasOwn(manifest.projection, "channelCredentials"));
+}
+
+function hostedWhatsAppAuthCredentials(manifest: RuntimeManifest): ManagedWhatsAppAuthCredential[] {
+	const raw = manifest.projection?.channelCredentials;
+	if (!Array.isArray(raw)) return [];
+	return raw
+		.flatMap(parseManagedWhatsAppAuthCredentials)
+		.filter((entry): entry is ManagedWhatsAppAuthCredential => entry !== null)
+		.sort((left, right) =>
+			`${left.target}:${left.accountKey}:${left.credentialId}`.localeCompare(
+				`${right.target}:${right.accountKey}:${right.credentialId}`,
+			),
+		);
+}
+
+function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAuthCredential[] {
+	const record = recordValue(value);
+	if (!record) return [];
+	if (record.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") return [];
+	const accountKey = stringValue(record.accountKey);
+	const credentialId = stringValue(record.credentialId);
+	const files = Array.isArray(record.files) ? record.files : [];
+	const credsFile = files
+		.map(recordValue)
+		.find((file) => file?.path === "creds.json" && typeof file.secretRef === "string");
+	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
+	if (!accountKey || !credentialId || !credsJsonSecretRef) {
+		throw new Error("WhatsApp auth credential projection is incomplete");
+	}
+	const targets = recordValue(record.targets);
+	const parsedTargets: ManagedWhatsAppAuthCredential[] = [];
+	const openclawTarget = targets ? recordValue(targets.openclaw) : null;
+	const openclawAuthDir = openclawTarget
+		? stringValue(openclawTarget.authDir)
+		: stringValue(record.authDir);
+	if (openclawAuthDir) {
+		parsedTargets.push({
+			accountKey,
+			credentialId,
+			authDir: openclawAuthDir,
+			credsJsonSecretRef,
+			target: targets ? "openclaw" : "legacy",
+		});
+	}
+	const hermesTarget = targets ? recordValue(targets.hermes) : null;
+	const hermesSessionDir = hermesTarget
+		? (stringValue(hermesTarget.sessionDir) ?? stringValue(hermesTarget.authDir))
+		: null;
+	if (hermesSessionDir) {
+		parsedTargets.push({
+			accountKey,
+			credentialId,
+			authDir: hermesSessionDir,
+			credsJsonSecretRef,
+			target: "hermes",
+		});
+	}
+	if (parsedTargets.length === 0) {
+		throw new Error("WhatsApp auth credential projection is incomplete");
+	}
+	return parsedTargets;
+}
+
+function materializeManagedWhatsAppAuthDir(
+	credential: ManagedWhatsAppAuthCredential,
+	credsJson: string,
+): void {
+	let parsedCreds: unknown;
+	try {
+		parsedCreds = JSON.parse(credsJson);
+		if (!recordValue(parsedCreds)) {
+			throw new Error("creds.json must be a JSON object");
+		}
+	} catch (error) {
+		removeManagedWhatsAppAuthDir(credential.authDir);
+		throw new Error(
+			`invalid WhatsApp auth state JSON for ${credential.accountKey}/${credential.credentialId}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
+
+	if (existsSync(credential.authDir) && lstatSync(credential.authDir).isSymbolicLink()) {
+		throw new Error(
+			`refusing to overwrite symlinked WhatsApp auth directory ${credential.authDir}`,
+		);
+	}
+	const existingMarker = readManagedWhatsAppAuthMarker(credential.authDir);
+	if (existingMarker && existingMarker.credentialId !== credential.credentialId) {
+		rmSync(credential.authDir, { recursive: true, force: true });
+	} else if (existsSync(credential.authDir) && !existingMarker) {
+		const entries = readdirSync(credential.authDir);
+		if (entries.length > 0) {
+			throw new Error(
+				`refusing to overwrite unmanaged WhatsApp auth directory ${credential.authDir}`,
+			);
+		}
+	}
+
+	makeRuntimeUserPrivateDir(credential.authDir);
+	writePrivateFileAtomic(
+		join(credential.authDir, "creds.json"),
+		`${JSON.stringify(parsedCreds, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o700,
+		},
+	);
+	makeRuntimeUserOwned(join(credential.authDir, "creds.json"));
+	writeJsonFile(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER), {
+		schemaVersion: "clawdi.managedWhatsAppAuth.v1",
+		provider: "whatsapp",
+		target: credential.target,
+		accountKey: credential.accountKey,
+		credentialId: credential.credentialId,
+	});
+	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER));
+}
+
+function managedWhatsAppAuthDirError(
+	manifest: RuntimeManifest,
+	credential: ManagedWhatsAppAuthCredential,
+): string | null {
+	const roots = managedWhatsAppAuthRootsForCredential(manifest, credential);
+	if (roots.length === 0) return "WhatsApp auth credential projection is missing runtime home";
+	const resolvedAuthDir = resolve(credential.authDir);
+	for (const root of roots) {
+		const relativePath = relative(root, resolvedAuthDir);
+		if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
+			return null;
+		}
+	}
+	return `WhatsApp auth directory must be under ${roots.join(" or ")}`;
+}
+
+function managedWhatsAppAuthRootsForCredential(
+	manifest: RuntimeManifest,
+	credential: ManagedWhatsAppAuthCredential,
+): string[] {
+	const roots = managedWhatsAppAuthRoots(manifest);
+	if (credential.target === "hermes") {
+		return roots.hermes ? [roots.hermes] : [];
+	}
+	if (credential.target === "openclaw" || credential.target === "legacy") {
+		return roots.openclaw ? [roots.openclaw] : [];
+	}
+	return [roots.openclaw, roots.hermes].filter((root): root is string => Boolean(root));
+}
+
+function managedWhatsAppAuthRoots(manifest: RuntimeManifest): {
+	openclaw: string | null;
+	hermes: string | null;
+} {
+	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	return {
+		openclaw: home ? resolve(home, ...MANAGED_WHATSAPP_AUTH_ROOT) : null,
+		hermes: home ? resolve(home, ...MANAGED_HERMES_WHATSAPP_AUTH_ROOT) : null,
+	};
+}
+
+function readManagedWhatsAppAuthMarker(authDir: string): { credentialId: string } | null {
+	const markerPath = join(authDir, MANAGED_WHATSAPP_AUTH_MARKER);
+	try {
+		if (!lstatSync(markerPath).isFile()) return null;
+		const parsed = JSON.parse(readFileSync(markerPath, "utf-8")) as unknown;
+		const record = recordValue(parsed);
+		const credentialId = record ? stringValue(record.credentialId) : null;
+		return credentialId ? { credentialId } : null;
+	} catch {
+		return null;
+	}
+}
+
+function removeManagedWhatsAppAuthDir(authDir: string): void {
+	if (!readManagedWhatsAppAuthMarker(authDir)) return;
+	rmSync(authDir, { recursive: true, force: true });
+}
+
+function removeStaleManagedWhatsAppAuthDirs(
+	manifest: RuntimeManifest,
+	expected: Set<string>,
+): void {
+	for (const root of Object.values(managedWhatsAppAuthRoots(manifest))) {
+		if (!root || !existsSync(root)) continue;
+		removeStaleManagedWhatsAppAuthDirsUnderRoot(root, expected);
+	}
+}
+
+function removeStaleManagedWhatsAppAuthDirsUnderRoot(root: string, expected: Set<string>): void {
+	for (const entry of readdirSync(root)) {
+		const authDir = join(root, entry);
+		try {
+			if (!lstatSync(authDir).isDirectory()) continue;
+		} catch {
+			continue;
+		}
+		if (!expected.has(authDir)) {
+			removeManagedWhatsAppAuthDir(authDir);
+		}
+	}
 }
 
 function writeScopedSecretValues(
@@ -1260,7 +1513,11 @@ function applyHostedChannelProjection(
 		const configPath = join(home, ".hermes", "config.yaml");
 		mergeHermesChannelConfig(
 			configPath,
-			hermesManagedChannelsPatch(channels, manifest.controlPlane.apiUrl),
+			hermesManagedChannelsPatch(
+				channels,
+				manifest.controlPlane.apiUrl,
+				manifest.projection?.channelCredentials,
+			),
 		);
 		makeRuntimeUserOwned(configPath);
 		return configPath;
@@ -1279,8 +1536,10 @@ function applyHostedChannelProjection(
 function hermesManagedChannelsPatch(
 	channels: Record<string, unknown>,
 	cloudApiUrl: string,
-): Record<"telegram" | "discord", Record<string, unknown>> {
+	channelCredentials: unknown,
+): Record<string, Record<string, unknown>> {
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
+	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials, baseUrl);
 	return {
 		telegram: channelHasAccounts(channels.telegram)
 			? {
@@ -1309,7 +1568,55 @@ function hermesManagedChannelsPatch(
 					bots_require_inline_mention: false,
 				}
 			: { enabled: false },
+		whatsapp: whatsapp
+			? {
+					enabled: true,
+					dm_policy: "open",
+					group_policy: "open",
+					allow_from: ["*"],
+					group_allow_from: ["*"],
+					require_mention: false,
+				}
+			: { enabled: false },
+		platforms: {
+			whatsapp: whatsapp
+				? {
+						enabled: true,
+						extra: {
+							session_path: whatsapp.sessionDir,
+							ws_url: whatsapp.wsUrl,
+						},
+					}
+				: { enabled: false },
+		},
 	};
+}
+
+function hermesWhatsAppProjection(
+	channels: Record<string, unknown>,
+	channelCredentials: unknown,
+	baseUrl: string,
+): { sessionDir: string; wsUrl: string } | null {
+	if (!channelHasAccounts(channels.whatsapp)) return null;
+	if (!Array.isArray(channelCredentials)) return null;
+	for (const credential of channelCredentials) {
+		const record = recordValue(credential);
+		if (record?.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") {
+			continue;
+		}
+		const accountId = stringValue(record.accountId);
+		const targets = recordValue(record.targets);
+		const hermesTarget = targets ? recordValue(targets.hermes) : null;
+		const sessionDir = hermesTarget
+			? (stringValue(hermesTarget.sessionDir) ?? stringValue(hermesTarget.authDir))
+			: null;
+		if (!accountId || !sessionDir) continue;
+		return {
+			sessionDir,
+			wsUrl: `${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
+		};
+	}
+	return null;
 }
 
 function channelHasAccounts(channel: unknown): boolean {
@@ -1320,6 +1627,12 @@ function channelHasAccounts(channel: unknown): boolean {
 
 function stripTrailingSlash(value: string): string {
 	return value.replace(/\/+$/, "");
+}
+
+function toWebSocketUrl(baseUrl: string): string {
+	if (baseUrl.startsWith("https://")) return `wss://${baseUrl.slice("https://".length)}`;
+	if (baseUrl.startsWith("http://")) return `ws://${baseUrl.slice("http://".length)}`;
+	return baseUrl;
 }
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
@@ -2759,6 +3072,15 @@ export function convergeRuntimeManifest(
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	writeSecretValues(load.secretValues, paths);
+	try {
+		materializeHostedChannelCredentials(manifest, load.secretValues);
+	} catch (error) {
+		installErrors.push(
+			`runtime channel credential materialization failed: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
 	const mitmSecretFile = writeMitmSecretFile(manifest, load.secretValues, paths);
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,

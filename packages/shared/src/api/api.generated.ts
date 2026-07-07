@@ -3467,6 +3467,8 @@ export interface components {
             created_at: string;
             /** Runtime Links */
             runtime_links?: components["schemas"]["ChannelRuntimeAgentLinkResponse"][];
+            /** Runtime Credentials */
+            runtime_credentials?: components["schemas"]["ChannelRuntimeCredentialResponse"][];
         };
         /** ChannelRuntimeAgentLinkResponse */
         ChannelRuntimeAgentLinkResponse: {
@@ -3494,6 +3496,46 @@ export interface components {
             created_at: string;
             /** Agent Token */
             agent_token?: string | null;
+        };
+        /** ChannelRuntimeCredentialResponse */
+        ChannelRuntimeCredentialResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /**
+             * Agent Link Id
+             * Format: uuid
+             */
+            agent_link_id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Provider */
+            provider: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Jid */
+            jid?: string | null;
+            /** Identity Pub Key Hex */
+            identity_pub_key_hex?: string | null;
+            /** Material */
+            material?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ChannelSendMessageRequest */
         ChannelSendMessageRequest: {

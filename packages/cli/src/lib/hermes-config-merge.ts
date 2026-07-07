@@ -59,10 +59,23 @@ export function mergeHermesMcpServer(
 
 export function mergeHermesChannelConfig(
 	configPath: string,
-	platforms: Record<"telegram" | "discord", Record<string, unknown>>,
+	platforms: Record<string, Record<string, unknown>>,
 ): void {
 	const document = readHermesConfig(configPath);
 	for (const [platform, config] of Object.entries(platforms)) {
+		if (platform === "platforms") {
+			const root = document.toJS();
+			if (isPlainRecord(root) && root.platforms !== undefined && !isPlainRecord(root.platforms)) {
+				throw new Error("Hermes config field platforms must be a YAML object.");
+			}
+			if (!isPlainRecord(root) || !isPlainRecord(root.platforms)) {
+				document.set("platforms", document.createNode({}));
+			}
+			for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
+				document.setIn(["platforms", nestedPlatform], document.createNode(nestedConfig));
+			}
+			continue;
+		}
 		document.set(platform, document.createNode(config));
 	}
 	writePrivateFileAtomic(configPath, String(document), {
