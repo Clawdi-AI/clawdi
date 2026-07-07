@@ -82,6 +82,16 @@ export function CopyKeysDialog({
 		() => ownVaults.filter((v) => v.slug !== vault.slug),
 		[ownVaults, vault.slug],
 	);
+	const targetVaultItems = useMemo(
+		() => [
+			...targetVaults.map((targetVault) => ({
+				value: targetVault.slug,
+				label: targetVault.name,
+			})),
+			{ value: NEW_VAULT, label: "New vault…" },
+		],
+		[targetVaults],
+	);
 	const effectiveChoice =
 		targetChoice || (targetVaults.length > 0 ? targetVaults[0].slug : NEW_VAULT);
 	const creatingNewVault = effectiveChoice === NEW_VAULT;
@@ -243,6 +253,7 @@ export function CopyKeysDialog({
 						<div className="space-y-1.5">
 							<Label htmlFor="copy-keys-target">Destination vault</Label>
 							<Select
+								items={targetVaultItems}
 								value={effectiveChoice}
 								onValueChange={(value) => {
 									if (value !== null) setTargetChoice(value);

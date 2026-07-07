@@ -712,10 +712,15 @@ function AttachProjectPicker({
 	onAttach: (projectId: string) => void;
 }) {
 	const [value, setValue] = useState("");
+	const projectItems = projects.map((project) => ({
+		value: project.id,
+		label: displayProjectName(project),
+	}));
 	if (projects.length === 0) return null;
 	return (
 		<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
 			<Select
+				items={projectItems}
 				value={value}
 				onValueChange={(nextValue) => {
 					if (nextValue !== null) setValue(nextValue);
@@ -778,6 +783,12 @@ function ShareKeysDialog({
 	const [isAttaching, setIsAttaching] = useState(false);
 
 	const candidates = shareable;
+	const candidateItems = candidates.map((project) => ({
+		value: project.id,
+		label: `${displayProjectName(project)}${
+			(vault.project_ids ?? []).includes(project.id) ? " (already added)" : ""
+		}`,
+	}));
 
 	const reset = () => {
 		setProjectId("");
@@ -828,6 +839,7 @@ function ShareKeysDialog({
 				<div className="space-y-1.5">
 					<Label htmlFor="share-keys-project">Project</Label>
 					<Select
+						items={candidateItems}
 						value={projectId}
 						onValueChange={(value) => {
 							if (value !== null) setProjectId(value);

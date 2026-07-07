@@ -50,6 +50,13 @@ const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
 	pending: "Pending",
 	failed: "Failed",
 };
+const LEDGER_FILTER_ITEMS = [
+	{ value: "all", label: "All activity" },
+	{ value: "topup", label: "Top-ups" },
+	{ value: "grant", label: "Grants" },
+	{ value: "usage", label: "Usage" },
+	{ value: "refund", label: "Refunds" },
+] as const;
 
 function statusVariant(
 	status: WalletLedgerStatus,
@@ -136,6 +143,7 @@ export function LedgerTable({
 					Activity
 				</h2>
 				<Select
+					items={LEDGER_FILTER_ITEMS}
 					value={filter}
 					onValueChange={(value) => {
 						if (value !== null) handleFilterChange(value);
@@ -145,11 +153,11 @@ export function LedgerTable({
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all">All activity</SelectItem>
-						<SelectItem value="topup">Top-ups</SelectItem>
-						<SelectItem value="grant">Grants</SelectItem>
-						<SelectItem value="usage">Usage</SelectItem>
-						<SelectItem value="refund">Refunds</SelectItem>
+						{LEDGER_FILTER_ITEMS.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
 					</SelectContent>
 				</Select>
 			</div>

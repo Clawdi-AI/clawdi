@@ -61,6 +61,7 @@ const CATEGORIES = [
 // "no filter". Keep them separate so ToggleGroup can render a selected state
 // for the All chip (Radix does not treat "" as a selected value).
 const ALL = "all";
+const ADD_CATEGORY_ITEMS = CATEGORIES.filter((category) => category.value !== ALL);
 const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");
 
 export default function MemoriesPage() {
@@ -460,6 +461,7 @@ function AddMemoryForm() {
 								Category
 							</Label>
 							<Select
+								items={ADD_CATEGORY_ITEMS}
 								value={addCategory}
 								onValueChange={(value) => {
 									if (value !== null) setAddCategory(value);
@@ -469,7 +471,7 @@ function AddMemoryForm() {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									{CATEGORIES.filter((c) => c.value !== ALL).map((c) => (
+									{ADD_CATEGORY_ITEMS.map((c) => (
 										<SelectItem key={c.value} value={c.value}>
 											{c.label}
 										</SelectItem>

@@ -13,7 +13,7 @@ import { useUsage } from "@/hosted/billing/hooks";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "AI Credit consumption across your agents. Wallet credits do not reset.";
+const DESCRIPTION = "AI Credit consumption for the current reporting window across your agents.";
 const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 export function UsagePage() {
@@ -45,9 +45,10 @@ export function UsagePage() {
 	const hasDailyBreakdown = u.by_day.length > 0;
 	const firstDailyPoint = u.by_day[0];
 	const lastDailyPoint = u.by_day[u.by_day.length - 1];
+	const windowLabel = `${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)}`;
 	const dailyChartLabel =
 		hasDailyBreakdown && firstDailyPoint && lastDailyPoint
-			? `Daily AI Credit usage from ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)}: ${formatCredits(u.total_credits)} total.`
+			? `Daily AI Credit usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
 			: undefined;
 	const maxDay = Math.max(1, ...u.by_day.map((d) => d.credits));
 	const maxModel = Math.max(1, ...u.by_model.map((m) => m.credits));
@@ -69,7 +70,7 @@ export function UsagePage() {
 		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 			<PageHeader
 				title="Usage"
-				description={`${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)} reporting window. Wallet credits do not reset.`}
+				description={`${windowLabel} reporting window. Totals below are for this window; wallet balance carries over.`}
 			/>
 
 			{/* Totals */}
@@ -79,7 +80,7 @@ export function UsagePage() {
 						<div className="text-3xl font-semibold tabular-nums">
 							{formatCredits(u.total_credits)}
 						</div>
-						<div className="text-sm text-muted-foreground">AI Credits used</div>
+						<div className="text-sm text-muted-foreground">AI Credits used in window</div>
 					</CardContent>
 				</Card>
 				<Card data-hosted="true">
@@ -87,7 +88,7 @@ export function UsagePage() {
 						<div className="text-3xl font-semibold tabular-nums">
 							{u.total_requests.toLocaleString()}
 						</div>
-						<div className="text-sm text-muted-foreground">Requests</div>
+						<div className="text-sm text-muted-foreground">Requests in window</div>
 					</CardContent>
 				</Card>
 			</div>
@@ -115,7 +116,7 @@ export function UsagePage() {
 								<span>{lastDailyPoint?.date.slice(5)}</span>
 							</div>
 							<table className="sr-only">
-								<caption>Daily consumption by day</caption>
+								<caption>Daily consumption by day in the reporting window</caption>
 								<thead>
 									<tr>
 										<th scope="col">Day</th>

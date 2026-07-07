@@ -51,7 +51,12 @@ export function checkoutReturnMarker(searchStr: string): string | null {
 		const value = params.get(key);
 		return value ? [`${key}=${value}`] : [];
 	});
+	if (checkoutReturnWasCanceled(searchStr)) values.push("checkout=cancel");
 	return values.length > 0 ? values.join("&") : null;
+}
+
+export function checkoutReturnWasCanceled(searchStr: string): boolean {
+	return new URLSearchParams(searchStr).get("checkout") === "cancel";
 }
 
 export function checkoutReturnDeploymentId(searchStr: string): string | null {

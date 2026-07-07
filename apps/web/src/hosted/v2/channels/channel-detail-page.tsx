@@ -501,6 +501,10 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const devices = creds.data ?? [];
 	// Default to the only link when there's exactly one.
 	const effectiveLink = linkId || (linkItems.length === 1 ? linkItems[0].id : "");
+	const linkSelectItems = linkItems.map((link) => ({
+		value: link.id,
+		label: envName(envs.data, link.agent_id, ownership),
+	}));
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -537,6 +541,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 						<div className="flex flex-col gap-1.5">
 							<Label htmlFor="wa-agent">Agent</Label>
 							<Select
+								items={linkSelectItems}
 								value={effectiveLink}
 								onValueChange={(value) => {
 									if (value !== null) setLinkId(value);
@@ -665,6 +670,10 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const [result, setResult] = useState<PairCodeResult | null>(null);
 	const [revealedAgentToken, setRevealedAgentToken] = useState<RevealedAgentToken | null>(null);
 	const [nowMs, setNowMs] = useState(() => Date.now());
+	const agentItems = (envs.data ?? []).map((env) => ({
+		value: env.id,
+		label: envName(envs.data, env.id, ownership),
+	}));
 	const generateLocked = useRef(false);
 	const meta = providerMeta(provider);
 	const isGenerating = create.isPending || generateLocked.current;
@@ -722,6 +731,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 						<Skeleton className="h-10 w-full rounded-md" />
 					) : (
 						<Select
+							items={agentItems}
 							value={agentId}
 							onValueChange={(value) => {
 								if (value !== null) setAgentId(value);
@@ -748,6 +758,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-ttl">Expires in</Label>
 					<Select
+						items={TTL_OPTIONS}
 						value={ttl}
 						onValueChange={(value) => {
 							if (value !== null) setTtl(value);

@@ -78,6 +78,7 @@ import type {
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
+	LANGUAGE_SELECT_ITEMS,
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
@@ -86,6 +87,7 @@ import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hoste
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
+	checkoutReturnWasCanceled,
 	useCancelSubscription,
 	useCheckout,
 	useCheckoutReturnRefresh,
@@ -752,16 +754,7 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			<EmptyState
 				icon={MonitorPlay}
 				title="No Runtime UI URL yet"
-				description={
-					<span>
-						This {label} runtime is running but hasn&apos;t published its browser UI endpoint. Reach
-						it by linking a channel from{" "}
-						<Link to="/channels" className="underline">
-							Channels
-						</Link>
-						.
-					</span>
-				}
+				description={`This ${label} runtime is running but hasn't published its browser UI endpoint yet. Check the Overview status shortly or use Terminal while it finishes.`}
 			/>
 		);
 	}
@@ -1303,7 +1296,7 @@ function AiProviderTab({
 						) : null}
 					</div>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						Clawdi-managed Claude models, billed from your wallet.
+						Clawdi-managed models, billed from your wallet.
 					</p>
 				</button>
 				{providers.isLoading ? <ProviderOptionSkeleton /> : null}
@@ -1431,12 +1424,32 @@ function AgentPrimaryModelPicker({
 }) {
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	const primaryProviderItems = [
+		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
+			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			: []),
+		...selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => ({
+			value: choice,
+			label: unresolvedProviderRef(choice),
+		})),
+		...customProviders
+			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+			.map((provider) => ({
+				value: provider.provider_id,
+				label: provider.label ?? provider.provider_id,
+			})),
+	];
+	const catalogModelItems = [
+		...catalogModelIds.map((model) => ({ value: model, label: formatModelLabel(model) })),
+		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+	];
 	return (
 		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
 			<div className="grid gap-3 sm:grid-cols-2">
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="agent-primary-provider">Primary provider</Label>
 					<Select
+						items={primaryProviderItems}
 						value={primaryProviderChoice}
 						onValueChange={(value) => {
 							if (value) onPrimaryProviderChange(value);
@@ -1468,6 +1481,7 @@ function AgentPrimaryModelPicker({
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="agent-catalog-model">Catalog model</Label>
 						<Select
+							items={catalogModelItems}
 							value={modelChoice}
 							onValueChange={(value) => {
 								if (!value) return;
@@ -1540,6 +1554,10 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 			.map((b) => ({ id: b.id, provider: b.provider, name: b.name }));
 		return [...mine, ...shared].filter((c) => !linkedIds.has(c.id));
 	}, [channels.data, botPool.data, linkedIds]);
+	const linkableItems = linkable.map((channel) => ({
+		value: channel.id,
+		label: `${providerMeta(channel.provider).label} · ${channel.name}`,
+	}));
 
 	// Provider/name labels for linked rows whose API payload omits the nested
 	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
@@ -1634,6 +1652,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 				</p>
 				<div className="flex flex-col gap-2 sm:flex-row">
 					<Select
+						items={linkableItems}
 						value={accountId}
 						onValueChange={(value) => {
 							if (value !== null) setAccountId(value);
@@ -1843,6 +1862,7 @@ function LanguageTimezoneSettingsSection({
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="settings-agent-language">Language</Label>
 						<Select
+							items={LANGUAGE_SELECT_ITEMS}
 							value={language || "default"}
 							onValueChange={(value) => {
 								setLanguage(value === null || value === "default" ? "" : value);
@@ -1985,6 +2005,12 @@ function ComputeSettingsSections({
 		if (!marker || checkoutReturnRef.current === marker) return;
 		checkoutReturnRef.current = marker;
 		void refreshCheckoutReturn().then(() => {
+			if (checkoutReturnWasCanceled(searchStr)) {
+				toast.message("Checkout canceled", {
+					description: "You were not charged. Your compute plan is unchanged.",
+				});
+				return;
+			}
 			const deploymentId = checkoutReturnDeploymentId(searchStr);
 			if (deploymentId && deploymentId !== deployment.id) {
 				void router.navigate({
@@ -2290,21 +2316,21 @@ function ComputeSettingsSections({
 				description="Restart, stop, or start the whole hosted compute."
 			>
 				<div className="flex flex-wrap gap-2.5">
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={lifecycle.isPending || !canRestart}
-						onClick={() =>
-							void runAction(() => runLifecycleAction("restart")).catch(() => undefined)
-						}
+					<ConfirmAction
+						title="Restart compute?"
+						description={<p>This restarts this hosted agent.</p>}
+						confirmLabel="Restart compute"
+						onConfirm={() => runAction(() => runLifecycleAction("restart"))}
 					>
-						{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-						Restart
-					</Button>
+						<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
+							{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Restart
+						</Button>
+					</ConfirmAction>
 					{canStop ? (
 						<ConfirmAction
 							title="Stop compute?"

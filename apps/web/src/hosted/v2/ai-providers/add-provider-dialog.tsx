@@ -241,6 +241,15 @@ export function AddProviderDialog({
 		Boolean(baseUrl.trim()) &&
 		noneAuthOk &&
 		(!keyRequired || apiKey.trim().length > 0);
+	const authMethodItems = [
+		{ value: "api_key", label: "API key" },
+		...(meta.oauth ? [{ value: "oauth", label: "Sign in with ChatGPT (Codex)" }] : []),
+		...(meta.custom ? [{ value: "none", label: "No auth (local)" }] : []),
+	];
+	const apiModeItems = meta.apiModes.map((mode) => ({
+		value: mode,
+		label: API_MODE_LABEL[mode],
+	}));
 
 	async function submit() {
 		if (!canSubmit) return;
@@ -712,6 +721,7 @@ export function AddProviderDialog({
 								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="provider-auth">Authentication</Label>
 									<Select
+										items={authMethodItems}
 										value={authMethod}
 										onValueChange={(value) => {
 											if (isAuthMethod(value)) setAuthMethod(value);
@@ -819,6 +829,7 @@ export function AddProviderDialog({
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="provider-mode">API mode</Label>
 										<Select
+											items={apiModeItems}
 											value={apiMode}
 											onValueChange={(value) => {
 												if (isApiMode(value)) setApiMode(value);

@@ -122,6 +122,14 @@ export function SendSkillDialog({
 				})),
 		[projects, skills],
 	);
+	const targetItems = useMemo(
+		() =>
+			[...agentTargets, ...projectTargets].map((target) => ({
+				value: target.value,
+				label: target.label,
+			})),
+		[agentTargets, projectTargets],
+	);
 
 	const send = useMutation({
 		mutationFn: async () => {
@@ -227,6 +235,7 @@ export function SendSkillDialog({
 					<div className="space-y-1.5">
 						<Label htmlFor="send-skill-target">Destination</Label>
 						<Select
+							items={targetItems}
 							value={target}
 							onValueChange={(value) => {
 								if (value !== null) setTarget(value);

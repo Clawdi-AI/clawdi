@@ -72,6 +72,13 @@ export function AddKeysDialog({
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
 		[vaultsQuery.data],
 	);
+	const vaultItems = useMemo(
+		() => [
+			...ownVaults.map((vault) => ({ value: vault.slug, label: vault.name })),
+			{ value: NEW_VAULT, label: "New vault…" },
+		],
+		[ownVaults],
+	);
 	// Default destination: pinned slug, else the first vault, else create-new.
 	const effectiveChoice = vaultChoice || (ownVaults.length > 0 ? ownVaults[0].slug : NEW_VAULT);
 	const selectedVault = ownVaults.find((v) => v.slug === effectiveChoice);
@@ -230,6 +237,7 @@ export function AddKeysDialog({
 							<div className="space-y-1.5">
 								<Label htmlFor="add-keys-vault">Into vault</Label>
 								<Select
+									items={vaultItems}
 									value={effectiveChoice}
 									onValueChange={(value) => {
 										if (value !== null) setVaultChoice(value);
