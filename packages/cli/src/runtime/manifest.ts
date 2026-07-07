@@ -28,6 +28,7 @@ import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
 import { z } from "zod";
 import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
+	mergeHermesChannelConfig,
 	mergeHermesConfig,
 	mergeHermesMcpServer,
 	removeHermesMcpServer,
@@ -1247,7 +1248,7 @@ function applyHostedChannelProjection(
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 ): string | null {
-	if (name !== "openclaw") return null;
+	if (name !== "openclaw" && name !== "hermes") return null;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return null;
 	}
@@ -1255,6 +1256,15 @@ function applyHostedChannelProjection(
 	if (!channels) return null;
 
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	if (name === "hermes") {
+		const configPath = join(home, ".hermes", "config.yaml");
+		mergeHermesChannelConfig(
+			configPath,
+			hermesManagedChannelsPatch(channels, manifest.controlPlane.apiUrl),
+		);
+		makeRuntimeUserOwned(configPath);
+		return configPath;
+	}
 	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
 	runRuntimeUserCommand(
 		observation.commandPath,
@@ -1264,6 +1274,52 @@ function applyHostedChannelProjection(
 		workspaceRoot,
 	);
 	return observation.commandPath;
+}
+
+function hermesManagedChannelsPatch(
+	channels: Record<string, unknown>,
+	cloudApiUrl: string,
+): Record<"telegram" | "discord", Record<string, unknown>> {
+	const baseUrl = stripTrailingSlash(cloudApiUrl);
+	return {
+		telegram: channelHasAccounts(channels.telegram)
+			? {
+					enabled: true,
+					dm_policy: "open",
+					group_policy: "open",
+					allow_from: ["*"],
+					group_allow_from: ["*"],
+					group_allowed_chats: ["*"],
+					require_mention: false,
+					extra: {
+						base_url: `${baseUrl}/v1/channels/telegram/bot`,
+						base_file_url: `${baseUrl}/v1/channels/telegram/file/bot`,
+					},
+				}
+			: { enabled: false },
+		discord: channelHasAccounts(channels.discord)
+			? {
+					enabled: true,
+					dm_policy: "open",
+					group_policy: "open",
+					allow_from: ["*"],
+					group_allow_from: ["*"],
+					require_mention: false,
+					thread_require_mention: false,
+					bots_require_inline_mention: false,
+				}
+			: { enabled: false },
+	};
+}
+
+function channelHasAccounts(channel: unknown): boolean {
+	if (!isPlainRecord(channel)) return false;
+	const accounts = channel.accounts;
+	return isPlainRecord(accounts) && Object.keys(accounts).length > 0;
+}
+
+function stripTrailingSlash(value: string): string {
+	return value.replace(/\/+$/, "");
 }
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {

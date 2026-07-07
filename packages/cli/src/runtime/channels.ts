@@ -10,6 +10,13 @@ import type { MitmProfileInputBundle } from "./mitm-profiles";
 type MitmProfile = MitmProfileInputBundle["profiles"][number];
 type ChannelProvider = RuntimeChannelAccount["provider"];
 
+const HERMES_MANAGED_CHANNEL_ENV = [
+	"TELEGRAM_ALLOW_ALL_USERS",
+	"DISCORD_ALLOW_ALL_USERS",
+	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
+] as const;
+const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
+
 interface ManagedChannelLink {
 	account: RuntimeChannelAccount;
 	accountKey: string;
@@ -67,7 +74,7 @@ function applyRuntimeChannelProjection(
 	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
 	const directProviderPassthrough =
 		managedProfiles.length > 0 ? directProviderPassthroughProfiles(manifest.projection ?? {}) : [];
-	return {
+	const projected: RuntimeManifest = {
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
@@ -78,6 +85,7 @@ function applyRuntimeChannelProjection(
 			...directProviderPassthrough,
 		]),
 	};
+	return applyHermesRuntimeChannelSettings(projected, links);
 }
 
 function buildOpenClawChannelsProjection(
@@ -130,6 +138,64 @@ function buildOpenClawChannelsProjection(
 		}
 	}
 	return channels;
+}
+
+function applyHermesRuntimeChannelSettings(
+	manifest: RuntimeManifest,
+	links: ManagedChannelLink[],
+): RuntimeManifest {
+	const hermes = manifest.runtimes.hermes;
+	if (!hermes?.enabled) return manifest;
+
+	const telegram = firstLinkForProvider(links, "telegram");
+	const discord = firstLinkForProvider(links, "discord");
+	const existingRun = hermes.run ?? { env: {}, prependPath: [] };
+	const env = omitKeys(existingRun.env ?? {}, HERMES_MANAGED_CHANNEL_ENV);
+	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, HERMES_MANAGED_CHANNEL_SECRET_ENV);
+
+	if (telegram) {
+		env.TELEGRAM_ALLOW_ALL_USERS = "true";
+		env.HERMES_TELEGRAM_DISABLE_FALLBACK_IPS = "true";
+		secretEnv.TELEGRAM_BOT_TOKEN = telegram.secretRef;
+	}
+	if (discord) {
+		env.DISCORD_ALLOW_ALL_USERS = "true";
+		secretEnv.DISCORD_BOT_TOKEN = discord.secretRef;
+	}
+
+	return {
+		...manifest,
+		runtimes: {
+			...manifest.runtimes,
+			hermes: {
+				...hermes,
+				run: {
+					...existingRun,
+					env,
+					secretEnv,
+				},
+			},
+		},
+	};
+}
+
+function firstLinkForProvider(
+	links: ManagedChannelLink[],
+	provider: ChannelProvider,
+): ManagedChannelLink | null {
+	return links.find((link) => link.account.provider === provider) ?? null;
+}
+
+function omitKeys<T extends string>(
+	input: Record<string, string>,
+	keys: readonly T[],
+): Record<string, string> {
+	const omitted = new Set<string>(keys);
+	const output: Record<string, string> = {};
+	for (const [key, value] of Object.entries(input)) {
+		if (!omitted.has(key)) output[key] = value;
+	}
+	return output;
 }
 
 function ensureAccountChannel(
