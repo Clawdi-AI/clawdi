@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
+import { durationSecondsBetween } from "../lib/session-duration";
 import { isValidSkillKey } from "../lib/skill-key";
 import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
@@ -147,9 +148,7 @@ export class HermesAdapter implements AgentAdapter {
 				const model = parseModelField(row.model);
 				const startedAt = new Date(row.started_at * 1000);
 				const endedAt = row.ended_at ? new Date(row.ended_at * 1000) : null;
-				const durationSeconds = endedAt
-					? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
-					: null;
+				const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 
 				const msgRows = msgStmt.all(row.id) as MessageRow[];
 				const messages: SessionMessage[] = msgRows.map((m) => ({

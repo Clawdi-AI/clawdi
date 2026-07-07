@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
+import { durationSecondsBetween } from "../lib/session-duration";
 import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -254,7 +255,7 @@ export class OpenClawAdapter implements AgentAdapter {
 				startedAt ??= new Date(updatedAt);
 				endedAt ??= new Date(updatedAt);
 
-				const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
+				const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 
 				const firstUserContent = messages.find((m) => m.role === "user")?.content;
 				const summary =

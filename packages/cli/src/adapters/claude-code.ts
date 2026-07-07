@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
+import { durationSecondsBetween } from "../lib/session-duration";
 import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -231,9 +232,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 		if (!startedAt || messages.length === 0) return null;
 
-		const durationSeconds = endedAt
-			? Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000)
-			: null;
+		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 
 		return {
 			projectPath,

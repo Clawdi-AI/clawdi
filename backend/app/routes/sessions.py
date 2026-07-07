@@ -1284,6 +1284,7 @@ async def sync_heartbeat(
 @router.post("/sessions/batch")
 async def batch_create_sessions(
     body: SessionBatchRequest,
+    request: Request,
     auth: AuthContext = Depends(require_scope("sessions:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionBatchResponse:
@@ -1297,6 +1298,17 @@ async def batch_create_sessions(
     if not body.sessions:
         return SessionBatchResponse(
             created=0, updated=0, unchanged=0, needs_content=[], rejected=[]
+        )
+
+    clamped_duration_ids = [
+        s.local_session_id for s in body.sessions if s.duration_seconds_was_clamped
+    ]
+    if clamped_duration_ids:
+        log.warning(
+            "session_batch_duration_clamped user_agent=%r count=%d local_session_ids=%s",
+            request.headers.get("user-agent", ""),
+            len(clamped_duration_ids),
+            clamped_duration_ids[:20],
         )
 
     # Agent API keys must NOT be able to write sessions

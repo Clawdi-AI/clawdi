@@ -1,9 +1,18 @@
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 # Lone UTF-16 surrogates (U+D800..U+DFFF) are valid Python `str`
 # but cannot be encoded as UTF-8, so asyncpg rejects the bound
@@ -36,7 +45,27 @@ SafeLocalSessionId = Annotated[
 ]
 
 
+def _is_negative_int_like(v: Any) -> bool:
+    if v is None or isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return v < 0
+    if isinstance(v, float):
+        return v.is_integer() and v < 0
+    if isinstance(v, str):
+        value = v.strip()
+        if not value:
+            return False
+        try:
+            return int(value) < 0
+        except ValueError:
+            return False
+    return False
+
+
 class SessionCreate(BaseModel):
+    _duration_seconds_clamped: bool = PrivateAttr(default=False)
+
     # Typed as UUID so Pydantic returns a 422 on garbage input — without this
     # the route's `uuid.UUID(...)` raises and FastAPI surfaces a 500.
     environment_id: uuid.UUID
@@ -54,8 +83,9 @@ class SessionCreate(BaseModel):
     last_activity_at: datetime | None = None
     # Non-negative numeric observables. Without `ge=0` a malformed
     # client could post negative tokens / duration and corrupt the
-    # dashboard's aggregate counters. The CLI never sends negatives
-    # for legitimate sessions; this is a boundary defense.
+    # dashboard's aggregate counters. Duration can go negative when
+    # client clocks move backward; clamp that measurement noise at
+    # the boundary while keeping counters strict.
     duration_seconds: int | None = Field(default=None, ge=0)
     message_count: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -71,6 +101,22 @@ class SessionCreate(BaseModel):
     # Optional so old clients that don't compute hashes still get inserted;
     # legacy rows with NULL hash are always treated as "needs content".
     content_hash: str | None = None
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _clamp_negative_duration(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+        clamped = False
+        if isinstance(data, dict) and _is_negative_int_like(data.get("duration_seconds")):
+            data = {**data, "duration_seconds": 0}
+            clamped = True
+        model = handler(data)
+        if clamped:
+            model._duration_seconds_clamped = True
+        return model
+
+    @property
+    def duration_seconds_was_clamped(self) -> bool:
+        return self._duration_seconds_clamped
 
     @field_validator("summary", mode="after")
     @classmethod

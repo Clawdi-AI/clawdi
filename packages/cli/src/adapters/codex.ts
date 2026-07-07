@@ -1,6 +1,7 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
+import { durationSecondsBetween } from "../lib/session-duration";
 import { extractSharedSkillTarGz, extractTarGz } from "../lib/tar";
 import type {
 	AgentAdapter,
@@ -202,7 +203,7 @@ export class CodexAdapter implements AgentAdapter {
 			}
 
 			if (!endedAt) endedAt = startedAt;
-			const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
+			const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 
 			const firstRealUser = messages.find(
 				(m) => m.role === "user" && !m.content.startsWith("<environment_context>"),
