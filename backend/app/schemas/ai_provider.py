@@ -41,6 +41,8 @@ class AiProviderModel(BaseModel):
     label: str | None = Field(default=None, max_length=300)
     api_mode: ApiMode | None = None
     input_modalities: list[InputModality] | None = None
+    supports_vision: bool | None = None
+    supports_tools: bool | None = None
     supports_reasoning: bool | None = None
     context_window: int | None = Field(default=None, ge=0)
     max_tokens: int | None = Field(default=None, ge=0)

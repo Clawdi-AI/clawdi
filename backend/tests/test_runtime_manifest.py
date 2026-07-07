@@ -1539,13 +1539,24 @@ async def test_runtime_manifest_projects_provider_secret_values(
         agent_type="openclaw",
     )
     ciphertext, nonce = encrypt("sk-test-provider")
+    managed_models = [
+        {
+            "id": "gpt-5.5",
+            "context_window": 272000,
+            "max_tokens": 128000,
+            "input_modalities": ["text", "image"],
+            "supports_vision": True,
+            "supports_tools": True,
+            "supports_reasoning": True,
+        }
+    ]
     db_session.add(
         AiProvider(
             owner_user_id=seed_user.id,
             provider_id="clawdi-managed-v2",
             type="custom_openai_compatible",
             base_url="https://sub2api.test/v1",
-            models=[{"id": "gpt-5.5"}],
+            models=managed_models,
             # Simulate a stale v2 managed provider row from before the chat-completions contract.
             api_mode="openai_responses",
             auth_type="api_key",
@@ -1580,7 +1591,7 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "type": "custom_openai_compatible",
         "baseUrl": "https://sub2api.test/v1",
         "apiMode": "openai_chat",
-        "models": [{"id": "gpt-5.5"}],
+        "models": managed_models,
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }

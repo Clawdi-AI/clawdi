@@ -464,6 +464,17 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     from app.services.vault_crypto import decrypt
 
     raw_key = "sk-admin-managed-secret"
+    managed_models = [
+        {
+            "id": "gpt-5.4-mini",
+            "context_window": 272000,
+            "max_tokens": 128000,
+            "input_modalities": ["text", "image"],
+            "supports_vision": True,
+            "supports_tools": True,
+            "supports_reasoning": True,
+        }
+    ]
     r = await admin_client.put(
         "/v1/admin/ai-providers/clawdi-managed-v2",
         headers=_AUTH,
@@ -472,6 +483,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
             "base_url": "https://ai-gateway.clawdi.ai/v1",
             "api_key": raw_key,
             "default_model": "gpt-5.4-mini",
+            "models": managed_models,
         },
     )
     assert r.status_code == 200, r.text
@@ -483,7 +495,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
-        "models": [{"id": "gpt-5.4-mini"}],
+        "models": managed_models,
         "has_api_key": True,
     }
 
@@ -502,7 +514,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert provider.auth_metadata == {"source": "managed", "profile": "default"}
     assert provider.managed_by == "clawdi"
     assert provider.runtime_env_name == MANAGED_AI_PROVIDER_RUNTIME_ENV
-    assert provider.models == [{"id": "gpt-5.4-mini"}]
+    assert provider.models == managed_models
     assert provider.archived_at is None
 
     payload = (

@@ -50,6 +50,8 @@ export interface AiProviderModel {
 	label?: string;
 	api_mode?: AiProviderApiMode;
 	input_modalities?: Array<"text" | "image" | "video" | "audio">;
+	supports_vision?: boolean;
+	supports_tools?: boolean;
 	supports_reasoning?: boolean;
 	context_window?: number;
 	max_tokens?: number;
@@ -420,6 +422,11 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 			(typeof model.api_mode !== "string" || !isAiProviderApiMode(model.api_mode))
 		) {
 			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid api_mode.`);
+		}
+		for (const field of ["supports_vision", "supports_tools", "supports_reasoning"] as const) {
+			if (model[field] !== undefined && typeof model[field] !== "boolean") {
+				errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid ${field}.`);
+			}
 		}
 	}
 }

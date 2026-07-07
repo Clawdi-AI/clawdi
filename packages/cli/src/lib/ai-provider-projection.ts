@@ -3,6 +3,7 @@ import type {
 	AiProviderApiMode,
 	AiProviderAuth,
 	AiProviderCatalog,
+	AiProviderModel,
 } from "@clawdi/shared";
 import {
 	defaultAiProviderApiMode,
@@ -321,7 +322,10 @@ function openClawModels(
 				id: model.id,
 				name: model.label ?? model.id,
 				api,
-				input: model.input_modalities,
+				input: openClawInputModalities(model),
+				reasoning: model.supports_reasoning,
+				compat:
+					model.supports_tools === undefined ? undefined : { supportsTools: model.supports_tools },
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
 			});
@@ -342,6 +346,13 @@ function openClawModels(
 		);
 	}
 	return models;
+}
+
+function openClawInputModalities(model: AiProviderModel): AiProviderModel["input_modalities"] {
+	if (model.input_modalities && model.input_modalities.length > 0) return model.input_modalities;
+	if (model.supports_vision === true) return ["text", "image"];
+	if (model.supports_vision === false) return ["text"];
+	return undefined;
 }
 
 function openClawApiLabel(apiMode: AiProviderApiMode): string | undefined {
@@ -417,8 +428,63 @@ function buildHermesProjection(
 		lines.push(`    transport: ${quoteYaml(transport)}`);
 		const envName = hermesKeyEnvForProvider(provider);
 		if (envName) lines.push(`    key_env: ${quoteYaml(envName)}`);
+		lines.push(...hermesModelLines(provider));
 	}
 	return `${lines.join("\n")}\n`;
+}
+
+function hermesModelLines(provider: ProjectionProvider): string[] {
+	const models = hermesModels(provider);
+	if (models.length === 0) return [];
+	const lines = ["    models:"];
+	for (const model of models) {
+		lines.push(`      ${quoteYaml(model.id)}:`);
+		if (model.context_length !== undefined) {
+			lines.push(`        context_length: ${model.context_length}`);
+		}
+		if (model.max_tokens !== undefined) {
+			lines.push(`        max_tokens: ${model.max_tokens}`);
+		}
+		if (model.supports_vision !== undefined) {
+			lines.push(`        supports_vision: ${model.supports_vision}`);
+		}
+	}
+	return lines;
+}
+
+function hermesModels(
+	provider: ProjectionProvider,
+): Array<{ id: string; context_length?: number; max_tokens?: number; supports_vision?: boolean }> {
+	const seen = new Set<string>();
+	const entries: Array<{
+		id: string;
+		context_length?: number;
+		max_tokens?: number;
+		supports_vision?: boolean;
+	}> = [];
+	for (const model of provider.models ?? []) {
+		if (!model.id || seen.has(model.id)) continue;
+		seen.add(model.id);
+		const entry: {
+			id: string;
+			context_length?: number;
+			max_tokens?: number;
+			supports_vision?: boolean;
+		} = { id: model.id };
+		const contextLength = positiveNumber(model.context_window);
+		if (contextLength !== undefined) entry.context_length = contextLength;
+		const maxTokens = positiveNumber(model.max_tokens);
+		if (maxTokens !== undefined) entry.max_tokens = maxTokens;
+		const supportsVision = hermesSupportsVision(model);
+		if (supportsVision !== undefined) entry.supports_vision = supportsVision;
+		if (Object.keys(entry).length > 1) entries.push(entry);
+	}
+	return entries;
+}
+
+function hermesSupportsVision(model: AiProviderModel): boolean | undefined {
+	if (typeof model.supports_vision === "boolean") return model.supports_vision;
+	return model.input_modalities?.includes("image") ? true : undefined;
 }
 
 function hermesBaseUrlForProvider(provider: ProjectionProvider): string {
