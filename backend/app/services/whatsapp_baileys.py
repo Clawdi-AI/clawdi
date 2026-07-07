@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -141,6 +141,13 @@ class WhatsAppAuthCert:
 class StoredWhatsAppCredential:
     credential: ChannelAgentCredential
     minted: MintedWhatsAppCreds
+
+
+@dataclass(frozen=True)
+class WhatsAppCredentialReplacementKey:
+    name: str | None
+    jid: str
+    lid: str | None
 
 
 @dataclass(frozen=True)
@@ -2183,22 +2190,24 @@ async def mint_whatsapp_agent_credential(
     self_identity: dict[str, str | None] | None = None,
 ) -> StoredWhatsAppCredential:
     now = datetime.now(UTC)
-    await db.execute(
-        update(ChannelAgentCredential)
-        .where(
-            ChannelAgentCredential.account_id == account.id,
-            ChannelAgentCredential.bot_agent_link_id == bot_agent_link_id,
-            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
-            ChannelAgentCredential.revoked_at.is_(None),
-        )
-        .values(revoked_at=now)
-    )
     minted = mint_tenant_creds(
         tenant_id=str(bot_agent_link_id),
         phone_user=phone_user,
         device=device,
         name=name,
         self_identity=self_identity,
+    )
+    replacement_key = whatsapp_credential_replacement_key(
+        name=name,
+        jid=minted.jid,
+        self_identity=self_identity,
+    )
+    await revoke_replaced_whatsapp_agent_credentials(
+        db,
+        account=account,
+        bot_agent_link_id=bot_agent_link_id,
+        replacement_key=replacement_key,
+        revoked_at=now,
     )
     serialized = serialize_creds(minted.creds)
     ciphertext, nonce = encrypt(serialized)
@@ -2212,11 +2221,124 @@ async def mint_whatsapp_agent_credential(
         synthetic_jid=minted.jid,
         encrypted_credentials=ciphertext,
         credential_nonce=nonce,
-        config={"device": device, "name": name},
+        config=whatsapp_agent_credential_config(
+            device=device,
+            name=name,
+            phone_user=phone_user,
+            self_identity=self_identity,
+            replacement_key=replacement_key,
+        ),
     )
     db.add(credential)
     await db.flush()
     return StoredWhatsAppCredential(credential=credential, minted=minted)
+
+
+def whatsapp_credential_replacement_key(
+    *,
+    name: str | None,
+    jid: str,
+    self_identity: dict[str, str | None] | None,
+) -> WhatsAppCredentialReplacementKey:
+    return WhatsAppCredentialReplacementKey(
+        name=_clean_optional_whatsapp_text(name),
+        jid=jid,
+        lid=_clean_optional_whatsapp_text((self_identity or {}).get("lid")),
+    )
+
+
+async def revoke_replaced_whatsapp_agent_credentials(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+    replacement_key: WhatsAppCredentialReplacementKey,
+    revoked_at: datetime,
+) -> None:
+    result = await db.execute(
+        select(ChannelAgentCredential).where(
+            ChannelAgentCredential.account_id == account.id,
+            ChannelAgentCredential.bot_agent_link_id == bot_agent_link_id,
+            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+            ChannelAgentCredential.revoked_at.is_(None),
+        )
+    )
+    for credential in result.scalars():
+        if whatsapp_credential_replacement_keys_match(credential, replacement_key):
+            credential.revoked_at = revoked_at
+
+
+def whatsapp_credential_replacement_keys_match(
+    credential: ChannelAgentCredential,
+    replacement_key: WhatsAppCredentialReplacementKey,
+) -> bool:
+    existing_key = whatsapp_credential_replacement_key_for_existing_credential(credential)
+    if existing_key.name != replacement_key.name or existing_key.jid != replacement_key.jid:
+        return False
+    config = credential.config if isinstance(credential.config, dict) else {}
+    if not isinstance(config.get("replacement_key"), dict):
+        return True
+    return existing_key.lid == replacement_key.lid
+
+
+def whatsapp_credential_replacement_key_for_existing_credential(
+    credential: ChannelAgentCredential,
+) -> WhatsAppCredentialReplacementKey:
+    config = credential.config if isinstance(credential.config, dict) else {}
+    stored_key = config.get("replacement_key")
+    if isinstance(stored_key, dict):
+        jid = _clean_optional_whatsapp_text(stored_key.get("jid")) or credential.synthetic_jid
+        return WhatsAppCredentialReplacementKey(
+            name=_clean_optional_whatsapp_text(stored_key.get("name")),
+            jid=jid,
+            lid=_clean_optional_whatsapp_text(stored_key.get("lid")),
+        )
+    return WhatsAppCredentialReplacementKey(
+        name=_clean_optional_whatsapp_text(config.get("name")),
+        jid=credential.synthetic_jid,
+        lid=None,
+    )
+
+
+def whatsapp_agent_credential_config(
+    *,
+    device: int,
+    name: str | None,
+    phone_user: str | None,
+    self_identity: dict[str, str | None] | None,
+    replacement_key: WhatsAppCredentialReplacementKey,
+) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "device": device,
+        "name": _clean_optional_whatsapp_text(name),
+        "replacement_key": {
+            "name": replacement_key.name,
+            "jid": replacement_key.jid,
+            "lid": replacement_key.lid,
+        },
+    }
+    clean_phone_user = _clean_optional_whatsapp_text(phone_user)
+    if clean_phone_user is not None:
+        config["phone_user"] = clean_phone_user
+    clean_self_identity = {
+        key: value
+        for key, value in {
+            "id": _clean_optional_whatsapp_text((self_identity or {}).get("id")),
+            "lid": _clean_optional_whatsapp_text((self_identity or {}).get("lid")),
+            "name": _clean_optional_whatsapp_text((self_identity or {}).get("name")),
+        }.items()
+        if value is not None
+    }
+    if clean_self_identity:
+        config["self_identity"] = clean_self_identity
+    return config
+
+
+def _clean_optional_whatsapp_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 async def resolve_whatsapp_credential_by_identity(

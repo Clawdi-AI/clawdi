@@ -1555,6 +1555,83 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
 
 
 @pytest.mark.asyncio
+async def test_whatsapp_tenant_creds_remint_replaces_same_link_name_and_target_only(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "whatsapp", "name": "wa-remint-replacement-key"},
+        )
+    ).json()
+    shared_self = {
+        "id": "16693773518:2@s.whatsapp.net",
+        "lid": "117901482786828:2@lid",
+    }
+
+    first_response = await client.post(
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+        json={"name": "tenant-a", "self_identity": shared_self},
+    )
+    replacement_response = await client.post(
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+        json={"name": "tenant-a", "self_identity": shared_self},
+    )
+    sibling_response = await client.post(
+        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+        json={"name": "tenant-b", "self_identity": shared_self},
+    )
+
+    assert first_response.status_code == 201
+    assert replacement_response.status_code == 201
+    assert sibling_response.status_code == 201
+    first = first_response.json()
+    replacement = replacement_response.json()
+    sibling = sibling_response.json()
+
+    first_credential = await db_session.get(ChannelAgentCredential, UUID(first["credential_id"]))
+    replacement_credential = await db_session.get(
+        ChannelAgentCredential, UUID(replacement["credential_id"])
+    )
+    sibling_credential = await db_session.get(
+        ChannelAgentCredential, UUID(sibling["credential_id"])
+    )
+    assert first_credential is not None
+    assert replacement_credential is not None
+    assert sibling_credential is not None
+    assert first_credential.revoked_at is not None
+    assert replacement_credential.revoked_at is None
+    assert sibling_credential.revoked_at is None
+
+    assert (
+        await resolve_whatsapp_credential_by_identity(
+            db_session,
+            identity_public_key=bytes.fromhex(first["identity_pub_key_hex"]),
+        )
+        is None
+    )
+    replacement_found = await resolve_whatsapp_credential_by_identity(
+        db_session,
+        identity_public_key=bytes.fromhex(replacement["identity_pub_key_hex"]),
+    )
+    sibling_found = await resolve_whatsapp_credential_by_identity(
+        db_session,
+        identity_public_key=bytes.fromhex(sibling["identity_pub_key_hex"]),
+    )
+    assert replacement_found is not None
+    assert sibling_found is not None
+    assert replacement_found.id == UUID(replacement["credential_id"])
+    assert sibling_found.id == UUID(sibling["credential_id"])
+
+    listed = (await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")).json()
+    assert {item["credential_id"] for item in listed} == {
+        replacement["credential_id"],
+        sibling["credential_id"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_remint(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

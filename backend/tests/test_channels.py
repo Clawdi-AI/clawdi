@@ -2024,9 +2024,10 @@ async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credentia
         .scalars()
         .all()
     )
-    assert [str(credential.id) for credential in active_credentials] == [
-        second.json()["credential_id"]
-    ]
+    assert {str(credential.id) for credential in active_credentials} == {
+        first.json()["credential_id"],
+        second.json()["credential_id"],
+    }
 
     api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
     async with _client_for_api_key(db_session, user, api_key) as runtime_client:
