@@ -20,6 +20,7 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
 	type DeploymentStatus,
 	type DeploymentStatusTone,
@@ -206,6 +207,7 @@ export function useHostedAgentTiles({
 	const unreachableFromOrigin = isNetworkError(query.error);
 
 	return {
+		hasExistingDeployments: includeDeployments && hasExistingCloudDeployments(query.data),
 		tiles,
 		claimedEnvIds,
 		// Disabled queries report isLoading=true forever in v5 (status

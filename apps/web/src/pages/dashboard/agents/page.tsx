@@ -46,11 +46,11 @@ export default function AgentsIndexPage() {
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedCount = selfManagedTiles.length;
 	const hostedAccessLoading = Boolean(HostedAgentsByCompute && hostedAccess.isLoading);
-	const hostedAgentsEnabled = Boolean(HostedAgentsByCompute && hostedAccess.canUseCloudAgents);
+	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsByCompute);
 	const legacyHostedAgentsEnabled = Boolean(
 		HostedAgentsByCompute && hostedAccess.canUseLegacyHostedDashboard,
 	);
-	const hostedSectionEnabled = hostedAgentsEnabled || legacyHostedAgentsEnabled;
+	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
 
 	return (
 		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-6 px-4 lg:px-6`}>
@@ -68,7 +68,7 @@ export default function AgentsIndexPage() {
 						}}
 						selfManagedCount={selfManagedCount}
 						cloudEnvs={environments ?? []}
-						showCloudDeployments={hostedAgentsEnabled}
+						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					/>
 				</Suspense>

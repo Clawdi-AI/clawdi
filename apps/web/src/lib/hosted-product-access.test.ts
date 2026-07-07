@@ -5,17 +5,19 @@ describe("hostedProductAccessFromProfile", () => {
 	it("keeps hosted product surfaces hidden by default", () => {
 		expect(hostedProductAccessFromProfile(undefined)).toEqual({
 			canUseLegacyHostedDashboard: false,
+			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});
 	});
 
-	it("uses the backend per-user Cloud agents gate", () => {
+	it("uses the backend per-user Cloud agent creation gate", () => {
 		expect(
 			hostedProductAccessFromProfile({
 				capabilities: { can_use_v2: true },
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
+			canCreateCloudAgents: true,
 			canUseCloudAgents: true,
 		});
 	});
@@ -27,11 +29,12 @@ describe("hostedProductAccessFromProfile", () => {
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: true,
+			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});
 	});
 
-	it("keeps Cloud agents disabled when the backend gate is false", () => {
+	it("keeps Cloud agent creation disabled when the backend gate is false", () => {
 		expect(
 			hostedProductAccessFromProfile({
 				capabilities: {
@@ -41,6 +44,7 @@ describe("hostedProductAccessFromProfile", () => {
 			}),
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
+			canCreateCloudAgents: false,
 			canUseCloudAgents: false,
 		});
 	});

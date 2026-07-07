@@ -118,7 +118,7 @@ export function SettingsDialog({
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showBilling = mounted && IS_HOSTED_BUILD && hostedAccess.canUseCloudAgents;
+	const showBilling = mounted && IS_HOSTED_BUILD && hostedAccess.canCreateCloudAgents;
 	const items = SETTINGS_NAV.filter((item) => !item.cloudOnly || showBilling);
 	const activeSection = items.some((item) => item.id === section)
 		? section

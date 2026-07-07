@@ -15,7 +15,7 @@ export function HostedProductGate({
 }) {
 	const router = useRouter();
 	const access = useHostedProductAccess();
-	const allowed = IS_HOSTED && access.canUseCloudAgents;
+	const allowed = IS_HOSTED && access.canCreateCloudAgents;
 	const denied = !access.isLoading && !allowed;
 
 	useEffect(() => {

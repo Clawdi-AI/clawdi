@@ -1557,7 +1557,7 @@ export function AppSidebar({
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const showCloudFeatures = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
+	const showCloudFeatures = mounted && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({

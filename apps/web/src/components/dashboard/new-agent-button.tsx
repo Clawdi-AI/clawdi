@@ -38,7 +38,7 @@ export function NewAgentButton({
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-	const canDeployManagedAgent = mounted && IS_HOSTED && hostedAccess.canUseCloudAgents;
+	const canDeployManagedAgent = mounted && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = mounted && IS_HOSTED && hostedAccess.isLoading;
 
 	function handleClick() {
