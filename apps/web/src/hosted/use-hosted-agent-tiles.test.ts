@@ -91,8 +91,6 @@ function deployment(
 			ai_provider_auth_kind: "managed",
 			public_ports: [],
 			runtime: "openclaw",
-			onboarded_agents: ["openclaw"],
-			configured_agents: ["openclaw"],
 			clawdi_cloud_environments: {},
 			vcpu: null,
 			ram_gb: null,
@@ -120,8 +118,6 @@ describe("deploymentToTiles", () => {
 				{},
 				{
 					runtime: "openclaw",
-					onboarded_agents: ["openclaw", "hermes"],
-					configured_agents: ["openclaw", "hermes"],
 					clawdi_cloud_environments: {
 						openclaw: openclawEnv.id,
 						hermes: "44444444-4444-4444-8444-444444444444",

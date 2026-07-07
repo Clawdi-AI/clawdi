@@ -36,8 +36,6 @@ function configInfo(
 		ai_provider_auth_kind: "managed",
 		public_ports: [],
 		runtime: "openclaw",
-		onboarded_agents: ["openclaw"],
-		configured_agents: ["openclaw"],
 		clawdi_cloud_environments: {},
 		vcpu: null,
 		ram_gb: null,
@@ -68,8 +66,6 @@ describe("deploymentRuntime", () => {
 				deployment(
 					configInfo({
 						runtime: "openclaw",
-						onboarded_agents: ["openclaw"],
-						configured_agents: ["openclaw", "hermes"],
 						clawdi_cloud_environments: {
 							hermes: "env-hermes",
 							openclaw: "env-openclaw",

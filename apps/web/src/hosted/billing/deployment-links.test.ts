@@ -28,8 +28,6 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 					ai_provider_auth_kind: "managed",
 					public_ports: [],
 					runtime: "openclaw",
-					onboarded_agents: [],
-					configured_agents: [],
 					clawdi_cloud_environments: envs,
 					vcpu: null,
 					ram_gb: null,
