@@ -4349,6 +4349,242 @@ exit 64
 		}
 	});
 
+	it("converges Hermes native Telegram and Discord channel projection", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(hermesBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+
+		const load: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "hermes",
+				deploymentId: "dep_hermes_channels",
+				environmentId: "env_hermes_channels",
+				instanceId: "iid_hermes_channels",
+				generation: 12,
+				issuedAt: "2026-07-07T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test/" },
+				runtimes: {
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+						run: {
+							args: ["gateway", "run", "--replace"],
+							env: { HERMES_EXISTING_ENV: "kept" },
+							prependPath: [],
+						},
+						services: {},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://hermes-channels",
+			offline: false,
+			secretValues: {},
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [
+				{
+					id: "acct-telegram-hermes",
+					provider: "telegram",
+					name: "Hermes Telegram",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-telegram-hermes",
+							account_id: "acct-telegram-hermes",
+							agent_id: "env_hermes_channels",
+							status: "active",
+							agent_token: "123456789:telegram-agent-token",
+						},
+					],
+				},
+				{
+					id: "acct-discord-hermes",
+					provider: "discord",
+					name: "Hermes Discord",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-discord-hermes",
+							account_id: "acct-discord-hermes",
+							agent_id: "env_hermes_channels",
+							status: "active",
+							agent_token: "discord-agent-token",
+						},
+					],
+				},
+			],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: '"hermes-channels"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
+		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
+		expect(hermesConfig).toContain("telegram:");
+		expect(hermesConfig).toContain("enabled: true");
+		expect(hermesConfig).toContain("base_url: https://cloud-api.test/v1/channels/telegram/bot");
+		expect(hermesConfig).toContain(
+			"base_file_url: https://cloud-api.test/v1/channels/telegram/file/bot",
+		);
+		expect(hermesConfig).toContain("discord:");
+		expect(hermesConfig).toContain("thread_require_mention: false");
+		expect(hermesConfig).not.toContain("telegram-agent-token");
+		expect(hermesConfig).not.toContain("discord-agent-token");
+
+		const runConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
+		);
+		expect(runConfig.env.HERMES_EXISTING_ENV).toBe("kept");
+		expect(runConfig.env.TELEGRAM_ALLOW_ALL_USERS).toBe("true");
+		expect(runConfig.env.DISCORD_ALLOW_ALL_USERS).toBe("true");
+		expect(runConfig.env.HERMES_TELEGRAM_DISABLE_FALLBACK_IPS).toBe("true");
+		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toMatch(
+			/^secret:\/\/channels\/telegram\/clawdi_accttelegram\/agent-token$/,
+		);
+		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toMatch(
+			/^secret:\/\/channels\/discord\/clawdi_acctdiscordh\/agent-token$/,
+		);
+		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
+		expect(hermesEnv).toContain('TELEGRAM_BOT_TOKEN="123456789:telegram-agent-token"');
+		expect(hermesEnv).toContain('DISCORD_BOT_TOKEN="discord-agent-token"');
+		expect(hermesEnv).toContain('TELEGRAM_ALLOW_ALL_USERS="true"');
+		expect(hermesEnv).toContain('DISCORD_ALLOW_ALL_USERS="true"');
+		expect(hermesEnv).toContain('HERMES_TELEGRAM_DISABLE_FALLBACK_IPS="true"');
+		const profileBundle = readFileSync(join(state, "config", "mitm", "profiles.json"), "utf-8");
+		expect(profileBundle).toContain("/v1/channels/telegram");
+		expect(profileBundle).toContain("/v1/channels/discord");
+	});
+
+	it("clears Hermes native channel settings when no channel links are active", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(join(home, ".hermes"), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			[
+				"telegram:",
+				"  enabled: true",
+				"discord:",
+				"  enabled: true",
+				"  stale: should-be-removed",
+				"",
+			].join("\n"),
+		);
+		chmodSync(hermesBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+
+		const load: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "hermes",
+				deploymentId: "dep_hermes_channel_clear",
+				environmentId: "env_hermes_channel_clear",
+				instanceId: "iid_hermes_channel_clear",
+				generation: 13,
+				issuedAt: "2026-07-07T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+						run: {
+							args: ["gateway", "run", "--replace"],
+							env: {
+								HERMES_EXISTING_ENV: "kept",
+								TELEGRAM_ALLOW_ALL_USERS: "true",
+								DISCORD_ALLOW_ALL_USERS: "true",
+							},
+							secretEnv: {
+								TELEGRAM_BOT_TOKEN: "secret://channels/telegram/clawdi_stale/agent-token",
+								DISCORD_BOT_TOKEN: "secret://channels/discord/clawdi_stale/agent-token",
+							},
+							prependPath: [],
+						},
+						services: {},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://hermes-channel-clear",
+			offline: false,
+			secretValues: {},
+		};
+		const projected = applyRuntimeChannelsToManifestLoad(load, {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: '"empty-hermes-channels"',
+		});
+
+		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
+		expect(hermesConfig).toContain("telegram:");
+		expect(hermesConfig).toContain("discord:");
+		expect(hermesConfig).toContain("enabled: false");
+		expect(hermesConfig).not.toContain("stale: should-be-removed");
+		const runConfig = JSON.parse(
+			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
+		);
+		expect(runConfig.env.HERMES_EXISTING_ENV).toBe("kept");
+		expect(runConfig.env.TELEGRAM_ALLOW_ALL_USERS).toBeUndefined();
+		expect(runConfig.env.DISCORD_ALLOW_ALL_USERS).toBeUndefined();
+		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toBeUndefined();
+		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toBeUndefined();
+		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
+		expect(hermesEnv).not.toContain("TELEGRAM_BOT_TOKEN");
+		expect(hermesEnv).not.toContain("DISCORD_BOT_TOKEN");
+	});
+
 	it("converges empty native channel projection with merge-patch deletes", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
