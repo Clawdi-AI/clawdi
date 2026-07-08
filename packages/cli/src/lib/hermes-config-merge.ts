@@ -17,6 +17,7 @@ const HERMES_GENERATED_PROVIDER_FIELDS = [
 	"base_url",
 	"default_model",
 	"model",
+	"models",
 	"transport",
 	"api_mode",
 	"key_env",
@@ -137,12 +138,24 @@ function applyHermesProviderPatch(
 	const patchModel = isPlainRecord(patchConfig.model) ? patchConfig.model : {};
 	removeHermesDirectModelFields(document, existingModel);
 	for (const [key, value] of Object.entries(patchModel)) {
+		if (value === null) {
+			if (Object.hasOwn(existingModel, key)) {
+				document.deleteIn(["model", key]);
+			}
+			continue;
+		}
 		document.setIn(["model", key], value);
 	}
 
 	const existingProviders = isPlainRecord(root.providers) ? root.providers : {};
 	const patchProviders = isPlainRecord(patchConfig.providers) ? patchConfig.providers : {};
 	for (const [providerId, patchValue] of Object.entries(patchProviders)) {
+		if (patchValue === null) {
+			if (Object.hasOwn(existingProviders, providerId)) {
+				document.deleteIn(["providers", providerId]);
+			}
+			continue;
+		}
 		if (!isPlainRecord(patchValue)) continue;
 		const existingProvider = isPlainRecord(existingProviders[providerId])
 			? existingProviders[providerId]
@@ -154,8 +167,19 @@ function applyHermesProviderPatch(
 			document.setIn(["providers", providerId], document.createNode({}));
 		}
 		removeHermesGeneratedProviderFields(document, providerId, existingProvider);
+		let wroteGeneratedField = false;
 		for (const [key, value] of Object.entries(patchValue)) {
+			if (value === null) {
+				if (Object.hasOwn(existingProvider, key)) {
+					document.deleteIn(["providers", providerId, key]);
+				}
+				continue;
+			}
 			document.setIn(["providers", providerId, key], value);
+			wroteGeneratedField = true;
+		}
+		if (!wroteGeneratedField && !hasHermesUserOwnedProviderFields(existingProvider)) {
+			document.deleteIn(["providers", providerId]);
 		}
 	}
 }
@@ -202,6 +226,12 @@ function removeHermesGeneratedProviderFields(
 	for (const key of HERMES_GENERATED_PROVIDER_FIELDS) {
 		if (Object.hasOwn(input, key)) document.deleteIn(["providers", providerId, key]);
 	}
+}
+
+function hasHermesUserOwnedProviderFields(input: Record<string, unknown>): boolean {
+	return Object.keys(input).some(
+		(key) => !(HERMES_GENERATED_PROVIDER_FIELDS as readonly string[]).includes(key),
+	);
 }
 
 function isPlainRecord(input: unknown): input is Record<string, unknown> {

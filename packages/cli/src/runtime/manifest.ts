@@ -26,8 +26,13 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
+import { stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
-import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import {
+	type AgentPrimaryModel,
+	buildAgentTargetProjection,
+	type ProjectionFile,
+} from "../lib/ai-provider-projection";
 import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
@@ -1373,31 +1378,56 @@ function isEnvKey(value: string): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
+interface HostedAiProviderProjectionResult {
+	path: string | null;
+	revision: string | null;
+}
+
+interface HermesHostedProviderPluginProjection {
+	modelPatch: string;
+	pluginFiles: ProjectionFile[];
+	revision: string;
+}
+
+interface HermesHostedPluginProviderProfile {
+	description: string;
+	displayName: string;
+	envName: string;
+	fallbackModels: string[];
+	pluginProviderName: string;
+	primaryModelDetails: {
+		context_length?: number;
+		max_tokens?: number;
+		supports_vision?: boolean;
+	} | null;
+	provider: AiProviderCatalog["providers"][number];
+	providerApiMode: string;
+}
+
+const HERMES_MODEL_PROVIDER_PLUGIN_NAME = "clawdi";
+const HERMES_MODEL_PROVIDER_PLUGIN_VERSION = "1.0.0";
+const HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION = [0, 18, 0] as const;
+const HERMES_PROVIDER_PROFILE_API_MODES: Partial<Record<AiProviderApiMode, string>> = {
+	openai_chat: "chat_completions",
+	openai_responses: "codex_responses",
+	anthropic_messages: "anthropic_messages",
+};
+
 function applyHostedAiProviderProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
-): string | null {
+): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
-		return null;
+		return { path: null, revision: null };
 	}
 	const projectionInput = hostedAiProviderCatalog(manifest, name);
-	if (!projectionInput) return null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
-		const projection = buildAgentTargetProjection(
-			"hermes",
-			projectionInput.catalog,
-			projectionInput.primaryModel,
-		);
-		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
-		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-		const configPath = join(home, ".hermes", "config.yaml");
-		mergeHermesConfig(configPath, file.content);
-		makeRuntimeUserOwned(configPath);
-		return configPath;
+		return applyHostedHermesAiProviderProjection(observation, projectionInput, home, workspaceRoot);
 	}
+	if (!projectionInput) return { path: null, revision: null };
 	if (name === "openclaw") {
 		applyOpenClawHostedProviderProjection(
 			observation.commandPath,
@@ -1406,9 +1436,380 @@ function applyHostedAiProviderProjection(
 			workspaceRoot,
 		);
 		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
-		return observation.commandPath;
+		return { path: observation.commandPath, revision: null };
 	}
-	return null;
+	return { path: null, revision: null };
+}
+
+function applyHostedHermesAiProviderProjection(
+	observation: RuntimeInstallObservation,
+	projectionInput: {
+		catalog: AiProviderCatalog;
+		primaryModel: AgentPrimaryModel;
+	} | null,
+	home: string,
+	workspaceRoot: string,
+): HostedAiProviderProjectionResult {
+	const configPath = join(home, ".hermes", "config.yaml");
+	if (!projectionInput) {
+		removeHermesModelProviderPlugin(home);
+		return {
+			path: null,
+			revision: revisionHash({ hermesProviderProjection: "none" }),
+		};
+	}
+
+	const commandPath = observation.commandPath;
+	if (!commandPath) return { path: null, revision: null };
+	const version = detectHermesInstalledVersion(commandPath, home, workspaceRoot);
+	if (!supportsHermesModelProviderPlugins(version)) {
+		removeHermesModelProviderPlugin(home);
+		const projection = buildAgentTargetProjection(
+			"hermes",
+			projectionInput.catalog,
+			projectionInput.primaryModel,
+		);
+		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
+		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
+		mergeHermesConfig(configPath, file.content);
+		makeRuntimeUserOwned(configPath);
+		return {
+			path: configPath,
+			revision: revisionHash({
+				hermesProviderProjection: "yaml-merge",
+				patch: file.content,
+			}),
+		};
+	}
+
+	const pluginProjection = buildHermesHostedProviderPluginProjection(
+		projectionInput.catalog,
+		projectionInput.primaryModel,
+	);
+	const pluginDir = syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles);
+	mergeHermesConfig(configPath, pluginProjection.modelPatch);
+	makeRuntimeUserOwned(configPath);
+	return {
+		path: pluginDir,
+		revision: pluginProjection.revision,
+	};
+}
+
+function detectHermesInstalledVersion(command: string, home: string, cwd: string): string | null {
+	const result = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
+	if (result.status !== 0) return null;
+	const output = [result.stdout, result.stderr]
+		.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+		.join("\n");
+	const match = output.match(/v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
+	return match?.[1] ?? null;
+}
+
+function supportsHermesModelProviderPlugins(version: string | null): boolean {
+	const parsed = parseSemverishVersion(version);
+	if (!parsed) return false;
+	return compareSemverParts(parsed, HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION) >= 0;
+}
+
+function parseSemverishVersion(version: string | null): [number, number, number] | null {
+	if (!version) return null;
+	const match = version.match(/(\d+)\.(\d+)\.(\d+)/);
+	if (!match) return null;
+	const major = Number.parseInt(match[1] ?? "", 10);
+	const minor = Number.parseInt(match[2] ?? "", 10);
+	const patch = Number.parseInt(match[3] ?? "", 10);
+	if (![major, minor, patch].every((part) => Number.isInteger(part) && part >= 0)) {
+		return null;
+	}
+	return [major, minor, patch];
+}
+
+function compareSemverParts(
+	left: readonly [number, number, number],
+	right: readonly [number, number, number],
+): number {
+	const [leftMajor, leftMinor, leftPatch] = left;
+	const [rightMajor, rightMinor, rightPatch] = right;
+	return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
+}
+
+function buildHermesHostedProviderPluginProjection(
+	catalog: AiProviderCatalog,
+	primaryModel: AgentPrimaryModel,
+): HermesHostedProviderPluginProjection {
+	const profiles = catalog.providers.map((provider) =>
+		buildHermesHostedPluginProviderProfile(
+			provider,
+			provider.id === primaryModel.provider_id ? primaryModel.model : null,
+		),
+	);
+	const primaryProvider = profiles.find((entry) => entry.provider.id === primaryModel.provider_id);
+	if (!primaryProvider?.primaryModelDetails) {
+		throw new Error(
+			`Hermes hosted provider projection cannot find primary provider ${primaryModel.provider_id}.`,
+		);
+	}
+	const pluginFiles: ProjectionFile[] = [
+		{
+			path: "__init__.py",
+			content: buildHermesHostedPluginInit(profiles),
+		},
+		{
+			path: "plugin.yaml",
+			content: [
+				`name: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
+				"kind: model-provider",
+				`version: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_VERSION)}`,
+				'description: "Clawdi hosted AI provider projection"',
+				'author: "Clawdi"',
+				"",
+			].join("\n"),
+		},
+	];
+	const compatibilityProviders = buildHermesHostedCompatibilityProviders(profiles);
+	const modelPatch = buildHermesHostedPluginModelPatch(
+		primaryModel,
+		primaryProvider.pluginProviderName,
+		primaryProvider.primaryModelDetails,
+		compatibilityProviders,
+	);
+	return {
+		modelPatch,
+		pluginFiles,
+		revision: revisionHash({
+			hermesProviderProjection: "plugin",
+			modelPatch,
+			pluginFiles,
+		}),
+	};
+}
+
+function buildHermesHostedPluginProviderProfile(
+	provider: AiProviderCatalog["providers"][number],
+	primaryModelId: string | null,
+): HermesHostedPluginProviderProfile {
+	const envName = provider.runtime_env_name?.trim();
+	if (!envName || !isEnvKey(envName)) {
+		throw new Error(
+			`Hermes model-provider plugin projection requires a valid runtime_env_name for ${provider.id}.`,
+		);
+	}
+	if (provider.auth.type !== "api_key") {
+		throw new Error(
+			`Hermes model-provider plugin projection requires api_key auth for ${provider.id}; got ${provider.auth.type}.`,
+		);
+	}
+	const providerApiMode = provider.api_mode;
+	if (!providerApiMode) {
+		throw new Error(
+			`Hermes model-provider plugin projection requires api_mode for ${provider.id}.`,
+		);
+	}
+	const apiMode = HERMES_PROVIDER_PROFILE_API_MODES[providerApiMode];
+	if (!apiMode) {
+		throw new Error(
+			`Hermes model-provider plugin projection does not support api_mode ${providerApiMode} for ${provider.id}.`,
+		);
+	}
+
+	const displayName = provider.label?.trim() || provider.id;
+	return {
+		description: `${displayName} projected by Clawdi runtime converge`,
+		displayName,
+		envName,
+		fallbackModels: hermesHostedFallbackModels(provider, primaryModelId),
+		pluginProviderName: hermesHostedPluginProviderName(provider.id),
+		primaryModelDetails:
+			primaryModelId === null ? null : hermesHostedPrimaryModelDetails(provider, primaryModelId),
+		provider,
+		providerApiMode: apiMode,
+	};
+}
+
+function buildHermesHostedPluginInit(
+	profiles: readonly HermesHostedPluginProviderProfile[],
+): string {
+	const lines = [
+		'"""Clawdi hosted AI provider projection."""',
+		"",
+		"from providers import register_provider",
+		"from providers.base import ProviderProfile",
+		"",
+	];
+	for (const profile of profiles) {
+		const profileArgs = [
+			`name=${pythonStringLiteral(profile.pluginProviderName)}`,
+			`display_name=${pythonStringLiteral(profile.displayName)}`,
+			`description=${pythonStringLiteral(profile.description)}`,
+			`env_vars=${pythonTupleLiteral([profile.envName])}`,
+			`base_url=${pythonStringLiteral(profile.provider.base_url)}`,
+			'auth_type="api_key"',
+			`api_mode=${pythonStringLiteral(profile.providerApiMode)}`,
+			...(profile.fallbackModels.length > 0
+				? [`fallback_models=${pythonTupleLiteral(profile.fallbackModels)}`]
+				: []),
+		];
+		lines.push(
+			"register_provider(",
+			"    ProviderProfile(",
+			...profileArgs.map((line) => `        ${line},`),
+			"    )",
+			")",
+			"",
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function buildHermesHostedCompatibilityProviders(
+	profiles: readonly HermesHostedPluginProviderProfile[],
+): Record<string, unknown> {
+	const providers: Record<string, unknown> = {};
+	for (const profile of profiles) {
+		const models = buildHermesHostedCompatibilityProviderModels(profile.provider);
+		providers[profile.pluginProviderName] =
+			Object.keys(models).length > 0
+				? {
+						api: profile.provider.base_url,
+						models,
+					}
+				: {
+						models: null,
+					};
+	}
+	return providers;
+}
+
+function buildHermesHostedCompatibilityProviderModels(
+	provider: AiProviderCatalog["providers"][number],
+): Record<string, unknown> {
+	const models: Record<string, unknown> = {};
+	for (const model of provider.models ?? []) {
+		const modelId = model.id.trim();
+		if (!modelId || Object.hasOwn(models, modelId)) continue;
+		const metadata: Record<string, unknown> = {};
+		const contextLength = positiveInteger(model.context_window);
+		if (contextLength !== undefined) metadata.context_length = contextLength;
+		const supportsVision = hermesHostedSupportsVision(model);
+		if (supportsVision !== undefined) metadata.supports_vision = supportsVision;
+		if (Object.keys(metadata).length === 0) continue;
+		models[modelId] = metadata;
+	}
+	return models;
+}
+
+function buildHermesHostedPluginModelPatch(
+	primaryModel: AgentPrimaryModel,
+	primaryPluginProviderName: string,
+	primaryModelDetails: {
+		context_length?: number;
+		max_tokens?: number;
+		supports_vision?: boolean;
+	},
+	compatibilityProviders: Record<string, unknown>,
+): string {
+	const patch: Record<string, unknown> = {
+		model: {
+			provider: primaryPluginProviderName,
+			default: primaryModel.model,
+			context_length: primaryModelDetails.context_length ?? null,
+			max_tokens: primaryModelDetails.max_tokens ?? null,
+			supports_vision: primaryModelDetails.supports_vision ?? null,
+		},
+	};
+	if (Object.keys(compatibilityProviders).length > 0) {
+		patch.providers = compatibilityProviders;
+	}
+	return [
+		"# Generated by Clawdi. Merge this patch into Hermes config.yaml.",
+		"# Contract: Hermes Agent 0.18.x discovers model-provider plugins from",
+		`# $HERMES_HOME/plugins/model-providers/${HERMES_MODEL_PROVIDER_PLUGIN_NAME}/.`,
+		stringifyYaml(patch).trimEnd(),
+		"",
+	].join("\n");
+}
+
+function hermesHostedPrimaryModelDetails(
+	provider: AiProviderCatalog["providers"][number],
+	modelId: string,
+): { context_length?: number; max_tokens?: number; supports_vision?: boolean } {
+	const model = provider.models?.find((entry) => entry.id === modelId);
+	return {
+		context_length: positiveInteger(model?.context_window),
+		max_tokens: positiveInteger(model?.max_tokens),
+		supports_vision: hermesHostedSupportsVision(model),
+	};
+}
+
+function hermesHostedFallbackModels(
+	provider: AiProviderCatalog["providers"][number],
+	primaryModelId: string | null,
+): string[] {
+	const ordered = [
+		...(primaryModelId ? [primaryModelId] : []),
+		...(provider.models ?? []).map((entry) => entry.id).filter((value) => value.trim().length > 0),
+	];
+	return ordered.filter((value, index, entries) => entries.indexOf(value) === index);
+}
+
+function hermesHostedSupportsVision(
+	model: NonNullable<AiProviderCatalog["providers"][number]["models"]>[number] | undefined,
+): boolean | undefined {
+	if (!model) return undefined;
+	if (typeof model.supports_vision === "boolean") return model.supports_vision;
+	return model.input_modalities?.includes("image") ? true : undefined;
+}
+
+function positiveInteger(value: number | undefined): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function pythonStringLiteral(value: string): string {
+	return JSON.stringify(value);
+}
+
+function pythonTupleLiteral(values: readonly string[]): string {
+	if (values.length === 0) return "()";
+	return `(${values.map((value) => pythonStringLiteral(value)).join(", ")}${
+		values.length === 1 ? "," : ""
+	})`;
+}
+
+function quoteYaml(value: string): string {
+	return JSON.stringify(value);
+}
+
+function hermesHostedPluginProviderName(providerId: string): string {
+	const normalized = providerId
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return `${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-${normalized || "provider"}`;
+}
+
+function hermesModelProviderPluginDir(home: string): string {
+	return join(home, ".hermes", "plugins", "model-providers", HERMES_MODEL_PROVIDER_PLUGIN_NAME);
+}
+
+function syncHermesModelProviderPlugin(home: string, files: ProjectionFile[]): string {
+	const pluginsDir = join(home, ".hermes", "plugins");
+	const providersDir = join(pluginsDir, "model-providers");
+	const pluginDir = hermesModelProviderPluginDir(home);
+	rmSync(pluginDir, { recursive: true, force: true });
+	makeRuntimeUserPrivateDir(pluginsDir);
+	makeRuntimeUserPrivateDir(providersDir);
+	makeRuntimeUserPrivateDir(pluginDir);
+	for (const file of files) {
+		const path = join(pluginDir, file.path);
+		writePrivateFileAtomic(path, file.content);
+		makeRuntimeUserOwned(path);
+	}
+	return pluginDir;
+}
+
+function removeHermesModelProviderPlugin(home: string): void {
+	rmSync(hermesModelProviderPluginDir(home), { recursive: true, force: true });
 }
 
 function applyOpenClawHostedProviderProjection(
@@ -1852,6 +2253,46 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		HOME: home,
+		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
+			.filter(Boolean)
+			.join(":"),
+	};
+}
+
+function spawnRuntimeUserCommand(
+	command: string,
+	args: string[],
+	home: string,
+	cwd: string,
+): ReturnType<typeof spawnSync> {
+	const env = runtimeUserCommandEnv(home);
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		if (commandExists("gosu")) {
+			return spawnSync("gosu", [runtimeUser, command, ...args], {
+				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
+				cwd,
+				encoding: "utf8",
+			});
+		}
+		if (commandExists("runuser")) {
+			return spawnSync(
+				"runuser",
+				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
+				{ env, cwd, encoding: "utf8" },
+			);
+		}
+		throw new Error(
+			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
+		);
+	}
+	return spawnSync(command, args, { env, cwd, encoding: "utf8" });
+}
+
 function runRuntimeUserCommand(
 	command: string,
 	args: string[],
@@ -1859,13 +2300,7 @@ function runRuntimeUserCommand(
 	home: string,
 	cwd: string,
 ): void {
-	const env = {
-		...process.env,
-		HOME: home,
-		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
-			.filter(Boolean)
-			.join(":"),
-	};
+	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
 		if (commandExists("gosu")) {
@@ -2191,12 +2626,14 @@ export function runtimeProgramRevision(
 	manifest: RuntimeManifest,
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
+	providerProjectionRevision: string | null = null,
 ): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		mitmProfiles: manifest.mitmProfiles ?? null,
 		projection: manifest.projection ?? null,
+		providerProjectionRevision,
 		runtime: manifest.runtimes[runtime] ?? null,
 		secretValues: secretValues ?? {},
 	});
@@ -2338,10 +2775,16 @@ function runtimeSystemdProgramRevision(
 	manifest: RuntimeManifest,
 	program: RuntimeSystemdUserProgram,
 	secretValues: Record<string, string> | undefined,
+	providerProjectionRevisions: Partial<Record<string, string | null>> = {},
 ): string {
 	if (program.service)
 		return runtimeServiceProgramRevision(manifest, program.runtime, program.service);
-	return runtimeProgramRevision(manifest, program.runtime, secretValues);
+	return runtimeProgramRevision(
+		manifest,
+		program.runtime,
+		secretValues,
+		providerProjectionRevisions[program.runtime] ?? null,
+	);
 }
 
 function shouldRunRuntime(runtime: string, manifest: RuntimeManifest): boolean {
@@ -2844,6 +3287,7 @@ function writeSystemdUnits(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
+	providerProjectionRevisions: Partial<Record<string, string | null>>,
 ): { systemUnits: string[]; userUnits: string[]; serviceInstallErrors: string[] } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const runtimeBridgeToken = hostedRuntimeBridgeToken();
@@ -2964,7 +3408,12 @@ function writeSystemdUnits(
 			...commonEnvironment,
 			...program.env,
 			CLAWDI_AUTH_TOKEN: "",
-			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(manifest, program, secretValues),
+			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
+				manifest,
+				program,
+				secretValues,
+				providerProjectionRevisions,
+			),
 			...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
 		};
 		if (officialRuntimeServiceInstallArgs(program)) {
@@ -3134,6 +3583,7 @@ export function convergeRuntimeManifest(
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
+	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
@@ -3171,7 +3621,13 @@ export function convergeRuntimeManifest(
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
 		try {
-			applyHostedAiProviderProjection(name, observation, manifest, workspaceRoot);
+			const providerProjection = applyHostedAiProviderProjection(
+				name,
+				observation,
+				manifest,
+				workspaceRoot,
+			);
+			providerProjectionRevisions[name] = providerProjection.revision;
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} provider projection failed: ${
@@ -3287,6 +3743,7 @@ export function convergeRuntimeManifest(
 		workspaceRoot,
 		daemonAuthTokenFile,
 		load.secretValues,
+		providerProjectionRevisions,
 	);
 	installErrors.push(...systemdUnits.serviceInstallErrors);
 
