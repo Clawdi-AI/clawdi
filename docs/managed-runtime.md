@@ -406,12 +406,13 @@ use official service installers for each runtime-owned surface when both are
 needed. Clawdi should not emulate that fan-out with shell wrappers or a
 runtime-owned-looking `hermes-dashboard.service`.
 
-OpenClaw's bridge-only hosted default stays loopback and unauthenticated because
-the runtime is reachable only through the Clawdi bridge and hosted access
-controls:
+OpenClaw's hosted default stays loopback and leaves auth selection to the
+runtime config projection. In v2 hosted, Clawdi patches
+`gateway.auth.mode=token` from `OPENCLAW_GATEWAY_TOKEN`; the launch command must
+not pass a conflicting `--auth` override:
 
 ```bash
-openclaw gateway run --allow-unconfigured --auth none --bind loopback --force
+openclaw gateway run --allow-unconfigured --bind loopback --force
 ```
 
 Production manifests should provide OpenClaw configuration and a real gateway

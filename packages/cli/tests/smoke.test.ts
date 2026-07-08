@@ -538,8 +538,6 @@ chmod +x "$HOME/.local/bin/hermes"
 				"gateway",
 				"run",
 				"--allow-unconfigured",
-				"--auth",
-				"none",
 				"--bind",
 				"loopback",
 				"--force",
