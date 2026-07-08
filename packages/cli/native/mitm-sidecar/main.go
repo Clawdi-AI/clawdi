@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 type profileBundle struct {
@@ -109,18 +111,27 @@ type proxyServer struct {
 	transport *http.Transport
 }
 
+type listenMode string
+
+const (
+	listenModeProxy       listenMode = "proxy"
+	listenModeTransparent listenMode = "transparent"
+)
+
 func main() {
 	var profileBundlePath string
 	var proxyURL string
 	var caFile string
 	var secretPath string
 	var allowRemoteProxy bool
+	var modeValue string
 
 	flag.StringVar(&profileBundlePath, "profile-bundle", "", "Path to the Clawdi MITM profile bundle JSON.")
 	flag.StringVar(&proxyURL, "proxy-url", "http://127.0.0.1:0", "HTTP proxy listen URL.")
 	flag.StringVar(&caFile, "ca-file", "", "Path where the generated CA PEM should be written.")
 	flag.StringVar(&secretPath, "secret-file", "", "Path to the short-lived Clawdi MITM secret map JSON.")
 	flag.BoolVar(&allowRemoteProxy, "allow-remote-proxy", false, "Allow the proxy to listen on a non-loopback interface.")
+	flag.StringVar(&modeValue, "mode", string(listenModeProxy), "MITM listen mode: proxy or transparent.")
 	flag.Parse()
 
 	if profileBundlePath == "" {
@@ -128,6 +139,10 @@ func main() {
 	}
 	if caFile == "" {
 		exitf("--ca-file is required")
+	}
+	mode := listenMode(modeValue)
+	if mode != listenModeProxy && mode != listenModeTransparent {
+		exitf("unsupported --mode %q", modeValue)
 	}
 
 	profiles, err := loadProfiles(profileBundlePath)
@@ -167,15 +182,28 @@ func main() {
 		},
 	}
 
-	server := &http.Server{
-		Handler:           http.HandlerFunc(proxy.dispatch),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
 	errs := make(chan error, 1)
-	go func() {
-		errs <- server.Serve(listener)
-	}()
+	var shutdown func()
+	if mode == listenModeTransparent {
+		server := newTransparentServer(proxy, listener)
+		shutdown = server.Close
+		go func() {
+			errs <- server.Serve()
+		}()
+	} else {
+		server := &http.Server{
+			Handler:           http.HandlerFunc(proxy.dispatch),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		shutdown = func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}
+		go func() {
+			errs <- server.Serve(listener)
+		}()
+	}
 
 	ready(true, actualProxyURL, caFile, "")
 
@@ -185,9 +213,7 @@ func main() {
 	select {
 	case sig := <-signals:
 		_ = sig
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
+		shutdown()
 	case err := <-errs:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			exitf("proxy server: %v", err)
@@ -621,6 +647,288 @@ func (p *proxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	_ = server.Serve(listener)
+}
+
+type transparentDestination struct {
+	Host string
+	Port int
+}
+
+type transparentServer struct {
+	proxy    *proxyServer
+	listener net.Listener
+	closed   chan struct{}
+	once     sync.Once
+}
+
+func newTransparentServer(proxy *proxyServer, listener net.Listener) *transparentServer {
+	return &transparentServer{
+		proxy:    proxy,
+		listener: listener,
+		closed:   make(chan struct{}),
+	}
+}
+
+func (s *transparentServer) Serve() error {
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-s.closed:
+				return http.ErrServerClosed
+			default:
+				return err
+			}
+		}
+		go s.proxy.handleTransparentConn(conn)
+	}
+}
+
+func (s *transparentServer) Close() {
+	s.once.Do(func() {
+		close(s.closed)
+		_ = s.listener.Close()
+	})
+}
+
+func (p *proxyServer) handleTransparentConn(conn net.Conn) {
+	dst, err := originalDestination(conn)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	switch dst.Port {
+	case 443:
+		p.handleTransparentTLS(conn, dst)
+	case 80:
+		p.handleTransparentHTTP(conn, dst)
+	default:
+		_ = conn.Close()
+	}
+}
+
+func (p *proxyServer) handleTransparentTLS(conn net.Conn, dst transparentDestination) {
+	var helloServerName string
+	tlsConn := tls.Server(conn, &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		NextProtos: []string{"http/1.1"},
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			helloServerName = hello.ServerName
+			certHost := hello.ServerName
+			if certHost == "" {
+				certHost = dst.Host
+			}
+			return p.ca.mintLeaf(certHost)
+		},
+	})
+	_ = tlsConn.SetDeadline(time.Now().Add(10 * time.Second))
+	if err := tlsConn.Handshake(); err != nil {
+		_ = tlsConn.Close()
+		return
+	}
+	_ = tlsConn.SetDeadline(time.Time{})
+	if helloServerName == "" {
+		helloServerName = tlsConn.ConnectionState().ServerName
+	}
+
+	listener := newOneShotListener(tlsConn)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			target, matchHost, err := transparentRequestTarget(r, "https", helloServerName, dst)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			p.forwardRequest(w, r, target, matchHost, "https", r.URL.Path, r.URL.RawQuery)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      30 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateHijacked || state == http.StateClosed {
+				_ = listener.Close()
+			}
+		},
+	}
+	_ = server.Serve(listener)
+}
+
+func (p *proxyServer) handleTransparentHTTP(conn net.Conn, dst transparentDestination) {
+	listener := newOneShotListener(conn)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			target, matchHost, err := transparentRequestTarget(r, "http", "", dst)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			p.forwardRequest(w, r, target, matchHost, "http", r.URL.Path, r.URL.RawQuery)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      30 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateHijacked || state == http.StateClosed {
+				_ = listener.Close()
+			}
+		},
+	}
+	_ = server.Serve(listener)
+}
+
+func transparentRequestTarget(r *http.Request, scheme, fallbackHost string, dst transparentDestination) (target, matchHost string, err error) {
+	rawHost := strings.TrimSpace(r.Host)
+	if rawHost == "" && r.URL != nil && r.URL.Host != "" {
+		rawHost = r.URL.Host
+	}
+	if rawHost == "" {
+		rawHost = fallbackHost
+	}
+	if rawHost == "" {
+		rawHost = dst.Host
+	}
+	host, port, err := splitOptionalHostPort(rawHost)
+	if err != nil {
+		return "", "", err
+	}
+	if host == "" || !isSafeHost(host) {
+		return "", "", fmt.Errorf("invalid host")
+	}
+	if port != "" && !isValidPort(port) {
+		return "", "", fmt.Errorf("invalid port")
+	}
+	if port == "" && !isDefaultSchemePort(scheme, dst.Port) {
+		port = strconv.Itoa(dst.Port)
+	}
+	target = urlHost(host, port)
+	return target, normalizeHost(target), nil
+}
+
+func splitOptionalHostPort(rawHost string) (host, port string, err error) {
+	rawHost = strings.TrimSpace(rawHost)
+	if rawHost == "" {
+		return "", "", nil
+	}
+	if parsedHost, parsedPort, splitErr := net.SplitHostPort(rawHost); splitErr == nil {
+		return strings.Trim(parsedHost, "[]"), parsedPort, nil
+	}
+	if strings.HasPrefix(rawHost, "[") {
+		end := strings.LastIndex(rawHost, "]")
+		if end < 0 {
+			return "", "", fmt.Errorf("invalid host")
+		}
+		host = rawHost[1:end]
+		rest := rawHost[end+1:]
+		if rest == "" {
+			return host, "", nil
+		}
+		if strings.HasPrefix(rest, ":") {
+			return host, strings.TrimPrefix(rest, ":"), nil
+		}
+		return "", "", fmt.Errorf("invalid host")
+	}
+	if strings.Count(rawHost, ":") > 1 {
+		return rawHost, "", nil
+	}
+	if idx := strings.LastIndex(rawHost, ":"); idx > 0 {
+		return rawHost[:idx], rawHost[idx+1:], nil
+	}
+	return rawHost, "", nil
+}
+
+func isDefaultSchemePort(scheme string, port int) bool {
+	return scheme == "http" && port == 80 || scheme == "https" && port == 443
+}
+
+const soOriginalDst = 80
+
+type rawSockaddrInet4 struct {
+	Family uint16
+	Port   [2]byte
+	Addr   [4]byte
+	Zero   [8]byte
+}
+
+type rawSockaddrInet6 struct {
+	Family   uint16
+	Port     [2]byte
+	Flowinfo uint32
+	Addr     [16]byte
+	ScopeID  uint32
+}
+
+func originalDestination(conn net.Conn) (transparentDestination, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return transparentDestination{}, fmt.Errorf("transparent interception requires a TCP connection")
+	}
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return transparentDestination{}, err
+	}
+	var dst transparentDestination
+	var sockErr error
+	if err := rawConn.Control(func(fd uintptr) {
+		dst, sockErr = getsockoptOriginalDestination(fd)
+	}); err != nil {
+		return transparentDestination{}, err
+	}
+	if sockErr != nil {
+		return transparentDestination{}, sockErr
+	}
+	return dst, nil
+}
+
+func getsockoptOriginalDestination(fd uintptr) (transparentDestination, error) {
+	if dst, err := getsockoptOriginalDestination4(fd); err == nil {
+		return dst, nil
+	}
+	return getsockoptOriginalDestination6(fd)
+}
+
+func getsockoptOriginalDestination4(fd uintptr) (transparentDestination, error) {
+	var addr rawSockaddrInet4
+	size := uint32(unsafe.Sizeof(addr))
+	if errno := getsockopt(fd, syscall.IPPROTO_IP, soOriginalDst, unsafe.Pointer(&addr), &size); errno != 0 {
+		return transparentDestination{}, errno
+	}
+	if addr.Family != syscall.AF_INET {
+		return transparentDestination{}, fmt.Errorf("SO_ORIGINAL_DST returned non-IPv4 family %d", addr.Family)
+	}
+	return transparentDestination{
+		Host: net.IP(addr.Addr[:]).String(),
+		Port: int(binary.BigEndian.Uint16(addr.Port[:])),
+	}, nil
+}
+
+func getsockoptOriginalDestination6(fd uintptr) (transparentDestination, error) {
+	var addr rawSockaddrInet6
+	size := uint32(unsafe.Sizeof(addr))
+	if errno := getsockopt(fd, syscall.IPPROTO_IPV6, soOriginalDst, unsafe.Pointer(&addr), &size); errno != 0 {
+		return transparentDestination{}, errno
+	}
+	if addr.Family != syscall.AF_INET6 {
+		return transparentDestination{}, fmt.Errorf("SO_ORIGINAL_DST returned non-IPv6 family %d", addr.Family)
+	}
+	return transparentDestination{
+		Host: net.IP(addr.Addr[:]).String(),
+		Port: int(binary.BigEndian.Uint16(addr.Port[:])),
+	}, nil
+}
+
+func getsockopt(fd uintptr, level, opt int, value unsafe.Pointer, size *uint32) syscall.Errno {
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_GETSOCKOPT,
+		fd,
+		uintptr(level),
+		uintptr(opt),
+		uintptr(value),
+		uintptr(unsafe.Pointer(size)),
+		0,
+	)
+	return errno
 }
 
 func targetFromConnect(rawTarget string) (target, matchHost, tlsHost string, err error) {
