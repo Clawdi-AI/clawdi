@@ -1548,11 +1548,34 @@ function mitmSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
 		? manifest.mitmProfiles.profiles
 		: [];
 	for (const profile of profiles) {
-		if (recordValue(profile)?.owner === "provider-projection") {
+		const profileRecord = recordValue(profile);
+		if (profileRecord?.owner === "provider-projection") {
 			collectSecretRefs(profile, refs);
+		}
+		if (profileRecord?.owner === "clawdi-native-channels") {
+			collectChannelRewriteSecretRefs(profileRecord, refs);
 		}
 	}
 	return [...refs].sort();
+}
+
+function collectChannelRewriteSecretRefs(
+	profile: Record<string, unknown>,
+	refs: Set<string>,
+): void {
+	const rewrite = recordValue(profile.rewrite);
+	if (!rewrite) return;
+	const pathReplace = recordValue(rewrite.pathReplace);
+	const replacementSecretRef = stringValue(pathReplace?.replacementSecretRef);
+	if (replacementSecretRef) refs.add(replacementSecretRef);
+	const setHeaders = recordValue(rewrite.setHeaders);
+	if (!setHeaders) return;
+	for (const setter of Object.values(setHeaders)) {
+		const setterRecord = recordValue(setter);
+		if (setterRecord?.type !== "secretRef") continue;
+		const secretRef = stringValue(setterRecord.secretRef);
+		if (secretRef) refs.add(secretRef);
+	}
 }
 
 function collectSecretRefs(value: unknown, refs: Set<string>): void {

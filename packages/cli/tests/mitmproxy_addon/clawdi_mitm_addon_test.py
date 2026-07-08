@@ -198,6 +198,13 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "rewrite": {
                         "upstreamBaseUrl": "https://control.test/v1/relay",
                         "preservePath": True,
+                        "pathReplace": {
+                            "type": "secretRefPrefix",
+                            "secretRef": "secret://placeholder",
+                            "replacementSecretRef": "secret://real-token",
+                            "prefix": "/bot",
+                            "suffix": "/",
+                        },
                         "setHeaders": {
                             "authorization": {
                                 "type": "secretRef",
@@ -211,6 +218,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             ],
             {
                 "secret://placeholder": "placeholder-token",
+                "secret://real-token": "real-agent-token",
                 "secret://control-token": "control-token",
             },
         )
@@ -221,7 +229,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(decision.action, "http")
         self.assertEqual(flow.request.scheme, "https")
         self.assertEqual(flow.request.host, "control.test")
-        self.assertEqual(flow.request.path, "/v1/relay/botplaceholder-token/send?x=1")
+        self.assertEqual(flow.request.path, "/v1/relay/botreal-agent-token/send?x=1")
         self.assertEqual(flow.request.headers["host"], "control.test")
         self.assertEqual(flow.request.headers["authorization"], "Bearer control-token")
 

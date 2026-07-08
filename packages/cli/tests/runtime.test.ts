@@ -3185,11 +3185,26 @@ exit 64
 			projected.localSecretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
 		).toBe("telegram-agent-token");
 		expect(
+			projected.localSecretValues?.[
+				"secret://channels/telegram/clawdi_accttelegram/placeholder-token"
+			],
+		).toMatch(/^999999999:[a-f0-9]{32}$/);
+		expect(
 			projected.localSecretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
 		).toBe("discord-agent-token");
 		expect(
+			projected.localSecretValues?.[
+				"secret://channels/discord/clawdi_acctdiscord1/placeholder-token"
+			],
+		).toMatch(/^clawdi_[a-f0-9]{32}$/);
+		expect(
 			projected.localSecretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
 		).toBe("whatsapp-agent-token");
+		expect(
+			projected.localSecretValues?.[
+				"secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"
+			],
+		).toMatch(/^clawdi_[a-f0-9]{32}$/);
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
 			discord: { enabled: true },
@@ -3702,6 +3717,8 @@ exit 42
 		const logs: string[] = [];
 		const providerSecretRef = "provider.default.apiKey";
 		const channelSecretRef = "secret://channels/telegram/clawdi_accttelegram/agent-token";
+		const channelPlaceholderSecretRef =
+			"secret://channels/telegram/clawdi_accttelegram/placeholder-token";
 		const hostedPayload = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -3848,11 +3865,13 @@ exit 64
 			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 		);
 		expect(baselineSecrets["secret://provider.default.apiKey"]).toBeUndefined();
-		expect(baselineSecrets[channelSecretRef]).toBe("agent-token-watch");
+		expect(baselineSecrets[channelPlaceholderSecretRef]).toMatch(/^999999999:[a-f0-9]{32}$/);
+		expect(JSON.stringify(baselineSecrets)).not.toContain("agent-token-watch");
 		const baselineMitmSecrets = JSON.parse(
 			readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
 		);
 		expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+		expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
 
 		const watchFetch = mockFetch([
 			{
@@ -3896,11 +3915,13 @@ exit 64
 				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 			);
 			expect(secrets["secret://provider.default.apiKey"]).toBeUndefined();
-			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
+			expect(secrets[channelPlaceholderSecretRef]).toMatch(/^999999999:[a-f0-9]{32}$/);
+			expect(JSON.stringify(secrets)).not.toContain("agent-token-watch");
 			const mitmSecrets = JSON.parse(
 				readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
 			);
 			expect(mitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+			expect(mitmSecrets[channelSecretRef]).toBe("agent-token-watch");
 			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
@@ -5664,15 +5685,21 @@ exit 64
 			);
 			expect(openclawRunConfig.secretEnv).toMatchObject({
 				CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN:
-					"secret://channels/telegram/clawdi_accttelegram/agent-token",
+					"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
 				CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN:
-					"secret://channels/discord/clawdi_acctdiscord1/agent-token",
+					"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
 			});
 			const secretsText = readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8");
 			expect(secretsText).toContain("secret://channels/telegram/");
-			expect(secretsText).toContain("agent-token-init");
+			expect(secretsText).toContain("placeholder-token");
+			expect(secretsText).toContain("999999999:");
+			expect(secretsText).not.toContain("agent-token-init");
 			expect(secretsText).toContain("secret://channels/discord/");
-			expect(secretsText).toContain("discord-agent-token-init");
+			expect(secretsText).toContain("clawdi_");
+			expect(secretsText).not.toContain("discord-agent-token-init");
+			const mitmSecretsText = readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8");
+			expect(mitmSecretsText).toContain("agent-token-init");
+			expect(mitmSecretsText).toContain("discord-agent-token-init");
 			const cachedManifestText = readFileSync(
 				join(state, "cache", "manifest.last-good.json"),
 				"utf-8",
@@ -5684,6 +5711,8 @@ exit 64
 			const profileBundle = readFileSync(join(state, "config", "mitm", "profiles.json"), "utf-8");
 			expect(profileBundle).toContain("clawdi-native-channels");
 			expect(profileBundle).toContain("/v1/channels/telegram");
+			expect(profileBundle).toContain("replacementSecretRef");
+			expect(profileBundle).toContain("placeholder-token");
 			const status = JSON.parse(logs[0] ?? "{}");
 			expect(status.status).toBe("ok");
 			expect(status.activeGeneration).toBe(7);
@@ -5812,14 +5841,16 @@ exit 64
 		expect(runConfig.env.DISCORD_ALLOW_ALL_USERS).toBe("true");
 		expect(runConfig.env.HERMES_TELEGRAM_DISABLE_FALLBACK_IPS).toBe("true");
 		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toMatch(
-			/^secret:\/\/channels\/telegram\/clawdi_accttelegram\/agent-token$/,
+			/^secret:\/\/channels\/telegram\/clawdi_accttelegram\/placeholder-token$/,
 		);
 		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toMatch(
-			/^secret:\/\/channels\/discord\/clawdi_acctdiscordh\/agent-token$/,
+			/^secret:\/\/channels\/discord\/clawdi_acctdiscordh\/placeholder-token$/,
 		);
 		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
-		expect(hermesEnv).toContain('TELEGRAM_BOT_TOKEN="123456789:telegram-agent-token"');
-		expect(hermesEnv).toContain('DISCORD_BOT_TOKEN="discord-agent-token"');
+		expect(hermesEnv).toMatch(/TELEGRAM_BOT_TOKEN="999999999:[a-f0-9]{32}"/);
+		expect(hermesEnv).toMatch(/DISCORD_BOT_TOKEN="clawdi_[a-f0-9]{32}"/);
+		expect(hermesEnv).not.toContain("telegram-agent-token");
+		expect(hermesEnv).not.toContain("discord-agent-token");
 		expect(hermesEnv).toContain('TELEGRAM_ALLOW_ALL_USERS="true"');
 		expect(hermesEnv).toContain('DISCORD_ALLOW_ALL_USERS="true"');
 		expect(hermesEnv).toContain('HERMES_TELEGRAM_DISABLE_FALLBACK_IPS="true"');

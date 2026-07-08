@@ -372,6 +372,7 @@ def apply_http_rewrite(flow: Any, profile: dict[str, Any], secrets: dict[str, st
     if not parsed.scheme or not parsed.hostname:
         return
     original_path = getattr(flow.request, "path", "") or "/"
+    original_path = apply_path_replace(original_path, rewrite, secrets)
     target_scheme = "https" if parsed.scheme == "wss" else "http" if parsed.scheme == "ws" else parsed.scheme
     flow.request.scheme = target_scheme
     flow.request.host = parsed.hostname
@@ -380,6 +381,26 @@ def apply_http_rewrite(flow: Any, profile: dict[str, Any], secrets: dict[str, st
     preserve_path = bool(rewrite.get("preservePath", True))
     flow.request.path = combine_paths(parsed.path or "/", original_path if preserve_path else "")
     apply_rewrite_headers(flow, profile, secrets)
+
+
+def apply_path_replace(request_path: str, rewrite: dict[str, Any], secrets: dict[str, str]) -> str:
+    replacement = rewrite.get("pathReplace")
+    if not isinstance(replacement, dict):
+        return request_path
+    if replacement.get("type") != "secretRefPrefix":
+        return request_path
+    placeholder = secrets.get(str(replacement.get("secretRef", "")))
+    actual = secrets.get(str(replacement.get("replacementSecretRef", "")))
+    if placeholder is None or actual is None:
+        return request_path
+    split = urlsplit(request_path or "/")
+    prefix = str(replacement.get("prefix", ""))
+    suffix = str(replacement.get("suffix", ""))
+    expected = f"{prefix}{placeholder}{suffix}"
+    if not split.path.startswith(expected):
+        return request_path
+    replaced_path = f"{prefix}{actual}{suffix}{split.path[len(expected):]}"
+    return f"{replaced_path}?{split.query}" if split.query else replaced_path
 
 
 def combine_paths(base_path: str, original_path: str) -> str:
