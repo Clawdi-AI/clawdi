@@ -79,6 +79,12 @@ export function runtimeInstallerMitmProfiles(): HostedMitmProfile[] {
 			"Hermes official installer script.",
 		),
 		profile("runtime-installer-uv", "astral.sh", "/uv/", "uv installer bootstrap."),
+		profile(
+			"runtime-installer-uv-releases",
+			"releases.astral.sh",
+			"/installers/uv/",
+			"uv installer release script.",
+		),
 		profile("runtime-installer-github", "github.com", "/", "Installer release metadata."),
 		profile(
 			"runtime-installer-github-api",

@@ -204,6 +204,18 @@ describe("runtime MITM profile schema", () => {
 				owner: "runtime-installer",
 			}),
 		);
+		expect(profiles).toContainEqual(
+			expect.objectContaining({
+				id: "runtime-installer-uv-releases",
+				kind: "passthrough",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "releases.astral.sh",
+					pathPrefix: "/installers/uv/",
+				}),
+				owner: "runtime-installer",
+			}),
+		);
 		expect(profiles).toEqual(
 			expect.arrayContaining([
 				{
