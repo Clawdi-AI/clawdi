@@ -10,6 +10,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
+import { ensureRuntimeAuthTokenFile, runtimeAuthTokenFileLabel } from "../runtime/auth-token";
 import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
@@ -27,7 +28,6 @@ import {
 	type RuntimeChannelsNotModified,
 	type RuntimeManifestLoad,
 	type RuntimeManifestNotModified,
-	runtimeSourceAuthEnv,
 } from "../runtime/manifest-source";
 import { startRuntimeMitmSidecar } from "../runtime/mitm-sidecar";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
@@ -1173,24 +1173,11 @@ function hasRuntimeCredential(input: {
 	if (input.manifestPath) return true;
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
-	try {
-		if (readFileSync(paths.daemonAuthToken, "utf-8").trim()) return true;
-	} catch {
-		// Fall through to the configured auth environment variable.
-	}
-	try {
-		return Boolean(process.env[runtimeSourceAuthEnv(paths)]?.trim());
-	} catch {
-		return Boolean(process.env.CLAWDI_AUTH_TOKEN?.trim());
-	}
+	return ensureRuntimeAuthTokenFile(paths) !== null;
 }
 
 function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
-	try {
-		return runtimeSourceAuthEnv(paths);
-	} catch {
-		return "CLAWDI_AUTH_TOKEN";
-	}
+	return runtimeAuthTokenFileLabel(paths);
 }
 
 function writable(path: string): boolean {
