@@ -110,23 +110,14 @@ interface ExistingManifestState {
 	generation?: number;
 }
 
-const legacyRuntimeSourceAuthSchema = z
-	.object({
-		type: z.literal("bearer-env"),
-		env: z.string().min(1).default("CLAWDI_AUTH_TOKEN"),
-	})
-	.strict();
-
 const runtimeSourceSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeSource.v1"),
 		type: z.literal("http"),
 		url: z.string().url(),
-		auth: legacyRuntimeSourceAuthSchema.optional(),
 		timeoutMs: z.number().int().positive().optional(),
 	})
-	.strict()
-	.transform(({ auth: _auth, ...source }) => source);
+	.strict();
 
 type RuntimeSource = z.infer<typeof runtimeSourceSchema>;
 

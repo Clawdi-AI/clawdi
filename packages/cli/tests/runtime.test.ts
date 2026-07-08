@@ -69,7 +69,6 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 	"CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES",
 	"CLAWDI_RUNTIME_PID1_ENVIRON_PATH",
-	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
 	"CLAWDI_API_URL",
 	"CLAWDI_SYSTEMD_APPLY",
@@ -732,7 +731,6 @@ describe("runtime manifest datasource", () => {
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/v1/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -880,7 +878,6 @@ chmod +x "$HOME/.local/bin/hermes"
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/v1/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
@@ -2380,30 +2377,26 @@ exit 64
 		);
 	});
 
-	it("uses the canonical runtime auth-token file instead of runtime source auth env", async () => {
+	it("uses the runtime auth token env before the canonical auth-token file", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
 		mkdirSync(home, { recursive: true });
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(join(run, "sync"), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
 		process.env.CLAWDI_AUTH_TOKEN = "bootstrap-token";
-		process.env.CUSTOM_RUNTIME_TOKEN = "stale-token";
 		writeFileSync(join(run, "secrets", "auth-token"), "stale-file-token\n");
-		writeFileSync(join(run, "sync", "auth-token"), "legacy-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CUSTOM_RUNTIME_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -2434,7 +2427,6 @@ exit 64
 			expect("manifest" in loaded).toBe(true);
 			expect(captured[0].headers.authorization).toBe("Bearer bootstrap-token");
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe("bootstrap-token\n");
-			expect(existsSync(join(run, "sync", "auth-token"))).toBe(false);
 		} finally {
 			restore();
 		}
@@ -2459,7 +2451,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://wrong-runtime.test/wrong-manifest",
-				auth: { type: "bearer-env", env: "STALE_RUNTIME_TOKEN_ENV" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -2546,7 +2537,6 @@ exit 64
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"runtime-file-token\n",
 			);
-			expect(existsSync(join(run, "sync", "auth-token"))).toBe(false);
 			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
 			expect(watchEnv).not.toContain("runtime-file-token");
 		} finally {
@@ -2574,7 +2564,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -2624,7 +2613,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/prefix/v1/runtime/manifest?ignored=1",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -3150,7 +3138,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -3287,7 +3274,6 @@ exit 42
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
@@ -3463,7 +3449,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const paths = getRuntimePaths();
@@ -3575,7 +3560,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		seedCurrentCliInstall(state);
@@ -3669,7 +3653,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		console.log = (value?: unknown) => {
@@ -4175,7 +4158,6 @@ chmod +x "$prefix/bin/clawdi"
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
@@ -4430,7 +4412,6 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
@@ -4543,7 +4524,6 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
@@ -4937,7 +4917,6 @@ exit 64
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
 				url: "https://runtime.test/manifest",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		process.env.HOME = home;
@@ -7371,7 +7350,6 @@ exit 64
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"runtime-auth-token\n",
 			);
-			expect(existsSync(join(run, "sync", "auth-token"))).toBe(false);
 			expect(openclawEnv.id).toBe("env-openclaw");
 			expect(codexEnv.id).toBe("env-codex");
 			expect(systemUnitNames).toContain("clawdi-runtime-watch.service");

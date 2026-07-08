@@ -1,13 +1,8 @@
 import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
 
 export const RUNTIME_AUTH_TOKEN_ENV = "CLAWDI_AUTH_TOKEN";
-
-export function legacyRuntimeAuthTokenPath(paths: RuntimePaths): string {
-	return join(paths.runRoot, "sync", "auth-token");
-}
 
 export function readRuntimeAuthToken(paths: RuntimePaths): string | null {
 	try {
@@ -23,7 +18,6 @@ export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): strin
 	if (!normalized) {
 		throw new Error("runtime auth token must not be empty");
 	}
-	rmSync(legacyRuntimeAuthTokenPath(paths), { force: true });
 	writePrivateFileAtomic(paths.daemonAuthToken, `${normalized}\n`, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
@@ -35,11 +29,9 @@ export function ensureRuntimeAuthTokenFile(paths: RuntimePaths): string | null {
 	const token = process.env[RUNTIME_AUTH_TOKEN_ENV]?.trim();
 	if (token) return writeRuntimeAuthToken(paths, token);
 	if (readRuntimeAuthToken(paths)) {
-		rmSync(legacyRuntimeAuthTokenPath(paths), { force: true });
 		return paths.daemonAuthToken;
 	}
 	rmSync(paths.daemonAuthToken, { force: true });
-	rmSync(legacyRuntimeAuthTokenPath(paths), { force: true });
 	return null;
 }
 
