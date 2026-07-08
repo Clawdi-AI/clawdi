@@ -26,7 +26,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
-import { stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import {
 	type AgentPrimaryModel,
@@ -43,6 +43,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import { manifestSchema } from "./manifest-contract";
 import {
 	isEnvSecretRef,
 	normalizeSecretValues,
@@ -143,6 +144,18 @@ interface RuntimeInstallObservation {
 
 function writeJsonFile(path: string, payload: unknown): void {
 	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function readLastGoodRuntimeManifest(paths: RuntimePaths): RuntimeManifest | null {
+	if (!existsSync(paths.manifestLastGood)) return null;
+	try {
+		const parsed = manifestSchema.safeParse(
+			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
+		);
+		return parsed.success ? parsed.data : null;
+	} catch {
+		return null;
+	}
 }
 
 function writeLastGoodManifest(
@@ -1384,6 +1397,11 @@ interface HostedAiProviderProjectionResult {
 	revision: string | null;
 }
 
+type HostedAiProviderProjectionInput = {
+	catalog: AiProviderCatalog;
+	primaryModel: AgentPrimaryModel;
+};
+
 interface HermesHostedProviderPluginProjection {
 	modelPatch: string;
 	pluginFiles: ProjectionFile[];
@@ -1419,23 +1437,46 @@ function applyHostedAiProviderProjection(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
+	previousManifest: RuntimeManifest | null,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null };
 	}
 	const projectionInput = hostedAiProviderCatalog(manifest, name);
+	const previousProjectionInput = previousManifest
+		? hostedAiProviderCatalog(previousManifest, name)
+		: null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
-		return applyHostedHermesAiProviderProjection(observation, projectionInput, home, workspaceRoot);
-	}
-	if (!projectionInput) return { path: null, revision: null };
-	if (name === "openclaw") {
-		applyOpenClawHostedProviderProjection(
-			observation.commandPath,
+		return applyHostedHermesAiProviderProjection(
+			observation,
 			projectionInput,
+			previousProjectionInput,
 			home,
 			workspaceRoot,
 		);
+	}
+	if (name === "openclaw") {
+		const deletedProviderIds = openClawStaleHostedProviderIds(
+			previousProjectionInput,
+			projectionInput,
+		);
+		if (projectionInput) {
+			applyOpenClawHostedProviderProjection(
+				observation.commandPath,
+				projectionInput,
+				deletedProviderIds,
+				home,
+				workspaceRoot,
+			);
+		} else if (deletedProviderIds.length > 0) {
+			applyOpenClawHostedProviderDeleteProjection(
+				observation.commandPath,
+				deletedProviderIds,
+				home,
+				workspaceRoot,
+			);
+		}
 		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
 		return { path: observation.commandPath, revision: null };
 	}
@@ -1444,19 +1485,28 @@ function applyHostedAiProviderProjection(
 
 function applyHostedHermesAiProviderProjection(
 	observation: RuntimeInstallObservation,
-	projectionInput: {
-		catalog: AiProviderCatalog;
-		primaryModel: AgentPrimaryModel;
-	} | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
 	home: string,
 	workspaceRoot: string,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (!projectionInput) {
 		removeHermesModelProviderPlugin(home);
+		const deletedProviderIds = existingHermesProviderIds(
+			configPath,
+			hermesStaleHostedProviderIds(previousProjectionInput, null),
+		);
+		if (deletedProviderIds.length > 0) {
+			mergeHermesConfig(configPath, hermesProviderDeletePatch(deletedProviderIds));
+			makeRuntimeUserOwned(configPath);
+		}
 		return {
 			path: null,
-			revision: revisionHash({ hermesProviderProjection: "none" }),
+			revision: revisionHash({
+				hermesProviderProjection: "none",
+				deletedProviderIds,
+			}),
 		};
 	}
 
@@ -1472,13 +1522,18 @@ function applyHostedHermesAiProviderProjection(
 		);
 		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-		mergeHermesConfig(configPath, file.content);
+		const deletedProviderIds = existingHermesProviderIds(
+			configPath,
+			hermesStaleHostedProviderIds(previousProjectionInput, projectionInput, "yaml-merge"),
+		);
+		const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
+		mergeHermesConfig(configPath, patchContent);
 		makeRuntimeUserOwned(configPath);
 		return {
 			path: configPath,
 			revision: revisionHash({
 				hermesProviderProjection: "yaml-merge",
-				patch: file.content,
+				patch: patchContent,
 			}),
 		};
 	}
@@ -1488,11 +1543,25 @@ function applyHostedHermesAiProviderProjection(
 		projectionInput.primaryModel,
 	);
 	const pluginDir = syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles);
-	mergeHermesConfig(configPath, pluginProjection.modelPatch);
+	const deletedProviderIds = hermesStaleHostedProviderIds(
+		previousProjectionInput,
+		projectionInput,
+		"plugin",
+	);
+	const existingDeletedProviderIds = existingHermesProviderIds(configPath, deletedProviderIds);
+	const modelPatch = mergeHermesProviderDeletes(
+		pluginProjection.modelPatch,
+		existingDeletedProviderIds,
+	);
+	mergeHermesConfig(configPath, modelPatch);
 	makeRuntimeUserOwned(configPath);
 	return {
 		path: pluginDir,
-		revision: pluginProjection.revision,
+		revision: revisionHash({
+			hermesProviderProjection: "plugin",
+			modelPatch,
+			pluginFiles: pluginProjection.pluginFiles,
+		}),
 	};
 }
 
@@ -1815,10 +1884,8 @@ function removeHermesModelProviderPlugin(home: string): void {
 
 function applyOpenClawHostedProviderProjection(
 	command: string,
-	projectionInput: {
-		catalog: AiProviderCatalog;
-		primaryModel: AgentPrimaryModel;
-	},
+	projectionInput: HostedAiProviderProjectionInput,
+	deletedProviderIds: readonly string[],
 	home: string,
 	workspaceRoot: string,
 ): void {
@@ -1829,7 +1896,28 @@ function applyOpenClawHostedProviderProjection(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	runRuntimeUserCommand(command, ["config", "patch", "--stdin"], file.content, home, workspaceRoot);
+	runRuntimeUserCommand(
+		command,
+		["config", "patch", "--stdin"],
+		mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		home,
+		workspaceRoot,
+	);
+}
+
+function applyOpenClawHostedProviderDeleteProjection(
+	command: string,
+	deletedProviderIds: readonly string[],
+	home: string,
+	workspaceRoot: string,
+): void {
+	runRuntimeUserCommand(
+		command,
+		["config", "patch", "--stdin"],
+		`${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
+		home,
+		workspaceRoot,
+	);
 }
 
 function applyOpenClawHostedProjectionAfterOfficialInstall(
@@ -1840,9 +1928,205 @@ function applyOpenClawHostedProjectionAfterOfficialInstall(
 ): void {
 	const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 	if (projectionInput) {
-		applyOpenClawHostedProviderProjection(command, projectionInput, home, workspaceRoot);
+		applyOpenClawHostedProviderProjection(command, projectionInput, [], home, workspaceRoot);
 	}
 	applyOpenClawGatewayHostedProjection(command, manifest, home, workspaceRoot);
+}
+
+function openClawStaleHostedProviderIds(
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+): string[] {
+	const previousProviderIds = previousProjectionInput
+		? safeOpenClawProjectedProviderIds(previousProjectionInput)
+		: new Set<string>();
+	const activeProviderIds = projectionInput
+		? openClawProjectedProviderIds(projectionInput)
+		: new Set<string>();
+	return staleProviderIds(previousProviderIds, activeProviderIds);
+}
+
+function openClawProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	const projection = buildAgentTargetProjection(
+		"openclaw",
+		projectionInput.catalog,
+		projectionInput.primaryModel,
+	);
+	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+	if (!file) return new Set();
+	return openClawProviderIdsFromPatch(file.content);
+}
+
+function safeOpenClawProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	try {
+		return openClawProjectedProviderIds(projectionInput);
+	} catch {
+		return new Set();
+	}
+}
+
+function openClawProviderIdsFromPatch(content: string): Set<string> {
+	const parsed = JSON.parse(content) as unknown;
+	const root = recordValue(parsed);
+	const models = root ? recordValue(root.models) : null;
+	const providers = models ? recordValue(models.providers) : null;
+	if (!providers) return new Set();
+	return new Set(
+		Object.entries(providers)
+			.filter(([, value]) => value !== null)
+			.map(([providerId]) => providerId),
+	);
+}
+
+function mergeOpenClawProviderDeletes(
+	patchContent: string,
+	deletedProviderIds: readonly string[],
+): string {
+	if (deletedProviderIds.length === 0) return patchContent;
+	const parsed = JSON.parse(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const existingModels = recordValue(patch.models);
+	const models: Record<string, unknown> = existingModels
+		? { ...existingModels }
+		: { mode: "merge" };
+	const existingProviders = recordValue(models.providers);
+	const providers = existingProviders ? { ...existingProviders } : {};
+	for (const providerId of deletedProviderIds) {
+		providers[providerId] = null;
+	}
+	models.mode = "merge";
+	models.providers = providers;
+	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
+}
+
+function openClawProviderDeletePatch(
+	deletedProviderIds: readonly string[],
+): Record<string, unknown> {
+	return {
+		models: {
+			mode: "merge",
+			providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
+		},
+	};
+}
+
+function hermesStaleHostedProviderIds(
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+	activeMode?: "plugin" | "yaml-merge",
+): string[] {
+	const previousProviderIds = previousProjectionInput
+		? safeHermesPotentialProjectedProviderIds(previousProjectionInput)
+		: new Set<string>();
+	const activeProviderIds =
+		projectionInput && activeMode
+			? hermesProjectedProviderIds(projectionInput, activeMode)
+			: new Set<string>();
+	return staleProviderIds(previousProviderIds, activeProviderIds);
+}
+
+function safeHermesPotentialProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	return new Set([
+		...safeHermesProjectedProviderIds(projectionInput, "yaml-merge"),
+		...safeHermesProjectedProviderIds(projectionInput, "plugin"),
+	]);
+}
+
+function safeHermesProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+	mode: "plugin" | "yaml-merge",
+): Set<string> {
+	try {
+		return hermesProjectedProviderIds(projectionInput, mode);
+	} catch {
+		return new Set();
+	}
+}
+
+function hermesProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+	mode: "plugin" | "yaml-merge",
+): Set<string> {
+	const patchContent =
+		mode === "plugin"
+			? buildHermesHostedProviderPluginProjection(
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				).modelPatch
+			: (buildAgentTargetProjection(
+					"hermes",
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				).files.find((entry) => entry.path.endsWith(".hermes.yaml"))?.content ?? "");
+	return hermesProviderIdsFromPatch(patchContent);
+}
+
+function hermesProviderIdsFromPatch(content: string): Set<string> {
+	if (!content.trim()) return new Set();
+	const parsed = parseYaml(content) as unknown;
+	const root = recordValue(parsed);
+	const providers = root ? recordValue(root.providers) : null;
+	if (!providers) return new Set();
+	return new Set(
+		Object.entries(providers)
+			.filter(([, value]) => value !== null)
+			.map(([providerId]) => providerId),
+	);
+}
+
+function mergeHermesProviderDeletes(
+	patchContent: string,
+	deletedProviderIds: readonly string[],
+): string {
+	if (deletedProviderIds.length === 0) return patchContent;
+	const parsed = parseYaml(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const existingProviders = recordValue(patch.providers);
+	const providers = existingProviders ? { ...existingProviders } : {};
+	for (const providerId of deletedProviderIds) {
+		providers[providerId] = null;
+	}
+	patch.providers = providers;
+	return `${stringifyYaml(patch).trimEnd()}\n`;
+}
+
+function existingHermesProviderIds(configPath: string, providerIds: readonly string[]): string[] {
+	if (providerIds.length === 0 || !existsSync(configPath)) return [];
+	try {
+		const parsed = parseYaml(readFileSync(configPath, "utf-8")) as unknown;
+		const root = recordValue(parsed);
+		const providers = root ? recordValue(root.providers) : null;
+		if (!providers) return [];
+		return providerIds.filter((providerId) => Object.hasOwn(providers, providerId));
+	} catch {
+		return [];
+	}
+}
+
+function hermesProviderDeletePatch(deletedProviderIds: readonly string[]): string {
+	return `${stringifyYaml({
+		providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
+	}).trimEnd()}\n`;
+}
+
+function staleProviderIds(
+	previousProviderIds: Set<string>,
+	activeProviderIds: Set<string>,
+): string[] {
+	return [...previousProviderIds]
+		.filter((providerId) => !activeProviderIds.has(providerId))
+		.sort((left, right) => left.localeCompare(right));
 }
 
 function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
@@ -3513,6 +3797,7 @@ export function convergeRuntimeManifest(
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
 	const writtenRuntimeSecretIds = new Set<string>();
+	const previousManifest = readLastGoodRuntimeManifest(paths);
 
 	mkdirSync(workspaceRoot, { recursive: true });
 	makeRuntimeUserOwned(paths.userHome);
@@ -3647,6 +3932,7 @@ export function convergeRuntimeManifest(
 				observation,
 				manifest,
 				workspaceRoot,
+				previousManifest,
 			);
 			providerProjectionRevisions[name] = providerProjection.revision;
 		} catch (error) {

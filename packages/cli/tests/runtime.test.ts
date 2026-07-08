@@ -373,6 +373,132 @@ function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
 	};
 }
 
+const HOSTED_PROVIDER_SWITCH_PROVIDERS: Record<string, Record<string, unknown>> = {
+	"clawdi-managed": hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
+	"clawdi-managed-v2": hostedProviderSwitchProvider("clawdi-managed-v2", "clawdi"),
+	"byok-a": hostedProviderSwitchProvider("byok-a", "user"),
+	"byok-b": hostedProviderSwitchProvider("byok-b", "user"),
+};
+
+function hostedProviderSwitchProvider(
+	providerId: string,
+	managedBy: "clawdi" | "user",
+): Record<string, unknown> {
+	const envPrefix = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+	return {
+		kind: "openai-compatible",
+		baseUrl: `https://${providerId}.provider.example.test/v1`,
+		model: hostedProviderSwitchModel(providerId),
+		models: [
+			{
+				id: hostedProviderSwitchModel(providerId),
+				context_window: 128000,
+				max_tokens: 8192,
+				supports_tools: true,
+			},
+		],
+		apiMode: providerId === "clawdi-managed" ? "openai_responses" : "openai_chat",
+		managed_by: managedBy,
+		runtimeEnvName:
+			managedBy === "clawdi" ? "CLAWDI_MANAGED_OPENAI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
+		apiKeySecretRef: `provider.${providerId}.apiKey`,
+	};
+}
+
+function hostedProviderSwitchModel(providerId: string): string {
+	return `${providerId}-model`;
+}
+
+function hostedProviderSwitchLoad(
+	home: string,
+	selectedProviderId: string,
+	generation: number,
+): RuntimeManifestLoad {
+	return {
+		source: "remote-datasource",
+		sourcePath: "https://runtime-source.test/desired-state",
+		offline: false,
+		secretValues: Object.fromEntries(
+			Object.keys(HOSTED_PROVIDER_SWITCH_PROVIDERS).map((providerId) => [
+				`provider.${providerId}.apiKey`,
+				`sk-${providerId}`,
+			]),
+		),
+		manifest: {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_provider_switch",
+			environmentId: "env_provider_switch",
+			instanceId: "iid_provider_switch",
+			generation,
+			issuedAt: "2026-07-08T00:00:00Z",
+			workspaceRoot: join(home, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: {
+				openclaw: {
+					...hostedOpenClawRuntime({
+						provider_ids: [selectedProviderId],
+						primary_model: {
+							provider_id: selectedProviderId,
+							model: hostedProviderSwitchModel(selectedProviderId),
+						},
+					}),
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://openclaw.ai/install-cli.sh",
+						home,
+						args: ["--json", "--no-onboard"],
+					},
+				},
+				hermes: {
+					...hostedHermesRuntime({
+						provider_ids: [selectedProviderId],
+						primary_model: {
+							provider_id: selectedProviderId,
+							model: hostedProviderSwitchModel(selectedProviderId),
+						},
+					}),
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://hermes-agent.nousresearch.com/install.sh",
+						home,
+						args: ["--skip-setup", "--skip-browser", "--non-interactive"],
+					},
+				},
+			},
+			projection: {
+				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				system: { home, workspace: join(home, "clawdi") },
+				providers: HOSTED_PROVIDER_SWITCH_PROVIDERS,
+			},
+			mitmProfiles: { profiles: [] },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		},
+	};
+}
+
+function applyOpenClawProviderPatchLog(
+	patchLog: string,
+	initialProviders: Record<string, unknown>,
+): Record<string, unknown> {
+	const providers = { ...initialProviders };
+	const patchText = existsSync(patchLog) ? readFileSync(patchLog, "utf-8") : "";
+	for (const rawPatch of patchText.split("\n---\n")) {
+		const trimmed = rawPatch.trim();
+		if (!trimmed) continue;
+		const patch = JSON.parse(trimmed);
+		if (!isRecord(patch)) continue;
+		const models = isRecord(patch.models) ? patch.models : {};
+		const patchProviders = isRecord(models.providers) ? models.providers : {};
+		for (const [providerId, providerPatch] of Object.entries(patchProviders)) {
+			if (providerPatch === null) delete providers[providerId];
+			else providers[providerId] = providerPatch;
+		}
+	}
+	return providers;
+}
+
 describe("runtime paths", () => {
 	it("uses ~/.clawdi in local mode", () => {
 		const home = join(root, "home", "alice");
@@ -1330,6 +1456,100 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(patch.models.providers["clawdi-managed-v2"].baseUrl).toBe(
 			"https://ai-gateway.example.test/v1",
 		);
+	});
+
+	it("reconciles hosted provider projections when the selected provider changes", () => {
+		const cases = [
+			{ id: "managed-to-byok", first: "clawdi-managed", second: "byok-a" },
+			{ id: "byok-to-managed", first: "byok-a", second: "clawdi-managed" },
+			{ id: "managed-to-managed", first: "clawdi-managed", second: "clawdi-managed-v2" },
+			{ id: "byok-to-byok", first: "byok-a", second: "byok-b" },
+		];
+		for (const providerCase of cases) {
+			const caseRoot = join(root, providerCase.id);
+			const home = join(caseRoot, "home", "clawdi");
+			const state = join(caseRoot, "var", "lib", "clawdi");
+			const run = join(caseRoot, "run", "clawdi");
+			const workspace = join(home, "clawdi");
+			const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+			const openclawPatchLog = join(caseRoot, "openclaw-provider-patches.jsonl");
+			mkdirSync(dirname(openclawBin), { recursive: true });
+			mkdirSync(join(home, ".hermes"), { recursive: true });
+			mkdirSync(workspace, { recursive: true });
+			writeFileSync(
+				openclawBin,
+				`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatchLog}'
+  printf '\\n---\\n' >> '${openclawPatchLog}'
+  exit 0
+fi
+exit 0
+`,
+			);
+			chmodSync(openclawBin, 0o700);
+			writeHermesVersionBinary(home, "0.18.0");
+			writeFileSync(
+				join(home, ".hermes", "config.yaml"),
+				[
+					"providers:",
+					"  user-local:",
+					'    api: "http://127.0.0.1:11434/v1"',
+					'    custom_field: "keep-me"',
+					"",
+				].join("\n"),
+			);
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+
+			const paths = getRuntimePaths();
+			const first = convergeRuntimeManifest(
+				hostedProviderSwitchLoad(home, providerCase.first, 1),
+				paths,
+			);
+			expect(first.installErrors).toEqual([]);
+
+			const second = convergeRuntimeManifest(
+				hostedProviderSwitchLoad(home, providerCase.second, 2),
+				paths,
+			);
+			expect(second.installErrors).toEqual([]);
+
+			const openclawProviders = applyOpenClawProviderPatchLog(openclawPatchLog, {
+				"user-local": {
+					baseUrl: "http://127.0.0.1:11434/v1",
+					models: [{ id: "local-model" }],
+				},
+			});
+			expect(Object.keys(openclawProviders).sort()).toEqual(
+				["user-local", providerCase.second].sort(),
+			);
+			expect(openclawProviders[providerCase.first]).toBeUndefined();
+			expect(openclawProviders[providerCase.second]).toMatchObject({
+				baseUrl: `https://${providerCase.second}.provider.example.test/v1`,
+			});
+			expect(openclawProviders["user-local"]).toMatchObject({
+				baseUrl: "http://127.0.0.1:11434/v1",
+			});
+
+			const hermesProviders = expectRecord(
+				readHermesConfigYaml(home).providers,
+				"Hermes providers config",
+			);
+			expect(Object.keys(hermesProviders).sort()).toEqual(
+				["user-local", `clawdi-${providerCase.second}`].sort(),
+			);
+			expect(hermesProviders[`clawdi-${providerCase.first}`]).toBeUndefined();
+			expect(hermesProviders[`clawdi-${providerCase.second}`]).toMatchObject({
+				api: `https://${providerCase.second}.provider.example.test/v1`,
+			});
+			expect(hermesProviders["user-local"]).toMatchObject({
+				custom_field: "keep-me",
+			});
+		}
 	});
 
 	it("reapplies OpenClaw hosted gateway config after the official gateway installer", () => {
