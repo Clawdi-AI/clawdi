@@ -26,6 +26,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import {
 	type AgentPrimaryModel,
@@ -1371,9 +1372,24 @@ interface HermesHostedProviderPluginProjection {
 	revision: string;
 }
 
+interface HermesHostedPluginProviderProfile {
+	description: string;
+	displayName: string;
+	envName: string;
+	fallbackModels: string[];
+	pluginProviderName: string;
+	primaryModelDetails: {
+		context_length?: number;
+		max_tokens?: number;
+		supports_vision?: boolean;
+	} | null;
+	provider: AiProviderCatalog["providers"][number];
+	providerApiMode: string;
+}
+
 const HERMES_MODEL_PROVIDER_PLUGIN_NAME = "clawdi";
 const HERMES_MODEL_PROVIDER_PLUGIN_VERSION = "1.0.0";
-const HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION = [0, 13, 0] as const;
+const HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION = [0, 18, 0] as const;
 const HERMES_PROVIDER_PROFILE_API_MODES: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "chat_completions",
 	openai_responses: "codex_responses",
@@ -1504,17 +1520,57 @@ function buildHermesHostedProviderPluginProjection(
 	catalog: AiProviderCatalog,
 	primaryModel: AgentPrimaryModel,
 ): HermesHostedProviderPluginProjection {
-	if (catalog.providers.length !== 1) {
-		throw new Error(
-			`Hermes model-provider plugin projection currently supports exactly one provider for hosted runtimes; got ${catalog.providers.length}.`,
-		);
-	}
-	const provider = catalog.providers.find((entry) => entry.id === primaryModel.provider_id);
-	if (!provider) {
+	const profiles = catalog.providers.map((provider) =>
+		buildHermesHostedPluginProviderProfile(
+			provider,
+			provider.id === primaryModel.provider_id ? primaryModel.model : null,
+		),
+	);
+	const primaryProvider = profiles.find((entry) => entry.provider.id === primaryModel.provider_id);
+	if (!primaryProvider?.primaryModelDetails) {
 		throw new Error(
 			`Hermes hosted provider projection cannot find primary provider ${primaryModel.provider_id}.`,
 		);
 	}
+	const pluginFiles: ProjectionFile[] = [
+		{
+			path: "__init__.py",
+			content: buildHermesHostedPluginInit(profiles),
+		},
+		{
+			path: "plugin.yaml",
+			content: [
+				`name: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
+				"kind: model-provider",
+				`version: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_VERSION)}`,
+				'description: "Clawdi hosted AI provider projection"',
+				'author: "Clawdi"',
+				"",
+			].join("\n"),
+		},
+	];
+	const compatibilityProviders = buildHermesHostedCompatibilityProviders(catalog, primaryModel);
+	const modelPatch = buildHermesHostedPluginModelPatch(
+		primaryModel,
+		primaryProvider.pluginProviderName,
+		primaryProvider.primaryModelDetails,
+		compatibilityProviders,
+	);
+	return {
+		modelPatch,
+		pluginFiles,
+		revision: revisionHash({
+			hermesProviderProjection: "plugin",
+			modelPatch,
+			pluginFiles,
+		}),
+	};
+}
+
+function buildHermesHostedPluginProviderProfile(
+	provider: AiProviderCatalog["providers"][number],
+	primaryModelId: string | null,
+): HermesHostedPluginProviderProfile {
 	const envName = provider.runtime_env_name?.trim();
 	if (!envName || !isEnvKey(envName)) {
 		throw new Error(
@@ -1539,103 +1595,100 @@ function buildHermesHostedProviderPluginProjection(
 		);
 	}
 
-	const primaryModelDetails = hermesHostedPrimaryModelDetails(provider, primaryModel.model);
-	const fallbackModels = hermesHostedFallbackModels(provider, primaryModel.model);
-	const displayName = provider.label?.trim() || "Clawdi";
-	const description = provider.label?.trim()
-		? `${provider.label.trim()} projected by Clawdi runtime converge`
-		: "Clawdi hosted AI provider projection";
-	const aliases = provider.id !== HERMES_MODEL_PROVIDER_PLUGIN_NAME ? [provider.id] : [];
-	const profileArgs = [
-		`name=${pythonStringLiteral(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
-		...(aliases.length > 0 ? [`aliases=${pythonTupleLiteral(aliases)}`] : []),
-		`display_name=${pythonStringLiteral(displayName)}`,
-		`description=${pythonStringLiteral(description)}`,
-		`env_vars=${pythonTupleLiteral([envName])}`,
-		`base_url=${pythonStringLiteral(provider.base_url)}`,
-		'auth_type="api_key"',
-		`api_mode=${pythonStringLiteral(apiMode)}`,
-		...(fallbackModels.length > 0 ? [`fallback_models=${pythonTupleLiteral(fallbackModels)}`] : []),
-	];
-	const pluginFiles: ProjectionFile[] = [
-		{
-			path: "__init__.py",
-			content: [
-				'"""Clawdi hosted AI provider projection."""',
-				"",
-				"from providers import register_provider",
-				"from providers.base import ProviderProfile",
-				"",
-				"register_provider(",
-				"    ProviderProfile(",
-				...profileArgs.map((line) => `        ${line},`),
-				"    )",
-				")",
-				"",
-			].join("\n"),
-		},
-		{
-			path: "plugin.yaml",
-			content: [
-				`name: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
-				"kind: model-provider",
-				`version: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_VERSION)}`,
-				'description: "Clawdi hosted AI provider projection"',
-				'author: "Clawdi"',
-				"",
-			].join("\n"),
-		},
-	];
-	const modelPatch = buildHermesHostedPluginModelPatch(
-		primaryModel,
-		primaryModelDetails,
-		catalog.providers.map((entry) => entry.id),
-	);
+	const displayName = provider.label?.trim() || provider.id;
 	return {
-		modelPatch,
-		pluginFiles,
-		revision: revisionHash({
-			hermesProviderProjection: "plugin",
-			modelPatch,
-			pluginFiles,
-		}),
+		description: `${displayName} projected by Clawdi runtime converge`,
+		displayName,
+		envName,
+		fallbackModels: hermesHostedFallbackModels(provider, primaryModelId),
+		pluginProviderName: hermesHostedPluginProviderName(provider.id),
+		primaryModelDetails:
+			primaryModelId === null ? null : hermesHostedPrimaryModelDetails(provider, primaryModelId),
+		provider,
+		providerApiMode: apiMode,
 	};
+}
+
+function buildHermesHostedPluginInit(
+	profiles: readonly HermesHostedPluginProviderProfile[],
+): string {
+	const lines = [
+		'"""Clawdi hosted AI provider projection."""',
+		"",
+		"from providers import register_provider",
+		"from providers.base import ProviderProfile",
+		"",
+	];
+	for (const profile of profiles) {
+		const profileArgs = [
+			`name=${pythonStringLiteral(profile.pluginProviderName)}`,
+			`display_name=${pythonStringLiteral(profile.displayName)}`,
+			`description=${pythonStringLiteral(profile.description)}`,
+			`env_vars=${pythonTupleLiteral([profile.envName])}`,
+			`base_url=${pythonStringLiteral(profile.provider.base_url)}`,
+			'auth_type="api_key"',
+			`api_mode=${pythonStringLiteral(profile.providerApiMode)}`,
+			...(profile.fallbackModels.length > 0
+				? [`fallback_models=${pythonTupleLiteral(profile.fallbackModels)}`]
+				: []),
+		];
+		lines.push(
+			"register_provider(",
+			"    ProviderProfile(",
+			...profileArgs.map((line) => `        ${line},`),
+			"    )",
+			")",
+			"",
+		);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function buildHermesHostedCompatibilityProviders(
+	catalog: AiProviderCatalog,
+	primaryModel: AgentPrimaryModel,
+): Record<string, unknown> {
+	const legacyProjection = buildAgentTargetProjection("hermes", catalog, primaryModel);
+	const file = legacyProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
+	if (!file) {
+		throw new Error("Hermes projection did not include a config merge YAML file.");
+	}
+	const parsed = parseYaml(file.content);
+	if (!isPlainRecord(parsed)) {
+		throw new Error("Hermes hosted compatibility projection must be a YAML object.");
+	}
+	return isPlainRecord(parsed.providers) ? parsed.providers : {};
 }
 
 function buildHermesHostedPluginModelPatch(
 	primaryModel: AgentPrimaryModel,
+	primaryPluginProviderName: string,
 	primaryModelDetails: {
 		context_length?: number;
 		max_tokens?: number;
 		supports_vision?: boolean;
 	},
-	providerIdsToDelete: string[],
+	compatibilityProviders: Record<string, unknown>,
 ): string {
-	const lines = [
+	const patch: Record<string, unknown> = {
+		model: {
+			provider: primaryPluginProviderName,
+			default: primaryModel.model,
+			context_length: primaryModelDetails.context_length ?? null,
+			max_tokens: primaryModelDetails.max_tokens ?? null,
+			supports_vision: primaryModelDetails.supports_vision ?? null,
+		},
+	};
+	if (Object.keys(compatibilityProviders).length > 0) {
+		patch.providers = compatibilityProviders;
+	}
+	return [
 		"# Generated by Clawdi. Merge this patch into Hermes config.yaml.",
-		"# Contract: Hermes Agent 0.13.0+ discovers model-provider plugins from",
+		"# Contract: Hermes Agent 0.18.x discovers model-provider plugins from",
 		`# $HERMES_HOME/plugins/model-providers/${HERMES_MODEL_PROVIDER_PLUGIN_NAME}/.`,
-		"model:",
-		`  provider: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
-		`  default: ${quoteYaml(primaryModel.model)}`,
-	];
-	if (primaryModelDetails.context_length !== undefined) {
-		lines.push(`  context_length: ${primaryModelDetails.context_length}`);
-	}
-	if (primaryModelDetails.max_tokens !== undefined) {
-		lines.push(`  max_tokens: ${primaryModelDetails.max_tokens}`);
-	}
-	if (primaryModelDetails.supports_vision !== undefined) {
-		lines.push(`  supports_vision: ${primaryModelDetails.supports_vision}`);
-	}
-	const deletions = [...new Set(providerIdsToDelete)].sort();
-	if (deletions.length > 0) {
-		lines.push("providers:");
-		for (const providerId of deletions) {
-			lines.push(`  ${quoteYaml(providerId)}: null`);
-		}
-	}
-	return `${lines.join("\n")}\n`;
+		stringifyYaml(patch).trimEnd(),
+		"",
+	].join("\n");
 }
 
 function hermesHostedPrimaryModelDetails(
@@ -1652,10 +1705,10 @@ function hermesHostedPrimaryModelDetails(
 
 function hermesHostedFallbackModels(
 	provider: AiProviderCatalog["providers"][number],
-	primaryModelId: string,
+	primaryModelId: string | null,
 ): string[] {
 	const ordered = [
-		primaryModelId,
+		...(primaryModelId ? [primaryModelId] : []),
 		...(provider.models ?? []).map((entry) => entry.id).filter((value) => value.trim().length > 0),
 	];
 	return ordered.filter((value, index, entries) => entries.indexOf(value) === index);
@@ -1686,6 +1739,15 @@ function pythonTupleLiteral(values: readonly string[]): string {
 
 function quoteYaml(value: string): string {
 	return JSON.stringify(value);
+}
+
+function hermesHostedPluginProviderName(providerId: string): string {
+	const normalized = providerId
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return `${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-${normalized || "provider"}`;
 }
 
 function hermesModelProviderPluginDir(home: string): string {

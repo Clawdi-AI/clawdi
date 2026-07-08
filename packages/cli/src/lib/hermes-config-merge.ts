@@ -17,6 +17,7 @@ const HERMES_GENERATED_PROVIDER_FIELDS = [
 	"base_url",
 	"default_model",
 	"model",
+	"models",
 	"transport",
 	"api_mode",
 	"key_env",
@@ -137,6 +138,12 @@ function applyHermesProviderPatch(
 	const patchModel = isPlainRecord(patchConfig.model) ? patchConfig.model : {};
 	removeHermesDirectModelFields(document, existingModel);
 	for (const [key, value] of Object.entries(patchModel)) {
+		if (value === null) {
+			if (Object.hasOwn(existingModel, key)) {
+				document.deleteIn(["model", key]);
+			}
+			continue;
+		}
 		document.setIn(["model", key], value);
 	}
 
