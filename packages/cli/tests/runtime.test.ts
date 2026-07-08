@@ -4593,7 +4593,7 @@ exit 64
 		expect(profileBundle).toContain("/v1/channels/discord");
 	});
 
-	it("converges Hermes native WhatsApp channel projection with managed Baileys creds", () => {
+	it("keeps Hermes native WhatsApp disabled until upstream websocket support is ready", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4698,32 +4698,22 @@ exit 64
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
-		const credentialProjection = projected.manifest.projection?.channelCredentials as Array<{
-			targets?: { hermes?: { sessionDir?: string; credsJsonEnv?: string } };
-		}>;
-		expect(credentialProjection[0]?.targets?.hermes).toEqual({
-			sessionDir,
-			credsJsonEnv: "HERMES_WA_CREDS_JSON",
-		});
+		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
+		expect(credentialProjection).toEqual([]);
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-hermes-secret");
-		expect(projected.secretValues?.[credentialSecretRef]).toContain("wa-hermes-secret");
+		expect(projected.secretValues?.[credentialSecretRef]).toBeUndefined();
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-hermes-secret");
 
 		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(join(sessionDir, "creds.json"), "utf-8"))).toEqual(creds);
-		expect(readFileSync(join(sessionDir, ".clawdi-managed-whatsapp-auth.json"), "utf-8")).toContain(
-			credentialId,
-		);
+		expect(existsSync(sessionDir)).toBe(false);
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("whatsapp:");
-		expect(hermesConfig).toContain("enabled: true");
-		expect(hermesConfig).toContain("dm_policy: open");
-		expect(hermesConfig).toContain("group_policy: open");
-		expect(hermesConfig).toContain("allow_from:");
-		expect(hermesConfig).toContain(`session_path: ${sessionDir}`);
-		expect(hermesConfig).toContain(
-			"ws_url: wss://cloud-api.test/v1/channels/whatsapp/00000000-0000-0000-0000-000000000001/baileys",
+		expect(hermesConfig).toContain("enabled: false");
+		expect(hermesConfig).not.toContain(`session_path: ${sessionDir}`);
+		expect(hermesConfig).not.toContain(
+			"/v1/channels/whatsapp/00000000-0000-0000-0000-000000000001/baileys",
 		);
 		expect(hermesConfig).not.toContain("wa-hermes-secret");
 
@@ -4731,17 +4721,17 @@ exit 64
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
 		expect(runConfig.env.HERMES_EXISTING_ENV).toBe("kept");
-		expect(runConfig.env.WHATSAPP_ENABLED).toBe("true");
-		expect(runConfig.env.WHATSAPP_MODE).toBe("bot");
-		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBe("*");
-		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBe(credentialSecretRef);
+		expect(runConfig.env.WHATSAPP_ENABLED).toBeUndefined();
+		expect(runConfig.env.WHATSAPP_MODE).toBeUndefined();
+		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBeUndefined();
+		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBeUndefined();
 		expect(JSON.stringify(runConfig)).not.toContain("wa-hermes-secret");
 		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
-		expect(hermesEnv).toContain('WHATSAPP_ENABLED="true"');
-		expect(hermesEnv).toContain('WHATSAPP_MODE="bot"');
-		expect(hermesEnv).toContain('WHATSAPP_ALLOWED_USERS="*"');
-		expect(hermesEnv).toContain("HERMES_WA_CREDS_JSON=");
-		expect(hermesEnv).toContain("wa-hermes-secret");
+		expect(hermesEnv).not.toContain("WHATSAPP_ENABLED");
+		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
+		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
+		expect(hermesEnv).not.toContain("HERMES_WA_CREDS_JSON");
+		expect(hermesEnv).not.toContain("wa-hermes-secret");
 
 		const removed = convergeRuntimeManifest(
 			applyRuntimeChannelsToManifestLoad(load, {

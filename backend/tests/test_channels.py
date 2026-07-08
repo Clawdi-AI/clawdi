@@ -32,7 +32,9 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
+    CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -146,6 +148,7 @@ async def _create_user_with_channel_agent(
     db_session: AsyncSession,
     *,
     label: str,
+    agent_type: str = "claude_code",
 ):
     from app.models.project import PROJECT_KIND_ENVIRONMENT, PROJECT_KIND_PERSONAL, Project
     from app.models.session import AgentEnvironment
@@ -182,7 +185,7 @@ async def _create_user_with_channel_agent(
         user_id=user.id,
         machine_id=f"{label}-agent-{suffix}",
         machine_name=f"{label.title()} Agent",
-        agent_type="claude_code",
+        agent_type=agent_type,
         os="darwin",
         default_project_id=agent_project.id,
     )
@@ -1416,6 +1419,178 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
     assert second_link.json()["detail"] == "channel bot link capacity reached"
     assert second_pair.status_code == 409
     assert second_pair.json()["detail"] == "channel bot link capacity reached"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD])
+async def test_hermes_agent_rejects_second_active_link_for_single_token_provider(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    provider: str,
+):
+    first_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"hermes-{provider}-first-{uuid4().hex}",
+    )
+    second_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"hermes-{provider}-second-{uuid4().hex}",
+    )
+    assert first_account.status_code == 201, first_account.text
+    assert second_account.status_code == 201, second_account.text
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"hermes-{provider}",
+        agent_type="hermes",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        first_link = await user_client.post(
+            f"/v1/channels/{first_account.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+        second_link = await user_client.post(
+            f"/v1/channels/{second_account.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert first_link.status_code == 201, first_link.text
+    assert second_link.status_code == 409
+    assert second_link.json()["detail"].startswith(f"one-{provider}-link-per-Hermes-agent")
+
+
+@pytest.mark.asyncio
+async def test_hermes_agent_rejects_whatsapp_links_and_tenant_credentials(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=f"hermes-whatsapp-{uuid4().hex}",
+        config={"phone_number_id": "phone-hermes-wa"},
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="hermes-whatsapp",
+        agent_type="hermes",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        link = await user_client.post(
+            f"/v1/channels/{account_id}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+        tenant_credential = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_id": str(agent.id)},
+        )
+
+    expected_detail = (
+        "WhatsApp for Hermes agents is coming soon - pending an upstream Hermes release."
+    )
+    assert link.status_code == 409
+    assert link.json()["detail"] == expected_detail
+    assert tenant_credential.status_code == 409
+    assert tenant_credential.json()["detail"] == expected_detail
+    links = (
+        (
+            await db_session.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == UUID(account_id),
+                    ChannelBotAgentLink.agent_id == agent.id,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert links == []
+
+    legacy_link = ChannelBotAgentLink(
+        account_id=UUID(account_id),
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    db_session.add(legacy_link)
+    await db_session.commit()
+    await db_session.refresh(legacy_link)
+
+    async with _client_for_user(db_session, user) as user_client:
+        tenant_credential_by_link = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_link_id": str(legacy_link.id)},
+        )
+
+    assert tenant_credential_by_link.status_code == 409
+    assert tenant_credential_by_link.json()["detail"] == expected_detail
+    credentials = (
+        (
+            await db_session.execute(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.bot_agent_link_id == legacy_link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert credentials == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_WHATSAPP])
+async def test_openclaw_agent_keeps_multi_link_behavior_for_same_provider(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    provider: str,
+):
+    first_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"openclaw-{provider}-first-{uuid4().hex}",
+        config={"phone_number_id": "phone-openclaw-first"} if provider == "whatsapp" else None,
+    )
+    second_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"openclaw-{provider}-second-{uuid4().hex}",
+        config={"phone_number_id": "phone-openclaw-second"} if provider == "whatsapp" else None,
+    )
+    assert first_account.status_code == 201, first_account.text
+    assert second_account.status_code == 201, second_account.text
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"openclaw-{provider}",
+        agent_type="openclaw",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        first_link = await user_client.post(
+            f"/v1/channels/{first_account.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+        second_link = await user_client.post(
+            f"/v1/channels/{second_account.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert first_link.status_code == 201, first_link.text
+    assert second_link.status_code == 201, second_link.text
 
 
 @pytest.mark.asyncio

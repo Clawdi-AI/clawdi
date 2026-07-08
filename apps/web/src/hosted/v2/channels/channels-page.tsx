@@ -330,7 +330,11 @@ function SharedBotsSection({
 	onRetry: () => void;
 	filter: ProviderFilter;
 }) {
-	const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
+	const [linkTarget, setLinkTarget] = useState<{
+		id: string;
+		name: string;
+		provider: string;
+	} | null>(null);
 	const groups = poolGroups(providers, filter);
 	const visibleCount = groups.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -372,7 +376,13 @@ function SharedBotsSection({
 									<PoolCard
 										key={item.id}
 										item={item}
-										onLink={() => setLinkTarget({ id: item.id, name: item.name })}
+										onLink={() =>
+											setLinkTarget({
+												id: item.id,
+												name: item.name,
+												provider: item.provider,
+											})
+										}
 									/>
 								))}
 							</div>
@@ -393,6 +403,7 @@ function SharedBotsSection({
 					onOpenChange={(open) => !open && setLinkTarget(null)}
 					accountId={linkTarget.id}
 					accountName={linkTarget.name}
+					provider={linkTarget.provider}
 				/>
 			) : null}
 		</section>

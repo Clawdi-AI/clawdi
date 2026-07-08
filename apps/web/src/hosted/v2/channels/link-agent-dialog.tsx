@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -30,7 +30,16 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TokenReveal } from "@/hosted/v2/channels/channel-ui";
-import { useEnvironments, useLinkAgent } from "@/hosted/v2/channels/channels-hooks";
+import {
+	useAgentChannelLinks,
+	useCreateWhatsappTenantCred,
+	useEnvironments,
+	useLinkAgent,
+} from "@/hosted/v2/channels/channels-hooks";
+import {
+	linkAgentBlockReason,
+	shouldMintWhatsappTenantCredential,
+} from "@/hosted/v2/channels/link-agent-dialog.logic";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -49,14 +58,17 @@ export function LinkAgentDialog({
 	onOpenChange,
 	accountId,
 	accountName,
+	provider,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	accountId: string;
 	accountName: string;
+	provider: string;
 }) {
 	const envs = useEnvironments();
 	const link = useLinkAgent(accountId);
+	const createWhatsappCredential = useCreateWhatsappTenantCred(accountId);
 	const ownership = useAgentOwnership();
 	// Empty string is the "no selection" sentinel: keeps the Select controlled
 	// (never flips undefined↔string, which warns), and reads as falsy so submit
@@ -64,30 +76,67 @@ export function LinkAgentDialog({
 	const [agentId, setAgentId] = useState("");
 	const [token, setToken] = useState<string | null>(null);
 	const [linkedNoToken, setLinkedNoToken] = useState(false);
+	const [whatsappCredentialMinted, setWhatsappCredentialMinted] = useState(false);
 	const submitLocked = useRef(false);
+
+	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
+	const selectedAgent = agents.find((env) => env.id === agentId);
+	const shouldCheckHermesSingleLink =
+		open &&
+		Boolean(agentId) &&
+		selectedAgent?.agent_type === "hermes" &&
+		(provider === "telegram" || provider === "discord");
+	const selectedAgentLinks = useAgentChannelLinks(agentId, shouldCheckHermesSingleLink);
+	const blockReason = linkAgentBlockReason({
+		provider,
+		selectedAgent,
+		existingAgentLinks: selectedAgentLinks.data ?? [],
+		accountId,
+	});
+	const guardLoading = shouldCheckHermesSingleLink && selectedAgentLinks.isLoading;
+	const isSubmitting = link.isPending || createWhatsappCredential.isPending || submitLocked.current;
 
 	useEffect(() => {
 		if (!open) return;
 		setAgentId("");
 		setToken(null);
 		setLinkedNoToken(false);
+		setWhatsappCredentialMinted(false);
 	}, [open]);
 
 	function submit() {
-		if (!agentId || submitLocked.current) return;
+		if (!agentId || blockReason || guardLoading || submitLocked.current) return;
+		const agent = selectedAgent;
 		submitLocked.current = true;
+		let credentialMutationStarted = false;
 		link.mutate(agentId, {
 			onSuccess: (data) => {
+				if (shouldMintWhatsappTenantCredential(provider, agent)) {
+					credentialMutationStarted = true;
+					createWhatsappCredential.mutate(
+						{ agent_link_id: data.id },
+						{
+							onSuccess: () => {
+								setWhatsappCredentialMinted(true);
+							},
+							onSettled: () => {
+								submitLocked.current = false;
+							},
+						},
+					);
+					return;
+				}
 				if (data.agent_token) setToken(data.agent_token);
 				else setLinkedNoToken(true);
 			},
 			onSettled: () => {
-				submitLocked.current = false;
+				if (!credentialMutationStarted) {
+					submitLocked.current = false;
+				}
 			},
 		});
 	}
 
-	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
 	const agentItems = useMemo(
 		() =>
 			agents.map((env) => {
@@ -116,6 +165,11 @@ export function LinkAgentDialog({
 						value={token}
 						note="Copy it now — it won't be shown again. The agent runtime uses this to send and receive on this channel."
 					/>
+				) : whatsappCredentialMinted ? (
+					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
+						<CircleCheck className="size-4 shrink-0" />
+						Device credential minted. Finish pairing from the agent runtime to link the number.
+					</div>
 				) : linkedNoToken ? (
 					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
 						<CircleCheck className="size-4 shrink-0" />
@@ -165,11 +219,22 @@ export function LinkAgentDialog({
 								})}
 							</SelectContent>
 						</Select>
+						{guardLoading ? (
+							<p className="text-xs text-muted-foreground">
+								Checking existing Hermes channel links...
+							</p>
+						) : null}
+						{blockReason ? (
+							<div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-muted p-3 text-sm text-warning-muted-foreground">
+								<TriangleAlert className="mt-0.5 size-4 shrink-0" />
+								<span>{blockReason}</span>
+							</div>
+						) : null}
 					</div>
 				)}
 
 				<DialogFooter>
-					{token || linkedNoToken ? (
+					{token || linkedNoToken || whatsappCredentialMinted ? (
 						<Button onClick={() => onOpenChange(false)}>Done</Button>
 					) : (
 						<>
@@ -178,9 +243,13 @@ export function LinkAgentDialog({
 							</Button>
 							<Button
 								onClick={submit}
-								disabled={!agentId || link.isPending || submitLocked.current}
+								disabled={!agentId || Boolean(blockReason) || guardLoading || isSubmitting}
 							>
-								{link.isPending ? "Linking…" : "Link agent"}
+								{createWhatsappCredential.isPending
+									? "Minting device…"
+									: link.isPending
+										? "Linking…"
+										: "Link agent"}
 							</Button>
 						</>
 					)}
