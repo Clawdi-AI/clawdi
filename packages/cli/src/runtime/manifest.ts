@@ -2852,6 +2852,20 @@ function runtimeEgressProgramRevision(
 	});
 }
 
+function runtimeEgressAgentUid(runtimeUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_EGRESS_AGENT_UID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
+	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const uid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
+	}
+	if (runtimeUser === "clawdi") return 10_001;
+	throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
+}
+
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
 	const officialName = officialRuntimeSystemdProgramName(program);
 	if (officialName) return officialName;
@@ -3413,6 +3427,7 @@ function writeSystemdUnits(
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const serviceInstallErrors: string[] = [];
+	const egressAgentUid = shouldRunMitm ? runtimeEgressAgentUid(runtimeUser) : null;
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -3465,6 +3480,7 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
+					CLAWDI_EGRESS_AGENT_UID: String(egressAgentUid),
 					CLAWDI_MITM_TRANSPARENT_PORT: String(mitmProgram.transparentPort),
 					CLAWDI_MITM_SIDECAR_UID: "0",
 					CLAWDI_MITM_TRANSPORT_VERSION: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
@@ -3472,7 +3488,7 @@ function writeSystemdUnits(
 				},
 				serviceType: "oneshot",
 				restart: false,
-				extraUnitLines: ["Before=clawdi-runtime-sidecar.service"],
+				extraUnitLines: [`Before=clawdi-runtime-sidecar.service user@${egressAgentUid}.service`],
 				extraServiceLines: ["RemainAfterExit=yes"],
 			}),
 		);

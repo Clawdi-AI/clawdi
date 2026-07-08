@@ -29,20 +29,19 @@ export function buildInvisibleGatewayNftRules(input: InvisibleGatewayNftRulesInp
 	const resolverIpv6 = unique(input.resolverIpv6.filter(isIpv6));
 	const lines = [
 		`# ${INVISIBLE_GATEWAY_TRANSPORT_VERSION}`,
-		"flush ruleset",
+		`destroy table inet ${INVISIBLE_GATEWAY_TABLE}`,
 		`add table inet ${INVISIBLE_GATEWAY_TABLE}`,
 		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver4 { type ipv4_addr; flags interval; }`,
 		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver6 { type ipv6_addr; flags interval; }`,
 		...nftAddElements("resolver4", resolverIpv4),
 		...nftAddElements("resolver6", resolverIpv6),
 		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_nat { type nat hook output priority -100; policy accept; }`,
-		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_filter { type filter hook output priority 0; policy drop; }`,
+		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_filter { type filter hook output priority 0; policy accept; }`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.sidecarUid} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } redirect to :${input.transparentPort}`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid != ${input.agentUid} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.sidecarUid} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} tcp dport ${input.transparentPort} accept`,
+		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" tcp dport ${input.transparentPort} accept`,
 		...resolverIpv4.flatMap((addr) => [
 			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} udp dport 53 accept`,
 			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} tcp dport 53 accept`,

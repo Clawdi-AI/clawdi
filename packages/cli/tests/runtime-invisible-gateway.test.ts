@@ -18,14 +18,14 @@ describe("runtime invisible gateway nftables", () => {
 		});
 
 		expect(rules).toContain("# clawdi-invisible-gateway-v1");
-		expect(rules).toContain("flush ruleset");
+		expect(rules).not.toContain("flush ruleset");
+		expect(rules).toContain("destroy table inet clawdi_invisible_gateway");
 		expect(rules).toContain("add table inet clawdi_invisible_gateway");
-		expect(rules).not.toContain("destroy table inet clawdi_invisible_gateway");
 		expect(rules).toContain(
 			"add chain inet clawdi_invisible_gateway output_nat { type nat hook output priority -100; policy accept; }",
 		);
 		expect(rules).toContain(
-			"add chain inet clawdi_invisible_gateway output_filter { type filter hook output priority 0; policy drop; }",
+			"add chain inet clawdi_invisible_gateway output_filter { type filter hook output priority 0; policy accept; }",
 		);
 		expect(rules).toContain(
 			"add rule inet clawdi_invisible_gateway output_nat meta skuid 0 accept",
@@ -33,9 +33,13 @@ describe("runtime invisible gateway nftables", () => {
 		expect(rules).toContain(
 			"add rule inet clawdi_invisible_gateway output_nat meta skuid 10001 tcp dport { 80, 443 } redirect to :25080",
 		);
-		expect(rules).toContain(
-			"add rule inet clawdi_invisible_gateway output_filter meta skuid != 10001 accept",
+		expect(rules).not.toContain(
+			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 tcp dport 25080 accept",
 		);
+		expect(rules).toContain(
+			'add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 oifname "lo" tcp dport 25080 accept',
+		);
+		expect(rules).not.toContain("meta skuid != 10001 accept");
 		expect(rules).toContain(
 			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 ip daddr 10.43.0.10 udp dport 53 accept",
 		);
