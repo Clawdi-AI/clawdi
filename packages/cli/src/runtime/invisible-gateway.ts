@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 export const INVISIBLE_GATEWAY_TRANSPORT_VERSION = "clawdi-invisible-gateway-v1";
 export const INVISIBLE_GATEWAY_TABLE = "clawdi_invisible_gateway";
+const INVISIBLE_GATEWAY_REDIRECT_CT_MARK = "0xc1a0d1";
 
 interface InvisibleGatewayNftRulesInput {
 	agentUid: number;
@@ -39,10 +40,11 @@ export function buildInvisibleGatewayNftRules(input: InvisibleGatewayNftRulesInp
 		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_nat { type nat hook output priority -100; policy accept; }`,
 		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_filter { type filter hook output priority 0; policy accept; }`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.sidecarUid} accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } redirect to :${input.transparentPort}`,
+		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } ct mark set ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} redirect to :${input.transparentPort}`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.sidecarUid} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" tcp dport ${input.transparentPort} accept`,
+		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ct mark ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} accept`,
 		...resolverIpv4.flatMap((addr) => [
 			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} udp dport 53 accept`,
 			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} tcp dport 53 accept`,

@@ -246,6 +246,8 @@ set -euo pipefail
 install -d "$HOME/.openclaw/bin" "$HOME/.openclaw/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.openclaw/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.openclaw/install-proof/npm-config-cafile"
 cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
 #!/usr/bin/env bash
 echo "openclaw fixture"
@@ -261,6 +263,8 @@ set -euo pipefail
 install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent" "$HOME/.hermes/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.hermes/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.hermes/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.hermes/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.hermes/install-proof/npm-config-cafile"
 printf '%s\\n' "\${HERMES_HOME:-}" > "$HOME/.hermes/install-proof/hermes-home"
 printf '%s\\n' "\${UV_PYTHON_INSTALL_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-install-dir"
 printf '%s\\n' "\${UV_PYTHON_BIN_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-bin-dir"
@@ -473,11 +477,23 @@ chmod +x "$HOME/.local/bin/hermes"
 				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cache"), "utf-8"),
 			).toBe("\n");
 			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-prefix"), "utf-8"),
 			).toBe("\n");
 			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cache"), "utf-8"),
 			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
 			expect(readFileSync(join(home, ".hermes", "install-proof", "hermes-home"), "utf-8")).toBe(
 				`${join(home, ".hermes")}\n`,
 			);

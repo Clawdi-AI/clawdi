@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { hostedManifestMitmProfiles } from "../src/runtime/hosted-mitm-profiles";
+import {
+	hostedManifestMitmProfiles,
+	runtimeInstallerMitmProfiles,
+} from "../src/runtime/hosted-mitm-profiles";
 import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
+
+const providerProfiles = (profiles: ReturnType<typeof hostedManifestMitmProfiles>["profiles"]) =>
+	profiles.filter((profile) => profile.owner === "provider-projection");
 
 describe("runtime MITM profile schema", () => {
 	it("accepts HTTP and websocket upstream base URLs", () => {
@@ -117,7 +123,8 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles).toEqual([
+		expect(bundle.profiles.map((profile) => profile.id)).toContain("runtime-installer-nodejs-dist");
+		expect(providerProfiles(bundle.profiles)).toEqual([
 			{
 				id: "managed-provider",
 				enabled: true,
@@ -147,6 +154,78 @@ describe("runtime MITM profile schema", () => {
 		]);
 	});
 
+	it("adds explicit runtime installer passthrough allowlist profiles", () => {
+		const profiles = runtimeInstallerMitmProfiles();
+		expect(profiles).toContainEqual(
+			expect.objectContaining({
+				id: "runtime-installer-openclaw-install",
+				kind: "passthrough",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "openclaw.ai",
+					pathPrefix: "/install-cli.sh",
+				}),
+				owner: "runtime-installer",
+			}),
+		);
+		expect(profiles).toContainEqual(
+			expect.objectContaining({
+				id: "runtime-installer-nodejs-dist",
+				kind: "passthrough",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "nodejs.org",
+					pathPrefix: "/dist/",
+				}),
+				owner: "runtime-installer",
+			}),
+		);
+		expect(profiles).toContainEqual(
+			expect.objectContaining({
+				id: "runtime-installer-npm-registry",
+				kind: "passthrough",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "registry.npmjs.org",
+					pathPrefix: "/",
+				}),
+				owner: "runtime-installer",
+			}),
+		);
+		expect(profiles).toContainEqual(
+			expect.objectContaining({
+				id: "runtime-installer-hermes-install",
+				kind: "passthrough",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "hermes-agent.nousresearch.com",
+					pathPrefix: "/install.sh",
+				}),
+				owner: "runtime-installer",
+			}),
+		);
+		expect(profiles).toEqual(
+			expect.arrayContaining([
+				{
+					id: "runtime-installer-pythonhosted",
+					enabled: true,
+					kind: "passthrough",
+					match: {
+						scheme: "https",
+						host: "files.pythonhosted.org",
+						pathPrefix: "/",
+						headers: {},
+						query: {},
+					},
+					logging: { redactHeaders: [], redactUrlPatterns: [] },
+					priority: 200,
+					owner: "runtime-installer",
+					description: "Hermes Python package artifacts.",
+				},
+			]),
+		);
+	});
+
 	it("builds managed provider profiles for runtime-scoped providers", () => {
 		const bundle = hostedManifestMitmProfiles({
 			providers: {
@@ -163,11 +242,11 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles.map((profile) => profile.id)).toEqual([
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.id)).toEqual([
 			"managed-provider-hermes",
 			"managed-provider-openclaw",
 		]);
-		expect(bundle.profiles.map((profile) => profile.match.host)).toEqual([
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.host)).toEqual([
 			"hermes-provider.example.test",
 			"openclaw-provider.example.test",
 		]);
@@ -184,7 +263,8 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles).toEqual([]);
+		expect(providerProfiles(bundle.profiles)).toEqual([]);
+		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
 	});
 
 	it("does not derive provider MITM profiles for unsupported provider API modes", () => {
@@ -198,6 +278,7 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles).toEqual([]);
+		expect(providerProfiles(bundle.profiles)).toEqual([]);
+		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
 	});
 });

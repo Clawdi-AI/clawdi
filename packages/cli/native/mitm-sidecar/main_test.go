@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"net/http"
 	"net/url"
 	"os"
@@ -632,6 +633,20 @@ func TestCertificateAuthorityPersistsAcrossSidecarRestarts(t *testing.T) {
 	}
 	if certInfo.Mode().Perm() != 0o644 {
 		t.Fatalf("expected CA cert mode 0644, got %o", certInfo.Mode().Perm())
+	}
+}
+
+func TestCertificateAuthorityMintsECDSALeafCertificates(t *testing.T) {
+	ca, err := newCertificateAuthority()
+	if err != nil {
+		t.Fatalf("create CA: %v", err)
+	}
+	cert, err := ca.mintLeaf("api.openai.com")
+	if err != nil {
+		t.Fatalf("mint leaf: %v", err)
+	}
+	if _, ok := cert.PrivateKey.(*ecdsa.PrivateKey); !ok {
+		t.Fatalf("expected ECDSA leaf key, got %T", cert.PrivateKey)
 	}
 }
 

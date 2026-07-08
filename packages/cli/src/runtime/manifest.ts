@@ -835,6 +835,13 @@ function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.Proc
 	delete env.npm_config_prefix;
 	delete env.NPM_CONFIG_CACHE;
 	delete env.npm_config_cache;
+	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
+	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
+	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.CURL_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
+	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
+	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
 	if (name === "hermes") {
 		const hermesHome = join(install.home, ".hermes");
 		env.HERMES_HOME = hermesHome;

@@ -1022,30 +1022,30 @@ chmod +x "$HOME/.local/bin/hermes"
 				apiMode: "openai_chat",
 				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			});
-			expect(loaded.manifest.mitmProfiles?.profiles).toMatchObject([
-				{
-					id: "managed-provider",
-					enabled: true,
-					kind: "provider",
-					match: {
-						scheme: "https",
-						host: "ai-gateway.example.test",
-						pathPrefix: "/v1",
-					},
-					rewrite: {
-						upstreamBaseUrl: "https://ai-gateway.example.test",
-						preservePath: true,
-						setHeaders: {
-							authorization: {
-								type: "secretRef",
-								secretRef: "secret://provider.default.apiKey",
-								prefix: "Bearer ",
-							},
+			expect(
+				loaded.manifest.mitmProfiles?.profiles.find((profile) => profile.id === "managed-provider"),
+			).toMatchObject({
+				id: "managed-provider",
+				enabled: true,
+				kind: "provider",
+				match: {
+					scheme: "https",
+					host: "ai-gateway.example.test",
+					pathPrefix: "/v1",
+				},
+				rewrite: {
+					upstreamBaseUrl: "https://ai-gateway.example.test",
+					preservePath: true,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://provider.default.apiKey",
+							prefix: "Bearer ",
 						},
 					},
-					owner: "provider-projection",
 				},
-			]);
+				owner: "provider-projection",
+			});
 			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 		} finally {
 			restore();
@@ -1108,30 +1108,30 @@ chmod +x "$HOME/.local/bin/hermes"
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			expect("manifest" in loaded).toBe(true);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-			expect(loaded.manifest.mitmProfiles?.profiles).toMatchObject([
-				{
-					id: "managed-provider",
-					enabled: true,
-					kind: "provider",
-					match: {
-						scheme: "https",
-						host: "ai-gateway.example.test",
-						pathPrefix: "/v1",
-					},
-					rewrite: {
-						upstreamBaseUrl: "https://ai-gateway.example.test",
-						preservePath: true,
-						setHeaders: {
-							authorization: {
-								type: "secretRef",
-								secretRef: "secret://provider.default.apiKey",
-								prefix: "Bearer ",
-							},
+			expect(
+				loaded.manifest.mitmProfiles?.profiles.find((profile) => profile.id === "managed-provider"),
+			).toMatchObject({
+				id: "managed-provider",
+				enabled: true,
+				kind: "provider",
+				match: {
+					scheme: "https",
+					host: "ai-gateway.example.test",
+					pathPrefix: "/v1",
+				},
+				rewrite: {
+					upstreamBaseUrl: "https://ai-gateway.example.test",
+					preservePath: true,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://provider.default.apiKey",
+							prefix: "Bearer ",
 						},
 					},
-					owner: "provider-projection",
 				},
-			]);
+				owner: "provider-projection",
+			});
 			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 		} finally {
 			restore();

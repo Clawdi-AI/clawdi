@@ -32,13 +32,16 @@ describe("runtime invisible gateway nftables", () => {
 			"add rule inet clawdi_invisible_gateway output_nat meta skuid 0 accept",
 		);
 		expect(rules).toContain(
-			"add rule inet clawdi_invisible_gateway output_nat meta skuid 10001 tcp dport { 80, 443 } redirect to :25080",
+			"add rule inet clawdi_invisible_gateway output_nat meta skuid 10001 tcp dport { 80, 443 } ct mark set 0xc1a0d1 redirect to :25080",
 		);
 		expect(rules).not.toContain(
 			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 tcp dport 25080 accept",
 		);
 		expect(rules).toContain(
 			'add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 oifname "lo" tcp dport 25080 accept',
+		);
+		expect(rules).toContain(
+			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 ct mark 0xc1a0d1 accept",
 		);
 		expect(rules).not.toContain("meta skuid != 10001 accept");
 		expect(rules).toContain(
