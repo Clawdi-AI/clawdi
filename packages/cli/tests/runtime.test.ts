@@ -2134,6 +2134,22 @@ exit 64
 									},
 								],
 							},
+							{
+								id: "acct-imessage-legacy",
+								provider: "imessage",
+								name: "Legacy iMessage",
+								status: "active",
+								visibility: "private",
+								runtime_links: [
+									{
+										id: "link-imessage-legacy",
+										account_id: "acct-imessage-legacy",
+										agent_id: "env_runtime",
+										status: "active",
+										agent_token: "legacy-imessage-token",
+									},
+								],
+							},
 						]),
 						{
 							status: 200,
@@ -2154,6 +2170,8 @@ exit 64
 			expect("channels" in loaded).toBe(true);
 			if (!("channels" in loaded)) throw new Error("expected channels load success");
 			expect(loaded.etag).toBe('"channels-etag-1"');
+			expect(loaded.channels).toHaveLength(1);
+			expect(loaded.channels[0]?.provider).toBe("telegram");
 			expect(loaded.channels[0]?.runtime_links[0]?.agent_token).toBe("agent-token-runtime");
 			expect(captured).toHaveLength(1);
 			expect(captured[0].path).toBe("/prefix/v1/channels");
@@ -4408,11 +4426,28 @@ exit 64
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
-			expect(patchText).toContain('"botToken": "agent-token-init"');
+			expect(patchText).toContain('"botToken": {');
+			expect(patchText).toContain(
+				'"id": "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"',
+			);
+			expect(patchText).not.toContain("agent-token-init");
 			expect(patchText).toContain('"discord"');
-			expect(patchText).toContain('"token": "discord-agent-token-init"');
+			expect(patchText).toContain('"token": {');
+			expect(patchText).toContain('"id": "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN"');
+			expect(patchText).not.toContain("discord-agent-token-init");
+			expect(patchText).toContain('"default": {');
+			expect(patchText).toContain('"source": "env"');
 			expect(patchText).toContain('"plugins"');
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+			const openclawRunConfig = JSON.parse(
+				readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
+			);
+			expect(openclawRunConfig.secretEnv).toMatchObject({
+				CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN:
+					"secret://channels/telegram/clawdi_accttelegram/agent-token",
+				CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN:
+					"secret://channels/discord/clawdi_acctdiscord1/agent-token",
+			});
 			const secretsText = readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8");
 			expect(secretsText).toContain("secret://channels/telegram/");
 			expect(secretsText).toContain("agent-token-init");
@@ -4925,7 +4960,7 @@ exit 0
 		expect(patchText).toContain('"telegram": null');
 		expect(patchText).toContain('"discord": null');
 		expect(patchText).toContain('"whatsapp": null');
-		expect(patchText).toContain('"bluebubbles": null');
+		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
 	});

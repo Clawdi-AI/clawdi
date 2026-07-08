@@ -1643,6 +1643,12 @@ function channelHasAccounts(channel: unknown): boolean {
 	return isPlainRecord(accounts) && Object.keys(accounts).length > 0;
 }
 
+function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknown>): boolean {
+	return ["telegram", "discord", "whatsapp"].some((channel) =>
+		channelHasAccounts(channels[channel]),
+	);
+}
+
 function stripTrailingSlash(value: string): string {
 	return value.replace(/\/+$/, "");
 }
@@ -1656,6 +1662,7 @@ function toWebSocketUrl(baseUrl: string): string {
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
 	const deleteEntries = openClawManagedChannelDeletes();
 	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
+	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(runtimeReadyChannels);
 	return {
 		channels: {
 			...deleteEntries,
@@ -1667,6 +1674,16 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 				...channelPluginEntries(runtimeReadyChannels),
 			},
 		},
+		secrets: usesEnvSecretRefs
+			? {
+					providers: {
+						default: { source: "env" },
+					},
+					defaults: {
+						env: "default",
+					},
+				}
+			: undefined,
 	};
 }
 
@@ -1919,10 +1936,9 @@ const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
 const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
 	whatsapp: ["clawhub:@openclaw/whatsapp", "@openclaw/whatsapp"],
-	bluebubbles: ["@openclaw/bluebubbles@2026.5.7"],
 };
 
-const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp", "bluebubbles"] as const;
+const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;
 const OPENCLAW_GATEWAY_TOKEN_ENV = "OPENCLAW_GATEWAY_TOKEN";
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {

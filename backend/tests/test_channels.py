@@ -33,6 +33,7 @@ from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
@@ -1109,6 +1110,44 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
     ]
     assert "telegram-secret" not in listed.text
     assert "webhook_secret" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    telegram = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_TELEGRAM,
+            "name": f"runtime-allowlisted-{uuid4().hex}",
+            "provider_token": "123456:telegram-secret",
+        },
+    )
+    assert telegram.status_code == 201, telegram.text
+    imessage = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_IMESSAGE,
+            "name": f"runtime-imessage-{uuid4().hex}",
+            "provider_token": "bluebubbles-password",
+            "config": {"server_url": "https://bluebubbles.example"},
+        },
+    )
+    assert imessage.status_code == 201, imessage.text
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        listed = await runtime_client.get("/v1/channels")
+
+    assert listed.status_code == 200, listed.text
+    providers = {item["provider"] for item in listed.json()}
+    assert providers == {CHANNEL_PROVIDER_TELEGRAM}
+    assert imessage.json()["id"] not in listed.text
+    assert "bluebubbles-password" not in listed.text
 
 
 @pytest.mark.asyncio
