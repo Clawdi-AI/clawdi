@@ -41,7 +41,7 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
-import { normalizeSecretRef } from "./hosted-mitm-profiles";
+import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import { manifestSchema } from "./manifest-contract";
 import {
@@ -1358,6 +1358,7 @@ function hostedProviderPlaceholderEnv(
 	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
 		const provider = recordValue(raw);
 		if (!provider) continue;
+		if (!isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
@@ -1365,6 +1366,39 @@ function hostedProviderPlaceholderEnv(
 		env[runtimeEnvName] = MANAGED_MITM_PLACEHOLDER_VALUE;
 	}
 	return env;
+}
+
+function hostedProviderSecretEnv(
+	manifest: RuntimeManifest,
+	runtimeName?: string,
+): Record<string, string> {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return {};
+	const secretEnv: Record<string, string> = {};
+	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
+		const provider = recordValue(raw);
+		if (!provider) continue;
+		if (isClawdiManagedProviderProjection(provider)) continue;
+		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
+		if (!apiKeySecretRef) continue;
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		if (!isEnvKey(runtimeEnvName)) continue;
+		secretEnv[runtimeEnvName] = apiKeySecretRef;
+	}
+	return secretEnv;
+}
+
+function assertNoProviderEnvOverlap(
+	runtimeName: string,
+	placeholderEnv: Record<string, string>,
+	secretEnv: Record<string, string>,
+): void {
+	for (const envName of Object.keys(placeholderEnv)) {
+		if (secretEnv[envName] === undefined) continue;
+		throw new Error(
+			`runtime ${runtimeName} provider env ${envName} is both managed and BYOK-backed`,
+		);
+	}
 }
 
 function mergeRuntimeEnvWithProviderPlaceholders(
@@ -4364,12 +4398,16 @@ export function convergeRuntimeManifest(
 		const providerPlaceholderEnv = runtime.enabled
 			? hostedProviderPlaceholderEnv(manifest, name)
 			: {};
+		const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+		assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
 		const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
 			name,
 			runtime.run,
 			providerPlaceholderEnv,
 		);
-		const secretEnv = runtime.enabled ? mergeRuntimeSecretEnv(name, runtime, {}) : {};
+		const secretEnv = runtime.enabled
+			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			: {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
 			secretValues,

@@ -15,6 +15,7 @@ interface HostedProviderProjection {
 	baseUrl?: string | null;
 	apiMode?: string | null;
 	apiKeySecretRef?: string | null;
+	managed_by?: string | null;
 	status?: string | null;
 }
 
@@ -132,7 +133,7 @@ export function managedProviderMitmProfiles(
 	for (const [providerId, provider] of providerProjectionEntries(hosted.providers)) {
 		const profile = managedProviderMitmProfileForProvider(providerId, provider);
 		if (!profile) continue;
-		const matchKey = `${profile.match.scheme}:${profile.match.host}:${profile.match.pathPrefix}`;
+		const matchKey = `${profile.match.scheme}:${profile.match.host}`;
 		if (seenMatches.has(matchKey)) continue;
 		seenMatches.add(matchKey);
 		profiles.push(profile);
@@ -147,7 +148,12 @@ function managedProviderMitmProfileForProvider(
 	const providerBaseUrl = cleanBaseUrl(provider?.baseUrl);
 	const providerApiMode = cleanString(provider?.apiMode);
 	const secretRef = normalizeSecretRef(provider?.apiKeySecretRef);
-	if (!providerBaseUrl || !secretRef || !providerUsesManagedMitmProfile(providerApiMode)) {
+	if (
+		!isClawdiManagedProviderProjection(provider) ||
+		!providerBaseUrl ||
+		!secretRef ||
+		!providerUsesManagedMitmProfile(providerApiMode)
+	) {
 		return null;
 	}
 	if (cleanString(provider.status) && cleanString(provider.status) !== "ok") return null;
@@ -162,12 +168,10 @@ function managedProviderMitmProfileForProvider(
 		match: {
 			scheme: parsed.protocol.replace(/:$/, "") as "http" | "https" | "ws" | "wss",
 			host: parsed.host.toLowerCase(),
-			pathPrefix: providerMatchPathPrefix(parsed.pathname),
 			headers: {},
 			query: {},
 		},
 		rewrite: {
-			upstreamBaseUrl: providerOrigin(parsed),
 			preservePath: true,
 			setHeaders: {
 				authorization: {
@@ -187,6 +191,10 @@ export function normalizeSecretRef(value: string | null | undefined): string | n
 	const trimmed = value?.trim();
 	if (!trimmed) return null;
 	return trimmed.startsWith("secret://") ? trimmed : `secret://${trimmed}`;
+}
+
+export function isClawdiManagedProviderProjection(provider: { managed_by?: unknown }): boolean {
+	return provider.managed_by === "clawdi";
 }
 
 function providerProjectionEntries(value: unknown): Array<[string, HostedProviderProjection]> {
@@ -222,15 +230,6 @@ function cleanBaseUrl(value: string | null | undefined): string | null {
 	} catch {
 		return null;
 	}
-}
-
-function providerMatchPathPrefix(pathname: string): string {
-	const cleaned = pathname.replace(/\/+$/, "");
-	return cleaned || "/";
-}
-
-function providerOrigin(parsed: URL): string {
-	return `${parsed.protocol}//${parsed.host}`;
 }
 
 function mergeGeneratedProfiles(

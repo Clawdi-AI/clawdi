@@ -43,8 +43,7 @@ describe("runtime MITM profile schema", () => {
 					headers: { authorization: { type: "exists" } },
 				},
 				rewrite: {
-					upstreamBaseUrl: "https://sub2api.test/backend-api/codex/responses",
-					preservePath: false,
+					preservePath: true,
 					setHeaders: {
 						authorization: {
 							type: "secretRef",
@@ -55,6 +54,24 @@ describe("runtime MITM profile schema", () => {
 				},
 			}).success,
 		).toBe(true);
+	});
+
+	it("requires upstream base URLs for HTTP and websocket rewrite profiles", () => {
+		for (const kind of ["http", "websocket"] as const) {
+			expect(
+				mitmProfileSchema.safeParse({
+					id: `missing-upstream-${kind}`,
+					enabled: true,
+					kind,
+					match: { scheme: kind === "websocket" ? "wss" : "https", host: "example.com" },
+					rewrite: {
+						setHeaders: {
+							authorization: "Bearer public-test-token",
+						},
+					},
+				}).success,
+			).toBe(false);
+		}
 	});
 
 	it("rejects upstream base URLs with unsupported schemes, credentials, or unsafe hosts", () => {
@@ -118,6 +135,7 @@ describe("runtime MITM profile schema", () => {
 				default: {
 					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
+					managed_by: "clawdi",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},
@@ -132,12 +150,10 @@ describe("runtime MITM profile schema", () => {
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
-					pathPrefix: "/v1",
 					headers: {},
 					query: {},
 				},
 				rewrite: {
-					upstreamBaseUrl: "https://ai-gateway.example.test",
 					preservePath: true,
 					setHeaders: {
 						authorization: {
@@ -244,11 +260,13 @@ describe("runtime MITM profile schema", () => {
 				openclaw: {
 					baseUrl: "https://openclaw-provider.example.test/v1",
 					apiMode: "openai_chat",
+					managed_by: "clawdi",
 					apiKeySecretRef: "provider.openclaw.apiKey",
 				},
 				hermes: {
 					baseUrl: "https://hermes-provider.example.test/v1",
 					apiMode: "openai_responses",
+					managed_by: "clawdi",
 					apiKeySecretRef: "provider.hermes.apiKey",
 				},
 			},
@@ -271,6 +289,23 @@ describe("runtime MITM profile schema", () => {
 				default: {
 					baseUrl: "https://sub2api.test/v1",
 					apiMode: "openai_chat",
+					managed_by: "clawdi",
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles)).toEqual([]);
+		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+	});
+
+	it("does not derive provider MITM profiles for BYOK providers", () => {
+		const bundle = hostedManifestMitmProfiles({
+			providers: {
+				default: {
+					baseUrl: "https://byok-provider.example.test/v1",
+					apiMode: "openai_chat",
+					managed_by: "user",
+					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},
 		});
@@ -285,6 +320,7 @@ describe("runtime MITM profile schema", () => {
 				default: {
 					baseUrl: "https://anthropic.example.test/v1",
 					apiMode: "anthropic_messages",
+					managed_by: "clawdi",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},

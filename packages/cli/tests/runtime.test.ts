@@ -981,6 +981,7 @@ describe("runtime manifest datasource", () => {
 									baseUrl: "https://sub2api.test/v1",
 									model: "gpt-5.5",
 									apiMode: "openai_chat",
+									managed_by: "clawdi",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 								codex: {
@@ -1128,6 +1129,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									baseUrl: "https://ai-gateway.test/v1",
 									model: "gpt-5.5",
 									apiMode: "openai_chat",
+									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
@@ -1209,6 +1211,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									baseUrl: "https://ai-gateway.example.test/v1",
 									model: "gpt-5.4-mini",
 									apiMode: "openai_chat",
+									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
@@ -1240,11 +1243,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
-					pathPrefix: "/v1",
 				},
 				rewrite: {
-					upstreamBaseUrl: "https://ai-gateway.example.test",
-					preservePath: true,
 					setHeaders: {
 						authorization: {
 							type: "secretRef",
@@ -1301,6 +1301,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									baseUrl: "https://ai-gateway.example.test/v1",
 									model: "gpt-5.4-mini",
 									apiMode: "openai_responses",
+									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
@@ -1326,11 +1327,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
-					pathPrefix: "/v1",
 				},
 				rewrite: {
-					upstreamBaseUrl: "https://ai-gateway.example.test",
-					preservePath: true,
 					setHeaders: {
 						authorization: {
 							type: "secretRef",
@@ -1487,9 +1485,9 @@ chmod +x "$HOME/.local/bin/hermes"
 		]);
 		expect(runConfig.defaultArgs).not.toContain("--auth");
 		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
-		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
-		expect(runConfig.secretEnv).toEqual({});
-		expect(runConfig.secretFilePath).toBeNull();
+		expect(runConfig.env.OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.secretEnv).toEqual({ OPENAI_API_KEY: "provider.default.apiKey" });
+		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
@@ -1981,10 +1979,14 @@ exit 0
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
-		expect(openclawRunConfig.env.OPENCLAW_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
-		expect(openclawRunConfig.secretEnv).toEqual({});
-		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
-		expect(hermesRunConfig.secretEnv).toEqual({});
+		expect(openclawRunConfig.env.OPENCLAW_PROVIDER_API_KEY).toBeUndefined();
+		expect(openclawRunConfig.secretEnv).toEqual({
+			OPENCLAW_PROVIDER_API_KEY: "provider.openclaw.apiKey",
+		});
+		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBeUndefined();
+		expect(hermesRunConfig.secretEnv).toEqual({
+			HERMES_PROVIDER_API_KEY: "provider.hermes.apiKey",
+		});
 		expect(JSON.stringify(openclawRunConfig)).not.toContain("sk-openclaw-provider");
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
 		expect(JSON.stringify(openclawRunConfig)).not.toContain("provider.hermes.apiKey");
@@ -2110,9 +2112,12 @@ exit 0
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
-		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
-		expect(hermesRunConfig.env.MOONSHOT_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
-		expect(hermesRunConfig.secretEnv).toEqual({});
+		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBeUndefined();
+		expect(hermesRunConfig.env.MOONSHOT_PROVIDER_API_KEY).toBeUndefined();
+		expect(hermesRunConfig.secretEnv).toEqual({
+			HERMES_PROVIDER_API_KEY: "provider.hermes.apiKey",
+			MOONSHOT_PROVIDER_API_KEY: "provider.moonshot.apiKey",
+		});
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-moonshot-provider");
 	});
@@ -2538,6 +2543,7 @@ exit 0
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.5",
 							apiMode: "openai_responses",
+							managed_by: "clawdi",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
 						},
@@ -3711,14 +3717,21 @@ exit 42
 					openclaw: hostedOpenClawRuntime({
 						install: { source: "official", channel: "stable" },
 						paths: { home },
+						provider_ids: ["clawdi-managed-v2"],
+						primary_model: {
+							provider_id: "clawdi-managed-v2",
+							model: "gpt-5.5",
+						},
 					}),
 				},
 				providers: {
-					default: {
+					"clawdi-managed-v2": {
 						kind: "openai-compatible",
 						baseUrl: "https://sub2api.test/v1",
 						model: "gpt-5.5",
 						apiMode: "openai_chat",
+						managed_by: "clawdi",
+						runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 						apiKeySecretRef: providerSecretRef,
 					},
 				},
@@ -4718,6 +4731,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								baseUrl: "https://ai-gateway.example.test/v1",
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
+								managed_by: "clawdi",
 								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
@@ -4732,11 +4746,8 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								match: {
 									scheme: "https",
 									host: "ai-gateway.example.test",
-									pathPrefix: "/v1",
 								},
 								rewrite: {
-									upstreamBaseUrl: "https://ai-gateway.example.test",
-									preservePath: true,
 									setHeaders: {
 										authorization: {
 											type: "secretRef",
@@ -4787,6 +4798,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 										baseUrl: "https://ai-gateway.example.test/v1",
 										model: "gpt-5.5",
 										apiMode: "openai_responses",
+										managed_by: "clawdi",
 										runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 										apiKeySecretRef: "provider.default.apiKey",
 									},
@@ -7205,6 +7217,7 @@ exit 64
 								baseUrl: "https://provider.test/v1",
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
+								managed_by: "clawdi",
 								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
@@ -7219,13 +7232,10 @@ exit 64
 								match: {
 									scheme: "https",
 									host: "provider.test",
-									pathPrefix: "/v1",
 									headers: {},
 									query: {},
 								},
 								rewrite: {
-									upstreamBaseUrl: "https://provider.test",
-									preservePath: true,
 									setHeaders: {
 										authorization: {
 											type: "secretRef",
@@ -7339,6 +7349,7 @@ exit 64
 								baseUrl: "https://provider.test/v1",
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
+								managed_by: "clawdi",
 								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
@@ -7762,6 +7773,7 @@ exit 64
 									kind: "openai-compatible",
 									baseUrl: "https://sub2api.test/v1",
 									apiMode: "openai_chat",
+									managed_by: "clawdi",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},

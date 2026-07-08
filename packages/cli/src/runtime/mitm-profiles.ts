@@ -181,7 +181,7 @@ export const mitmProfileSchema = z
 	.strict()
 	.superRefine((profile, ctx) => {
 		if (
-			(profile.kind === "http" || profile.kind === "websocket" || profile.kind === "provider") &&
+			(profile.kind === "http" || profile.kind === "websocket") &&
 			!profile.rewrite?.upstreamBaseUrl
 		) {
 			ctx.addIssue({

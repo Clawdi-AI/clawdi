@@ -150,9 +150,8 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "id": "provider",
                     "enabled": True,
                     "kind": "provider",
-                    "match": {"scheme": "https", "host": "gateway.test", "pathPrefix": "/v1"},
+                    "match": {"scheme": "https", "host": "gateway.test"},
                     "rewrite": {
-                        "upstreamBaseUrl": "https://unused-upstream.test",
                         "setHeaders": {
                             "authorization": {
                                 "type": "secretRef",
