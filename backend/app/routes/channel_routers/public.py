@@ -25,6 +25,8 @@ from app.core.database import get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
+    CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_PROVIDERS,
     CHANNEL_STATUS_ACTIVE,
@@ -110,6 +112,12 @@ from app.services.whatsapp_baileys import (
 )
 
 router = APIRouter(prefix="/channels", tags=["channels"])
+
+RUNTIME_CHANNEL_PROVIDERS = (
+    CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_WHATSAPP,
+)
 
 SECRETISH_ACTIVITY_DETAIL_KEYS = (
     "secret",
@@ -357,6 +365,7 @@ async def list_channels(
             .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
             .where(
                 ChannelAccount.archived_at.is_(None),
+                ChannelAccount.provider.in_(RUNTIME_CHANNEL_PROVIDERS),
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,

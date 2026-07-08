@@ -26,6 +26,8 @@ const HERMES_MANAGED_CHANNEL_SECRET_ENV = [
 	"DISCORD_BOT_TOKEN",
 	"HERMES_WA_CREDS_JSON",
 ] as const;
+const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
+const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
 
 interface ManagedChannelLink {
 	account: RuntimeChannelAccount;
@@ -35,6 +37,12 @@ interface ManagedChannelLink {
 	agentToken: string;
 	secretRef: string;
 	credentials: RuntimeChannelCredential[];
+}
+
+interface OpenClawEnvSecretRef {
+	source: "env";
+	provider: "default";
+	id: string;
 }
 
 interface RuntimeChannelCredentialProjection {
@@ -130,7 +138,10 @@ function applyRuntimeChannelProjection(
 			...directProviderPassthrough,
 		]),
 	};
-	return applyHermesRuntimeChannelSettings(projected, links);
+	return applyHermesRuntimeChannelSettings(
+		applyOpenClawRuntimeChannelSettings(projected, links),
+		links,
+	);
 }
 
 function buildOpenClawChannelsProjection(
@@ -145,7 +156,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				botToken: link.agentToken,
+				botToken: openClawChannelTokenSecretRef(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -158,7 +169,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "discord", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				token: link.agentToken,
+				token: openClawChannelTokenSecretRef(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -175,16 +186,8 @@ function buildOpenClawChannelsProjection(
 			channel.accounts[link.accountKey] = {
 				enabled: true,
 				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
-				token: link.agentToken,
+				token: openClawChannelTokenSecretRef(link),
 				...(credential ? { authDir: credential.authDir } : {}),
-			};
-			continue;
-		}
-		if (provider === "imessage") {
-			channels.bluebubbles = {
-				enabled: true,
-				serverUrl: `${stripTrailingSlash(cloudApiUrl)}/v1/channels/imessage/bluebubbles`,
-				password: link.agentToken,
 			};
 		}
 	}
@@ -204,6 +207,37 @@ function buildRuntimeChannelCredentialsProjection(
 				`${right.provider}:${right.accountKey}:${right.credentialId}`,
 			),
 		);
+}
+
+function applyOpenClawRuntimeChannelSettings(
+	manifest: RuntimeManifest,
+	links: ManagedChannelLink[],
+): RuntimeManifest {
+	const openclaw = manifest.runtimes.openclaw;
+	if (!openclaw?.enabled) return manifest;
+
+	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
+	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
+	for (const link of links) {
+		secretEnv[openClawChannelTokenEnvName(link)] = link.secretRef;
+	}
+	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
+		return manifest;
+	}
+
+	return {
+		...manifest,
+		runtimes: {
+			...manifest.runtimes,
+			openclaw: {
+				...openclaw,
+				run: {
+					...existingRun,
+					secretEnv,
+				},
+			},
+		},
+	};
 }
 
 function applyHermesRuntimeChannelSettings(
@@ -264,6 +298,43 @@ function firstLinkForProvider(
 	provider: ChannelProvider,
 ): ManagedChannelLink | null {
 	return links.find((link) => link.account.provider === provider) ?? null;
+}
+
+function openClawChannelTokenSecretRef(link: ManagedChannelLink): OpenClawEnvSecretRef {
+	return {
+		source: "env",
+		provider: "default",
+		id: openClawChannelTokenEnvName(link),
+	};
+}
+
+function openClawChannelTokenEnvName(link: ManagedChannelLink): string {
+	return `${OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX}${envKeySegment(link.account.provider)}_${envKeySegment(
+		link.accountKey,
+	)}${OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX}`;
+}
+
+function envKeySegment(value: string): string {
+	const segment = value
+		.toUpperCase()
+		.replace(/[^A-Z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return segment || "CHANNEL";
+}
+
+function omitOpenClawManagedChannelSecretEnv(
+	input: Record<string, string>,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(input).filter(([key]) => !isOpenClawManagedChannelSecretEnv(key)),
+	);
+}
+
+function isOpenClawManagedChannelSecretEnv(key: string): boolean {
+	return (
+		key.startsWith(OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX) &&
+		key.endsWith(OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX)
+	);
 }
 
 function omitKeys<T extends string>(

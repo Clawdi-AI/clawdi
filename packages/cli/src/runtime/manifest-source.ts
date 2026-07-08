@@ -61,9 +61,13 @@ export interface RuntimeChannelCredential {
 	material?: unknown;
 }
 
+const RUNTIME_CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
+const runtimeChannelProviderSchema = z.enum(RUNTIME_CHANNEL_PROVIDERS);
+type RuntimeChannelProvider = z.infer<typeof runtimeChannelProviderSchema>;
+
 export interface RuntimeChannelAccount {
 	id: string;
-	provider: "telegram" | "discord" | "whatsapp" | "imessage";
+	provider: RuntimeChannelProvider;
 	name: string;
 	status: string;
 	visibility: "private" | "public";
@@ -161,7 +165,7 @@ const runtimeChannelCredentialSchema = z
 const runtimeChannelAccountSchema = z
 	.object({
 		id: z.string().min(1),
-		provider: z.enum(["telegram", "discord", "whatsapp", "imessage"]),
+		provider: runtimeChannelProviderSchema,
 		name: z.string().min(1),
 		status: z.string().min(1),
 		visibility: z.enum(["private", "public"]).default("private"),
@@ -170,10 +174,36 @@ const runtimeChannelAccountSchema = z
 	})
 	.passthrough();
 
-const runtimeChannelsSchema = z.array(runtimeChannelAccountSchema);
+const runtimeChannelsSchema = z.array(z.unknown()).transform((accounts, ctx) => {
+	const allowedAccounts: RuntimeChannelAccount[] = [];
+	for (const [index, account] of accounts.entries()) {
+		const provider = recordValue(account)?.provider;
+		if (typeof provider === "string" && !isRuntimeChannelProvider(provider)) {
+			continue;
+		}
+		const parsed = runtimeChannelAccountSchema.safeParse(account);
+		if (!parsed.success) {
+			for (const issue of parsed.error.issues) {
+				ctx.addIssue({ ...issue, path: [index, ...issue.path] });
+			}
+			continue;
+		}
+		allowedAccounts.push(parsed.data);
+	}
+	return allowedAccounts;
+});
 
 function readJsonFile(path: string): unknown {
 	return JSON.parse(readFileSync(path, "utf-8")) as unknown;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	return value as Record<string, unknown>;
+}
+
+function isRuntimeChannelProvider(value: string): value is RuntimeChannelProvider {
+	return runtimeChannelProviderSchema.safeParse(value).success;
 }
 
 function zodErrors(error: z.ZodError): string[] {
