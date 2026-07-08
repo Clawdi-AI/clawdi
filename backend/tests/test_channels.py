@@ -1465,24 +1465,26 @@ async def test_hermes_agent_rejects_second_active_link_for_single_token_provider
 
 
 @pytest.mark.asyncio
-async def test_hermes_agent_rejects_whatsapp_links_and_tenant_credentials(
+@pytest.mark.parametrize("agent_type", ["hermes", "openclaw"])
+async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
+    agent_type: str,
 ):
     created = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
         provider=CHANNEL_PROVIDER_WHATSAPP,
-        name=f"hermes-whatsapp-{uuid4().hex}",
-        config={"phone_number_id": "phone-hermes-wa"},
+        name=f"{agent_type}-whatsapp-{uuid4().hex}",
+        config={"phone_number_id": f"phone-{agent_type}-wa"},
     )
     assert created.status_code == 201, created.text
     account_id = created.json()["id"]
     user, agent = await _create_user_with_channel_agent(
         db_session,
-        label="hermes-whatsapp",
-        agent_type="hermes",
+        label=f"{agent_type}-whatsapp",
+        agent_type=agent_type,
     )
 
     async with _client_for_user(db_session, user) as user_client:
@@ -1495,9 +1497,7 @@ async def test_hermes_agent_rejects_whatsapp_links_and_tenant_credentials(
             json={"agent_id": str(agent.id)},
         )
 
-    expected_detail = (
-        "WhatsApp for Hermes agents is coming soon - pending an upstream Hermes release."
-    )
+    expected_detail = channel_service.WHATSAPP_COMING_SOON_DETAIL
     assert link.status_code == 409
     assert link.json()["detail"] == expected_detail
     assert tenant_credential.status_code == 409
@@ -1550,8 +1550,8 @@ async def test_hermes_agent_rejects_whatsapp_links_and_tenant_credentials(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_WHATSAPP])
-async def test_openclaw_agent_keeps_multi_link_behavior_for_same_provider(
+@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD])
+async def test_openclaw_agent_keeps_multi_link_behavior_for_telegram_and_discord(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -1562,14 +1562,12 @@ async def test_openclaw_agent_keeps_multi_link_behavior_for_same_provider(
         target_clerk_id=seed_user.clerk_id,
         provider=provider,
         name=f"openclaw-{provider}-first-{uuid4().hex}",
-        config={"phone_number_id": "phone-openclaw-first"} if provider == "whatsapp" else None,
     )
     second_account = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
         provider=provider,
         name=f"openclaw-{provider}-second-{uuid4().hex}",
-        config={"phone_number_id": "phone-openclaw-second"} if provider == "whatsapp" else None,
     )
     assert first_account.status_code == 201, first_account.text
     assert second_account.status_code == 201, second_account.text

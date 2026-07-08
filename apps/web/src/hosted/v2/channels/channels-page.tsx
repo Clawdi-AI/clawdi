@@ -31,9 +31,10 @@ import { AccessBadge, HealthBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool, useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
+import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Connect Telegram, Discord, and WhatsApp to your agents.";
+const DESCRIPTION = "Connect Telegram and Discord to your agents. WhatsApp is coming soon.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
 type ProviderFilter = "all" | ChannelProviderId;
@@ -418,7 +419,9 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 			: `${item.link_count} of ${item.max_links} linked`;
 
 	const meta = providerMeta(item.provider);
-	const linkable = !meta.unavailable && item.available && item.capabilities.link_agent;
+	const whatsappLinkingGated = item.provider === "whatsapp" && !WHATSAPP_LINKING_READY;
+	const linkable =
+		!whatsappLinkingGated && !meta.unavailable && item.available && item.capabilities.link_agent;
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
@@ -453,7 +456,13 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 				</Button>
 			) : (
 				<Button size="sm" variant="outline" className="w-full" disabled>
-					{meta.unavailable ? "Unavailable" : item.available ? "Not linkable" : "At capacity"}
+					{whatsappLinkingGated
+						? "Coming soon"
+						: meta.unavailable
+							? "Unavailable"
+							: item.available
+								? "Not linkable"
+								: "At capacity"}
 				</Button>
 			)}
 		</div>

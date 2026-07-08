@@ -45,6 +45,7 @@ import {
 	runtimeUserName,
 	runtimeUserSystemdEnvArgs,
 } from "../runtime/systemd-user";
+import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -536,6 +537,7 @@ async function applyLink(
 
 	let token = link.agent_token ?? null;
 	let tokenWritten = false;
+	const runtimeOutputGated = channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY;
 	if (
 		ctx.rotateAllTokens ||
 		(ctx.rotateMissingTokens &&
@@ -563,10 +565,10 @@ async function applyLink(
 		});
 	}
 
-	if (token) {
+	if (token && !runtimeOutputGated) {
 		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, token);
 		tokenWritten = true;
-	} else {
+	} else if (!runtimeOutputGated) {
 		const existingToken = readDotenvValue(
 			ctx.manifestDir,
 			ctx.manifest.outputs.dotenv,
@@ -582,7 +584,7 @@ async function applyLink(
 		}
 	}
 
-	if (linkManifest.pair_code) {
+	if (linkManifest.pair_code && !runtimeOutputGated) {
 		const pairCode = unwrap(
 			await ctx.api.POST("/v1/channels/{account_id}/pair-codes", {
 				params: { path: { account_id: account.id } },
@@ -610,7 +612,11 @@ async function applyLink(
 		});
 	}
 
-	if (channel.provider === "whatsapp" && linkManifest.whatsapp?.baileys_credentials_dir) {
+	if (
+		channel.provider === "whatsapp" &&
+		WHATSAPP_UPSTREAM_READY &&
+		linkManifest.whatsapp?.baileys_credentials_dir
+	) {
 		await writeWhatsAppCredentials(ctx, account.id, link, linkManifest);
 	}
 
@@ -797,6 +803,7 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 	for (const channel of manifest.channels) {
 		const accountKey = runtimeAccountKey(channel);
 		for (const link of channel.links) {
+			if (channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
 			if (link.pair_code?.command_env) {
 				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);
