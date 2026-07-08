@@ -31,7 +31,7 @@ export const AGENT_TARGET_CONTRACTS: Record<
 	},
 	hermes: {
 		settingMethod: "structured merge into $HERMES_HOME/config.yaml providers dict",
-		supportedVersionRange: "Hermes Agent 0.13.0 through 0.17.0 with providers dict compatibility",
+		supportedVersionRange: "Hermes Agent 0.12.0 through 0.17.0 with providers dict compatibility",
 		status: "enabled",
 	},
 	openclaw: {

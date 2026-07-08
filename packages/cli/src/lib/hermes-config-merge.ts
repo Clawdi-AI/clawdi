@@ -143,6 +143,12 @@ function applyHermesProviderPatch(
 	const existingProviders = isPlainRecord(root.providers) ? root.providers : {};
 	const patchProviders = isPlainRecord(patchConfig.providers) ? patchConfig.providers : {};
 	for (const [providerId, patchValue] of Object.entries(patchProviders)) {
+		if (patchValue === null) {
+			if (Object.hasOwn(existingProviders, providerId)) {
+				document.deleteIn(["providers", providerId]);
+			}
+			continue;
+		}
 		if (!isPlainRecord(patchValue)) continue;
 		const existingProvider = isPlainRecord(existingProviders[providerId])
 			? existingProviders[providerId]
