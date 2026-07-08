@@ -21,7 +21,12 @@ export interface RuntimeManifestLoad {
 	source: "fixture-file" | "remote-datasource" | "last-good-cache";
 	sourcePath: string;
 	offline: boolean;
+	// Values supplied by the manifest datasource. Keep this deploy-surface map provider-only.
 	secretValues?: Record<string, string>;
+	// Values synthesized from separate local/runtime datasources, such as /v1/channels.
+	localSecretValues?: Record<string, string>;
+	// Original datasource manifest before local runtime projections are applied.
+	sourceManifest?: RuntimeManifest;
 	etag?: string;
 }
 

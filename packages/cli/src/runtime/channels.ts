@@ -75,13 +75,15 @@ export function applyRuntimeChannelsToManifestLoad(
 	if (!channels) return load;
 	const managedLinks = managedChannelLinks(channels.channels);
 	const manifest = applyRuntimeChannelProjection(load.manifest, managedLinks);
+	const localSecretValues = {
+		...(load.localSecretValues ?? {}),
+		...channelSecretValues(managedLinks, manifest.projection?.channelCredentials),
+	};
 	return {
 		...load,
 		manifest,
-		secretValues: {
-			...(load.secretValues ?? {}),
-			...channelSecretValues(managedLinks, manifest.projection?.channelCredentials),
-		},
+		sourceManifest: load.sourceManifest ?? load.manifest,
+		localSecretValues: Object.keys(localSecretValues).length > 0 ? localSecretValues : undefined,
 	};
 }
 
@@ -89,7 +91,6 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
-		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
@@ -152,6 +153,7 @@ function buildOpenClawChannelsProjection(
 	const channels: Record<string, unknown> = {};
 	for (const link of links) {
 		const provider = link.account.provider;
+		if (provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		if (provider === "telegram") {
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
@@ -219,6 +221,7 @@ function applyOpenClawRuntimeChannelSettings(
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
+		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		secretEnv[openClawChannelTokenEnvName(link)] = link.secretRef;
 	}
 	if (!openclaw.run && Object.keys(secretEnv).length === 0) {

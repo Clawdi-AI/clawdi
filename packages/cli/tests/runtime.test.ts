@@ -2611,6 +2611,108 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("keeps deploy manifest secretValues provider-only when channel links are projected", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				runtime: "openclaw",
+				deploymentId: "dep_channel_secret_boundary",
+				environmentId: "env_channel_secret_boundary",
+				instanceId: "iid_channel_secret_boundary",
+				generation: 6,
+				issuedAt: "2026-07-08T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: true },
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+			offline: false,
+			secretValues: { "provider.default.apiKey": "sk-provider" },
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: [
+				{
+					id: "acct-telegram-1",
+					provider: "telegram",
+					name: "Runtime Telegram",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-telegram-1",
+							account_id: "acct-telegram-1",
+							agent_id: "env_channel_secret_boundary",
+							status: "active",
+							agent_token: "telegram-agent-token",
+						},
+					],
+					runtime_credentials: [],
+				},
+				{
+					id: "acct-discord-1",
+					provider: "discord",
+					name: "Runtime Discord",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-discord-1",
+							account_id: "acct-discord-1",
+							agent_id: "env_channel_secret_boundary",
+							status: "active",
+							agent_token: "discord-agent-token",
+						},
+					],
+					runtime_credentials: [],
+				},
+				{
+					id: "acct-whatsapp-1",
+					provider: "whatsapp",
+					name: "Runtime WhatsApp",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-whatsapp-1",
+							account_id: "acct-whatsapp-1",
+							agent_id: "env_channel_secret_boundary",
+							status: "active",
+							agent_token: "whatsapp-agent-token",
+						},
+					],
+					runtime_credentials: [],
+				},
+			],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: '"channel-secret-boundary"',
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+
+		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("channels/");
+		expect(projected.sourceManifest).toEqual(loaded.manifest);
+		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
+		expect(
+			projected.localSecretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
+		).toBe("telegram-agent-token");
+		expect(
+			projected.localSecretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
+		).toBe("discord-agent-token");
+		expect(
+			projected.localSecretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
+		).toBe("whatsapp-agent-token");
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			telegram: { enabled: true },
+			discord: { enabled: true },
+		});
+		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
+	});
+
 	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const linkId = "link-whatsapp-1";
@@ -2684,7 +2786,13 @@ exit 64
 
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
-		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
+		expect(projected.manifest.mitmProfiles?.profiles).toEqual([
+			expect.objectContaining({
+				id: "native-whatsapp-clawdi_000000000000-graph-managed",
+				kind: "http",
+				owner: "clawdi-native-channels",
+			}),
+		]);
 		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
 		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
@@ -4848,6 +4956,14 @@ exit 64
 			expect(secretsText).toContain("agent-token-init");
 			expect(secretsText).toContain("secret://channels/discord/");
 			expect(secretsText).toContain("discord-agent-token-init");
+			const cachedManifestText = readFileSync(
+				join(state, "cache", "manifest.last-good.json"),
+				"utf-8",
+			);
+			expect(cachedManifestText).not.toContain('"channels"');
+			expect(cachedManifestText).not.toContain("agent-token-init");
+			expect(cachedManifestText).not.toContain("discord-agent-token-init");
+			expect(existsSync(join(state, "cache", "runtime-secrets.last-good.json"))).toBe(false);
 			const profileBundle = readFileSync(join(state, "config", "mitm", "profiles.json"), "utf-8");
 			expect(profileBundle).toContain("clawdi-native-channels");
 			expect(profileBundle).toContain("/v1/channels/telegram");

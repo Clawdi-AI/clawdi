@@ -30,7 +30,7 @@ import {
 	runtimeSourceAuthEnv,
 } from "../runtime/manifest-source";
 import { startRuntimeMitmSidecar } from "../runtime/mitm-sidecar";
-import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
+import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
@@ -1228,6 +1228,14 @@ function writeRuntimeManifestEtag(
 	writePrivateFileAtomic(paths.manifestEtag, `${etag}\n`, { mode: 0o644, dirMode: 0o755 });
 }
 
+function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePaths): string | null {
+	return cacheRuntimeLastGoodManifest(
+		load.sourceManifest ?? load.manifest,
+		paths,
+		load.secretValues,
+	);
+}
+
 function readRuntimeChannelsEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
 	if (!existsSync(paths.channelsEtag)) return undefined;
 	const etag = readFileSync(paths.channelsEtag, "utf-8").trim();
@@ -1722,21 +1730,13 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		];
 		const installOk = runtimeErrors.length === 0;
 		if (installOk && loaded.source === "remote-datasource") {
-			convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
-				convergence.manifest,
-				paths,
-				convergenceLoad.secretValues,
-			);
+			convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(convergenceLoad, paths);
 			writeRuntimeManifestEtag(paths, loaded.etag);
 			if (channelsLoad) {
 				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
 			}
 		} else if (installOk) {
-			convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
-				convergence.manifest,
-				paths,
-				convergenceLoad.secretValues,
-			);
+			convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(convergenceLoad, paths);
 		}
 		const status = buildRuntimeBootStatus(
 			{
@@ -1892,11 +1892,7 @@ async function runtimeWatchTick(
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
 			if (convergence.installErrors.length === 0 && !systemdApplyError) {
-				convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
-					convergence.manifest,
-					paths,
-					loaded.secretValues,
-				);
+				convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(loaded, paths);
 				if (!("notModified" in manifestLoad)) {
 					writeRuntimeManifestEtag(paths, manifestLoad.etag);
 				}
@@ -1918,11 +1914,7 @@ async function runtimeWatchTick(
 				convergence: convergence.outputs,
 			};
 		}
-		convergence.outputs.manifestLastGood = cacheRuntimeLastGoodManifest(
-			convergence.manifest,
-			paths,
-			loaded.secretValues,
-		);
+		convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(loaded, paths);
 		if (!("notModified" in manifestLoad)) {
 			writeRuntimeManifestEtag(paths, manifestLoad.etag);
 		}
