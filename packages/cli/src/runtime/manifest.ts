@@ -771,6 +771,7 @@ function runningAsRoot(): boolean {
 }
 
 function runtimeInstallerExecution(
+	name: string,
 	install: RuntimeInstall,
 	installerPath: string,
 ): {
@@ -780,7 +781,7 @@ function runtimeInstallerExecution(
 	executionUser: string | null;
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const env = runtimeInstallerEnv(install);
+	const env = runtimeInstallerEnv(name, install);
 	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
@@ -828,12 +829,21 @@ function runtimeInstallerExecution(
 	);
 }
 
-function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
+function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env, HOME: install.home };
 	delete env.NPM_CONFIG_PREFIX;
 	delete env.npm_config_prefix;
 	delete env.NPM_CONFIG_CACHE;
 	delete env.npm_config_cache;
+	if (name === "hermes") {
+		const hermesHome = join(install.home, ".hermes");
+		env.HERMES_HOME = hermesHome;
+		env.UV_PYTHON_INSTALL_DIR = join(hermesHome, "uv", "python");
+		env.UV_PYTHON_BIN_DIR = join(hermesHome, "uv", "bin");
+		env.UV_MANAGED_PYTHON = "1";
+		delete env.UV_NO_MANAGED_PYTHON;
+		delete env.UV_PYTHON_DOWNLOADS;
+	}
 	return env;
 }
 
@@ -947,7 +957,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
-		const execution = runtimeInstallerExecution(install, materialized.path);
+		const execution = runtimeInstallerExecution(name, install, materialized.path);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
