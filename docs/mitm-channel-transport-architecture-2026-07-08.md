@@ -12,13 +12,28 @@ The Clawdi MITM profile schema is explicit: a profile has one of five kinds, `ht
 
 At request time, the native sidecar matches only enabled profiles loaded from that bundle (`packages/cli/native/mitm-sidecar/main.go:198`). A non-matching request is rejected, not passed through by default (`packages/cli/native/mitm-sidecar/main.go:688`). `deny` returns a blocked response; other matched profiles route to their configured upstream, preserve or rewrite the path, set `Host`, add `X-Clawdi-Original-Host` for non-passthrough traffic, and resolve any rewrite secrets inside the sidecar process (`packages/cli/native/mitm-sidecar/main.go:693`, `packages/cli/native/mitm-sidecar/main.go:697`, `packages/cli/native/mitm-sidecar/main.go:703`, `packages/cli/native/mitm-sidecar/main.go:719`, `packages/cli/native/mitm-sidecar/main.go:722`).
 
-### 1.2 Engagement mechanism: proxy environment plus CA trust
+### 1.2 Accepted DNS limitation
+
+The Invisible Gateway allows DNS from the agent UID to the pod resolver so
+ordinary provider and channel hostnames continue to resolve before HTTP/TLS
+interception. DNS payloads are not inspected by the sidecar, billed, or matched
+against MITM profiles. An agent can therefore exfiltrate data through DNS query
+names, for example by encoding data into labels under an attacker-controlled
+domain.
+
+This is an accepted limitation for the controlled/semi-trusted beta launch. It
+is not acceptable for untrusted public signup. The fast-follow hardening item is
+to replace open resolver access with a DNS allowlist resolver or DNS egress proxy
+that permits only approved provider/control-plane/channel domains and blocks or
+logs all other query names.
+
+### 1.3 Engagement mechanism: proxy environment plus CA trust
 
 MITM engagement is not iptables/NAT interception in the code reviewed. Clawdi engages interception by starting a local HTTP forward proxy and injecting proxy and CA environment variables into the runtime process. The runtime-facing environment includes `HTTPS_PROXY`, `HTTP_PROXY`, lowercase proxy variants, `NO_PROXY`, `OPENCLAW_PROXY_URL`, and CA variables for Node, Python requests, curl, git, Deno, and Codex (`packages/cli/src/runtime/mitm-env.ts:58`, `packages/cli/src/runtime/mitm-env.ts:64`, `packages/cli/src/runtime/mitm-env.ts:65`, `packages/cli/src/runtime/mitm-env.ts:66`). Hosted systemd runtime programs receive the same runtime env from `applyMitmSidecarRuntimeEnv` when a MITM program exists (`packages/cli/src/runtime/manifest.ts:2254`). `clawdi run -- ...` uses the same mechanism: it builds an invocation env from the hosted run config, starts the sidecar if `CLAWDI_MITM_ENABLED=1`, applies the sidecar's actual proxy URL and CA, strips sidecar control env, and spawns the child with that environment (`packages/cli/src/runtime/run-config.ts:244`, `packages/cli/src/commands/run.ts:347`, `packages/cli/src/commands/run.ts:367`, `packages/cli/src/commands/run.ts:380`).
 
 Therefore a process is intercepted only if it sends traffic through the injected HTTP proxy environment, or through runtime-specific code that consumes `OPENCLAW_PROXY_URL`, and trusts the generated CA for TLS. A process or library that ignores `HTTPS_PROXY`/`HTTP_PROXY` for WebSocket or TLS sockets will not be transparently intercepted by this layer even if it inherits the environment. Conversely, a process that honors those env vars does not need explicit Clawdi relay URLs for the same destination.
 
-### 1.3 Sidecar process and native implementation
+### 1.4 Sidecar process and native implementation
 
 The published CLI package carries a bundled `clawdi-mitm-sidecar` artifact; `prepublishOnly` builds it from `packages/cli/native/mitm-sidecar` into `clawdi-mitm-sidecar`, and that directory is included in the package files (`packages/cli/package.json:11`, `packages/cli/package.json:36`, `packages/cli/scripts/build-mitm-sidecar-bundle.mjs:9`, `packages/cli/scripts/build-mitm-sidecar-bundle.mjs:31`, `packages/cli/scripts/build-mitm-sidecar-bundle.mjs:42`). I found no separate source path or package named `clawdi-mitm-broker`; in this repo the broker role is the native sidecar binary.
 
@@ -28,7 +43,7 @@ The native sidecar itself is a loopback HTTP proxy by default: flags define `--p
 
 For HTTP it expects absolute-form forward-proxy requests; otherwise it returns "this endpoint is an HTTP forward proxy" (`packages/cli/native/mitm-sidecar/main.go:551`). For HTTPS/WSS it handles `CONNECT`, writes `200 Connection Established`, terminates TLS with a minted leaf certificate from the Clawdi CA, and then forwards the inner HTTP request through the profile router (`packages/cli/native/mitm-sidecar/main.go:568`, `packages/cli/native/mitm-sidecar/main.go:585`, `packages/cli/native/mitm-sidecar/main.go:590`, `packages/cli/native/mitm-sidecar/main.go:608`). WebSocket upgrades are recognized during forwarding and routed to `forwardWebSocket`, which dials the rewritten upstream and pipes both connections after a successful `101 Switching Protocols` response (`packages/cli/native/mitm-sidecar/main.go:680`, `packages/cli/native/mitm-sidecar/main.go:731`, `packages/cli/native/mitm-sidecar/main.go:1047`).
 
-### 1.4 Hosted runtime systemd path
+### 1.5 Hosted runtime systemd path
 
 Hosted runtime convergence builds a deterministic loopback MITM program when the manifest has an enabled profile bundle. The proxy port is derived from instance ID and service-state path; the CA is written under `$CLAWDI_RUN_DIR/mitm/systemd/ca.pem` (`packages/cli/src/runtime/manifest.ts:2214`). Clawdi writes a `clawdi-runtime-sidecar.service` user unit when either bridge surfaces or MITM profiles exist; for MITM it passes the profile bundle, proxy URL, CA file, and secret file to `clawdi runtime sidecar` (`packages/cli/src/runtime/manifest.ts:2881`, `packages/cli/src/runtime/manifest.ts:2895`). The `runtime sidecar` command is hosted-only, starts the bridge module if requested, starts the MITM module if `CLAWDI_MITM_PROFILE_BUNDLE` is present, and keeps the module alive until shutdown or unexpected sidecar exit (`packages/cli/src/commands/runtime.ts:2145`, `packages/cli/src/commands/runtime.ts:2172`, `packages/cli/src/commands/runtime.ts:2185`).
 

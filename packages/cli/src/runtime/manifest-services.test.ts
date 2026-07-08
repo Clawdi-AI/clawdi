@@ -58,7 +58,7 @@ function writeFakeGatewayCli(input: {
 set -euo pipefail
 printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 case "$*" in
-  "gateway install --force --json"|"gateway install")
+  "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
 				? "exit 41"
@@ -263,8 +263,11 @@ describe("runtime manifest services", () => {
 		]);
 		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"clawdi-hermes-dashboard.service",
-			"clawdi-runtime-sidecar.service",
 			"hermes-gateway.service",
+		]);
+		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"clawdi-runtime-sidecar.service",
+			"clawdi-runtime-watch.service",
 		]);
 		expect(readUserServiceConfig(paths, "hermes-gateway")).toContain(
 			'ExecStart="hermes" "gateway" "run" "--replace"',
@@ -359,7 +362,7 @@ describe("runtime manifest services", () => {
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
-			"hermes gateway install",
+			"hermes gateway install --force",
 			"openclaw gateway install --force --json",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",

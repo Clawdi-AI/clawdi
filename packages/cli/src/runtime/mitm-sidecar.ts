@@ -1,9 +1,9 @@
-import { type ChildProcessByStdio, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { type ChildProcessByStdio, spawn, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { stripMitmSidecarControlEnv } from "./mitm-env";
+import { SYSTEM_CA_BUNDLE, stripMitmSidecarControlEnv } from "./mitm-env";
 
 export interface RuntimeMitmSidecarInput {
 	runtime: string;
@@ -43,6 +43,8 @@ export async function startRuntimeMitmSidecar(
 	const args = [
 		"--profile-bundle",
 		input.profileBundlePath,
+		"--mode",
+		input.env.CLAWDI_MITM_MODE?.trim() || "proxy",
 		"--proxy-url",
 		input.env.CLAWDI_MITM_PROXY_URL ?? "http://127.0.0.1:0",
 		"--ca-file",
@@ -64,7 +66,7 @@ export async function startRuntimeMitmSidecar(
 		if (input.env.CLAWDI_DEBUG === "1") process.stderr.write(chunk);
 	});
 
-	const ready = await waitForSidecarReady(child);
+	const ready = installSystemCaIfRequested(input.env, await waitForSidecarReady(child));
 	return {
 		proxyUrl: ready.proxyUrl,
 		caFile: ready.caFile,
@@ -78,8 +80,31 @@ export async function startRuntimeMitmSidecar(
 function sidecarProcessEnv(inputEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const env = { ...process.env, ...inputEnv };
 	delete env.CLAWDI_AUTH_TOKEN;
+	delete env.CLAWDI_MANAGED_OPENAI_API_KEY;
 	stripMitmSidecarControlEnv(env);
 	return env;
+}
+
+function installSystemCaIfRequested(
+	env: NodeJS.ProcessEnv,
+	ready: { proxyUrl: string; caFile: string },
+): { proxyUrl: string; caFile: string } {
+	if (env.CLAWDI_MITM_INSTALL_SYSTEM_CA !== "1") return ready;
+	const target =
+		env.CLAWDI_MITM_SYSTEM_CA_CERT?.trim() || "/usr/local/share/ca-certificates/clawdi-mitm.crt";
+	const bundle = env.CLAWDI_MITM_SYSTEM_CA_BUNDLE?.trim() || SYSTEM_CA_BUNDLE;
+	mkdirSync(dirname(target), { recursive: true });
+	copyFileSync(ready.caFile, target);
+	chmodSync(target, 0o644);
+	const result = spawnSync("update-ca-certificates", [], {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	if (result.status !== 0) {
+		const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+		throw new Error(`update-ca-certificates failed${detail ? `\n${detail}` : ""}`);
+	}
+	return { proxyUrl: ready.proxyUrl, caFile: bundle };
 }
 
 function resolveSidecarInvocation(env: NodeJS.ProcessEnv): { command: string } | null {

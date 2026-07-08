@@ -64,8 +64,13 @@ import {
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
+import { INVISIBLE_GATEWAY_TRANSPORT_VERSION } from "./invisible-gateway";
 import type { RuntimeManifestLoad } from "./manifest-source";
-import { applyMitmSidecarRuntimeEnv } from "./mitm-env";
+import {
+	applyMitmTransparentRuntimeEnv,
+	MANAGED_MITM_PLACEHOLDER_VALUE,
+	SYSTEM_CA_BUNDLE,
+} from "./mitm-env";
 import {
 	buildMitmProfileBundle,
 	hasEnabledMitmProfiles,
@@ -169,7 +174,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths);
+	writeLastGoodSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	return paths.manifestLastGood;
 }
 
@@ -184,8 +189,9 @@ export function cacheRuntimeLastGoodManifest(
 function writeLastGoodSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): void {
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
@@ -210,10 +216,11 @@ function makeManagedSecretRoot(path: string): void {
 function writeSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): string | null {
 	const path = paths.managedSecretFile;
 	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(path, { force: true });
 		rmSync(legacyPath, { force: true });
@@ -227,6 +234,27 @@ function writeSecretValues(
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+function omitSecretRefs(
+	secretValues: Record<string, string> | undefined,
+	excludedRefs: readonly string[],
+): Record<string, string> {
+	const normalized = normalizeSecretValues(secretValues);
+	for (const ref of excludedRefs) {
+		for (const alias of secretRefAliases(ref)) {
+			delete normalized[alias];
+		}
+	}
+	return normalized;
+}
+
+function secretRefAliases(ref: string): string[] {
+	const aliases = new Set<string>([ref]);
+	const normalized = normalizeSecretRef(ref);
+	if (normalized) aliases.add(normalized);
+	if (ref.startsWith("secret://")) aliases.add(ref.slice("secret://".length));
+	return [...aliases];
 }
 
 interface ManagedWhatsAppAuthCredential {
@@ -695,6 +723,16 @@ function makeRootOwned(path: string): void {
 	}
 }
 
+function makeRootReadableDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeRootOwned(path);
+	try {
+		chmodSync(path, 0o755);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+}
+
 function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path);
@@ -770,6 +808,7 @@ function runningAsRoot(): boolean {
 }
 
 function runtimeInstallerExecution(
+	name: string,
 	install: RuntimeInstall,
 	installerPath: string,
 ): {
@@ -779,7 +818,7 @@ function runtimeInstallerExecution(
 	executionUser: string | null;
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const env = runtimeInstallerEnv(install);
+	const env = runtimeInstallerEnv(name, install);
 	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
@@ -827,12 +866,28 @@ function runtimeInstallerExecution(
 	);
 }
 
-function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
+function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env, HOME: install.home };
 	delete env.NPM_CONFIG_PREFIX;
 	delete env.npm_config_prefix;
 	delete env.NPM_CONFIG_CACHE;
 	delete env.npm_config_cache;
+	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
+	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
+	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.CURL_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
+	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
+	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
+	if (name === "hermes") {
+		const hermesHome = join(install.home, ".hermes");
+		env.HERMES_HOME = hermesHome;
+		env.UV_PYTHON_INSTALL_DIR = join(hermesHome, "uv", "python");
+		env.UV_PYTHON_BIN_DIR = join(hermesHome, "uv", "bin");
+		env.UV_MANAGED_PYTHON = "1";
+		delete env.UV_NO_MANAGED_PYTHON;
+		delete env.UV_PYTHON_DOWNLOADS;
+	}
 	return env;
 }
 
@@ -946,7 +1001,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
-		const execution = runtimeInstallerExecution(install, materialized.path);
+		const execution = runtimeInstallerExecution(name, install, materialized.path);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
@@ -1250,6 +1305,8 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 	return type === "api_key" || type === "secret_ref";
 }
 
+const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
+
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
 	const raw =
 		typeof input.runtimeEnvName === "string"
@@ -1257,11 +1314,17 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 			: typeof input.runtime_env_name === "string"
 				? input.runtime_env_name
 				: null;
-	if (raw && isEnvKey(raw)) return raw;
+	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
+	if (
+		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
+		isOpenAiCompatibleMode(hostedProviderApiMode(input))
+	) {
+		return "OPENAI_API_KEY";
+	}
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
-function hostedProviderSecretEnv(
+function hostedProviderPlaceholderEnv(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
 ): Record<string, string> {
@@ -1275,9 +1338,56 @@ function hostedProviderSecretEnv(
 		if (!apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
 		if (!isEnvKey(runtimeEnvName)) continue;
-		env[runtimeEnvName] = normalizeSecretRef(apiKeySecretRef) ?? apiKeySecretRef;
+		env[runtimeEnvName] = MANAGED_MITM_PLACEHOLDER_VALUE;
 	}
 	return env;
+}
+
+function mergeRuntimeEnvWithProviderPlaceholders(
+	runtimeName: string,
+	settings: RuntimeManifest["runtimes"][string]["run"],
+	providerEnv: Record<string, string>,
+): RuntimeManifest["runtimes"][string]["run"] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	const userEnv = settings?.env ?? {};
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings?.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...(settings ?? {}),
+		prependPath: settings?.prependPath ?? [],
+		env: {
+			...userEnv,
+			...providerEnv,
+		},
+	};
+}
+
+function mergeRuntimeServiceEnvWithProviderPlaceholders(
+	runtimeName: string,
+	serviceName: string,
+	settings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
+	providerEnv: Record<string, string>,
+): NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} service ${serviceName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...settings,
+		env: {
+			...(settings.env ?? {}),
+			...providerEnv,
+		},
+	};
 }
 
 function runtimeSecretFilePath(paths: RuntimePaths, runtimeName: string): string {
@@ -1364,13 +1474,26 @@ function writeMitmSecretFile(
 		secretValues,
 		mitmSecretRefs(manifest),
 		paths,
-		"runtime-user",
+		"root",
 	);
 }
 
 function mitmSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
 	collectSecretRefs(manifest.mitmProfiles, refs);
+	return [...refs].sort();
+}
+
+function mitmSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	const profiles = Array.isArray(manifest.mitmProfiles?.profiles)
+		? manifest.mitmProfiles.profiles
+		: [];
+	for (const profile of profiles) {
+		if (recordValue(profile)?.owner === "provider-projection") {
+			collectSecretRefs(profile, refs);
+		}
+	}
 	return [...refs].sort();
 }
 
@@ -2544,13 +2667,70 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const uid =
+		runtimeUser && runtimeUser !== "root" && runningAsRoot()
+			? String(runtimeEgressAgentUid(runtimeUser))
+			: null;
+	const runtimeDir = uid ? `/run/user/${uid}` : null;
 	return {
 		...process.env,
 		HOME: home,
 		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
 			.filter(Boolean)
 			.join(":"),
+		...(runtimeDir
+			? {
+					XDG_RUNTIME_DIR: runtimeDir,
+					DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
+				}
+			: {}),
 	};
+}
+
+function runtimeUserGid(runtimeUser: string): number {
+	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const gid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(gid) && gid >= 0 && gid <= 4_294_967_295) return gid;
+	}
+	if (runtimeUser === "clawdi") return 10_001;
+	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
+}
+
+function userManagerControlSocketExists(runtimeDir: string): boolean {
+	return existsSync(join(runtimeDir, "bus")) || existsSync(join(runtimeDir, "systemd", "private"));
+}
+
+function waitForUserManagerControlSocket(runtimeDir: string): boolean {
+	const waitUntil = Date.now() + 120_000;
+	const waitBuffer = new SharedArrayBuffer(4);
+	const waitView = new Int32Array(waitBuffer);
+	while (Date.now() < waitUntil) {
+		if (userManagerControlSocketExists(runtimeDir)) return true;
+		Atomics.wait(waitView, 0, 0, 200);
+	}
+	return userManagerControlSocketExists(runtimeDir);
+}
+
+function ensureRuntimeUserManagerReady(runtimeUser: string): void {
+	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
+	const uid = runtimeEgressAgentUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	const runtimeDir = `/run/user/${uid}`;
+	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
+	execFileSync("install", ["-d", "-m", "0700", "-o", String(uid), "-g", String(gid), runtimeDir]);
+	if (userManagerControlSocketExists(runtimeDir)) return;
+	const unit = `user@${uid}.service`;
+	let result = spawnSync("systemctl", ["restart", unit], { stdio: "ignore" });
+	if (result.status !== 0) {
+		result = spawnSync("systemctl", ["start", unit], { stdio: "ignore" });
+	}
+	if (result.status !== 0 || !waitForUserManagerControlSocket(runtimeDir)) {
+		throw new Error(
+			`runtime user systemd manager did not publish a control socket under ${runtimeDir}`,
+		);
+	}
 }
 
 function spawnRuntimeUserCommand(
@@ -2562,6 +2742,7 @@ function spawnRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			return spawnSync("gosu", [runtimeUser, command, ...args], {
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
@@ -2593,6 +2774,7 @@ function runRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			execFileSync("gosu", [runtimeUser, command, ...args], {
 				input: stdin,
@@ -2954,7 +3136,9 @@ interface RuntimeSystemdUserProgram {
 interface RuntimeMitmSystemdProgram {
 	profileBundlePath: string;
 	proxyUrl: string;
+	transparentPort: number;
 	caFile: string;
+	systemCaBundle: string;
 	secretFilePath: string | null;
 }
 
@@ -2969,7 +3153,9 @@ function runtimeMitmSystemdProgram(
 	return {
 		profileBundlePath,
 		proxyUrl: `http://127.0.0.1:${port}`,
-		caFile: join(paths.runRoot, "mitm", "systemd", "ca.pem"),
+		transparentPort: port,
+		caFile: paths.mitmSystemCaFile,
+		systemCaBundle: SYSTEM_CA_BUNDLE,
 		secretFilePath,
 	};
 }
@@ -2999,10 +3185,7 @@ function buildRuntimeSystemdUserProgram(input: {
 		env[envName] = value;
 	}
 	if (input.mitm) {
-		applyMitmSidecarRuntimeEnv(env, {
-			proxyUrl: input.mitm.proxyUrl,
-			caFile: input.mitm.caFile,
-		});
+		applyMitmTransparentRuntimeEnv(env, { caFile: input.mitm.systemCaBundle });
 	}
 
 	const command =
@@ -3037,8 +3220,36 @@ export function runtimeSidecarProgramRevision(
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
 		mitmProfiles: manifest.mitmProfiles ?? null,
 		secretValues: secretValues ?? {},
-		runtimeSidecar: "hosted-runtime-sidecar-v1",
+		runtimeSidecar: "hosted-runtime-sidecar-transparent-v1",
+		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
 	});
+}
+
+function runtimeEgressProgramRevision(
+	manifest: RuntimeManifest,
+	mitmProgram: RuntimeMitmSystemdProgram,
+): string {
+	return revisionHash({
+		runtimeEgress: "hosted-runtime-egress-nft-v1",
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		transparentPort: mitmProgram.transparentPort,
+		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+	});
+}
+
+function runtimeEgressAgentUid(runtimeUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_EGRESS_AGENT_UID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
+	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const uid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
+	}
+	if (runtimeUser === "clawdi") return 10_001;
+	throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
@@ -3205,7 +3416,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		runtime: "hermes",
 		programName: "hermes-gateway",
 		command: "hermes",
-		installArgs: ["gateway", "install"],
+		installArgs: ["gateway", "install", "--force"],
 		uninstallArgs: ["gateway", "uninstall"],
 		service: "gateway",
 		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
@@ -3292,6 +3503,9 @@ function writeSystemdUnit(input: {
 	cwd: string;
 	env: Record<string, string>;
 	unitEnv?: Record<string, string>;
+	serviceType?: "simple" | "oneshot" | "notify";
+	restart?: boolean;
+	extraUnitLines?: string[];
 	extraServiceLines?: string[];
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
@@ -3308,19 +3522,19 @@ function writeSystemdUnit(input: {
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 		"[Unit]",
 		`Description=${input.description}`,
+		...(input.extraUnitLines ?? []),
 		"",
 		"[Service]",
 		`# ClawdiEnvironmentRevision=${envRevision}`,
-		"Type=simple",
+		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
 		...(input.extraServiceLines ?? []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		`ExecStart=${systemdExec(input.command, input.args)}`,
-		"Restart=always",
-		"RestartSec=2",
-		"KillMode=mixed",
-		"TimeoutStopSec=30",
+		...(input.restart === false
+			? []
+			: ["Restart=always", "RestartSec=2", "KillMode=mixed", "TimeoutStopSec=30"]),
 		"",
 		"[Install]",
 		`WantedBy=${input.wantedBy}`,
@@ -3540,7 +3754,12 @@ function isGeneratedSystemdFile(path: string): boolean {
 
 function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdSystemRoot)) return;
-	const managed = new Set(["clawdi-runtime-watch.service", "clawdi-daemon.service"]);
+	const managed = new Set([
+		"clawdi-runtime-watch.service",
+		"clawdi-daemon.service",
+		"clawdi-runtime-egress.service",
+		"clawdi-runtime-sidecar.service",
+	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	for (const entry of readdirSync(paths.systemdSystemRoot)) {
 		if (!managed.has(entry) || writtenNames.has(entry)) continue;
@@ -3588,6 +3807,8 @@ function writeSystemdUnits(
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_MANIFEST_URL: process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() ?? "",
+		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
@@ -3607,6 +3828,7 @@ function writeSystemdUnits(
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const serviceInstallErrors: string[] = [];
+	const egressAgentUid = shouldRunMitm ? runtimeEgressAgentUid(runtimeUser) : null;
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -3647,9 +3869,38 @@ function writeSystemdUnits(
 		);
 	}
 
+	if (shouldRunMitm && mitmProgram) {
+		systemUnits.push(
+			writeSystemdSystemUnit({
+				paths,
+				name: "clawdi-runtime-egress",
+				description: "Clawdi hosted runtime invisible gateway egress rules",
+				command: "clawdi",
+				args: ["runtime", "egress", "apply"],
+				cwd: workspaceRoot,
+				env: {
+					...commonEnvironment,
+					CLAWDI_AUTH_TOKEN: "",
+					CLAWDI_EGRESS_AGENT_UID: String(egressAgentUid),
+					CLAWDI_MITM_TRANSPARENT_PORT: String(mitmProgram.transparentPort),
+					CLAWDI_MITM_SIDECAR_UID: "0",
+					CLAWDI_MITM_TRANSPORT_VERSION: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+					CLAWDI_RUNTIME_REV: runtimeEgressProgramRevision(manifest, mitmProgram),
+				},
+				serviceType: "oneshot",
+				restart: false,
+				extraUnitLines: [`Before=clawdi-runtime-sidecar.service user@${egressAgentUid}.service`],
+				extraServiceLines: [
+					"EnvironmentFile=-/etc/clawdi/invisible-gateway.env",
+					"RemainAfterExit=yes",
+				],
+			}),
+		);
+	}
+
 	if (shouldRunBridge || shouldRunMitm) {
-		userUnits.push(
-			writeSystemdUserUnit({
+		systemUnits.push(
+			writeSystemdSystemUnit({
 				paths,
 				name: "clawdi-runtime-sidecar",
 				description: "Clawdi hosted runtime sidecar",
@@ -3663,12 +3914,24 @@ function writeSystemdUnits(
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
 					CLAWDI_MITM_PROFILE_BUNDLE:
 						shouldRunMitm && mitmProgram ? mitmProgram.profileBundlePath : "",
+					CLAWDI_MITM_MODE: shouldRunMitm ? "transparent" : "",
 					CLAWDI_MITM_PROXY_URL: shouldRunMitm && mitmProgram ? mitmProgram.proxyUrl : "",
+					CLAWDI_MITM_TRANSPARENT_PORT:
+						shouldRunMitm && mitmProgram ? String(mitmProgram.transparentPort) : "",
 					CLAWDI_MITM_CA_FILE: shouldRunMitm && mitmProgram ? mitmProgram.caFile : "",
+					CLAWDI_MITM_INSTALL_SYSTEM_CA: shouldRunMitm ? "1" : "",
+					CLAWDI_MITM_SYSTEM_CA_BUNDLE:
+						shouldRunMitm && mitmProgram ? mitmProgram.systemCaBundle : "",
 					CLAWDI_MITM_SECRET_FILE:
 						shouldRunMitm && mitmProgram ? (mitmProgram.secretFilePath ?? "") : "",
+					CLAWDI_MITM_TRANSPORT_VERSION: shouldRunMitm ? INVISIBLE_GATEWAY_TRANSPORT_VERSION : "",
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
 				},
+				serviceType: "notify",
+				extraUnitLines: shouldRunMitm
+					? ["Requires=clawdi-runtime-egress.service", "After=clawdi-runtime-egress.service"]
+					: undefined,
+				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
 	}
@@ -3808,6 +4071,10 @@ export function convergeRuntimeManifest(
 	mkdirSync(semRoot, { recursive: true });
 	mkdirSync(paths.managedSecretRoot, { recursive: true });
 	makeManagedSecretRoot(paths.managedSecretRoot);
+	makeRootReadableDir(paths.mitmProfileRoot);
+	makeRootReadableDir(paths.mitmRoot);
+	makeRootReadableDir(dirname(paths.mitmSystemCaFile));
+	makeRuntimeUserPrivateDir(paths.mitmScratchRoot);
 
 	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {
@@ -3869,7 +4136,7 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(secretValues, paths);
+	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	try {
 		materializeHostedChannelCredentials(manifest, secretValues);
 	} catch (error) {
@@ -3961,9 +4228,15 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, hostedProviderSecretEnv(manifest, name))
+		const providerPlaceholderEnv = runtime.enabled
+			? hostedProviderPlaceholderEnv(manifest, name)
 			: {};
+		const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
+			name,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
+		const secretEnv = runtime.enabled ? mergeRuntimeSecretEnv(name, runtime, {}) : {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
 			secretValues,
@@ -3981,7 +4254,7 @@ export function convergeRuntimeManifest(
 			appRoot: observation.appRoot,
 			workspaceRoot,
 			mitmProfileBundlePath,
-			settings: runtime.run,
+			settings: runtimeRunSettings,
 			secretFilePath: runtimeProviderSecretFile,
 			secretEnv,
 		});
@@ -4001,8 +4274,14 @@ export function convergeRuntimeManifest(
 		}
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+				name,
+				service,
+				serviceSettings,
+				providerPlaceholderEnv,
+			);
 			const serviceSecretEnv = runtime.enabled
-				? mergeRuntimeServiceSecretEnv(name, service, serviceSettings, secretEnv)
+				? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
 				: {};
 			const serviceRunConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
@@ -4014,7 +4293,7 @@ export function convergeRuntimeManifest(
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 				workspaceRoot,
-				settings: serviceSettings,
+				settings: serviceRunSettings,
 				secretFilePath: null,
 				secretEnv: serviceSecretEnv,
 			});

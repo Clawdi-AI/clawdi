@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { buildMitmSidecarEnv } from "./mitm-env";
+import { applyMitmTransparentRuntimeEnv } from "./mitm-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 import { runtimeSecretValue } from "./secret-values";
@@ -232,10 +232,9 @@ export function buildRuntimeRunInvocation(
 			: {}),
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
-	const sidecarEnv = buildMitmSidecarEnv({
-		env,
-		profileBundlePath: read.config.mitmProfileBundlePath,
-	});
+	if (read.config.mitmProfileBundlePath) {
+		applyMitmTransparentRuntimeEnv(env);
+	}
 	const command =
 		read.config.commandPath && existsSync(read.config.commandPath)
 			? read.config.commandPath
@@ -246,7 +245,7 @@ export function buildRuntimeRunInvocation(
 		command,
 		args: args.length > 1 ? args.slice(1) : read.config.defaultArgs,
 		cwd: read.config.cwd,
-		env: sidecarEnv,
+		env,
 		configPath: read.path,
 	};
 }

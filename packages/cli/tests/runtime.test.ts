@@ -263,6 +263,62 @@ function systemdEnvRevision(envFile: string): string {
 	return match?.[1] ?? "";
 }
 
+function expectExistingFileNotToContain(path: string, value: string): void {
+	if (!existsSync(path)) return;
+	expect(readFileSync(path, "utf-8")).not.toContain(value);
+}
+
+function expectProviderMitmProfileUsesSecretRef(
+	profiles: unknown,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(Array.isArray(profiles)).toBe(true);
+	const providerProfiles = (profiles as Array<Record<string, unknown>>).filter(
+		(profile) => profile.kind === "provider" && profile.owner === "provider-projection",
+	);
+	expect(providerProfiles).toHaveLength(1);
+	const providerProfileText = JSON.stringify(providerProfiles[0]);
+	expect(providerProfileText).toContain(`"secretRef":"${secretRef}"`);
+	expect(providerProfileText).toContain('"type":"secretRef"');
+	expect(providerProfileText).not.toContain(plaintextSecret);
+}
+
+function expectMitmProfileBundleUsesSecretRef(
+	bundlePath: string | null,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(bundlePath).toBeTruthy();
+	if (!bundlePath) throw new Error("expected MITM profile bundle path");
+	const bundleText = readFileSync(bundlePath, "utf-8");
+	expect(bundleText).toContain(secretRef);
+	expect(bundleText).not.toContain(plaintextSecret);
+	const bundle = JSON.parse(bundleText) as { profiles?: unknown };
+	expectProviderMitmProfileUsesSecretRef(bundle.profiles, secretRef, plaintextSecret);
+}
+
+function expectMitmSecretFileIsSidecarOnly(
+	paths: RuntimePaths,
+	mitmSecretFile: string | null,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(mitmSecretFile).toBe(join(paths.managedSecretRoot, "mitm-secrets.json"));
+	if (!mitmSecretFile) throw new Error("expected MITM secret file path");
+	expect(mitmSecretFile.startsWith(paths.userHome)).toBe(false);
+	expect(mitmSecretFile.startsWith(paths.serviceStateRoot)).toBe(false);
+	const secretFileStat = statSync(mitmSecretFile);
+	expect(secretFileStat.mode & 0o777).toBe(0o600);
+	expect(statSync(dirname(mitmSecretFile)).mode & 0o777).toBe(0o711);
+	if (typeof process.getuid === "function" && process.getuid() === 0) {
+		expect(secretFileStat.uid).toBe(0);
+		expect(secretFileStat.gid).toBe(0);
+	}
+	const secrets = JSON.parse(readFileSync(mitmSecretFile, "utf-8")) as Record<string, string>;
+	expect(secrets[secretRef]).toBe(plaintextSecret);
+}
+
 function hermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
@@ -902,6 +958,7 @@ describe("runtime manifest datasource", () => {
 									kind: "openai-compatible",
 									baseUrl: "https://sub2api.test/v1",
 									model: "gpt-5.5",
+									apiMode: "openai_chat",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 								codex: {
@@ -959,7 +1016,12 @@ describe("runtime manifest datasource", () => {
 			);
 			expect(loaded.manifest.runtimes.openclaw.install?.home).toBe(home);
 			expect(loaded.manifest.runtimes.openclaw.install?.args).toEqual(["--json", "--no-onboard"]);
-			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+			expectProviderMitmProfileUsesSecretRef(
+				loaded.manifest.mitmProfiles?.profiles,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 			expect(loaded.secretValues).toEqual({
 				"provider.default.apiKey": "sk-runtime",
 				"secret://provider.default.apiKey": "sk-runtime",
@@ -1072,8 +1134,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 			).not.toContain("clawdi-runtime-bridge.service");
 			expect(hermesEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
-			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
-			expect(hermesDashboardEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
+			expect(hermesEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expect(hermesEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+			expect(hermesDashboardEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expect(hermesDashboardEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
 			expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toContain("sk-runtime");
 			expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toContain(
 				"sk-runtime",
@@ -1145,13 +1209,37 @@ chmod +x "$HOME/.local/bin/hermes"
 				apiMode: "openai_chat",
 				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			});
-			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+			expect(
+				loaded.manifest.mitmProfiles?.profiles.find((profile) => profile.id === "managed-provider"),
+			).toMatchObject({
+				id: "managed-provider",
+				enabled: true,
+				kind: "provider",
+				match: {
+					scheme: "https",
+					host: "ai-gateway.example.test",
+					pathPrefix: "/v1",
+				},
+				rewrite: {
+					upstreamBaseUrl: "https://ai-gateway.example.test",
+					preservePath: true,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://provider.default.apiKey",
+							prefix: "Bearer ",
+						},
+					},
+				},
+				owner: "provider-projection",
+			});
+			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 		} finally {
 			restore();
 		}
 	});
 
-	it("does not derive provider MITM profiles from hosted-runtime manifests", async () => {
+	it("derives sidecar-only provider MITM profiles from hosted-runtime manifests", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -1207,7 +1295,30 @@ chmod +x "$HOME/.local/bin/hermes"
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			expect("manifest" in loaded).toBe(true);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+			expect(
+				loaded.manifest.mitmProfiles?.profiles.find((profile) => profile.id === "managed-provider"),
+			).toMatchObject({
+				id: "managed-provider",
+				enabled: true,
+				kind: "provider",
+				match: {
+					scheme: "https",
+					host: "ai-gateway.example.test",
+					pathPrefix: "/v1",
+				},
+				rewrite: {
+					upstreamBaseUrl: "https://ai-gateway.example.test",
+					preservePath: true,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://provider.default.apiKey",
+							prefix: "Bearer ",
+						},
+					},
+				},
+				owner: "provider-projection",
+			});
 			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 		} finally {
 			restore();
@@ -1334,9 +1445,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			apiKey: {
 				source: "env",
 				provider: "default",
-				id: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				id: "OPENAI_API_KEY",
 			},
 		});
+		expect(patch.models.providers.default.apiKey.id).not.toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
 		expect(patch.models.providers.default.api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
@@ -1352,10 +1464,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			"--force",
 		]);
 		expect(runConfig.defaultArgs).not.toContain("--auth");
-		expect(runConfig.secretEnv).toEqual({
-			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
-		});
-		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
+		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(runConfig.secretEnv).toEqual({});
+		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
@@ -1847,12 +1959,12 @@ exit 0
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
-		expect(openclawRunConfig.secretEnv).toEqual({
-			OPENCLAW_PROVIDER_API_KEY: "secret://provider.openclaw.apiKey",
-		});
-		expect(hermesRunConfig.secretEnv).toEqual({
-			HERMES_PROVIDER_API_KEY: "secret://provider.hermes.apiKey",
-		});
+		expect(openclawRunConfig.env.OPENCLAW_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(openclawRunConfig.secretEnv).toEqual({});
+		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(hermesRunConfig.secretEnv).toEqual({});
+		expect(JSON.stringify(openclawRunConfig)).not.toContain("sk-openclaw-provider");
+		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
 		expect(JSON.stringify(openclawRunConfig)).not.toContain("provider.hermes.apiKey");
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("provider.openclaw.apiKey");
 	});
@@ -1976,10 +2088,11 @@ exit 0
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
-		expect(hermesRunConfig.secretEnv).toEqual({
-			HERMES_PROVIDER_API_KEY: "secret://provider.hermes.apiKey",
-			MOONSHOT_PROVIDER_API_KEY: "secret://provider.moonshot.apiKey",
-		});
+		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(hermesRunConfig.env.MOONSHOT_PROVIDER_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(hermesRunConfig.secretEnv).toEqual({});
+		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
+		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-moonshot-provider");
 	});
 
 	it("removes the converge-owned Hermes model-provider plugin when the provider projection disappears", () => {
@@ -2367,7 +2480,7 @@ exit 0
 		}
 	});
 
-	it("injects provider secrets from hosted runtime manifest responses into runtime run config", async () => {
+	it("keeps provider secrets sidecar-only for hosted runtime manifest responses", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2425,22 +2538,28 @@ exit 0
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.secretEnv).toEqual({
-			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
-		});
-		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
+		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(runConfig.secretEnv).toEqual({});
+		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
-		const aggregateSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
+		expectExistingFileNotToContain(
+			join(run, "secrets", "runtime-secrets.json"),
+			"sk-runtime-provider",
 		);
-		expect(aggregateSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
-		const runtimeSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "runtimes", "openclaw.json"), "utf-8"),
+		const paths = getRuntimePaths();
+		expectMitmProfileBundleUsesSecretRef(
+			convergence.outputs.mitmProfileBundle,
+			"secret://provider.default.apiKey",
+			"sk-runtime-provider",
 		);
-		expect(runtimeSecrets).toEqual({
-			"provider.default.apiKey": "sk-runtime-provider",
-			"secret://provider.default.apiKey": "sk-runtime-provider",
-		});
+		expectMitmSecretFileIsSidecarOnly(
+			paths,
+			convergence.outputs.mitmSecretFile,
+			"secret://provider.default.apiKey",
+			"sk-runtime-provider",
+		);
+		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
 	});
 
 	it("does not project a key-required hosted provider without a secret ref as no-auth", () => {
@@ -3235,7 +3354,7 @@ exit 64
 		]);
 	});
 
-	it("adds direct provider passthrough only when managed channels enable the sidecar", () => {
+	it("keeps managed channels separate from provider projection profiles", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -3300,33 +3419,7 @@ exit 64
 
 		expect(projected.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"native-telegram-clawdi_accttelegram-managed",
-			"direct-provider-passthrough-hermes",
-			"direct-provider-passthrough-openclaw",
 		]);
-		expect(
-			projected.manifest.mitmProfiles?.profiles.find(
-				(profile) => profile.id === "direct-provider-passthrough-openclaw",
-			),
-		).toMatchObject({
-			kind: "passthrough",
-			match: {
-				scheme: "https",
-				host: "openclaw-provider.example.test",
-				pathPrefix: "/v1/",
-			},
-		});
-		expect(
-			projected.manifest.mitmProfiles?.profiles.find(
-				(profile) => profile.id === "direct-provider-passthrough-hermes",
-			),
-		).toMatchObject({
-			kind: "passthrough",
-			match: {
-				scheme: "https",
-				host: "hermes-provider.example.test",
-				pathPrefix: "/v1/",
-			},
-		});
 	});
 
 	it("runtime watch applies remote changes, tracks systemd unit changes, and saves the new ETag", async () => {
@@ -3438,7 +3531,11 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(
@@ -3603,6 +3700,7 @@ exit 42
 						kind: "openai-compatible",
 						baseUrl: "https://sub2api.test/v1",
 						model: "gpt-5.5",
+						apiMode: "openai_chat",
 						apiKeySecretRef: providerSecretRef,
 					},
 				},
@@ -3704,6 +3802,11 @@ exit 64
 				paths,
 			);
 			expect(initialConvergence.installErrors).toEqual([]);
+			expectMitmProfileBundleUsesSecretRef(
+				initialConvergence.outputs.mitmProfileBundle,
+				"secret://provider.default.apiKey",
+				"sk-provider-watch",
+			);
 			writeFileSync(paths.manifestEtag, '"manifest-etag-stable"\n');
 			writeFileSync(paths.channelsEtag, '"channels-etag-current"\n');
 		} finally {
@@ -3713,8 +3816,12 @@ exit 64
 		const baselineSecrets = JSON.parse(
 			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 		);
-		expect(baselineSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+		expect(baselineSecrets["secret://provider.default.apiKey"]).toBeUndefined();
 		expect(baselineSecrets[channelSecretRef]).toBe("agent-token-watch");
+		const baselineMitmSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
+		);
+		expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 
 		const watchFetch = mockFetch([
 			{
@@ -3757,8 +3864,12 @@ exit 64
 			const secrets = JSON.parse(
 				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 			);
-			expect(secrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+			expect(secrets["secret://provider.default.apiKey"]).toBeUndefined();
 			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
+			const mitmSecrets = JSON.parse(
+				readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
+			);
+			expect(mitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
@@ -4472,9 +4583,252 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("runtime watch reasserts invisible gateway egress across CLI self-upgrade", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ -z "$prefix" ]; then
+  echo "missing --prefix" >&2
+  exit 64
+fi
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.2-beta.0"
+  exit 0
+fi
+echo "fake upgraded clawdi"
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${systemctlLog}'
+printf 'ActiveState=active\\nSubState=running\\n'
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const paths = getRuntimePaths();
+		seedCurrentCliInstall(state, "clawdi@0.13.1-beta.0", "0.13.1-beta.0");
+		convergeRuntimeManifest(
+			{
+				source: "fixture-file",
+				sourcePath: "test://self-upgrade-egress-before",
+				offline: false,
+				secretValues: {
+					"provider.default.apiKey": "sk-before-upgrade",
+				},
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_cli_egress",
+					environmentId: "env_cli_egress",
+					instanceId: "iid_cli_egress",
+					generation: 1,
+					issuedAt: "2026-06-06T00:00:00Z",
+					workspaceRoot: join(home, "clawdi"),
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+					},
+					projection: {
+						providers: {
+							default: {
+								kind: "openai-compatible",
+								baseUrl: "https://ai-gateway.example.test/v1",
+								model: "gpt-5.5",
+								apiMode: "openai_responses",
+								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								apiKeySecretRef: "provider.default.apiKey",
+							},
+						},
+					},
+					mitmProfiles: {
+						profiles: [
+							{
+								id: "managed-provider",
+								enabled: true,
+								kind: "provider",
+								match: {
+									scheme: "https",
+									host: "ai-gateway.example.test",
+									pathPrefix: "/v1",
+								},
+								rewrite: {
+									upstreamBaseUrl: "https://ai-gateway.example.test",
+									preservePath: true,
+									setHeaders: {
+										authorization: {
+											type: "secretRef",
+											secretRef: "secret://provider.default.apiKey",
+											prefix: "Bearer ",
+										},
+									},
+								},
+								priority: 80,
+								owner: "provider-projection",
+							},
+						],
+					},
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				},
+			},
+			paths,
+		);
+		writeFileSync(systemctlLog, "");
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
+								deploymentId: "dep_cli_egress",
+								environmentId: "env_cli_egress",
+								instanceId: "iid_cli_egress",
+								generation: 2,
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								clawdiCli: {
+									source: "npm:clawdi",
+									packageSpec: "clawdi@0.13.2-beta.0",
+								},
+								runtimes: {
+									openclaw: hostedOpenClawRuntime(),
+								},
+								providers: {
+									default: {
+										kind: "openai-compatible",
+										baseUrl: "https://ai-gateway.example.test/v1",
+										model: "gpt-5.5",
+										apiMode: "openai_responses",
+										runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+										apiKeySecretRef: "provider.default.apiKey",
+									},
+								},
+							},
+							secretValues: {
+								"provider.default.apiKey": "sk-after-upgrade",
+							},
+						}),
+						{
+							status: 200,
+							headers: {
+								"content-type": "application/json",
+								etag: '"etag-cli-egress-2"',
+							},
+						},
+					),
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: () =>
+					new Response(JSON.stringify([]), {
+						status: 200,
+						headers: {
+							"content-type": "application/json",
+							etag: '"channels-cli-egress-1"',
+						},
+					}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("applied");
+			expect(event.selfReexec).toBe(true);
+			expect(event.systemdApply.applied).toBe(true);
+			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-sidecar.service");
+			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			const egressRestart = systemctlCalls.indexOf("restart clawdi-runtime-egress.service");
+			const sidecarRestart = systemctlCalls.indexOf("restart clawdi-runtime-sidecar.service");
+			expect(egressRestart).toBeGreaterThan(-1);
+			expect(sidecarRestart).toBeGreaterThan(-1);
+			expect(egressRestart).toBeLessThan(sidecarRestart);
+			const egressEnv = readSystemdEnvFile(paths, "clawdi-runtime-egress");
+			const egressUnit = readSystemdSystemUnit(paths, "clawdi-runtime-egress");
+			expect(egressEnv).toContain('CLAWDI_MITM_TRANSPORT_VERSION="clawdi-invisible-gateway-v1"');
+			expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');
+			expect(egressEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
+			expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
+			expect(readSystemdSystemUnit(paths, "clawdi-runtime-sidecar")).toContain(
+				"After=clawdi-runtime-egress.service",
+			);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -4818,7 +5172,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
@@ -6710,6 +7068,9 @@ exit 64
 		expect(
 			convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("clawdi-runtime-sidecar.service");
+		expect(
+			convergence.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)),
+		).not.toContain("clawdi-runtime-sidecar.service");
 	});
 
 	it("adds the hosted runtime sidecar bridge module for declared control UI surfaces", () => {
@@ -6759,10 +7120,16 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const unitNames = convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1));
-		expect(unitNames).not.toContain("clawdi-runtime-bridge.service");
-		expect(unitNames).toContain("clawdi-runtime-sidecar.service");
-		const runtimeSidecarUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
+		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const runtimeSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -6783,7 +7150,7 @@ exit 64
 		expect(openclawEnv).not.toContain("bridge-secret");
 	});
 
-	it("keeps provider-secret systemd env in the ephemeral run-dir config", () => {
+	it("keeps provider secrets sidecar-only in the ephemeral run-dir config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6830,6 +7197,35 @@ exit 64
 							},
 						},
 					},
+					mitmProfiles: {
+						profiles: [
+							{
+								id: "managed-provider",
+								enabled: true,
+								kind: "provider",
+								match: {
+									scheme: "https",
+									host: "provider.test",
+									pathPrefix: "/v1",
+									headers: {},
+									query: {},
+								},
+								rewrite: {
+									upstreamBaseUrl: "https://provider.test",
+									preservePath: true,
+									setHeaders: {
+										authorization: {
+											type: "secretRef",
+											secretRef: "secret://provider.default.apiKey",
+											prefix: "Bearer ",
+										},
+									},
+								},
+								priority: 80,
+								owner: "provider-projection",
+							},
+						],
+					},
 					recovery: {},
 				},
 				source: "fixture-file",
@@ -6845,34 +7241,44 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const unitNames = convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1));
-		const runtimeSidecarUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(convergence.outputs.processManager).toBe("systemd");
 		expect(convergence.outputs.systemdUserUnitRoot).toBe(join(home, ".config", "systemd", "user"));
 		expect(convergence.outputs.systemdSystemUnitRoot).toBe(paths.systemdSystemRoot);
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
-		expect(unitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-egress.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).not.toContain("sk-runtime");
-		expect(openclawEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="sk-runtime"');
+		expect(openclawEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(openclawEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(openclawEnv).not.toContain("sk-runtime");
 		expect(openclawEnv).not.toContain(join(state, "bin"));
 		expect(statSync(join(run, "secrets")).mode & 0o777).toBe(0o711);
 		const aggregateSecretPath = join(run, "secrets", "runtime-secrets.json");
 		expect(statSync(aggregateSecretPath).mode & 0o777).toBe(0o600);
-		expect(statSync(join(run, "secrets", "runtimes")).mode & 0o777).toBe(0o700);
-		const runtimeSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "runtimes", "openclaw.json"), "utf-8"),
-		);
-		expect(runtimeSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
-		expect(JSON.stringify(runtimeSecrets)).not.toContain("sk-other-runtime");
+		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
+		const mitmSecretPath = join(run, "secrets", "mitm-secrets.json");
+		expect(statSync(mitmSecretPath).mode & 0o777).toBe(0o600);
+		const mitmSecrets = JSON.parse(readFileSync(mitmSecretPath, "utf-8"));
+		expect(mitmSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
+		expect(JSON.stringify(mitmSecrets)).not.toContain("sk-other-runtime");
 	});
 
-	it("fails closed when direct systemd launch cannot resolve a provider secret", () => {
+	it("does not put missing provider secrets into direct systemd launch env", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6882,47 +7288,47 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		expect(() =>
-			convergeRuntimeManifest(
-				{
-					manifest: {
-						schemaVersion: "clawdi.runtimeDesiredState.v1",
-						deploymentId: "dep_provider_secret_missing",
-						environmentId: "env_provider_secret_missing",
-						instanceId: "iid_provider_secret_missing",
-						generation: 1,
-						issuedAt: "2026-06-26T00:00:00Z",
-						controlPlane: { apiUrl: "https://cloud-api.test" },
-						runtimes: {
-							openclaw: { enabled: true },
-						},
-						projection: {
-							providers: {
-								default: {
-									kind: "openai-compatible",
-									baseUrl: "https://provider.test/v1",
-									model: "gpt-5.5",
-									apiMode: "openai_responses",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
-									apiKeySecretRef: "provider.default.apiKey",
-								},
+		convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_provider_secret_missing",
+					environmentId: "env_provider_secret_missing",
+					instanceId: "iid_provider_secret_missing",
+					generation: 1,
+					issuedAt: "2026-06-26T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: true },
+					},
+					projection: {
+						providers: {
+							default: {
+								kind: "openai-compatible",
+								baseUrl: "https://provider.test/v1",
+								model: "gpt-5.5",
+								apiMode: "openai_responses",
+								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								apiKeySecretRef: "provider.default.apiKey",
 							},
 						},
-						recovery: {},
 					},
-					source: "fixture-file",
-					sourcePath: "test://provider-secret-missing",
-					offline: false,
-					secretValues: {},
+					recovery: {},
 				},
-				getRuntimePaths(),
-			),
-		).toThrow(
-			"Runtime secret secret://provider.default.apiKey for CLAWDI_MANAGED_OPENAI_API_KEY is unavailable.",
+				source: "fixture-file",
+				sourcePath: "test://provider-secret-missing",
+				offline: false,
+				secretValues: {},
+			},
+			getRuntimePaths(),
 		);
+		const openclawEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
+		expect(openclawEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(openclawEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(openclawEnv).not.toContain("provider.default.apiKey");
 	});
 
-	it("runs MITM as a systemd sidecar and gives runtime programs only final proxy env", () => {
+	it("runs MITM as a transparent systemd sidecar with nft egress", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6973,24 +7379,43 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const mitmUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const egressUnit = readSystemdSystemUnit(paths, "clawdi-runtime-egress");
+		const egressEnv = readSystemdEnvFile(paths, "clawdi-runtime-egress");
+		const mitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const mitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
+		expect(egressUnit).toContain("Type=oneshot");
+		expect(egressUnit).toContain("RemainAfterExit=yes");
+		expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
+		expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
+		expect(egressUnit).toContain('ExecStart="clawdi" "runtime" "egress" "apply"');
+		expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');
+		expect(egressEnv).toContain("CLAWDI_MITM_TRANSPARENT_PORT=");
+		expect(egressEnv).toContain('CLAWDI_MITM_TRANSPORT_VERSION="clawdi-invisible-gateway-v1"');
+		expect(mitmUnit).toContain("Type=notify");
+		expect(mitmUnit).toContain("Requires=clawdi-runtime-egress.service");
+		expect(mitmUnit).toContain("After=clawdi-runtime-egress.service");
 		expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
 		expect(mitmEnv).toContain(
 			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
 		);
+		expect(mitmEnv).toContain('CLAWDI_MITM_MODE="transparent"');
 		expect(mitmEnv).toContain(`CLAWDI_MITM_CA_FILE="${join(run, "mitm", "systemd", "ca.pem")}"`);
+		expect(mitmEnv).toContain('CLAWDI_MITM_INSTALL_SYSTEM_CA="1"');
+		expect(mitmEnv).toContain('CLAWDI_MITM_SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"');
+		expect(statSync(join(state, "config", "mitm")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(state, "config", "mitm", "profiles.json")).mode & 0o777).toBe(0o644);
+		expect(statSync(join(run, "mitm")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(run, "mitm", "systemd")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(run, "mitm-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_PROFILE_BUNDLE");
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_SECRET_FILE");
-		expect(openclawEnv).toContain('HTTPS_PROXY="http://127.0.0.1:');
-		expect(openclawEnv).toContain('OPENCLAW_PROXY_URL="http://127.0.0.1:');
-		expect(openclawEnv).toContain('NODE_USE_ENV_PROXY="1"');
-		expect(openclawEnv).toContain(
-			`NODE_EXTRA_CA_CERTS="${join(run, "mitm", "systemd", "ca.pem")}"`,
-		);
+		expect(openclawEnv).not.toContain("HTTPS_PROXY=");
+		expect(openclawEnv).not.toContain("OPENCLAW_PROXY_URL=");
+		expect(openclawEnv).not.toContain("NODE_USE_ENV_PROXY=");
+		expect(openclawEnv).toContain('NODE_EXTRA_CA_CERTS="/etc/ssl/certs/ca-certificates.crt"');
 		expect(openclawUnit).not.toContain("clawdi run -- openclaw");
 	});
 
@@ -7291,6 +7716,7 @@ exit 64
 								default: {
 									kind: "openai-compatible",
 									baseUrl: "https://sub2api.test/v1",
+									apiMode: "openai_chat",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -7308,13 +7734,28 @@ exit 64
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 			expect(convergence.mode).toBe("normal");
-			expect(convergence.outputs.mitmProfileBundle).toBe(null);
-			expect(convergence.outputs.mitmSecretFile).toBeNull();
-			expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(true);
 			const paths = getRuntimePaths();
+			expectMitmProfileBundleUsesSecretRef(
+				convergence.outputs.mitmProfileBundle,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expectMitmSecretFileIsSidecarOnly(
+				paths,
+				convergence.outputs.mitmSecretFile,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expectExistingFileNotToContain(join(run, "secrets", "runtime-secrets.json"), "sk-runtime");
+			expectExistingFileNotToContain(
+				join(state, "cache", "runtime-secrets.last-good.json"),
+				"sk-runtime",
+			);
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-egress.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			]);
 			expect(convergence.outputs.systemdUserUnits).toEqual([
 				join(paths.systemdUserRoot, "openclaw-gateway.service"),
@@ -7325,9 +7766,6 @@ exit 64
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8")).not.toContain(
-				"sk-runtime",
-			);
-			expect(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8")).toContain(
 				"sk-runtime",
 			);
 			const providerHealth = JSON.parse(
@@ -7592,6 +8030,10 @@ exit 64
 			expect(systemUnitNames).toContain("clawdi-runtime-watch.service");
 			expect(systemUnitNames).toContain("clawdi-daemon.service");
 			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchEnv).toContain(
+				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/desired-state"',
+			);
+			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).toContain(
 				`ExecStart="clawdi" "daemon" "run" "--auth-token-file" "${join(
 					run,
@@ -7650,7 +8092,9 @@ exit 64
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+		const profiles = loaded.manifest.mitmProfiles?.profiles ?? [];
+		expect(profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+		expect(profiles.some((profile) => profile.kind === "provider")).toBe(false);
 	});
 
 	it("rejects invalid explicit hosted MITM profiles instead of falling back", async () => {

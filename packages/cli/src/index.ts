@@ -734,6 +734,16 @@ runtimeCmd
 	});
 
 runtimeCmd
+	.command("egress")
+	.description("Manage hosted runtime invisible gateway egress")
+	.command("apply")
+	.description("Apply hosted runtime nftables egress interception rules")
+	.action(async () => {
+		const { runtimeEgressApply } = await import("./commands/runtime.js");
+		runtimeEgressApply();
+	});
+
+runtimeCmd
 	.command("plan")
 	.description("Preview channel account, link, and runtime projection changes")
 	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")

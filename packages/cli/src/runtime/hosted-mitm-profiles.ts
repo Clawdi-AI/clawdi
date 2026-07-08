@@ -14,34 +14,123 @@ interface HostedRuntimeManifestProjection {
 interface HostedProviderProjection {
 	baseUrl?: string | null;
 	apiMode?: string | null;
+	apiKeySecretRef?: string | null;
+	status?: string | null;
 }
 
 export function hostedManifestMitmProfiles(
 	hosted: HostedRuntimeManifestProjection,
 ): MitmProfileInputBundle {
-	if (hosted.mitmProfiles !== undefined) {
-		return mitmProfileInputBundleSchema.parse(hosted.mitmProfiles);
-	}
-	return { profiles: [] };
+	const explicit =
+		hosted.mitmProfiles !== undefined
+			? mitmProfileInputBundleSchema.parse(hosted.mitmProfiles)
+			: { profiles: [] };
+	return mergeGeneratedProfiles(explicit, [
+		...runtimeInstallerMitmProfiles(),
+		...managedProviderMitmProfiles(hosted),
+	]);
 }
 
-function providerUsesDirectProjection(apiMode: string | null): boolean {
+export function runtimeInstallerMitmProfiles(): HostedMitmProfile[] {
+	const profile = (
+		id: string,
+		host: string,
+		pathPrefix: string,
+		description: string,
+	): HostedMitmProfile => ({
+		id,
+		enabled: true,
+		kind: "passthrough",
+		match: {
+			scheme: "https",
+			host,
+			pathPrefix,
+			headers: {},
+			query: {},
+		},
+		logging: { redactHeaders: [], redactUrlPatterns: [] },
+		priority: 200,
+		owner: "runtime-installer",
+		description,
+	});
+	return [
+		profile(
+			"runtime-installer-openclaw-install",
+			"openclaw.ai",
+			"/install-cli.sh",
+			"OpenClaw official installer script.",
+		),
+		profile(
+			"runtime-installer-nodejs-dist",
+			"nodejs.org",
+			"/dist/",
+			"Node.js release artifacts used by the OpenClaw official installer.",
+		),
+		profile(
+			"runtime-installer-npm-registry",
+			"registry.npmjs.org",
+			"/",
+			"npm package metadata and tarballs used by the OpenClaw official installer.",
+		),
+		profile(
+			"runtime-installer-hermes-install",
+			"hermes-agent.nousresearch.com",
+			"/install.sh",
+			"Hermes official installer script.",
+		),
+		profile("runtime-installer-uv", "astral.sh", "/uv/", "uv installer bootstrap."),
+		profile(
+			"runtime-installer-uv-releases",
+			"releases.astral.sh",
+			"/installers/uv/",
+			"uv installer release script.",
+		),
+		profile("runtime-installer-github", "github.com", "/", "Installer release metadata."),
+		profile(
+			"runtime-installer-github-api",
+			"api.github.com",
+			"/",
+			"Installer release metadata API.",
+		),
+		profile(
+			"runtime-installer-github-raw",
+			"raw.githubusercontent.com",
+			"/",
+			"Installer release script assets.",
+		),
+		profile(
+			"runtime-installer-github-objects",
+			"objects.githubusercontent.com",
+			"/",
+			"Installer release binary assets.",
+		),
+		profile(
+			"runtime-installer-github-release-assets",
+			"release-assets.githubusercontent.com",
+			"/",
+			"Installer release binary assets.",
+		),
+		profile("runtime-installer-pypi", "pypi.org", "/simple/", "Hermes Python package index."),
+		profile(
+			"runtime-installer-pythonhosted",
+			"files.pythonhosted.org",
+			"/",
+			"Hermes Python package artifacts.",
+		),
+	];
+}
+
+function providerUsesManagedMitmProfile(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
-export function directProviderPassthroughProfile(
-	hosted: HostedRuntimeManifestProjection,
-): HostedMitmProfile | null {
-	return directProviderPassthroughProfiles(hosted)[0] ?? null;
-}
-
-export function directProviderPassthroughProfiles(
+export function managedProviderMitmProfiles(
 	hosted: HostedRuntimeManifestProjection,
 ): HostedMitmProfile[] {
 	const profiles: HostedMitmProfile[] = [];
 	const seenMatches = new Set<string>();
 	for (const [providerId, provider] of providerProjectionEntries(hosted.providers)) {
-		const profile = directProviderPassthroughProfileForProvider(providerId, provider);
+		const profile = managedProviderMitmProfileForProvider(providerId, provider);
 		if (!profile) continue;
 		const matchKey = `${profile.match.scheme}:${profile.match.host}:${profile.match.pathPrefix}`;
 		if (seenMatches.has(matchKey)) continue;
@@ -51,30 +140,45 @@ export function directProviderPassthroughProfiles(
 	return profiles;
 }
 
-function directProviderPassthroughProfileForProvider(
+function managedProviderMitmProfileForProvider(
 	providerId: string,
 	provider: HostedProviderProjection,
 ): HostedMitmProfile | null {
 	const providerBaseUrl = cleanBaseUrl(provider?.baseUrl);
 	const providerApiMode = cleanString(provider?.apiMode);
-	if (!providerBaseUrl || !providerUsesDirectProjection(providerApiMode)) return null;
+	const secretRef = normalizeSecretRef(provider?.apiKeySecretRef);
+	if (!providerBaseUrl || !secretRef || !providerUsesManagedMitmProfile(providerApiMode)) {
+		return null;
+	}
+	if (cleanString(provider.status) && cleanString(provider.status) !== "ok") return null;
 	const parsed = new URL(providerBaseUrl);
 	return {
 		id:
 			providerId === "default"
-				? "direct-provider-passthrough"
-				: `direct-provider-passthrough-${profileIdSuffix(providerId)}`,
+				? "managed-provider"
+				: `managed-provider-${profileIdSuffix(providerId)}`,
 		enabled: true,
-		kind: "passthrough",
+		kind: "provider",
 		match: {
 			scheme: parsed.protocol.replace(/:$/, "") as "http" | "https" | "ws" | "wss",
 			host: parsed.host.toLowerCase(),
-			pathPrefix: providerPathPrefix(parsed.pathname),
+			pathPrefix: providerMatchPathPrefix(parsed.pathname),
 			headers: {},
 			query: {},
 		},
+		rewrite: {
+			upstreamBaseUrl: providerOrigin(parsed),
+			preservePath: true,
+			setHeaders: {
+				authorization: {
+					type: "secretRef",
+					secretRef,
+					prefix: "Bearer ",
+				},
+			},
+		},
 		logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-		priority: 240,
+		priority: 80,
 		owner: "provider-projection",
 	};
 }
@@ -120,10 +224,26 @@ function cleanBaseUrl(value: string | null | undefined): string | null {
 	}
 }
 
-function providerPathPrefix(pathname: string): string {
+function providerMatchPathPrefix(pathname: string): string {
 	const cleaned = pathname.replace(/\/+$/, "");
-	if (!cleaned) return "/";
-	return `${cleaned}/`;
+	return cleaned || "/";
+}
+
+function providerOrigin(parsed: URL): string {
+	return `${parsed.protocol}//${parsed.host}`;
+}
+
+function mergeGeneratedProfiles(
+	explicit: MitmProfileInputBundle,
+	generated: HostedMitmProfile[],
+): MitmProfileInputBundle {
+	const generatedIds = new Set(generated.map((profile) => profile.id));
+	return {
+		profiles: [
+			...explicit.profiles.filter((profile) => !generatedIds.has(profile.id)),
+			...generated,
+		],
+	};
 }
 
 function profileIdSuffix(value: string): string {

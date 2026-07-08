@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
-const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
+export const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
+export const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
+export const SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 
 export const mitmSidecarEnvKeys = [
 	"CLAWDI_MITM_ENABLED",
@@ -10,6 +11,12 @@ export const mitmSidecarEnvKeys = [
 	"CLAWDI_MITM_PROXY_URL",
 	"CLAWDI_MITM_PROXY_HOST",
 	"CLAWDI_MITM_PROXY_PORT",
+	"CLAWDI_MITM_MODE",
+	"CLAWDI_MITM_TRANSPARENT_PORT",
+	"CLAWDI_MITM_TRANSPORT_VERSION",
+	"CLAWDI_MITM_INSTALL_SYSTEM_CA",
+	"CLAWDI_MITM_SYSTEM_CA_CERT",
+	"CLAWDI_MITM_SYSTEM_CA_BUNDLE",
 	"CLAWDI_MITM_CA_FILE",
 	"CLAWDI_MITM_CA_PATH",
 	"CLAWDI_MITM_SECRET_FILE",
@@ -77,9 +84,7 @@ export function buildMitmSidecarEnv(input: MitmSidecarEnvInput): NodeJS.ProcessE
 
 export function stripMitmSidecarEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...source };
-	for (const key of mitmSidecarEnvKeys) {
-		delete env[key];
-	}
+	deleteMitmSidecarEnv(env);
 	return env;
 }
 
@@ -113,6 +118,31 @@ export function applyMitmSidecarRuntimeEnv(
 	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
 }
 
+export function applyMitmTransparentRuntimeEnv(
+	env: NodeJS.ProcessEnv,
+	output: { caFile?: string } = {},
+): void {
+	deleteMitmSidecarEnv(env);
+	const caFile = output.caFile ?? SYSTEM_CA_BUNDLE;
+	env.SSL_CERT_FILE = caFile;
+	env.NODE_EXTRA_CA_CERTS = caFile;
+	env.REQUESTS_CA_BUNDLE = caFile;
+	env.CURL_CA_BUNDLE = caFile;
+	env.GIT_SSL_CAINFO = caFile;
+	env.DENO_CERT = caFile;
+	env.CODEX_CA_CERTIFICATE = caFile;
+	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
+}
+
+function deleteMitmSidecarEnv(env: NodeJS.ProcessEnv): void {
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("CLAWDI_MITM_")) delete env[key];
+	}
+	for (const key of mitmSidecarEnvKeys) {
+		delete env[key];
+	}
+}
+
 function resolveProxyUrl(env: NodeJS.ProcessEnv): string {
 	const explicit = env.CLAWDI_MITM_PROXY_URL?.trim();
 	if (explicit) return explicit;
@@ -133,16 +163,16 @@ function resolveSecretFile(env: NodeJS.ProcessEnv): string {
 	return (
 		env.CLAWDI_MITM_SECRET_FILE?.trim() ||
 		(env.CLAWDI_RUN_DIR?.trim()
-			? join(env.CLAWDI_RUN_DIR.trim(), "mitm", "secrets.json")
+			? join(env.CLAWDI_RUN_DIR.trim(), "secrets", "mitm-secrets.json")
 			: undefined) ||
-		join("/run/clawdi", "mitm", "secrets.json")
+		join("/run/clawdi", "secrets", "mitm-secrets.json")
 	);
 }
 
 function resolveMitmRunRoot(env: NodeJS.ProcessEnv): string {
 	return env.CLAWDI_RUN_DIR?.trim()
-		? join(env.CLAWDI_RUN_DIR.trim(), "mitm")
-		: join("/run/clawdi", "mitm");
+		? join(env.CLAWDI_RUN_DIR.trim(), "mitm-scratch")
+		: join("/run/clawdi", "mitm-scratch");
 }
 
 function buildNoProxy(proxyUrl: string): string {

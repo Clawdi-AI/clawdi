@@ -50,6 +50,9 @@ export interface RuntimePaths {
 	managedSecretRoot: string;
 	managedSecretFile: string;
 	runtimeSecretFileRoot: string;
+	mitmRoot: string;
+	mitmScratchRoot: string;
+	mitmSystemCaFile: string;
 	daemonAuthToken: string;
 	instanceData: string;
 	sensitiveInstanceData: string;
@@ -153,6 +156,9 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		managedSecretRoot: join(runRoot, "secrets"),
 		managedSecretFile: join(runRoot, "secrets", "runtime-secrets.json"),
 		runtimeSecretFileRoot: join(runRoot, "secrets", "runtimes"),
+		mitmRoot: join(runRoot, "mitm"),
+		mitmScratchRoot: join(runRoot, "mitm-scratch"),
+		mitmSystemCaFile: join(runRoot, "mitm", "systemd", "ca.pem"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),
 		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),

@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { directProviderPassthroughProfiles } from "./hosted-mitm-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeChannelAccount,
@@ -119,8 +118,6 @@ function applyRuntimeChannelProjection(
 	links: ManagedChannelLink[],
 ): RuntimeManifest {
 	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
-	const directProviderPassthrough =
-		managedProfiles.length > 0 ? directProviderPassthroughProfiles(manifest.projection ?? {}) : [];
 	const runtimeHome = runtimeProjectionHome(manifest);
 	const channelCredentials = buildRuntimeChannelCredentialsProjection(
 		links,
@@ -134,10 +131,7 @@ function applyRuntimeChannelProjection(
 			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl, runtimeHome),
 			channelCredentials,
 		},
-		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, [
-			...managedProfiles,
-			...directProviderPassthrough,
-		]),
+		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, managedProfiles),
 	};
 	return applyHermesRuntimeChannelSettings(
 		applyOpenClawRuntimeChannelSettings(projected, links),
@@ -509,7 +503,6 @@ function mergeMitmProfiles(
 function isChannelProjectionProfile(profile: MitmProfile): boolean {
 	return (
 		profile.owner === "clawdi-native-channels" ||
-		profile.owner === "provider-projection" ||
 		profile.id === "direct-provider-passthrough" ||
 		profile.id.startsWith("direct-provider-passthrough-")
 	);

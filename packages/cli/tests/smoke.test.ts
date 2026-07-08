@@ -246,6 +246,8 @@ set -euo pipefail
 install -d "$HOME/.openclaw/bin" "$HOME/.openclaw/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.openclaw/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.openclaw/install-proof/npm-config-cafile"
 cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
 #!/usr/bin/env bash
 echo "openclaw fixture"
@@ -261,6 +263,14 @@ set -euo pipefail
 install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent" "$HOME/.hermes/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.hermes/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.hermes/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.hermes/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.hermes/install-proof/npm-config-cafile"
+printf '%s\\n' "\${HERMES_HOME:-}" > "$HOME/.hermes/install-proof/hermes-home"
+printf '%s\\n' "\${UV_PYTHON_INSTALL_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-install-dir"
+printf '%s\\n' "\${UV_PYTHON_BIN_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-bin-dir"
+printf '%s\\n' "\${UV_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-managed-python"
+printf '%s\\n' "\${UV_NO_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-no-managed-python"
+printf '%s\\n' "\${UV_PYTHON_DOWNLOADS:-}" > "$HOME/.hermes/install-proof/uv-python-downloads"
 cat > "$HOME/.local/bin/hermes" <<'SH'
 #!/usr/bin/env bash
 echo "hermes fixture"
@@ -387,7 +397,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
 			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
-			expect(parsed.convergence.systemdSystemUnits).toEqual([]);
+			expect(parsed.convergence.systemdSystemUnits).toEqual([
+				join(runRoot, "systemd", "system", "clawdi-runtime-egress.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
+			]);
 
 			for (const outputPath of [
 				join(serviceStateRoot, "config", "clawdi.json"),
@@ -417,10 +430,11 @@ chmod +x "$HOME/.local/bin/hermes"
 					"hermes-gateway.service.d",
 					"10-clawdi-hosted.conf",
 				),
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
 				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
 				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-egress.service"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
 				join(home, "clawdi"),
@@ -463,10 +477,40 @@ chmod +x "$HOME/.local/bin/hermes"
 				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cache"), "utf-8"),
 			).toBe("\n");
 			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-prefix"), "utf-8"),
 			).toBe("\n");
 			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cache"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(readFileSync(join(home, ".hermes", "install-proof", "hermes-home"), "utf-8")).toBe(
+				`${join(home, ".hermes")}\n`,
+			);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-install-dir"), "utf-8"),
+			).toBe(`${join(home, ".hermes", "uv", "python")}\n`);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-bin-dir"), "utf-8"),
+			).toBe(`${join(home, ".hermes", "uv", "bin")}\n`);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-managed-python"), "utf-8"),
+			).toBe("1\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-no-managed-python"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-downloads"), "utf-8"),
 			).toBe("\n");
 
 			const managed = JSON.parse(
@@ -497,7 +541,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"utf-8",
 			);
 			const sidecarUnit = readFileSync(
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				"utf-8",
 			);
 			const openclawEnv = readFileSync(

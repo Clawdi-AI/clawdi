@@ -1512,6 +1512,48 @@ describe("ai-provider commands", () => {
 		expect(mergedConfig).toContain("openai-main:");
 	});
 
+	it("creates a Hermes providers block when the official config omits one", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		writeFileSync(
+			hermesConfig,
+			[
+				"model:",
+				'  default: "anthropic/claude-opus-4.6"',
+				'  provider: "auto"',
+				"terminal:",
+				'  backend: "local"',
+				"",
+			].join("\n"),
+		);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ target: "hermes", json: true });
+		} finally {
+			restore();
+		}
+
+		const mergedConfig = parseYaml(readFileSync(hermesConfig, "utf-8")) as {
+			model?: Record<string, unknown>;
+			providers?: Record<string, unknown>;
+			terminal?: Record<string, unknown>;
+		};
+		expect(mergedConfig.model?.provider).toBe("custom:openai-main");
+		expect(mergedConfig.model?.default).toBe("gpt-5.2");
+		expect(mergedConfig.providers?.["openai-main"]).toMatchObject({
+			api: "https://api.openai.com/v1",
+			key_env: "OPENAI_API_KEY",
+		});
+		expect(mergedConfig.terminal?.backend).toBe("local");
+	});
+
 	it("supports dotted provider ids in Hermes config.yaml merge", async () => {
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });

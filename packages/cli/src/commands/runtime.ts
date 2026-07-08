@@ -15,6 +15,7 @@ import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/brid
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
+import { applyInvisibleGatewayRulesFromEnv } from "../runtime/invisible-gateway";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
@@ -1267,6 +1268,9 @@ interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 }
 
+const RUNTIME_EGRESS_SYSTEM_UNIT = "clawdi-runtime-egress.service";
+const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
 		system: readManagedSystemdUnits(paths.systemdSystemRoot),
@@ -1335,6 +1339,9 @@ function applySystemdRuntimeUpdate(
 		user.changed.length === 0 &&
 		user.removed.length === 0
 	) {
+		if (after.system.has(RUNTIME_EGRESS_SYSTEM_UNIT) && shouldApplySystemdRuntimeUpdate(paths)) {
+			systemctl(["restart", RUNTIME_EGRESS_SYSTEM_UNIT]);
+		}
 		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 	}
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
@@ -1343,16 +1350,20 @@ function applySystemdRuntimeUpdate(
 		return { applied: false, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
 	}
 
-	const removableSystemUnits = system.removed.filter(
-		(unit) => unit !== "clawdi-runtime-watch.service",
-	);
+	const removableSystemUnits = system.removed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
 	if (removableSystemUnits.length > 0) {
 		systemctl(["stop", ...removableSystemUnits], { allowNonZero: true });
 	}
 	systemctl(["daemon-reload"]);
 	if (system.present.length > 0) systemctl(["start", ...system.present]);
+	if (
+		after.system.has(RUNTIME_EGRESS_SYSTEM_UNIT) &&
+		before.system.has(RUNTIME_EGRESS_SYSTEM_UNIT)
+	) {
+		systemctl(["restart", RUNTIME_EGRESS_SYSTEM_UNIT]);
+	}
 	const restartSystemUnits = system.changed.filter(
-		(unit) => unit !== "clawdi-runtime-watch.service",
+		(unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT && unit !== RUNTIME_EGRESS_SYSTEM_UNIT,
 	);
 	if (restartSystemUnits.length > 0) {
 		systemctl(["restart", ...restartSystemUnits]);
@@ -2163,6 +2174,7 @@ export async function runtimeSidecar(): Promise<void> {
 			});
 			console.error(`runtime sidecar MITM module listening on ${mitm.proxyUrl}`);
 		}
+		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
 		await stopRuntimeSidecarModules(bridge, mitm);
 		throw error;
@@ -2189,6 +2201,14 @@ export async function runtimeSidecar(): Promise<void> {
 	);
 }
 
+export function runtimeEgressApply(): void {
+	if (detectRuntimeMode() !== "hosted") {
+		throw new Error("runtime egress apply is only available in hosted runtime mode");
+	}
+	const result = applyInvisibleGatewayRulesFromEnv(process.env);
+	console.log(JSON.stringify({ ready: true, ...result }));
+}
+
 async function stopRuntimeSidecarModules(
 	bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null,
 	mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null,
@@ -2205,6 +2225,14 @@ function waitForShutdownSignal(): Promise<void> {
 		};
 		process.once("SIGTERM", done);
 		process.once("SIGINT", done);
+	});
+}
+
+function notifySystemdReady(status: string): void {
+	if (!process.env.NOTIFY_SOCKET) return;
+	spawnSync("systemd-notify", ["--ready", `--status=${status}`], {
+		stdio: "ignore",
+		env: process.env,
 	});
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"net/http"
 	"net/url"
 	"os"
@@ -54,6 +55,75 @@ func TestLoadProfilesValidatesAndSorts(t *testing.T) {
 	}
 	if profiles[1].Priority != 100 {
 		t.Fatalf("expected default priority 100, got %d", profiles[1].Priority)
+	}
+}
+
+func TestTransparentRequestTargetUsesHostHeader(t *testing.T) {
+	req := &http.Request{
+		Host: "api.openai.com",
+		URL:  &url.URL{Path: "/v1/responses"},
+	}
+	target, matchHost, err := transparentRequestTarget(req, "https", "api.openai.com", transparentDestination{
+		Host: "10.0.0.42",
+		Port: 443,
+	})
+	if err != nil {
+		t.Fatalf("transparentRequestTarget failed: %v", err)
+	}
+	if target != "api.openai.com" {
+		t.Fatalf("expected host-only target, got %q", target)
+	}
+	if matchHost != "api.openai.com" {
+		t.Fatalf("expected profile match host, got %q", matchHost)
+	}
+}
+
+func TestTransparentRequestTargetFallsBackToSNI(t *testing.T) {
+	req := &http.Request{URL: &url.URL{Path: "/backend-api/codex/responses"}}
+	target, matchHost, err := transparentRequestTarget(req, "https", "chatgpt.com", transparentDestination{
+		Host: "10.0.0.43",
+		Port: 443,
+	})
+	if err != nil {
+		t.Fatalf("transparentRequestTarget failed: %v", err)
+	}
+	if target != "chatgpt.com" || matchHost != "chatgpt.com" {
+		t.Fatalf("expected SNI host target/match, got %q/%q", target, matchHost)
+	}
+}
+
+func TestTransparentRequestTargetKeepsNonDefaultPort(t *testing.T) {
+	req := &http.Request{
+		Host: "provider.test",
+		URL:  &url.URL{Path: "/v1/chat/completions"},
+	}
+	target, matchHost, err := transparentRequestTarget(req, "https", "", transparentDestination{
+		Host: "10.0.0.44",
+		Port: 8443,
+	})
+	if err != nil {
+		t.Fatalf("transparentRequestTarget failed: %v", err)
+	}
+	if target != "provider.test:8443" || matchHost != "provider.test:8443" {
+		t.Fatalf("expected non-default port in target/match, got %q/%q", target, matchHost)
+	}
+}
+
+func TestSplitOptionalHostPortHandlesIPv6(t *testing.T) {
+	host, port, err := splitOptionalHostPort("[2001:db8::1]:443")
+	if err != nil {
+		t.Fatalf("splitOptionalHostPort failed: %v", err)
+	}
+	if host != "2001:db8::1" || port != "443" {
+		t.Fatalf("unexpected IPv6 split: host=%q port=%q", host, port)
+	}
+
+	host, port, err = splitOptionalHostPort("2001:db8::2")
+	if err != nil {
+		t.Fatalf("splitOptionalHostPort failed: %v", err)
+	}
+	if host != "2001:db8::2" || port != "" {
+		t.Fatalf("unexpected bare IPv6 split: host=%q port=%q", host, port)
 	}
 }
 
@@ -563,6 +633,20 @@ func TestCertificateAuthorityPersistsAcrossSidecarRestarts(t *testing.T) {
 	}
 	if certInfo.Mode().Perm() != 0o644 {
 		t.Fatalf("expected CA cert mode 0644, got %o", certInfo.Mode().Perm())
+	}
+}
+
+func TestCertificateAuthorityMintsECDSALeafCertificates(t *testing.T) {
+	ca, err := newCertificateAuthority()
+	if err != nil {
+		t.Fatalf("create CA: %v", err)
+	}
+	cert, err := ca.mintLeaf("api.openai.com")
+	if err != nil {
+		t.Fatalf("mint leaf: %v", err)
+	}
+	if _, ok := cert.PrivateKey.(*ecdsa.PrivateKey); !ok {
+		t.Fatalf("expected ECDSA leaf key, got %T", cert.PrivateKey)
 	}
 }
 

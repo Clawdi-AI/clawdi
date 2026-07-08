@@ -133,9 +133,12 @@ function applyHermesProviderPatch(
 	const existingConfig = document.toJS();
 	const root = isPlainRecord(existingConfig) ? existingConfig : {};
 	validateHermesMergeRoot(root);
-	prepareHermesMergeRoot(document, root);
 	const existingModel = isPlainRecord(root.model) ? root.model : {};
 	const patchModel = isPlainRecord(patchConfig.model) ? patchConfig.model : {};
+	const patchProviders = isPlainRecord(patchConfig.providers) ? patchConfig.providers : {};
+	prepareHermesMergeRoot(document, root, {
+		needsProviders: Object.keys(patchProviders).length > 0,
+	});
 	removeHermesDirectModelFields(document, existingModel);
 	for (const [key, value] of Object.entries(patchModel)) {
 		if (value === null) {
@@ -148,7 +151,6 @@ function applyHermesProviderPatch(
 	}
 
 	const existingProviders = isPlainRecord(root.providers) ? root.providers : {};
-	const patchProviders = isPlainRecord(patchConfig.providers) ? patchConfig.providers : {};
 	for (const [providerId, patchValue] of Object.entries(patchProviders)) {
 		if (patchValue === null) {
 			if (Object.hasOwn(existingProviders, providerId)) {
@@ -200,11 +202,12 @@ function validateHermesMergeRoot(root: Record<string, unknown>): void {
 function prepareHermesMergeRoot(
 	document: ReturnType<typeof parseDocument>,
 	root: Record<string, unknown>,
+	input: { needsProviders: boolean },
 ): void {
 	if (Object.hasOwn(root, "model") && !isPlainRecord(root.model)) {
 		document.set("model", document.createNode({}));
 	}
-	if (Object.hasOwn(root, "providers") && root.providers === null) {
+	if (input.needsProviders && !isPlainRecord(root.providers)) {
 		document.set("providers", document.createNode({}));
 	}
 }
