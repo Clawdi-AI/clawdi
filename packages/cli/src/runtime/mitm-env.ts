@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
-const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
+export const MANAGED_MITM_PLACEHOLDER_ENV = "CLAWDI_PROVIDER_PLACEHOLDER_TOKEN";
+export const MANAGED_MITM_PLACEHOLDER_VALUE = "clawdi-mitm-placeholder";
+export const SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 
 export const mitmSidecarEnvKeys = [
 	"CLAWDI_MITM_ENABLED",
@@ -10,6 +11,11 @@ export const mitmSidecarEnvKeys = [
 	"CLAWDI_MITM_PROXY_URL",
 	"CLAWDI_MITM_PROXY_HOST",
 	"CLAWDI_MITM_PROXY_PORT",
+	"CLAWDI_MITM_MODE",
+	"CLAWDI_MITM_TRANSPARENT_PORT",
+	"CLAWDI_MITM_TRANSPORT_VERSION",
+	"CLAWDI_MITM_INSTALL_SYSTEM_CA",
+	"CLAWDI_MITM_SYSTEM_CA_BUNDLE",
 	"CLAWDI_MITM_CA_FILE",
 	"CLAWDI_MITM_CA_PATH",
 	"CLAWDI_MITM_SECRET_FILE",
@@ -110,6 +116,24 @@ export function applyMitmSidecarRuntimeEnv(
 	env.GIT_SSL_CAINFO = output.caFile;
 	env.DENO_CERT = output.caFile;
 	env.CODEX_CA_CERTIFICATE = output.caFile;
+	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
+}
+
+export function applyMitmTransparentRuntimeEnv(
+	env: NodeJS.ProcessEnv,
+	output: { caFile?: string } = {},
+): void {
+	for (const key of mitmSidecarEnvKeys) {
+		delete env[key];
+	}
+	const caFile = output.caFile ?? SYSTEM_CA_BUNDLE;
+	env.SSL_CERT_FILE = caFile;
+	env.NODE_EXTRA_CA_CERTS = caFile;
+	env.REQUESTS_CA_BUNDLE = caFile;
+	env.CURL_CA_BUNDLE = caFile;
+	env.GIT_SSL_CAINFO = caFile;
+	env.DENO_CERT = caFile;
+	env.CODEX_CA_CERTIFICATE = caFile;
 	env[MANAGED_MITM_PLACEHOLDER_ENV] ??= MANAGED_MITM_PLACEHOLDER_VALUE;
 }
 

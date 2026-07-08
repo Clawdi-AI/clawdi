@@ -28,7 +28,7 @@ import {
 } from "../lib/vault-errors";
 import {
 	applyMitmSidecarRuntimeEnv,
-	buildMitmSidecarEnv,
+	applyMitmTransparentRuntimeEnv,
 	stripMitmSidecarControlEnv,
 } from "../runtime/mitm-env";
 import {
@@ -314,20 +314,18 @@ function hostedGenericRunInvocation(
 	if (!command) return null;
 	const paths = getRuntimePaths({ mode: "hosted" });
 	const mitmProfileBundle = existsSync(paths.mitmProfileBundle) ? paths.mitmProfileBundle : null;
+	const env = {
+		...baseEnv,
+		PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
+	};
+	if (mitmProfileBundle) applyMitmTransparentRuntimeEnv(env);
 	return {
 		runtime: "generic",
 		service: null,
 		command,
 		args: commandArgs,
 		cwd: process.cwd(),
-		env: buildMitmSidecarEnv({
-			env: {
-				...baseEnv,
-				PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
-			},
-			profileBundlePath: mitmProfileBundle,
-			secretFile: paths.managedSecretFile,
-		}),
+		env,
 		configPath: mitmProfileBundle ?? paths.managedConfig,
 	};
 }

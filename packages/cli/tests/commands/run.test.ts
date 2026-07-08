@@ -375,22 +375,14 @@ describe("run command project folder selection", () => {
 		expect(logs.join("\n")).toContain("Runtime hermes is disabled");
 	});
 
-	it("injects hosted runtime provider secrets into the managed runtime process", async () => {
+	it("uses hosted runtime provider placeholders without exposing managed secrets", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const openclawPath = join(tmpRoot, "home", "clawdi", ".openclaw", "bin", "openclaw");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const secretFile = join(runRoot, "secrets", "runtime-secrets.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(runRoot, "secrets"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".openclaw", "bin"), { recursive: true });
-		writeFileSync(
-			secretFile,
-			JSON.stringify({
-				"provider.default.apiKey": "sk-runtime-provider",
-			}),
-		);
 		writeFileSync(
 			join(runConfigRoot, "openclaw.json"),
 			JSON.stringify({
@@ -402,11 +394,11 @@ describe("run command project folder selection", () => {
 				instanceId: "iid_test",
 				command: "openclaw",
 				defaultArgs: ["gateway", "run"],
-				env: {},
-				secretEnv: {
-					CLAWDI_MANAGED_OPENAI_API_KEY: "provider.default.apiKey",
+				env: {
+					CLAWDI_MANAGED_OPENAI_API_KEY: "clawdi-mitm-placeholder",
 				},
-				secretFilePath: secretFile,
+				secretEnv: {},
+				secretFilePath: null,
 				prependPath: [join(tmpRoot, "home", "clawdi", ".openclaw", "bin")],
 				cwd: projectRoot,
 				commandPath: openclawPath,
@@ -427,7 +419,7 @@ describe("run command project folder selection", () => {
 		expect(calls).toHaveLength(1);
 		expect(sidecar.calls).toHaveLength(0);
 		expect(calls[0].args).toEqual(["gateway", "run"]);
-		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("sk-runtime-provider");
+		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
@@ -563,7 +555,7 @@ describe("run command project folder selection", () => {
 		expect(process.exitCode).toBe(143);
 	});
 
-	it("injects MITM sidecar env for hosted runtime commands with profile bundles", async () => {
+	it("applies transparent MITM CA env for hosted runtime commands with profile bundles", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -603,36 +595,27 @@ describe("run command project folder selection", () => {
 
 		await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(sidecar.calls).toHaveLength(1);
-		expect(sidecar.calls[0]).toMatchObject({
-			runtime: "hermes",
-			profileBundlePath: mitmProfileBundle,
-			proxyUrl: "http://127.0.0.1:0",
-		});
-		const sidecarCaFile = sidecar.calls[0].caFile;
-		expect(sidecarCaFile?.startsWith(join(runRoot, "mitm-scratch", "sidecars"))).toBe(true);
-		expect(sidecarCaFile?.endsWith(join("", "ca.pem"))).toBe(true);
-		expect(sidecar.calls[0].authToken).toBeUndefined();
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
-		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.HTTP_PROXY).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.http_proxy).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.NO_PROXY).toContain("127.0.0.1");
-		expect(calls[0].env.no_proxy).toBe(calls[0].env.NO_PROXY);
-		expect(calls[0].env.NODE_USE_ENV_PROXY).toBe("1");
-		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:0");
-		expect(calls[0].env.SSL_CERT_FILE).toBe(sidecarCaFile);
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(sidecarCaFile);
-		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe(sidecarCaFile);
-		expect(calls[0].env.CURL_CA_BUNDLE).toBe(sidecarCaFile);
-		expect(calls[0].env.GIT_SSL_CAINFO).toBe(sidecarCaFile);
-		expect(calls[0].env.DENO_CERT).toBe(sidecarCaFile);
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(sidecarCaFile);
+		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
+		expect(calls[0].env.HTTP_PROXY).toBeUndefined();
+		expect(calls[0].env.https_proxy).toBeUndefined();
+		expect(calls[0].env.http_proxy).toBeUndefined();
+		expect(calls[0].env.NO_PROXY).toBeUndefined();
+		expect(calls[0].env.no_proxy).toBeUndefined();
+		expect(calls[0].env.NODE_USE_ENV_PROXY).toBeUndefined();
+		expect(calls[0].env.OPENCLAW_PROXY_URL).toBeUndefined();
+		expect(calls[0].env.SSL_CERT_FILE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.REQUESTS_CA_BUNDLE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.CURL_CA_BUNDLE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.GIT_SSL_CAINFO).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.DENO_CERT).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
 		expect(calls[0].env.CLAWDI_MITM_SIDECAR_PATH).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SIDECAR_BUNDLE).toBeUndefined();
@@ -640,7 +623,7 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 	});
 
-	it("fails closed when a hosted runtime MITM sidecar fails to start", async () => {
+	it("does not start a per-run hosted MITM sidecar for transparent runtime commands", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -676,27 +659,14 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 
-		const originalExit = process.exit;
-		const originalLog = console.log;
-		process.exit = ((code?: string | number | null) => {
-			throw new Error(`process.exit:${code ?? 0}`);
-		}) as typeof process.exit;
-		console.log = () => {};
-		try {
-			await expect(
-				run(["hermes", "serve"], {}, spawnImpl, async () => {
-					throw new Error("MITM sidecar did not become ready");
-				}),
-			).rejects.toThrow("process.exit:1");
-		} finally {
-			console.log = originalLog;
-			process.exit = originalExit;
-		}
+		const sidecar = recordSidecar();
+		await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(calls).toHaveLength(0);
+		expect(sidecar.calls).toHaveLength(0);
+		expect(calls).toHaveLength(1);
 	});
 
-	it("uses the sidecar's actual proxy and CA paths for hosted runtime commands", async () => {
+	it("uses the system CA bundle for hosted transparent runtime commands", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -737,10 +707,7 @@ describe("run command project folder selection", () => {
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar({
-			proxyUrl: "http://127.0.0.1:19090",
-			caFile: join(runRoot, "actual-ca.pem"),
-		});
+		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
@@ -753,18 +720,18 @@ describe("run command project folder selection", () => {
 			delete process.env.CLAWDI_MITM_PROXY_PORT;
 		}
 
-		expect(sidecar.calls).toHaveLength(1);
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
-		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
-		expect(calls[0].env.HTTP_PROXY).toBe("http://127.0.0.1:19090");
-		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19090");
-		expect(calls[0].env.http_proxy).toBe("http://127.0.0.1:19090");
-		expect(calls[0].env.OPENCLAW_PROXY_URL).toBe("http://127.0.0.1:19090");
+		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
+		expect(calls[0].env.HTTP_PROXY).toBeUndefined();
+		expect(calls[0].env.https_proxy).toBeUndefined();
+		expect(calls[0].env.http_proxy).toBeUndefined();
+		expect(calls[0].env.OPENCLAW_PROXY_URL).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_CA_FILE).toBeUndefined();
-		expect(calls[0].env.SSL_CERT_FILE).toBe(join(runRoot, "actual-ca.pem"));
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(join(runRoot, "actual-ca.pem"));
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(join(runRoot, "actual-ca.pem"));
+		expect(calls[0].env.SSL_CERT_FILE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
 	});
 
 	it("runs generic hosted commands with the managed MITM profile bundle without login", async () => {
@@ -784,10 +751,7 @@ describe("run command project folder selection", () => {
 			}),
 		);
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar({
-			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
-		});
+		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
@@ -795,31 +759,17 @@ describe("run command project folder selection", () => {
 
 		await run(["codex", "exec", "hello"], {}, spawnImpl, sidecar.sidecarFactory);
 
-		expect(sidecar.calls).toHaveLength(1);
-		expect(sidecar.calls[0]).toMatchObject({
-			runtime: "generic",
-			profileBundlePath: mitmProfileBundle,
-			proxyUrl: "http://127.0.0.1:0",
-			secretFile: join(runRoot, "secrets", "runtime-secrets.json"),
-		});
-		expect(sidecar.calls[0].caFile?.startsWith(join(runRoot, "mitm-scratch", "sidecars"))).toBe(
-			true,
-		);
-		expect(sidecar.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("codex");
 		expect(calls[0].args).toEqual(["exec", "hello"]);
 		expect(calls[0].cwd).toBe(projectChild);
 		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
-		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19191");
-		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19191");
-		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(
-			join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
-		);
-		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(
-			join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
-		);
+		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
+		expect(calls[0].env.https_proxy).toBeUndefined();
+		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
 	});
 
 	it("runs generic hosted commands without login when no MITM profile bundle exists", async () => {
@@ -907,8 +857,7 @@ describe("run command project folder selection", () => {
 		}
 
 		expect(captured.map((request) => request.path)).toEqual(["/v1/vault/resolve"]);
-		expect(sidecar.calls).toHaveLength(1);
-		expect(sidecar.calls[0].secretFile).toBe(join(runRoot, "secrets", "runtime-secrets.json"));
+		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
 		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();

@@ -62,8 +62,13 @@ import {
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
+import { INVISIBLE_GATEWAY_TRANSPORT_VERSION } from "./invisible-gateway";
 import type { RuntimeManifestLoad } from "./manifest-source";
-import { applyMitmSidecarRuntimeEnv } from "./mitm-env";
+import {
+	applyMitmTransparentRuntimeEnv,
+	MANAGED_MITM_PLACEHOLDER_VALUE,
+	SYSTEM_CA_BUNDLE,
+} from "./mitm-env";
 import {
 	buildMitmProfileBundle,
 	hasEnabledMitmProfiles,
@@ -1257,7 +1262,7 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
-function hostedProviderSecretEnv(
+function hostedProviderPlaceholderEnv(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
 ): Record<string, string> {
@@ -1271,9 +1276,56 @@ function hostedProviderSecretEnv(
 		if (!apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
 		if (!isEnvKey(runtimeEnvName)) continue;
-		env[runtimeEnvName] = normalizeSecretRef(apiKeySecretRef) ?? apiKeySecretRef;
+		env[runtimeEnvName] = MANAGED_MITM_PLACEHOLDER_VALUE;
 	}
 	return env;
+}
+
+function mergeRuntimeEnvWithProviderPlaceholders(
+	runtimeName: string,
+	settings: RuntimeManifest["runtimes"][string]["run"],
+	providerEnv: Record<string, string>,
+): RuntimeManifest["runtimes"][string]["run"] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	const userEnv = settings?.env ?? {};
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings?.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...(settings ?? {}),
+		prependPath: settings?.prependPath ?? [],
+		env: {
+			...userEnv,
+			...providerEnv,
+		},
+	};
+}
+
+function mergeRuntimeServiceEnvWithProviderPlaceholders(
+	runtimeName: string,
+	serviceName: string,
+	settings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
+	providerEnv: Record<string, string>,
+): NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} service ${serviceName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...settings,
+		env: {
+			...(settings.env ?? {}),
+			...providerEnv,
+		},
+	};
 }
 
 function runtimeSecretFilePath(paths: RuntimePaths, runtimeName: string): string {
@@ -1360,7 +1412,7 @@ function writeMitmSecretFile(
 		secretValues,
 		mitmSecretRefs(manifest),
 		paths,
-		"runtime-user",
+		"root",
 	);
 }
 
@@ -2688,7 +2740,9 @@ interface RuntimeSystemdUserProgram {
 interface RuntimeMitmSystemdProgram {
 	profileBundlePath: string;
 	proxyUrl: string;
+	transparentPort: number;
 	caFile: string;
+	systemCaBundle: string;
 	secretFilePath: string | null;
 }
 
@@ -2703,7 +2757,9 @@ function runtimeMitmSystemdProgram(
 	return {
 		profileBundlePath,
 		proxyUrl: `http://127.0.0.1:${port}`,
+		transparentPort: port,
 		caFile: paths.mitmSystemCaFile,
+		systemCaBundle: SYSTEM_CA_BUNDLE,
 		secretFilePath,
 	};
 }
@@ -2733,10 +2789,7 @@ function buildRuntimeSystemdUserProgram(input: {
 		env[envName] = value;
 	}
 	if (input.mitm) {
-		applyMitmSidecarRuntimeEnv(env, {
-			proxyUrl: input.mitm.proxyUrl,
-			caFile: input.mitm.caFile,
-		});
+		applyMitmTransparentRuntimeEnv(env, { caFile: input.mitm.systemCaBundle });
 	}
 
 	const command =
@@ -2771,7 +2824,21 @@ export function runtimeSidecarProgramRevision(
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
 		mitmProfiles: manifest.mitmProfiles ?? null,
 		secretValues: secretValues ?? {},
-		runtimeSidecar: "hosted-runtime-sidecar-v1",
+		runtimeSidecar: "hosted-runtime-sidecar-transparent-v1",
+		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+	});
+}
+
+function runtimeEgressProgramRevision(
+	manifest: RuntimeManifest,
+	mitmProgram: RuntimeMitmSystemdProgram,
+): string {
+	return revisionHash({
+		runtimeEgress: "hosted-runtime-egress-nft-v1",
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		transparentPort: mitmProgram.transparentPort,
+		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
 	});
 }
 
@@ -3026,6 +3093,9 @@ function writeSystemdUnit(input: {
 	cwd: string;
 	env: Record<string, string>;
 	unitEnv?: Record<string, string>;
+	serviceType?: "simple" | "oneshot" | "notify";
+	restart?: boolean;
+	extraUnitLines?: string[];
 	extraServiceLines?: string[];
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
@@ -3042,19 +3112,19 @@ function writeSystemdUnit(input: {
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 		"[Unit]",
 		`Description=${input.description}`,
+		...(input.extraUnitLines ?? []),
 		"",
 		"[Service]",
 		`# ClawdiEnvironmentRevision=${envRevision}`,
-		"Type=simple",
+		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
 		...(input.extraServiceLines ?? []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		`ExecStart=${systemdExec(input.command, input.args)}`,
-		"Restart=always",
-		"RestartSec=2",
-		"KillMode=mixed",
-		"TimeoutStopSec=30",
+		...(input.restart === false
+			? []
+			: ["Restart=always", "RestartSec=2", "KillMode=mixed", "TimeoutStopSec=30"]),
 		"",
 		"[Install]",
 		`WantedBy=${input.wantedBy}`,
@@ -3277,6 +3347,7 @@ function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string
 	const managed = new Set([
 		"clawdi-runtime-watch.service",
 		"clawdi-daemon.service",
+		"clawdi-runtime-egress.service",
 		"clawdi-runtime-sidecar.service",
 	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -3370,6 +3441,31 @@ function writeSystemdUnits(
 		);
 	}
 
+	if (shouldRunMitm && mitmProgram) {
+		systemUnits.push(
+			writeSystemdSystemUnit({
+				paths,
+				name: "clawdi-runtime-egress",
+				description: "Clawdi hosted runtime invisible gateway egress rules",
+				command: "clawdi",
+				args: ["runtime", "egress", "apply"],
+				cwd: workspaceRoot,
+				env: {
+					...commonEnvironment,
+					CLAWDI_AUTH_TOKEN: "",
+					CLAWDI_MITM_TRANSPARENT_PORT: String(mitmProgram.transparentPort),
+					CLAWDI_MITM_SIDECAR_UID: "0",
+					CLAWDI_MITM_TRANSPORT_VERSION: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+					CLAWDI_RUNTIME_REV: runtimeEgressProgramRevision(manifest, mitmProgram),
+				},
+				serviceType: "oneshot",
+				restart: false,
+				extraUnitLines: ["Before=clawdi-runtime-sidecar.service"],
+				extraServiceLines: ["RemainAfterExit=yes"],
+			}),
+		);
+	}
+
 	if (shouldRunBridge || shouldRunMitm) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
@@ -3386,12 +3482,24 @@ function writeSystemdUnits(
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
 					CLAWDI_MITM_PROFILE_BUNDLE:
 						shouldRunMitm && mitmProgram ? mitmProgram.profileBundlePath : "",
+					CLAWDI_MITM_MODE: shouldRunMitm ? "transparent" : "",
 					CLAWDI_MITM_PROXY_URL: shouldRunMitm && mitmProgram ? mitmProgram.proxyUrl : "",
+					CLAWDI_MITM_TRANSPARENT_PORT:
+						shouldRunMitm && mitmProgram ? String(mitmProgram.transparentPort) : "",
 					CLAWDI_MITM_CA_FILE: shouldRunMitm && mitmProgram ? mitmProgram.caFile : "",
+					CLAWDI_MITM_INSTALL_SYSTEM_CA: shouldRunMitm ? "1" : "",
+					CLAWDI_MITM_SYSTEM_CA_BUNDLE:
+						shouldRunMitm && mitmProgram ? mitmProgram.systemCaBundle : "",
 					CLAWDI_MITM_SECRET_FILE:
 						shouldRunMitm && mitmProgram ? (mitmProgram.secretFilePath ?? "") : "",
+					CLAWDI_MITM_TRANSPORT_VERSION: shouldRunMitm ? INVISIBLE_GATEWAY_TRANSPORT_VERSION : "",
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
 				},
+				serviceType: "notify",
+				extraUnitLines: shouldRunMitm
+					? ["Requires=clawdi-runtime-egress.service", "After=clawdi-runtime-egress.service"]
+					: undefined,
+				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
 	}
@@ -3686,9 +3794,15 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, hostedProviderSecretEnv(manifest, name))
+		const providerPlaceholderEnv = runtime.enabled
+			? hostedProviderPlaceholderEnv(manifest, name)
 			: {};
+		const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
+			name,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
+		const secretEnv = runtime.enabled ? mergeRuntimeSecretEnv(name, runtime, {}) : {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
 			secretValues,
@@ -3706,7 +3820,7 @@ export function convergeRuntimeManifest(
 			appRoot: observation.appRoot,
 			workspaceRoot,
 			mitmProfileBundlePath,
-			settings: runtime.run,
+			settings: runtimeRunSettings,
 			secretFilePath: runtimeProviderSecretFile,
 			secretEnv,
 		});
@@ -3726,8 +3840,14 @@ export function convergeRuntimeManifest(
 		}
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+				name,
+				service,
+				serviceSettings,
+				providerPlaceholderEnv,
+			);
 			const serviceSecretEnv = runtime.enabled
-				? mergeRuntimeServiceSecretEnv(name, service, serviceSettings, secretEnv)
+				? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
 				: {};
 			const serviceRunConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
@@ -3739,7 +3859,7 @@ export function convergeRuntimeManifest(
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 				workspaceRoot,
-				settings: serviceSettings,
+				settings: serviceRunSettings,
 				secretFilePath: null,
 				secretEnv: serviceSecretEnv,
 			});

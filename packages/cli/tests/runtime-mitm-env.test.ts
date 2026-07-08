@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import {
 	applyMitmSidecarRuntimeEnv,
+	applyMitmTransparentRuntimeEnv,
 	buildMitmSidecarEnv,
 	stripMitmSidecarControlEnv,
 	stripMitmSidecarEnv,
@@ -117,5 +118,26 @@ describe("runtime MITM env projection", () => {
 		expect(stripped.NODE_OPTIONS).toBe("--trace-warnings");
 		expect(stripped.HTTPS_PROXY).toBeUndefined();
 		expect(stripped.CODEX_CA_CERTIFICATE).toBeUndefined();
+	});
+
+	it("applies hosted transparent CA env without proxy variables", () => {
+		const env: NodeJS.ProcessEnv = {
+			HTTPS_PROXY: "http://stale.invalid:8080",
+			OPENCLAW_PROXY_URL: "http://stale.invalid:8080",
+			CLAWDI_MITM_PROFILE_BUNDLE: "/tmp/profiles.json",
+			CLAWDI_MITM_SECRET_FILE: "/tmp/secrets.json",
+		};
+
+		applyMitmTransparentRuntimeEnv(env);
+
+		expect(env.HTTPS_PROXY).toBeUndefined();
+		expect(env.HTTP_PROXY).toBeUndefined();
+		expect(env.OPENCLAW_PROXY_URL).toBeUndefined();
+		expect(env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
+		expect(env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(env.SSL_CERT_FILE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(env.REQUESTS_CA_BUNDLE).toBe("/etc/ssl/certs/ca-certificates.crt");
+		expect(env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
 	});
 });

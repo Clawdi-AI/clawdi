@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-	directProviderPassthroughProfile,
-	directProviderPassthroughProfiles,
-	hostedManifestMitmProfiles,
-} from "../src/runtime/hosted-mitm-profiles";
+import { hostedManifestMitmProfiles } from "../src/runtime/hosted-mitm-profiles";
 import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
 
 describe("runtime MITM profile schema", () => {
@@ -109,7 +105,7 @@ describe("runtime MITM profile schema", () => {
 		).toBe(false);
 	});
 
-	it("does not enable the hosted sidecar for directly projected providers", () => {
+	it("derives managed provider rewrite profiles from hosted provider projection", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
@@ -121,53 +117,38 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(bundle.profiles).toEqual([]);
+		expect(bundle.profiles).toEqual([
+			{
+				id: "managed-provider",
+				enabled: true,
+				kind: "provider",
+				match: {
+					scheme: "https",
+					host: "ai-gateway.example.test",
+					pathPrefix: "/v1",
+					headers: {},
+					query: {},
+				},
+				rewrite: {
+					upstreamBaseUrl: "https://ai-gateway.example.test",
+					preservePath: true,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://provider.default.apiKey",
+							prefix: "Bearer ",
+						},
+					},
+				},
+				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+				priority: 80,
+				owner: "provider-projection",
+			},
+		]);
 	});
 
-	it("does not derive provider MITM profiles from hosted provider projection", () => {
+	it("builds managed provider profiles for runtime-scoped providers", () => {
 		const bundle = hostedManifestMitmProfiles({
-			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-			providers: {
-				default: {
-					baseUrl: "https://ai-gateway.example.test/v1",
-					apiMode: "openai_responses",
-					apiKeySecretRef: "provider.default.apiKey",
-				},
-			},
-		});
-
-		expect(bundle.profiles).toEqual([]);
-	});
-
-	it("builds a direct provider allowlist only when another manifest feature enables the sidecar", () => {
-		const direct = directProviderPassthroughProfile({
-			providers: {
-				default: {
-					baseUrl: "https://ai-gateway.example.test/v1",
-					apiMode: "openai_chat",
-					apiKeySecretRef: "provider.default.apiKey",
-				},
-			},
-		});
-
-		expect(direct).toMatchObject({
-			enabled: true,
-			kind: "passthrough",
-			match: {
-				scheme: "https",
-				host: "ai-gateway.example.test",
-				pathPrefix: "/v1/",
-				headers: {},
-				query: {},
-			},
-			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-			priority: 240,
-			owner: "provider-projection",
-		});
-	});
-
-	it("builds direct provider allowlists for runtime-scoped providers", () => {
-		const direct = directProviderPassthroughProfiles({
 			providers: {
 				openclaw: {
 					baseUrl: "https://openclaw-provider.example.test/v1",
@@ -182,22 +163,36 @@ describe("runtime MITM profile schema", () => {
 			},
 		});
 
-		expect(direct.map((profile) => profile.id)).toEqual([
-			"direct-provider-passthrough-hermes",
-			"direct-provider-passthrough-openclaw",
+		expect(bundle.profiles.map((profile) => profile.id)).toEqual([
+			"managed-provider-hermes",
+			"managed-provider-openclaw",
 		]);
-		expect(direct.map((profile) => profile.match.host)).toEqual([
+		expect(bundle.profiles.map((profile) => profile.match.host)).toEqual([
 			"hermes-provider.example.test",
 			"openclaw-provider.example.test",
 		]);
 	});
 
-	it("does not derive provider MITM profiles without explicit manifest profiles", () => {
+	it("does not derive provider MITM profiles without a managed provider secret ref", () => {
 		const bundle = hostedManifestMitmProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
 				default: {
 					baseUrl: "https://sub2api.test/v1",
+					apiMode: "openai_chat",
+				},
+			},
+		});
+
+		expect(bundle.profiles).toEqual([]);
+	});
+
+	it("does not derive provider MITM profiles for unsupported provider API modes", () => {
+		const bundle = hostedManifestMitmProfiles({
+			providers: {
+				default: {
+					baseUrl: "https://anthropic.example.test/v1",
+					apiMode: "anthropic_messages",
 					apiKeySecretRef: "provider.default.apiKey",
 				},
 			},
