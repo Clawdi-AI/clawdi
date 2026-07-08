@@ -509,8 +509,6 @@ describe("runtime run config", () => {
 			"gateway",
 			"run",
 			"--allow-unconfigured",
-			"--auth",
-			"none",
 			"--bind",
 			"loopback",
 			"--force",
@@ -1220,6 +1218,15 @@ chmod +x "$HOME/.local/bin/hermes"
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
+		expect(runConfig.defaultArgs).toEqual([
+			"gateway",
+			"run",
+			"--allow-unconfigured",
+			"--bind",
+			"loopback",
+			"--force",
+		]);
+		expect(runConfig.defaultArgs).not.toContain("--auth");
 		expect(runConfig.secretEnv).toEqual({
 			CLAWDI_MANAGED_OPENAI_API_KEY: "secret://provider.default.apiKey",
 		});
@@ -1442,6 +1449,11 @@ chmod +x "$HOME/.local/bin/hermes"
 				},
 			},
 		});
+		const openclawUnit = readSystemdUserServiceConfig(getRuntimePaths(), "openclaw-gateway");
+		expect(openclawUnit).toContain(
+			'"gateway" "run" "--allow-unconfigured" "--bind" "loopback" "--force"',
+		);
+		expect(openclawUnit).not.toContain('"--auth"');
 	});
 
 	it("projects runtime-scoped hosted providers into each enabled agent config", () => {

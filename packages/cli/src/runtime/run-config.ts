@@ -63,16 +63,7 @@ export type RuntimeRunConfig = z.infer<typeof runtimeRunConfigSchema>;
 
 const DEFAULT_RUNTIME_ARGS: Record<SupportedRuntimeName, string[]> = {
 	hermes: ["dashboard", "--host", "127.0.0.1", "--no-open"],
-	openclaw: [
-		"gateway",
-		"run",
-		"--allow-unconfigured",
-		"--auth",
-		"none",
-		"--bind",
-		"loopback",
-		"--force",
-	],
+	openclaw: ["gateway", "run", "--allow-unconfigured", "--bind", "loopback", "--force"],
 };
 
 export type RuntimeRunConfigRead =
