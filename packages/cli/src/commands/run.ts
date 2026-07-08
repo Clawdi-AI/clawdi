@@ -363,6 +363,8 @@ async function spawnRuntimeInvocation(
 		}
 	}
 	if (sidecar) {
+		// Local `clawdi run` uses an unprivileged per-run forward proxy. Hosted runtime
+		// uses the root/system transparent gateway and must never receive proxy vars here.
 		applyMitmSidecarRuntimeEnv(invocation.env, sidecar);
 		stripMitmSidecarControlEnv(invocation.env);
 	}

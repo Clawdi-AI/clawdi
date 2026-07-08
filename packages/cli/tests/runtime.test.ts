@@ -4487,6 +4487,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(egressEnv).toContain('CLAWDI_MITM_TRANSPORT_VERSION="clawdi-invisible-gateway-v1"');
 			expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');
 			expect(egressEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
 			expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-sidecar")).toContain(
 				"After=clawdi-runtime-egress.service",
@@ -7049,6 +7050,7 @@ exit 64
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(egressUnit).toContain("Type=oneshot");
 		expect(egressUnit).toContain("RemainAfterExit=yes");
+		expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
 		expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
 		expect(egressUnit).toContain('ExecStart="clawdi" "runtime" "egress" "apply"');
 		expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');

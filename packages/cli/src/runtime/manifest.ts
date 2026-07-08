@@ -3599,7 +3599,10 @@ function writeSystemdUnits(
 				serviceType: "oneshot",
 				restart: false,
 				extraUnitLines: [`Before=clawdi-runtime-sidecar.service user@${egressAgentUid}.service`],
-				extraServiceLines: ["RemainAfterExit=yes"],
+				extraServiceLines: [
+					"EnvironmentFile=-/etc/clawdi/invisible-gateway.env",
+					"RemainAfterExit=yes",
+				],
 			}),
 		);
 	}

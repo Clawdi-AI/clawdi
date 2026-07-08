@@ -70,6 +70,7 @@ describe("runtime invisible gateway nftables", () => {
 				[
 					"nameserver 10.43.0.10",
 					"nameserver fd00::10",
+					"nameserver fd00::10::bad",
 					"nameserver invalid",
 					"search svc.cluster.local",
 					"",
@@ -83,5 +84,23 @@ describe("runtime invisible gateway nftables", () => {
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("uses the supplied table and drop contract", () => {
+		const rules = buildInvisibleGatewayNftRules({
+			table: "clawdi_test_gateway",
+			dropAction: "counter drop",
+			agentUid: 10001,
+			sidecarUid: 0,
+			transparentPort: 25080,
+			resolverIpv4: [],
+			resolverIpv6: [],
+		});
+
+		expect(rules).toContain("add table inet clawdi_test_gateway");
+		expect(rules).toContain(
+			"add rule inet clawdi_test_gateway output_filter meta skuid 10001 counter drop",
+		);
+		expect(rules).not.toContain("clawdi_invisible_gateway");
 	});
 });

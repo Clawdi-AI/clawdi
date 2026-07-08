@@ -1,11 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 
 export const INVISIBLE_GATEWAY_TRANSPORT_VERSION = "clawdi-invisible-gateway-v1";
 export const INVISIBLE_GATEWAY_TABLE = "clawdi_invisible_gateway";
+export const INVISIBLE_GATEWAY_DEFAULT_DROP_ACTION = "counter drop";
 const INVISIBLE_GATEWAY_REDIRECT_CT_MARK = "0xc1a0d1";
 
 interface InvisibleGatewayNftRulesInput {
+	table?: string;
+	transportVersion?: string;
+	dropAction?: string;
 	agentUid: number;
 	sidecarUid: number;
 	transparentPort: number;
@@ -27,33 +32,38 @@ export function buildInvisibleGatewayNftRules(input: InvisibleGatewayNftRulesInp
 	validateUid(input.agentUid, "agentUid");
 	validateUid(input.sidecarUid, "sidecarUid");
 	validatePort(input.transparentPort);
+	const table = input.table ?? INVISIBLE_GATEWAY_TABLE;
+	const transportVersion = input.transportVersion ?? INVISIBLE_GATEWAY_TRANSPORT_VERSION;
+	const dropAction = input.dropAction ?? INVISIBLE_GATEWAY_DEFAULT_DROP_ACTION;
+	validateNftIdentifier(table, "table");
+	validateDropAction(dropAction);
 	const resolverIpv4 = unique(input.resolverIpv4.filter(isIpv4));
 	const resolverIpv6 = unique(input.resolverIpv6.filter(isIpv6));
 	const lines = [
-		`# ${INVISIBLE_GATEWAY_TRANSPORT_VERSION}`,
-		...(input.replaceExistingTable ? [`delete table inet ${INVISIBLE_GATEWAY_TABLE}`] : []),
-		`add table inet ${INVISIBLE_GATEWAY_TABLE}`,
-		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver4 { type ipv4_addr; flags interval; }`,
-		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver6 { type ipv6_addr; flags interval; }`,
-		...nftAddElements("resolver4", resolverIpv4),
-		...nftAddElements("resolver6", resolverIpv6),
-		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_nat { type nat hook output priority -100; policy accept; }`,
-		`add chain inet ${INVISIBLE_GATEWAY_TABLE} output_filter { type filter hook output priority 0; policy accept; }`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.sidecarUid} accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } ct mark set ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} redirect to :${input.transparentPort}`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.sidecarUid} accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ct state established,related accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" tcp dport ${input.transparentPort} accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ct mark ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} accept`,
+		`# ${transportVersion}`,
+		...(input.replaceExistingTable ? [`delete table inet ${table}`] : []),
+		`add table inet ${table}`,
+		`add set inet ${table} resolver4 { type ipv4_addr; flags interval; }`,
+		`add set inet ${table} resolver6 { type ipv6_addr; flags interval; }`,
+		...nftAddElements(table, "resolver4", resolverIpv4),
+		...nftAddElements(table, "resolver6", resolverIpv6),
+		`add chain inet ${table} output_nat { type nat hook output priority -100; policy accept; }`,
+		`add chain inet ${table} output_filter { type filter hook output priority 0; policy accept; }`,
+		`add rule inet ${table} output_nat meta skuid ${input.sidecarUid} accept`,
+		`add rule inet ${table} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } ct mark set ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} redirect to :${input.transparentPort}`,
+		`add rule inet ${table} output_filter meta skuid ${input.sidecarUid} accept`,
+		`add rule inet ${table} output_filter meta skuid ${input.agentUid} ct state established,related accept`,
+		`add rule inet ${table} output_filter meta skuid ${input.agentUid} oifname "lo" tcp dport ${input.transparentPort} accept`,
+		`add rule inet ${table} output_filter meta skuid ${input.agentUid} ct mark ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} accept`,
 		...resolverIpv4.flatMap((addr) => [
-			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} udp dport 53 accept`,
-			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip daddr ${addr} tcp dport 53 accept`,
+			`add rule inet ${table} output_filter meta skuid ${input.agentUid} ip daddr ${addr} udp dport 53 accept`,
+			`add rule inet ${table} output_filter meta skuid ${input.agentUid} ip daddr ${addr} tcp dport 53 accept`,
 		]),
 		...resolverIpv6.flatMap((addr) => [
-			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip6 daddr ${addr} udp dport 53 accept`,
-			`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ip6 daddr ${addr} tcp dport 53 accept`,
+			`add rule inet ${table} output_filter meta skuid ${input.agentUid} ip6 daddr ${addr} udp dport 53 accept`,
+			`add rule inet ${table} output_filter meta skuid ${input.agentUid} ip6 daddr ${addr} tcp dport 53 accept`,
 		]),
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} counter drop`,
+		`add rule inet ${table} output_filter meta skuid ${input.agentUid} ${dropAction}`,
 		"",
 	];
 	return `${lines.join("\n")}`;
@@ -68,14 +78,17 @@ export function applyInvisibleGatewayRulesFromEnv(
 	if (transparentPort === null) {
 		throw new Error("CLAWDI_MITM_TRANSPARENT_PORT is required for invisible gateway egress");
 	}
+	const table = gatewayTableEnv(env);
 	const resolvers = readResolverAddresses(env.CLAWDI_RESOLV_CONF?.trim() || "/etc/resolv.conf");
 	const rules = buildInvisibleGatewayNftRules({
+		table,
+		dropAction: gatewayDropActionEnv(env),
 		agentUid,
 		sidecarUid,
 		transparentPort,
 		resolverIpv4: resolvers.ipv4,
 		resolverIpv6: resolvers.ipv6,
-		replaceExistingTable: nftTableExists(INVISIBLE_GATEWAY_TABLE),
+		replaceExistingTable: nftTableExists(table),
 	});
 	const result = spawnSync("nft", ["-f", "-"], {
 		input: rules,
@@ -87,7 +100,7 @@ export function applyInvisibleGatewayRulesFromEnv(
 		throw new Error(`nft apply failed${detail ? `\n${detail}` : ""}`);
 	}
 	return {
-		table: INVISIBLE_GATEWAY_TABLE,
+		table,
 		agentUid,
 		sidecarUid,
 		transparentPort,
@@ -133,9 +146,13 @@ function runtimeUserUid(env: NodeJS.ProcessEnv): number {
 	return uid;
 }
 
-function nftAddElements(setName: "resolver4" | "resolver6", values: string[]): string[] {
+function nftAddElements(
+	table: string,
+	setName: "resolver4" | "resolver6",
+	values: string[],
+): string[] {
 	if (values.length === 0) return [];
-	return [`add element inet ${INVISIBLE_GATEWAY_TABLE} ${setName} { ${values.join(", ")} }`];
+	return [`add element inet ${table} ${setName} { ${values.join(", ")} }`];
 }
 
 function numericEnv(value: string | undefined): number | null {
@@ -156,12 +173,37 @@ function validatePort(value: number): void {
 	}
 }
 
+function validateNftIdentifier(value: string, name: string): void {
+	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+		throw new Error(`${name} must be a safe nft identifier`);
+	}
+}
+
+function validateDropAction(value: string): void {
+	if (value !== INVISIBLE_GATEWAY_DEFAULT_DROP_ACTION) {
+		throw new Error("dropAction must be counter drop");
+	}
+}
+
+function gatewayTableEnv(env: NodeJS.ProcessEnv): string {
+	const table = env.CLAWDI_INVISIBLE_GATEWAY_TABLE?.trim() || INVISIBLE_GATEWAY_TABLE;
+	validateNftIdentifier(table, "CLAWDI_INVISIBLE_GATEWAY_TABLE");
+	return table;
+}
+
+function gatewayDropActionEnv(env: NodeJS.ProcessEnv): string {
+	const action =
+		env.CLAWDI_INVISIBLE_GATEWAY_DROP_ACTION?.trim() || INVISIBLE_GATEWAY_DEFAULT_DROP_ACTION;
+	validateDropAction(action);
+	return action;
+}
+
 function isIpv4(value: string): boolean {
-	return /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(value);
+	return isIP(value) === 4;
 }
 
 function isIpv6(value: string): boolean {
-	return value.includes(":") && /^[0-9A-Fa-f:.]+$/.test(value);
+	return isIP(value) === 6;
 }
 
 function unique(values: string[]): string[] {
