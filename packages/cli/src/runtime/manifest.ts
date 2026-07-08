@@ -3385,6 +3385,8 @@ function writeSystemdUnits(
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_MANIFEST_URL: process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() ?? "",
+		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,

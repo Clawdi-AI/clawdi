@@ -7551,6 +7551,7 @@ exit 64
 				path.split("/").at(-1),
 			);
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
+			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const openclawEnv = JSON.parse(
@@ -7573,6 +7574,10 @@ exit 64
 			expect(systemUnitNames).toContain("clawdi-runtime-watch.service");
 			expect(systemUnitNames).toContain("clawdi-daemon.service");
 			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchEnv).toContain(
+				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/desired-state"',
+			);
+			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).toContain(
 				`ExecStart="clawdi" "daemon" "run" "--auth-token-file" "${join(
 					run,
