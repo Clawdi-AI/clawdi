@@ -18,11 +18,14 @@ describe("runtime invisible gateway nftables", () => {
 		});
 
 		expect(rules).toContain("# clawdi-invisible-gateway-v1");
-		expect(rules).toContain("destroy table inet clawdi_invisible_gateway");
+		expect(rules).toContain("flush ruleset");
 		expect(rules).toContain("add table inet clawdi_invisible_gateway");
-		expect(rules).not.toContain("flush ruleset");
+		expect(rules).not.toContain("destroy table inet clawdi_invisible_gateway");
 		expect(rules).toContain(
-			"add chain inet clawdi_invisible_gateway output_filter { type filter hook output priority filter; policy drop; }",
+			"add chain inet clawdi_invisible_gateway output_nat { type nat hook output priority -100; policy accept; }",
+		);
+		expect(rules).toContain(
+			"add chain inet clawdi_invisible_gateway output_filter { type filter hook output priority 0; policy drop; }",
 		);
 		expect(rules).toContain(
 			"add rule inet clawdi_invisible_gateway output_nat meta skuid 0 accept",
