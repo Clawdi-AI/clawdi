@@ -6534,6 +6534,7 @@ exit 64
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_SECRET_FILE");
 		expect(openclawEnv).toContain('HTTPS_PROXY="http://127.0.0.1:');
 		expect(openclawEnv).toContain('OPENCLAW_PROXY_URL="http://127.0.0.1:');
+		expect(openclawEnv).toContain('NODE_USE_ENV_PROXY="1"');
 		expect(openclawEnv).toContain(
 			`NODE_EXTRA_CA_CERTS="${join(run, "mitm", "systemd", "ca.pem")}"`,
 		);

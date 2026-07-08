@@ -100,6 +100,7 @@ export function applyMitmSidecarRuntimeEnv(
 	env.http_proxy = output.proxyUrl;
 	env.NO_PROXY = buildNoProxy(output.proxyUrl);
 	env.no_proxy = env.NO_PROXY;
+	env.NODE_USE_ENV_PROXY = "1";
 	env.OPENCLAW_PROXY_URL = output.proxyUrl;
 	env.CLAWDI_MITM_CA_FILE = output.caFile;
 	env.SSL_CERT_FILE = output.caFile;
