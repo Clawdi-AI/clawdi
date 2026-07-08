@@ -673,11 +673,23 @@ function makeRootOwned(path: string): void {
 
 function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
+	makeRuntimeUserOwnedAncestors(path);
 	makeRuntimeUserOwned(path);
 	try {
 		chmodSync(path, 0o700);
 	} catch {
 		// Best effort for non-POSIX local development environments.
+	}
+}
+
+function makeRuntimeUserOwnedAncestors(path: string): void {
+	const home = process.env.HOME ? resolve(process.env.HOME) : null;
+	if (!home) return;
+	let current = resolve(dirname(path));
+	while (current === home || current.startsWith(`${home}/`)) {
+		makeRuntimeUserOwned(current);
+		if (current === home) return;
+		current = dirname(current);
 	}
 }
 
