@@ -35,6 +35,7 @@ import {
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { HERMES_WHATSAPP_UPSTREAM_READY } from "./hermes-whatsapp-gate";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
@@ -1609,6 +1610,7 @@ function hermesWhatsAppProjection(
 	channelCredentials: unknown,
 	baseUrl: string,
 ): { sessionDir: string; wsUrl: string } | null {
+	if (!HERMES_WHATSAPP_UPSTREAM_READY) return null;
 	if (!channelHasAccounts(channels.whatsapp)) return null;
 	if (!Array.isArray(channelCredentials)) return null;
 	for (const credential of channelCredentials) {

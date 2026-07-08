@@ -26,7 +26,11 @@ const BOT_GRID_CLASS = ENTITY_GRID_CLASS;
  */
 export function SharedBotsPool() {
 	const pool = useBotPool();
-	const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
+	const [linkTarget, setLinkTarget] = useState<{
+		id: string;
+		name: string;
+		provider: string;
+	} | null>(null);
 
 	if (pool.isLoading) {
 		return (
@@ -82,7 +86,13 @@ export function SharedBotsPool() {
 								<PoolCard
 									key={item.id}
 									item={item}
-									onLink={() => setLinkTarget({ id: item.id, name: item.name })}
+									onLink={() =>
+										setLinkTarget({
+											id: item.id,
+											name: item.name,
+											provider: item.provider,
+										})
+									}
 								/>
 							))}
 						</div>
@@ -96,6 +106,7 @@ export function SharedBotsPool() {
 					onOpenChange={(o) => !o && setLinkTarget(null)}
 					accountId={linkTarget.id}
 					accountName={linkTarget.name}
+					provider={linkTarget.provider}
 				/>
 			) : null}
 		</div>

@@ -290,7 +290,12 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				</TabsList>
 
 				<TabsContent value="agents" className={LIST_TAB_CLASS}>
-					<AgentsTab accountId={id} accountName={ch.name} readOnly={providerUnavailable} />
+					<AgentsTab
+						accountId={id}
+						accountName={ch.name}
+						provider={ch.provider}
+						readOnly={providerUnavailable}
+					/>
 				</TabsContent>
 				{ch.provider === "whatsapp" && !providerUnavailable ? (
 					<TabsContent value="devices" className={FORM_TAB_CLASS}>
@@ -326,10 +331,12 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 function AgentsTab({
 	accountId,
 	accountName,
+	provider,
 	readOnly = false,
 }: {
 	accountId: string;
 	accountName: string;
+	provider: string;
 	readOnly?: boolean;
 }) {
 	const links = useChannelAgentLinks(accountId);
@@ -480,6 +487,7 @@ function AgentsTab({
 					onOpenChange={setLinkOpen}
 					accountId={accountId}
 					accountName={accountName}
+					provider={provider}
 				/>
 			)}
 		</div>

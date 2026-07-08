@@ -53,6 +53,7 @@ from app.schemas.channel import (
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
+    ensure_hermes_agent_provider_link_available,
     get_active_channel_account,
     get_channel_secret,
     get_or_create_bot_agent_link,
@@ -130,6 +131,13 @@ async def create_whatsapp_tenant_credential(
     )
     auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
     link = await _resolve_whatsapp_tenant_link(db, auth=auth, account=account, body=body)
+    await ensure_hermes_agent_provider_link_available(
+        db,
+        account=account,
+        agent_id=link.agent_id,
+        user_id=link.user_id,
+        existing_same_account_link=True,
+    )
     stored = await mint_whatsapp_agent_credential(
         db,
         account=account,

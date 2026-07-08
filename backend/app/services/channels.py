@@ -54,6 +54,7 @@ from app.models.channel import (
     ChannelPairCode,
     ChannelSecret,
 )
+from app.models.session import AgentEnvironment
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.discord_rate_limiter import discord_rate_limiter
 from app.services.imessage_routing import (
@@ -96,6 +97,11 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
 )
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
+HERMES_AGENT_TYPE = "hermes"
+HERMES_SINGLE_LINK_PROVIDERS = frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD})
+HERMES_WHATSAPP_UNSUPPORTED_DETAIL = (
+    "WhatsApp for Hermes agents is coming soon - pending an upstream Hermes release."
+)
 
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
 TELEGRAM_REF_FILE_ID = "telegram_file_id"
@@ -322,8 +328,22 @@ async def get_or_create_bot_agent_link(
     )
     link = result.scalar_one_or_none()
     if link is not None:
+        await ensure_hermes_agent_provider_link_available(
+            db,
+            account=account,
+            agent_id=agent_id,
+            user_id=link_user_id,
+            existing_same_account_link=True,
+        )
         return link, None
 
+    await ensure_hermes_agent_provider_link_available(
+        db,
+        account=account,
+        agent_id=agent_id,
+        user_id=link_user_id,
+        existing_same_account_link=False,
+    )
     await ensure_bot_agent_link_capacity(db, account=account)
     raw_token = agent_token or generate_agent_token(account.provider)
     link = ChannelBotAgentLink(
@@ -335,6 +355,64 @@ async def get_or_create_bot_agent_link(
     db.add(link)
     await db.flush()
     return link, raw_token
+
+
+async def ensure_hermes_agent_provider_link_available(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    agent_id: UUID,
+    user_id: UUID,
+    existing_same_account_link: bool,
+) -> None:
+    agent = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if agent is None or agent.agent_type != HERMES_AGENT_TYPE:
+        return
+
+    if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=HERMES_WHATSAPP_UNSUPPORTED_DETAIL,
+        )
+    if existing_same_account_link or account.provider not in HERMES_SINGLE_LINK_PROVIDERS:
+        return
+
+    existing_link = (
+        await db.execute(
+            select(ChannelBotAgentLink.id)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+            .where(
+                ChannelBotAgentLink.agent_id == agent_id,
+                ChannelBotAgentLink.user_id == user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.provider == account.provider,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing_link is None:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"one-{account.provider}-link-per-Hermes-agent: Hermes agents support one "
+            f"active {account.provider} link. Unlink the existing {account.provider} "
+            "channel before linking another."
+        ),
+    )
 
 
 def channel_bot_link_limit(account: ChannelAccount) -> int | None:
