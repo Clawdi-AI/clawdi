@@ -681,6 +681,16 @@ function makeRootOwned(path: string): void {
 	}
 }
 
+function makeRootReadableDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeRootOwned(path);
+	try {
+		chmodSync(path, 0o755);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+}
+
 function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path);
@@ -2693,7 +2703,7 @@ function runtimeMitmSystemdProgram(
 	return {
 		profileBundlePath,
 		proxyUrl: `http://127.0.0.1:${port}`,
-		caFile: join(paths.runRoot, "mitm", "systemd", "ca.pem"),
+		caFile: paths.mitmSystemCaFile,
 		secretFilePath,
 	};
 }
@@ -3264,7 +3274,11 @@ function isGeneratedSystemdFile(path: string): boolean {
 
 function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdSystemRoot)) return;
-	const managed = new Set(["clawdi-runtime-watch.service", "clawdi-daemon.service"]);
+	const managed = new Set([
+		"clawdi-runtime-watch.service",
+		"clawdi-daemon.service",
+		"clawdi-runtime-sidecar.service",
+	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	for (const entry of readdirSync(paths.systemdSystemRoot)) {
 		if (!managed.has(entry) || writtenNames.has(entry)) continue;
@@ -3357,8 +3371,8 @@ function writeSystemdUnits(
 	}
 
 	if (shouldRunBridge || shouldRunMitm) {
-		userUnits.push(
-			writeSystemdUserUnit({
+		systemUnits.push(
+			writeSystemdSystemUnit({
 				paths,
 				name: "clawdi-runtime-sidecar",
 				description: "Clawdi hosted runtime sidecar",
@@ -3516,6 +3530,10 @@ export function convergeRuntimeManifest(
 	mkdirSync(semRoot, { recursive: true });
 	mkdirSync(paths.managedSecretRoot, { recursive: true });
 	makeManagedSecretRoot(paths.managedSecretRoot);
+	makeRootReadableDir(paths.mitmProfileRoot);
+	makeRootReadableDir(paths.mitmRoot);
+	makeRootReadableDir(dirname(paths.mitmSystemCaFile));
+	makeRuntimeUserPrivateDir(paths.mitmScratchRoot);
 
 	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {

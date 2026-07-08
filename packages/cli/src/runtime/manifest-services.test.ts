@@ -263,8 +263,11 @@ describe("runtime manifest services", () => {
 		]);
 		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"clawdi-hermes-dashboard.service",
-			"clawdi-runtime-sidecar.service",
 			"hermes-gateway.service",
+		]);
+		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"clawdi-runtime-sidecar.service",
+			"clawdi-runtime-watch.service",
 		]);
 		expect(readUserServiceConfig(paths, "hermes-gateway")).toContain(
 			'ExecStart="hermes" "gateway" "run" "--replace"',

@@ -30,9 +30,11 @@ describe("runtime MITM env projection", () => {
 		expect(env.http_proxy).toBe("http://127.0.0.1:19090");
 		expect(env.CLAWDI_MITM_ENABLED).toBe("1");
 		expect(env.CLAWDI_MITM_PROFILE_BUNDLE).toBe(profileBundlePath);
-		expect(env.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "sidecars"))).toBe(true);
+		expect(
+			env.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm-scratch", "sidecars")),
+		).toBe(true);
 		expect(env.CLAWDI_MITM_CA_FILE?.endsWith(join("", "ca.pem"))).toBe(true);
-		expect(env.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
+		expect(env.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "secrets", "mitm-secrets.json"));
 		expect(env.NODE_USE_ENV_PROXY).toBe("1");
 		expect(env.NODE_OPTIONS).toBe("--trace-warnings");
 		expect(env.SSL_CERT_FILE).toBe(env.CLAWDI_MITM_CA_FILE);
@@ -53,15 +55,17 @@ describe("runtime MITM env projection", () => {
 			env: { CLAWDI_RUN_DIR: "/run/clawdi" },
 		});
 
-		expect(first.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
-		expect(second.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "mitm", "secrets.json"));
+		expect(first.CLAWDI_MITM_SECRET_FILE).toBe(join("/run/clawdi", "secrets", "mitm-secrets.json"));
+		expect(second.CLAWDI_MITM_SECRET_FILE).toBe(
+			join("/run/clawdi", "secrets", "mitm-secrets.json"),
+		);
 		expect(first.CLAWDI_MITM_CA_FILE).not.toBe(second.CLAWDI_MITM_CA_FILE);
-		expect(first.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "sidecars"))).toBe(
-			true,
-		);
-		expect(second.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm", "sidecars"))).toBe(
-			true,
-		);
+		expect(
+			first.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm-scratch", "sidecars")),
+		).toBe(true);
+		expect(
+			second.CLAWDI_MITM_CA_FILE?.startsWith(join("/run/clawdi", "mitm-scratch", "sidecars")),
+		).toBe(true);
 	});
 
 	it("applies sidecar runtime output without exposing Clawdi MITM internals", () => {
@@ -76,13 +80,13 @@ describe("runtime MITM env projection", () => {
 
 		applyMitmSidecarRuntimeEnv(env, {
 			proxyUrl: "http://127.0.0.1:27183",
-			caFile: "/run/clawdi/mitm/live-ca.pem",
+			caFile: "/run/clawdi/mitm/systemd/live-ca.pem",
 		});
 		stripMitmSidecarControlEnv(env);
 
 		expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:27183");
 		expect(env.https_proxy).toBe("http://127.0.0.1:27183");
-		expect(env.CODEX_CA_CERTIFICATE).toBe("/run/clawdi/mitm/live-ca.pem");
+		expect(env.CODEX_CA_CERTIFICATE).toBe("/run/clawdi/mitm/systemd/live-ca.pem");
 		expect(env.CLAWDI_MITM_ENABLED).toBeUndefined();
 		expect(env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
 		expect(env.CLAWDI_MITM_PROXY_URL).toBeUndefined();

@@ -387,7 +387,9 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
 			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
-			expect(parsed.convergence.systemdSystemUnits).toEqual([]);
+			expect(parsed.convergence.systemdSystemUnits).toEqual([
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
+			]);
 
 			for (const outputPath of [
 				join(serviceStateRoot, "config", "clawdi.json"),
@@ -417,7 +419,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					"hermes-gateway.service.d",
 					"10-clawdi-hosted.conf",
 				),
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
 				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
 				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
@@ -497,7 +499,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"utf-8",
 			);
 			const sidecarUnit = readFileSync(
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				"utf-8",
 			);
 			const openclawEnv = readFileSync(

@@ -6373,6 +6373,9 @@ exit 64
 		expect(
 			convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("clawdi-runtime-sidecar.service");
+		expect(
+			convergence.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)),
+		).not.toContain("clawdi-runtime-sidecar.service");
 	});
 
 	it("adds the hosted runtime sidecar bridge module for declared control UI surfaces", () => {
@@ -6422,10 +6425,16 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const unitNames = convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1));
-		expect(unitNames).not.toContain("clawdi-runtime-bridge.service");
-		expect(unitNames).toContain("clawdi-runtime-sidecar.service");
-		const runtimeSidecarUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
+		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const runtimeSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -6508,15 +6517,22 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const unitNames = convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1));
-		const runtimeSidecarUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
+			path.split("/").at(-1),
+		);
+		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(convergence.outputs.processManager).toBe("systemd");
 		expect(convergence.outputs.systemdUserUnitRoot).toBe(join(home, ".config", "systemd", "user"));
 		expect(convergence.outputs.systemdSystemUnitRoot).toBe(paths.systemdSystemRoot);
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
-		expect(unitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
+		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
@@ -6636,7 +6652,7 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const mitmUnit = readSystemdUserUnit(paths, "clawdi-runtime-sidecar");
+		const mitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const mitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -6645,6 +6661,11 @@ exit 64
 			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
 		);
 		expect(mitmEnv).toContain(`CLAWDI_MITM_CA_FILE="${join(run, "mitm", "systemd", "ca.pem")}"`);
+		expect(statSync(join(state, "config", "mitm")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(state, "config", "mitm", "profiles.json")).mode & 0o777).toBe(0o644);
+		expect(statSync(join(run, "mitm")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(run, "mitm", "systemd")).mode & 0o777).toBe(0o755);
+		expect(statSync(join(run, "mitm-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_PROFILE_BUNDLE");
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_SECRET_FILE");

@@ -133,16 +133,16 @@ function resolveSecretFile(env: NodeJS.ProcessEnv): string {
 	return (
 		env.CLAWDI_MITM_SECRET_FILE?.trim() ||
 		(env.CLAWDI_RUN_DIR?.trim()
-			? join(env.CLAWDI_RUN_DIR.trim(), "mitm", "secrets.json")
+			? join(env.CLAWDI_RUN_DIR.trim(), "secrets", "mitm-secrets.json")
 			: undefined) ||
-		join("/run/clawdi", "mitm", "secrets.json")
+		join("/run/clawdi", "secrets", "mitm-secrets.json")
 	);
 }
 
 function resolveMitmRunRoot(env: NodeJS.ProcessEnv): string {
 	return env.CLAWDI_RUN_DIR?.trim()
-		? join(env.CLAWDI_RUN_DIR.trim(), "mitm")
-		: join("/run/clawdi", "mitm");
+		? join(env.CLAWDI_RUN_DIR.trim(), "mitm-scratch")
+		: join("/run/clawdi", "mitm-scratch");
 }
 
 function buildNoProxy(proxyUrl: string): string {

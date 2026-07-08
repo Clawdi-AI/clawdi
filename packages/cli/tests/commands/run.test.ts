@@ -114,7 +114,7 @@ function recordSidecar(output?: { proxyUrl?: string; caFile?: string }): {
 		});
 		return {
 			proxyUrl: output?.proxyUrl ?? input.env.CLAWDI_MITM_PROXY_URL ?? "http://127.0.0.1:18080",
-			caFile: output?.caFile ?? input.env.CLAWDI_MITM_CA_FILE ?? "/run/clawdi/mitm/ca.pem",
+			caFile: output?.caFile ?? input.env.CLAWDI_MITM_CA_FILE ?? "/run/clawdi/mitm-scratch/ca.pem",
 			stop: async () => {
 				stops += 1;
 			},
@@ -147,7 +147,7 @@ describe("run command project folder selection", () => {
 					HOME: "/home/clawdi",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/runtime-secrets.json",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/mitm-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-mitm-placeholder",
 				},
@@ -180,9 +180,9 @@ describe("run command project folder selection", () => {
 					PATH: "/home/clawdi/.local/bin:/usr/bin",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/runtime-secrets.json",
+					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/mitm-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
-					SSL_CERT_FILE: "/run/clawdi/mitm/sidecars/test/ca.pem",
+					SSL_CERT_FILE: "/run/clawdi/mitm-scratch/sidecars/test/ca.pem",
 				},
 				configPath: "/var/lib/clawdi/config/run/hermes.json",
 			},
@@ -202,7 +202,7 @@ describe("run command project folder selection", () => {
 		expect(child.env.LOGNAME).toBe("clawdi");
 		expect(child.env.PATH).toBe("/home/clawdi/.local/bin:/usr/bin");
 		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
-		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm/sidecars/test/ca.pem");
+		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm-scratch/sidecars/test/ca.pem");
 		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
 	});
@@ -610,7 +610,7 @@ describe("run command project folder selection", () => {
 			proxyUrl: "http://127.0.0.1:0",
 		});
 		const sidecarCaFile = sidecar.calls[0].caFile;
-		expect(sidecarCaFile?.startsWith(join(runRoot, "mitm", "sidecars"))).toBe(true);
+		expect(sidecarCaFile?.startsWith(join(runRoot, "mitm-scratch", "sidecars"))).toBe(true);
 		expect(sidecarCaFile?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(sidecar.calls[0].authToken).toBeUndefined();
 		expect(calls).toHaveLength(1);
@@ -786,7 +786,7 @@ describe("run command project folder selection", () => {
 		const { calls, spawnImpl } = recordSpawn();
 		const sidecar = recordSidecar({
 			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
+			caFile: join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
 		});
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
@@ -802,7 +802,9 @@ describe("run command project folder selection", () => {
 			proxyUrl: "http://127.0.0.1:0",
 			secretFile: join(runRoot, "secrets", "runtime-secrets.json"),
 		});
-		expect(sidecar.calls[0].caFile?.startsWith(join(runRoot, "mitm", "sidecars"))).toBe(true);
+		expect(sidecar.calls[0].caFile?.startsWith(join(runRoot, "mitm-scratch", "sidecars"))).toBe(
+			true,
+		);
 		expect(sidecar.calls[0].caFile?.endsWith(join("", "ca.pem"))).toBe(true);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("codex");
@@ -813,10 +815,10 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.HTTPS_PROXY).toBe("http://127.0.0.1:19191");
 		expect(calls[0].env.https_proxy).toBe("http://127.0.0.1:19191");
 		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe(
-			join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
+			join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
 		);
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe(
-			join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
+			join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
 		);
 	});
 
@@ -881,7 +883,7 @@ describe("run command project folder selection", () => {
 		const { calls, spawnImpl } = recordSpawn();
 		const sidecar = recordSidecar({
 			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm", "sidecars", "actual", "ca.pem"),
+			caFile: join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
 		});
 		const { captured, restore } = mockFetch([
 			{
