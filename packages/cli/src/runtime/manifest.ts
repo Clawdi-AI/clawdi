@@ -1268,6 +1268,8 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 	return type === "api_key" || type === "secret_ref";
 }
 
+const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
+
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
 	const raw =
 		typeof input.runtimeEnvName === "string"
@@ -1275,7 +1277,13 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 			: typeof input.runtime_env_name === "string"
 				? input.runtime_env_name
 				: null;
-	if (raw && isEnvKey(raw)) return raw;
+	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
+	if (
+		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
+		isOpenAiCompatibleMode(hostedProviderApiMode(input))
+	) {
+		return "OPENAI_API_KEY";
+	}
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
