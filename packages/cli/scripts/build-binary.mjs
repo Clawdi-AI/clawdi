@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,3 +33,8 @@ if (!result.success) {
 }
 
 console.log(`built ${outfile} (${target})`);
+
+cpSync(resolve(cliRoot, "mitmproxy-addon"), resolve(dirname(outfile), "mitmproxy-addon"), {
+	recursive: true,
+});
+console.log(`copied mitmproxy addon to ${resolve(dirname(outfile), "mitmproxy-addon")}`);

@@ -11,6 +11,7 @@
 	"files": [
 		"bin",
 		"dist",
+		"mitmproxy-addon",
 		"LICENSE",
 		"README.md"
 	],

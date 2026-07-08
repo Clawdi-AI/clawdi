@@ -22,6 +22,9 @@ const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
 if (packageFiles.includes("clawdi-mitm-sidecar")) {
 	problems.push('package.json files must not include the removed "clawdi-mitm-sidecar" bundle');
 }
+if (!packageFiles.includes("mitmproxy-addon")) {
+	problems.push('package.json files must include "mitmproxy-addon"');
+}
 
 if (problems.length > 0) {
 	console.error("The published CLI package manifest is not ready:");
