@@ -160,7 +160,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths);
+	writeLastGoodSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	return paths.manifestLastGood;
 }
 
@@ -175,8 +175,9 @@ export function cacheRuntimeLastGoodManifest(
 function writeLastGoodSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): void {
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
@@ -201,10 +202,11 @@ function makeManagedSecretRoot(path: string): void {
 function writeSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): string | null {
 	const path = paths.managedSecretFile;
 	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(path, { force: true });
 		rmSync(legacyPath, { force: true });
@@ -218,6 +220,27 @@ function writeSecretValues(
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+function omitSecretRefs(
+	secretValues: Record<string, string> | undefined,
+	excludedRefs: readonly string[],
+): Record<string, string> {
+	const normalized = normalizeSecretValues(secretValues);
+	for (const ref of excludedRefs) {
+		for (const alias of secretRefAliases(ref)) {
+			delete normalized[alias];
+		}
+	}
+	return normalized;
+}
+
+function secretRefAliases(ref: string): string[] {
+	const aliases = new Set<string>([ref]);
+	const normalized = normalizeSecretRef(ref);
+	if (normalized) aliases.add(normalized);
+	if (ref.startsWith("secret://")) aliases.add(ref.slice("secret://".length));
+	return [...aliases];
 }
 
 interface ManagedWhatsAppAuthCredential {
@@ -1444,6 +1467,19 @@ function writeMitmSecretFile(
 function mitmSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
 	collectSecretRefs(manifest.mitmProfiles, refs);
+	return [...refs].sort();
+}
+
+function mitmSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	const profiles = Array.isArray(manifest.mitmProfiles?.profiles)
+		? manifest.mitmProfiles.profiles
+		: [];
+	for (const profile of profiles) {
+		if (recordValue(profile)?.owner === "provider-projection") {
+			collectSecretRefs(profile, refs);
+		}
+	}
 	return [...refs].sort();
 }
 
@@ -3805,7 +3841,7 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(secretValues, paths);
+	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	try {
 		materializeHostedChannelCredentials(manifest, secretValues);
 	} catch (error) {

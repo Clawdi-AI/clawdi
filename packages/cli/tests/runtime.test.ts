@@ -264,6 +264,62 @@ function systemdEnvRevision(envFile: string): string {
 	return match?.[1] ?? "";
 }
 
+function expectExistingFileNotToContain(path: string, value: string): void {
+	if (!existsSync(path)) return;
+	expect(readFileSync(path, "utf-8")).not.toContain(value);
+}
+
+function expectProviderMitmProfileUsesSecretRef(
+	profiles: unknown,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(Array.isArray(profiles)).toBe(true);
+	const providerProfiles = (profiles as Array<Record<string, unknown>>).filter(
+		(profile) => profile.kind === "provider" && profile.owner === "provider-projection",
+	);
+	expect(providerProfiles).toHaveLength(1);
+	const providerProfileText = JSON.stringify(providerProfiles[0]);
+	expect(providerProfileText).toContain(`"secretRef":"${secretRef}"`);
+	expect(providerProfileText).toContain('"type":"secretRef"');
+	expect(providerProfileText).not.toContain(plaintextSecret);
+}
+
+function expectMitmProfileBundleUsesSecretRef(
+	bundlePath: string | null,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(bundlePath).toBeTruthy();
+	if (!bundlePath) throw new Error("expected MITM profile bundle path");
+	const bundleText = readFileSync(bundlePath, "utf-8");
+	expect(bundleText).toContain(secretRef);
+	expect(bundleText).not.toContain(plaintextSecret);
+	const bundle = JSON.parse(bundleText) as { profiles?: unknown };
+	expectProviderMitmProfileUsesSecretRef(bundle.profiles, secretRef, plaintextSecret);
+}
+
+function expectMitmSecretFileIsSidecarOnly(
+	paths: RuntimePaths,
+	mitmSecretFile: string | null,
+	secretRef: string,
+	plaintextSecret: string,
+): void {
+	expect(mitmSecretFile).toBe(join(paths.managedSecretRoot, "mitm-secrets.json"));
+	if (!mitmSecretFile) throw new Error("expected MITM secret file path");
+	expect(mitmSecretFile.startsWith(paths.userHome)).toBe(false);
+	expect(mitmSecretFile.startsWith(paths.serviceStateRoot)).toBe(false);
+	const secretFileStat = statSync(mitmSecretFile);
+	expect(secretFileStat.mode & 0o777).toBe(0o600);
+	expect(statSync(dirname(mitmSecretFile)).mode & 0o777).toBe(0o711);
+	if (typeof process.getuid === "function" && process.getuid() === 0) {
+		expect(secretFileStat.uid).toBe(0);
+		expect(secretFileStat.gid).toBe(0);
+	}
+	const secrets = JSON.parse(readFileSync(mitmSecretFile, "utf-8")) as Record<string, string>;
+	expect(secrets[secretRef]).toBe(plaintextSecret);
+}
+
 function hermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
@@ -777,6 +833,7 @@ describe("runtime manifest datasource", () => {
 									kind: "openai-compatible",
 									baseUrl: "https://sub2api.test/v1",
 									model: "gpt-5.5",
+									apiMode: "openai_chat",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 								codex: {
@@ -834,7 +891,12 @@ describe("runtime manifest datasource", () => {
 			);
 			expect(loaded.manifest.runtimes.openclaw.install?.home).toBe(home);
 			expect(loaded.manifest.runtimes.openclaw.install?.args).toEqual(["--json", "--no-onboard"]);
-			expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+			expectProviderMitmProfileUsesSecretRef(
+				loaded.manifest.mitmProfiles?.profiles,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expect(JSON.stringify(loaded.manifest.mitmProfiles)).not.toContain("sk-runtime");
 			expect(loaded.secretValues).toEqual({
 				"provider.default.apiKey": "sk-runtime",
 				"secret://provider.default.apiKey": "sk-runtime",
@@ -1258,9 +1320,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			apiKey: {
 				source: "env",
 				provider: "default",
-				id: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				id: "OPENAI_API_KEY",
 			},
 		});
+		expect(patch.models.providers.default.apiKey.id).not.toBe("CLAWDI_MANAGED_OPENAI_API_KEY");
 		expect(patch.models.providers.default.api).toBeUndefined();
 		expect(JSON.stringify(patch)).not.toContain("agentRuntime");
 		expect(JSON.stringify(patch)).not.toContain("chatgpt.com");
@@ -2261,18 +2324,23 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(runConfig.secretEnv).toEqual({});
 		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
-		const aggregateSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
+		expectExistingFileNotToContain(
+			join(run, "secrets", "runtime-secrets.json"),
+			"sk-runtime-provider",
 		);
-		expect(aggregateSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime-provider");
+		const paths = getRuntimePaths();
+		expectMitmProfileBundleUsesSecretRef(
+			convergence.outputs.mitmProfileBundle,
+			"secret://provider.default.apiKey",
+			"sk-runtime-provider",
+		);
+		expectMitmSecretFileIsSidecarOnly(
+			paths,
+			convergence.outputs.mitmSecretFile,
+			"secret://provider.default.apiKey",
+			"sk-runtime-provider",
+		);
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
-		const mitmSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
-		);
-		expect(mitmSecrets).toEqual({
-			"provider.default.apiKey": "sk-runtime-provider",
-			"secret://provider.default.apiKey": "sk-runtime-provider",
-		});
 	});
 
 	it("does not project a key-required hosted provider without a secret ref as no-auth", () => {
@@ -3126,7 +3194,11 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(
@@ -3291,6 +3363,7 @@ exit 42
 						kind: "openai-compatible",
 						baseUrl: "https://sub2api.test/v1",
 						model: "gpt-5.5",
+						apiMode: "openai_chat",
 						apiKeySecretRef: providerSecretRef,
 					},
 				},
@@ -3392,6 +3465,11 @@ exit 64
 				paths,
 			);
 			expect(initialConvergence.installErrors).toEqual([]);
+			expectMitmProfileBundleUsesSecretRef(
+				initialConvergence.outputs.mitmProfileBundle,
+				"secret://provider.default.apiKey",
+				"sk-provider-watch",
+			);
 			writeFileSync(paths.manifestEtag, '"manifest-etag-stable"\n');
 			writeFileSync(paths.channelsEtag, '"channels-etag-current"\n');
 		} finally {
@@ -3401,8 +3479,12 @@ exit 64
 		const baselineSecrets = JSON.parse(
 			readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 		);
-		expect(baselineSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+		expect(baselineSecrets["secret://provider.default.apiKey"]).toBeUndefined();
 		expect(baselineSecrets[channelSecretRef]).toBe("agent-token-watch");
+		const baselineMitmSecrets = JSON.parse(
+			readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
+		);
+		expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 
 		const watchFetch = mockFetch([
 			{
@@ -3445,8 +3527,12 @@ exit 64
 			const secrets = JSON.parse(
 				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 			);
-			expect(secrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+			expect(secrets["secret://provider.default.apiKey"]).toBeUndefined();
 			expect(secrets[channelSecretRef]).toBe("agent-token-watch");
+			const mitmSecrets = JSON.parse(
+				readFileSync(join(run, "secrets", "mitm-secrets.json"), "utf-8"),
+			);
+			expect(mitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
@@ -4160,7 +4246,11 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 		} finally {
@@ -4744,7 +4834,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-runtime-egress.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
@@ -7283,6 +7377,7 @@ exit 64
 								default: {
 									kind: "openai-compatible",
 									baseUrl: "https://sub2api.test/v1",
+									apiMode: "openai_chat",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -7300,13 +7395,28 @@ exit 64
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 			expect(convergence.mode).toBe("normal");
-			expect(convergence.outputs.mitmProfileBundle).toBe(null);
-			expect(convergence.outputs.mitmSecretFile).toBeNull();
-			expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(true);
 			const paths = getRuntimePaths();
+			expectMitmProfileBundleUsesSecretRef(
+				convergence.outputs.mitmProfileBundle,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expectMitmSecretFileIsSidecarOnly(
+				paths,
+				convergence.outputs.mitmSecretFile,
+				"secret://provider.default.apiKey",
+				"sk-runtime",
+			);
+			expectExistingFileNotToContain(join(run, "secrets", "runtime-secrets.json"), "sk-runtime");
+			expectExistingFileNotToContain(
+				join(state, "cache", "runtime-secrets.last-good.json"),
+				"sk-runtime",
+			);
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-egress.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			]);
 			expect(convergence.outputs.systemdUserUnits).toEqual([
 				join(paths.systemdUserRoot, "openclaw-gateway.service"),
@@ -7317,9 +7427,6 @@ exit 64
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8")).not.toContain(
-				"sk-runtime",
-			);
-			expect(readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8")).toContain(
 				"sk-runtime",
 			);
 			const providerHealth = JSON.parse(
