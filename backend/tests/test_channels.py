@@ -33,6 +33,7 @@ from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
@@ -1109,6 +1110,59 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
     ]
     assert "telegram-secret" not in listed.text
     assert "webhook_secret" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_env_bound_list_channels_filters_legacy_runtime_providers(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    telegram_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"runtime-allowlist-{uuid4().hex}",
+            "provider_token": "123456:telegram-secret",
+        },
+    )
+    assert telegram_response.status_code == 201, telegram_response.text
+    telegram = telegram_response.json()
+
+    legacy_agent_token_ciphertext, legacy_agent_token_nonce = encrypt_optional_token(
+        "legacy-imessage-agent-token"
+    )
+    legacy_account = ChannelAccount(
+        user_id=seed_user.id,
+        provider=CHANNEL_PROVIDER_IMESSAGE,
+        name=f"runtime-imessage-{uuid4().hex}",
+        webhook_secret_hash=hash_token("legacy-imessage-webhook-secret"),
+    )
+    db_session.add(legacy_account)
+    await db_session.flush()
+    db_session.add(
+        ChannelBotAgentLink(
+            account_id=legacy_account.id,
+            user_id=seed_user.id,
+            agent_id=channel_agent.id,
+            agent_token_hash=hash_token("legacy-imessage-agent-token"),
+            encrypted_agent_token=legacy_agent_token_ciphertext,
+            agent_token_nonce=legacy_agent_token_nonce,
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        listed = await runtime_client.get("/v1/channels")
+
+    assert listed.status_code == 200, listed.text
+    payload = listed.json()
+    assert [item["id"] for item in payload] == [telegram["id"]]
+    assert payload[0]["provider"] == "telegram"
+    assert "imessage" not in listed.text
+    assert "legacy-imessage-agent-token" not in listed.text
 
 
 @pytest.mark.asyncio

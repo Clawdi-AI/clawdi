@@ -63,7 +63,7 @@ export interface RuntimeChannelCredential {
 
 export interface RuntimeChannelAccount {
 	id: string;
-	provider: "telegram" | "discord" | "whatsapp" | "imessage";
+	provider: "telegram" | "discord" | "whatsapp";
 	name: string;
 	status: string;
 	visibility: "private" | "public";
@@ -161,7 +161,7 @@ const runtimeChannelCredentialSchema = z
 const runtimeChannelAccountSchema = z
 	.object({
 		id: z.string().min(1),
-		provider: z.enum(["telegram", "discord", "whatsapp", "imessage"]),
+		provider: z.enum(["telegram", "discord", "whatsapp"]),
 		name: z.string().min(1),
 		status: z.string().min(1),
 		visibility: z.enum(["private", "public"]).default("private"),

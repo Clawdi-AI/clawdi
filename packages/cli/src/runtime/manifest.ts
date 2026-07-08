@@ -1666,10 +1666,8 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 }
 
 function openClawManagedChannelDeletes(): Record<string, null> {
-	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
-		string,
-		null
-	>;
+	const channels = [...OPENCLAW_MANAGED_CHANNELS, ...OPENCLAW_RETIRED_MANAGED_CHANNELS];
+	return Object.fromEntries(channels.map((channel) => [channel, null])) as Record<string, null>;
 }
 
 function installOpenClawChannelPlugins(
@@ -1906,10 +1904,10 @@ const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
 const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
 	whatsapp: ["clawhub:@openclaw/whatsapp", "@openclaw/whatsapp"],
-	bluebubbles: ["@openclaw/bluebubbles@2026.5.7"],
 };
 
-const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp", "bluebubbles"] as const;
+const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;
+const OPENCLAW_RETIRED_MANAGED_CHANNELS = ["bluebubbles"] as const;
 const OPENCLAW_GATEWAY_TOKEN_ENV = "OPENCLAW_GATEWAY_TOKEN";
 
 function desiredLiveSyncAgents(manifest: RuntimeManifest): LiveSyncAgent[] {

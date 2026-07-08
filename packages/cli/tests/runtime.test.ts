@@ -2177,7 +2177,18 @@ exit 64
 				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
-					openclaw: { enabled: true },
+					openclaw: {
+						enabled: true,
+						run: {
+							env: { OPENCLAW_EXISTING_ENV: "kept" },
+							secretEnv: {
+								CLAWDI_CHANNEL_TELEGRAM_CLAWDI_STALE_AGENT_TOKEN:
+									"secret://channels/telegram/clawdi_stale/agent-token",
+								OPENCLAW_USER_SECRET: "secret://user/secret",
+							},
+							prependPath: [],
+						},
+					},
 				},
 			},
 			source: "remote-datasource",
@@ -2196,6 +2207,10 @@ exit 64
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
+		expect(projected.manifest.runtimes.openclaw?.run?.env?.OPENCLAW_EXISTING_ENV).toBe("kept");
+		expect(projected.manifest.runtimes.openclaw?.run?.secretEnv).toEqual({
+			OPENCLAW_USER_SECRET: "secret://user/secret",
+		});
 	});
 
 	it("projects WhatsApp tenant credentials as secret-backed auth state", () => {
@@ -2273,11 +2288,19 @@ exit 64
 		const authDir = join("/home/clawdi", ".openclaw", "credentials", "whatsapp", accountKey);
 		const channelProjection = projected.manifest.projection?.channels as Record<string, unknown>;
 		const whatsapp = channelProjection.whatsapp as {
-			accounts: Record<string, { authDir?: string; token?: string }>;
+			accounts: Record<string, { authDir?: string; token?: unknown }>;
 		};
 		expect(whatsapp.accounts[accountKey]).toMatchObject({
 			authDir,
-			token: "wa-agent-token",
+			token: {
+				source: "env",
+				provider: "default",
+				id: "CLAWDI_CHANNEL_WHATSAPP_CLAWDI_000000000000_AGENT_TOKEN",
+			},
+		});
+		expect(projected.manifest.runtimes.openclaw?.run?.secretEnv).toMatchObject({
+			CLAWDI_CHANNEL_WHATSAPP_CLAWDI_000000000000_AGENT_TOKEN:
+				"secret://channels/whatsapp/clawdi_000000000000/agent-token",
 		});
 		const credentialProjection = projected.manifest.projection?.channelCredentials;
 		expect(credentialProjection).toEqual([
@@ -4436,11 +4459,26 @@ exit 64
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
-			expect(patchText).toContain('"botToken": "agent-token-init"');
+			expect(patchText).toContain('"botToken"');
+			expect(patchText).toContain(
+				'"id": "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"',
+			);
 			expect(patchText).toContain('"discord"');
-			expect(patchText).toContain('"token": "discord-agent-token-init"');
+			expect(patchText).toContain('"token"');
+			expect(patchText).toContain('"id": "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN"');
+			expect(patchText).not.toContain("agent-token-init");
+			expect(patchText).not.toContain("discord-agent-token-init");
 			expect(patchText).toContain('"plugins"');
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+			const openclawRunConfig = JSON.parse(
+				readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
+			);
+			expect(openclawRunConfig.secretEnv).toMatchObject({
+				CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN:
+					"secret://channels/telegram/clawdi_accttelegram/agent-token",
+				CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN:
+					"secret://channels/discord/clawdi_acctdiscord1/agent-token",
+			});
 			const secretsText = readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8");
 			expect(secretsText).toContain("secret://channels/telegram/");
 			expect(secretsText).toContain("agent-token-init");

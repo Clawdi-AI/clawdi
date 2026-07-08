@@ -33,6 +33,7 @@ from app.models.channel import (
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
+    V2_RUNTIME_CHANNEL_PROVIDERS,
     ChannelAccount,
     ChannelAgentCredential,
     ChannelBinding,
@@ -358,6 +359,7 @@ async def list_channels(
             .where(
                 ChannelAccount.archived_at.is_(None),
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.provider.in_(V2_RUNTIME_CHANNEL_PROVIDERS),
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.user_id == auth.user_id,

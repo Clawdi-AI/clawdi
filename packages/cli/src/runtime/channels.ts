@@ -26,6 +26,8 @@ const HERMES_MANAGED_CHANNEL_SECRET_ENV = [
 	"DISCORD_BOT_TOKEN",
 	"HERMES_WA_CREDS_JSON",
 ] as const;
+const OPENCLAW_MANAGED_CHANNEL_SECRET_ENV_RE =
+	/^CLAWDI_CHANNEL_(TELEGRAM|DISCORD|WHATSAPP)_[A-Z0-9_]+_AGENT_TOKEN$/;
 
 interface ManagedChannelLink {
 	account: RuntimeChannelAccount;
@@ -129,7 +131,10 @@ function applyRuntimeChannelProjection(
 			...directProviderPassthrough,
 		]),
 	};
-	return applyHermesRuntimeChannelSettings(projected, links);
+	return applyHermesRuntimeChannelSettings(
+		applyOpenClawRuntimeChannelSettings(projected, links),
+		links,
+	);
 }
 
 function buildOpenClawChannelsProjection(
@@ -144,7 +149,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				botToken: link.agentToken,
+				botToken: openClawChannelTokenSecretInput(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -157,7 +162,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "discord", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				token: link.agentToken,
+				token: openClawChannelTokenSecretInput(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -174,20 +179,24 @@ function buildOpenClawChannelsProjection(
 			channel.accounts[link.accountKey] = {
 				enabled: true,
 				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
-				token: link.agentToken,
+				token: openClawChannelTokenSecretInput(link),
 				...(credential ? { authDir: credential.authDir } : {}),
-			};
-			continue;
-		}
-		if (provider === "imessage") {
-			channels.bluebubbles = {
-				enabled: true,
-				serverUrl: `${stripTrailingSlash(cloudApiUrl)}/v1/channels/imessage/bluebubbles`,
-				password: link.agentToken,
 			};
 		}
 	}
 	return channels;
+}
+
+function openClawChannelTokenSecretInput(link: ManagedChannelLink): {
+	source: "env";
+	provider: "default";
+	id: string;
+} {
+	return {
+		source: "env",
+		provider: "default",
+		id: openClawChannelTokenEnvName(link),
+	};
 }
 
 function buildRuntimeChannelCredentialsProjection(
@@ -258,6 +267,37 @@ function applyHermesRuntimeChannelSettings(
 	};
 }
 
+function applyOpenClawRuntimeChannelSettings(
+	manifest: RuntimeManifest,
+	links: ManagedChannelLink[],
+): RuntimeManifest {
+	const openclaw = manifest.runtimes.openclaw;
+	if (!openclaw?.enabled) return manifest;
+
+	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
+	const secretEnv = omitKeysByPattern(
+		existingRun.secretEnv ?? {},
+		OPENCLAW_MANAGED_CHANNEL_SECRET_ENV_RE,
+	);
+	for (const link of links) {
+		secretEnv[openClawChannelTokenEnvName(link)] = link.secretRef;
+	}
+
+	return {
+		...manifest,
+		runtimes: {
+			...manifest.runtimes,
+			openclaw: {
+				...openclaw,
+				run: {
+					...existingRun,
+					secretEnv,
+				},
+			},
+		},
+	};
+}
+
 function firstLinkForProvider(
 	links: ManagedChannelLink[],
 	provider: ChannelProvider,
@@ -273,6 +313,14 @@ function omitKeys<T extends string>(
 	const output: Record<string, string> = {};
 	for (const [key, value] of Object.entries(input)) {
 		if (!omitted.has(key)) output[key] = value;
+	}
+	return output;
+}
+
+function omitKeysByPattern(input: Record<string, string>, pattern: RegExp): Record<string, string> {
+	const output: Record<string, string> = {};
+	for (const [key, value] of Object.entries(input)) {
+		if (!pattern.test(key)) output[key] = value;
 	}
 	return output;
 }
@@ -484,6 +532,12 @@ function addSecretValue(values: Record<string, string>, ref: string, value: stri
 
 function channelSecretRef(provider: ChannelProvider, accountKey: string): string {
 	return `secret://channels/${provider}/${accountKey}/agent-token`;
+}
+
+function openClawChannelTokenEnvName(link: ManagedChannelLink): string {
+	const provider = link.account.provider.toUpperCase();
+	const account = link.accountKey.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+	return `CLAWDI_CHANNEL_${provider}_${account}_AGENT_TOKEN`;
 }
 
 function whatsappBaileysCredentialProjection(
