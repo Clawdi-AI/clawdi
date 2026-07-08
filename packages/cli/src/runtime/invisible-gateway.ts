@@ -42,7 +42,7 @@ export function buildInvisibleGatewayNftRules(input: InvisibleGatewayNftRulesInp
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.sidecarUid} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_nat meta skuid ${input.agentUid} tcp dport { 80, 443 } ct mark set ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} redirect to :${input.transparentPort}`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.sidecarUid} accept`,
-		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" accept`,
+		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ct state established,related accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} oifname "lo" tcp dport ${input.transparentPort} accept`,
 		`add rule inet ${INVISIBLE_GATEWAY_TABLE} output_filter meta skuid ${input.agentUid} ct mark ${INVISIBLE_GATEWAY_REDIRECT_CT_MARK} accept`,
 		...resolverIpv4.flatMap((addr) => [

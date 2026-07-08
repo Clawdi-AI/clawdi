@@ -58,7 +58,7 @@ function writeFakeGatewayCli(input: {
 set -euo pipefail
 printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 case "$*" in
-  "gateway install --force --json"|"gateway install")
+  "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
 				? "exit 41"
@@ -362,7 +362,7 @@ describe("runtime manifest services", () => {
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
-			"hermes gateway install",
+			"hermes gateway install --force",
 			"openclaw gateway install --force --json",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",

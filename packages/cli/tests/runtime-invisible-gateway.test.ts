@@ -37,6 +37,12 @@ describe("runtime invisible gateway nftables", () => {
 		expect(rules).not.toContain(
 			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 tcp dport 25080 accept",
 		);
+		expect(rules).not.toContain(
+			'add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 oifname "lo" accept',
+		);
+		expect(rules).toContain(
+			"add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 ct state established,related accept",
+		);
 		expect(rules).toContain(
 			'add rule inet clawdi_invisible_gateway output_filter meta skuid 10001 oifname "lo" tcp dport 25080 accept',
 		);

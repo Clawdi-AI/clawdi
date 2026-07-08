@@ -95,7 +95,7 @@ function writeFakeGatewayCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "gateway install --force --json"|"gateway install")
+  "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
 				? "exit 41"

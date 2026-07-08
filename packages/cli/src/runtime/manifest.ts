@@ -2346,13 +2346,70 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const uid =
+		runtimeUser && runtimeUser !== "root" && runningAsRoot()
+			? String(runtimeEgressAgentUid(runtimeUser))
+			: null;
+	const runtimeDir = uid ? `/run/user/${uid}` : null;
 	return {
 		...process.env,
 		HOME: home,
 		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
 			.filter(Boolean)
 			.join(":"),
+		...(runtimeDir
+			? {
+					XDG_RUNTIME_DIR: runtimeDir,
+					DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
+				}
+			: {}),
 	};
+}
+
+function runtimeUserGid(runtimeUser: string): number {
+	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const gid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(gid) && gid >= 0 && gid <= 4_294_967_295) return gid;
+	}
+	if (runtimeUser === "clawdi") return 10_001;
+	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
+}
+
+function userManagerControlSocketExists(runtimeDir: string): boolean {
+	return existsSync(join(runtimeDir, "bus")) || existsSync(join(runtimeDir, "systemd", "private"));
+}
+
+function waitForUserManagerControlSocket(runtimeDir: string): boolean {
+	const waitUntil = Date.now() + 120_000;
+	const waitBuffer = new SharedArrayBuffer(4);
+	const waitView = new Int32Array(waitBuffer);
+	while (Date.now() < waitUntil) {
+		if (userManagerControlSocketExists(runtimeDir)) return true;
+		Atomics.wait(waitView, 0, 0, 200);
+	}
+	return userManagerControlSocketExists(runtimeDir);
+}
+
+function ensureRuntimeUserManagerReady(runtimeUser: string): void {
+	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
+	const uid = runtimeEgressAgentUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	const runtimeDir = `/run/user/${uid}`;
+	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
+	execFileSync("install", ["-d", "-m", "0700", "-o", String(uid), "-g", String(gid), runtimeDir]);
+	if (userManagerControlSocketExists(runtimeDir)) return;
+	const unit = `user@${uid}.service`;
+	let result = spawnSync("systemctl", ["restart", unit], { stdio: "ignore" });
+	if (result.status !== 0) {
+		result = spawnSync("systemctl", ["start", unit], { stdio: "ignore" });
+	}
+	if (result.status !== 0 || !waitForUserManagerControlSocket(runtimeDir)) {
+		throw new Error(
+			`runtime user systemd manager did not publish a control socket under ${runtimeDir}`,
+		);
+	}
 }
 
 function spawnRuntimeUserCommand(
@@ -2364,6 +2421,7 @@ function spawnRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			return spawnSync("gosu", [runtimeUser, command, ...args], {
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
@@ -2395,6 +2453,7 @@ function runRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			execFileSync("gosu", [runtimeUser, command, ...args], {
 				input: stdin,
@@ -3045,7 +3104,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		runtime: "hermes",
 		programName: "hermes-gateway",
 		command: "hermes",
-		installArgs: ["gateway", "install"],
+		installArgs: ["gateway", "install", "--force"],
 		uninstallArgs: ["gateway", "uninstall"],
 		service: "gateway",
 		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",

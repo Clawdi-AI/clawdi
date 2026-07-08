@@ -947,10 +947,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 			).not.toContain("clawdi-runtime-bridge.service");
 			expect(hermesEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
-			expect(hermesEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-mitm-placeholder"');
-			expect(hermesDashboardEnv).toContain(
-				'CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-mitm-placeholder"',
-			);
+			expect(hermesEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expect(hermesEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+			expect(hermesDashboardEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+			expect(hermesDashboardEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
 			expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toContain("sk-runtime");
 			expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toContain(
 				"sk-runtime",
@@ -1276,7 +1276,8 @@ chmod +x "$HOME/.local/bin/hermes"
 			"--force",
 		]);
 		expect(runConfig.defaultArgs).not.toContain("--auth");
-		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
 		expect(runConfig.secretEnv).toEqual({});
 		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
@@ -2255,7 +2256,8 @@ chmod +x "$HOME/.local/bin/hermes"
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
 		expect(runConfig.secretEnv).toEqual({});
 		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
@@ -6829,7 +6831,8 @@ exit 64
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).not.toContain("sk-runtime");
-		expect(openclawEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(openclawEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(openclawEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
 		expect(openclawEnv).not.toContain("sk-runtime");
 		expect(openclawEnv).not.toContain(join(state, "bin"));
 		expect(statSync(join(run, "secrets")).mode & 0o777).toBe(0o711);
@@ -6888,7 +6891,8 @@ exit 64
 			getRuntimePaths(),
 		);
 		const openclawEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
-		expect(openclawEnv).toContain('CLAWDI_MANAGED_OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(openclawEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(openclawEnv).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
 		expect(openclawEnv).not.toContain("provider.default.apiKey");
 	});
 
@@ -7635,7 +7639,9 @@ exit 64
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.mitmProfiles?.profiles).toEqual([]);
+		const profiles = loaded.manifest.mitmProfiles?.profiles ?? [];
+		expect(profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
+		expect(profiles.some((profile) => profile.kind === "provider")).toBe(false);
 	});
 
 	it("rejects invalid explicit hosted MITM profiles instead of falling back", async () => {
