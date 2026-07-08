@@ -3476,12 +3476,21 @@ function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): s
 	return manifest.workspaceRoot ?? paths.workspaceRoot;
 }
 
+function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> | undefined {
+	const merged = {
+		...(load.secretValues ?? {}),
+		...(load.localSecretValues ?? {}),
+	};
+	return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 export function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
 	opts: { cacheLastGood?: boolean } = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
+	const secretValues = runtimeSecretValues(load);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
@@ -3568,9 +3577,9 @@ export function convergeRuntimeManifest(
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(load.secretValues, paths);
+	writeSecretValues(secretValues, paths);
 	try {
-		materializeHostedChannelCredentials(manifest, load.secretValues);
+		materializeHostedChannelCredentials(manifest, secretValues);
 	} catch (error) {
 		installErrors.push(
 			`runtime channel credential materialization failed: ${
@@ -3578,7 +3587,7 @@ export function convergeRuntimeManifest(
 			}`,
 		);
 	}
-	const mitmSecretFile = writeMitmSecretFile(manifest, load.secretValues, paths);
+	const mitmSecretFile = writeMitmSecretFile(manifest, secretValues, paths);
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,
 		paths,
@@ -3664,7 +3673,7 @@ export function convergeRuntimeManifest(
 			: {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
-			load.secretValues,
+			secretValues,
 			secretEnv,
 			paths,
 		);
@@ -3690,7 +3699,7 @@ export function convergeRuntimeManifest(
 			const program = buildRuntimeSystemdUserProgram({
 				config: runConfig,
 				paths,
-				secretValues: load.secretValues,
+				secretValues,
 				mitm: mitmSystemdProgram,
 			});
 			if (program) {
@@ -3722,7 +3731,7 @@ export function convergeRuntimeManifest(
 			const program = buildRuntimeSystemdUserProgram({
 				config: serviceRunConfig,
 				paths,
-				secretValues: load.secretValues,
+				secretValues,
 				mitm: mitmSystemdProgram,
 			});
 			if (program) {
@@ -3747,7 +3756,7 @@ export function convergeRuntimeManifest(
 		paths,
 		workspaceRoot,
 		daemonAuthTokenFile,
-		load.secretValues,
+		secretValues,
 		providerProjectionRevisions,
 	);
 	installErrors.push(...systemdUnits.serviceInstallErrors);
@@ -3757,7 +3766,11 @@ export function convergeRuntimeManifest(
 	removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
 	removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
 	if (installErrors.length === 0 && opts.cacheLastGood !== false) {
-		manifestLastGood = writeLastGoodManifest(manifest, paths, load.secretValues);
+		manifestLastGood = writeLastGoodManifest(
+			load.sourceManifest ?? manifest,
+			paths,
+			load.secretValues,
+		);
 	}
 
 	return {
