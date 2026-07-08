@@ -1,6 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -15,7 +16,6 @@ import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/brid
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
-import { applyInvisibleGatewayRulesFromEnv } from "../runtime/invisible-gateway";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
@@ -45,6 +45,12 @@ import {
 	runtimeUserName,
 	runtimeUserSystemdEnvArgs,
 } from "../runtime/systemd-user";
+import {
+	applyTransparentMitmNftRulesFromEnv,
+	cleanupTransparentMitmNftRulesFromEnv,
+	loadTransparentMitmEnvConfig,
+	type TransparentMitmEnvConfig,
+} from "../runtime/transparent-mitm";
 import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -1267,7 +1273,6 @@ interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 }
 
-const RUNTIME_EGRESS_SYSTEM_UNIT = "clawdi-runtime-egress.service";
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
@@ -1338,9 +1343,6 @@ function applySystemdRuntimeUpdate(
 		user.changed.length === 0 &&
 		user.removed.length === 0
 	) {
-		if (after.system.has(RUNTIME_EGRESS_SYSTEM_UNIT) && shouldApplySystemdRuntimeUpdate(paths)) {
-			systemctl(["restart", RUNTIME_EGRESS_SYSTEM_UNIT]);
-		}
 		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 	}
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
@@ -1355,15 +1357,7 @@ function applySystemdRuntimeUpdate(
 	}
 	systemctl(["daemon-reload"]);
 	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	if (
-		after.system.has(RUNTIME_EGRESS_SYSTEM_UNIT) &&
-		before.system.has(RUNTIME_EGRESS_SYSTEM_UNIT)
-	) {
-		systemctl(["restart", RUNTIME_EGRESS_SYSTEM_UNIT]);
-	}
-	const restartSystemUnits = system.changed.filter(
-		(unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT && unit !== RUNTIME_EGRESS_SYSTEM_UNIT,
-	);
+	const restartSystemUnits = system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
 	if (restartSystemUnits.length > 0) {
 		systemctl(["restart", ...restartSystemUnits]);
 	}
@@ -2169,12 +2163,156 @@ export async function runtimeSidecar(): Promise<void> {
 	await bridge.close();
 }
 
-export function runtimeEgressApply(): void {
+export async function runtimeMitmRun(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime egress apply is only available in hosted runtime mode");
+		throw new Error("runtime mitm is only available in hosted runtime mode");
 	}
-	const result = applyInvisibleGatewayRulesFromEnv(process.env);
-	console.log(JSON.stringify({ ready: true, ...result }));
+	const config = loadTransparentMitmEnvConfig(process.env);
+	const mitmdump = startMitmdump(config);
+	let redirectApplied = false;
+	const cleanup = () => {
+		if (!redirectApplied) return;
+		try {
+			cleanupTransparentMitmNftRulesFromEnv(process.env);
+		} catch (error) {
+			console.error(
+				`transparent MITM nft cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		redirectApplied = false;
+	};
+	const stop = () => {
+		cleanup();
+		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
+	};
+	process.once("SIGTERM", stop);
+	process.once("SIGINT", stop);
+	try {
+		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () => mitmdump.exitCode);
+		applyTransparentMitmNftRulesFromEnv(process.env);
+		redirectApplied = true;
+		notifySystemdReady("runtime transparent MITM ready");
+		const exit = await waitForChildExit(mitmdump);
+		if (exit.code !== 0 && exit.signal === null) {
+			throw new Error(`mitmdump exited with status ${exit.code}`);
+		}
+	} finally {
+		process.off("SIGTERM", stop);
+		process.off("SIGINT", stop);
+		cleanup();
+	}
+}
+
+function startMitmdump(config: TransparentMitmEnvConfig): ChildProcess {
+	if (!existsSync(config.mitmproxyBinaryPath)) {
+		throw new Error(`mitmdump binary is missing: ${config.mitmproxyBinaryPath}`);
+	}
+	if (!existsSync(config.mitmproxyAddonPath)) {
+		throw new Error(`mitmproxy addon is missing: ${config.mitmproxyAddonPath}`);
+	}
+	const mitmdumpArgs = [
+		"--mode",
+		"transparent",
+		"--listen-host",
+		"127.0.0.1",
+		"--listen-port",
+		String(config.transparentPort),
+		"--set",
+		`confdir=${config.caDir}`,
+		"--set",
+		"stream_large_bodies=1",
+		"--set",
+		"termlog_verbosity=info",
+		"-s",
+		config.mitmproxyAddonPath,
+	];
+	const childEnv: NodeJS.ProcessEnv = {
+		...process.env,
+		CLAWDI_MITM_ENV_FILE: config.envFile ?? process.env.CLAWDI_MITM_ENV_FILE ?? "",
+		HOME: config.caDir,
+	};
+	const command = config.mitmproxyBinaryPath;
+	const args = mitmdumpArgs;
+	const child =
+		runningAsRootCommand() && config.mitmUser !== "root"
+			? spawnAsUser(config.mitmUser, command, args, childEnv)
+			: spawn(command, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+	child.stdout?.pipe(process.stdout);
+	child.stderr?.pipe(process.stderr);
+	return child;
+}
+
+function spawnAsUser(
+	user: string,
+	command: string,
+	args: string[],
+	env: NodeJS.ProcessEnv,
+): ChildProcess {
+	if (commandExistsOnPath("gosu")) {
+		return spawn("gosu", [user, command, ...args], {
+			env: { ...env, USER: user, LOGNAME: user },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	}
+	if (commandExistsOnPath("runuser")) {
+		return spawn("runuser", ["-u", user, "--", command, ...args], {
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	}
+	throw new Error(`cannot drop mitmdump to ${user}; install gosu or runuser`);
+}
+
+function waitForChildExit(
+	child: ChildProcess,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+	return new Promise((resolve) => {
+		child.once("exit", (code, signal) => resolve({ code, signal }));
+	});
+}
+
+function waitForTcpPort(
+	host: string,
+	port: number,
+	timeoutMs: number,
+	exitCode: () => number | null,
+): Promise<void> {
+	const startedAt = Date.now();
+	return new Promise((resolve, reject) => {
+		const attempt = () => {
+			const code = exitCode();
+			if (code !== null) {
+				reject(new Error(`mitmdump exited before listening on ${host}:${port}`));
+				return;
+			}
+			const socket = connect({ host, port });
+			socket.once("connect", () => {
+				socket.destroy();
+				resolve();
+			});
+			socket.once("error", () => {
+				socket.destroy();
+				if (Date.now() - startedAt >= timeoutMs) {
+					reject(new Error(`timed out waiting for mitmdump on ${host}:${port}`));
+					return;
+				}
+				setTimeout(attempt, 100);
+			});
+		};
+		attempt();
+	});
+}
+
+function runningAsRootCommand(): boolean {
+	return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function commandExistsOnPath(command: string): boolean {
+	const result = spawnSync("command", ["-v", command], {
+		shell: true,
+		stdio: "ignore",
+	});
+	return result.status === 0;
 }
 
 function waitForShutdownSignal(): Promise<void> {

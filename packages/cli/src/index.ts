@@ -734,13 +734,13 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("egress")
-	.description("Manage hosted runtime invisible gateway egress")
-	.command("apply")
-	.description("Apply hosted runtime nftables egress interception rules")
+	.command("mitm")
+	.description("Run hosted runtime transparent MITM engine")
+	.command("run")
+	.description("Start mitmproxy and manage runtime nftables redirect lifecycle")
 	.action(async () => {
-		const { runtimeEgressApply } = await import("./commands/runtime.js");
-		runtimeEgressApply();
+		const { runtimeMitmRun } = await import("./commands/runtime.js");
+		await runtimeMitmRun();
 	});
 
 runtimeCmd

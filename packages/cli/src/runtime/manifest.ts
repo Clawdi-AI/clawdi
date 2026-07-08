@@ -64,7 +64,6 @@ import {
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
-import { INVISIBLE_GATEWAY_TRANSPORT_VERSION } from "./invisible-gateway";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import {
 	applyMitmTransparentRuntimeEnv,
@@ -95,6 +94,7 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
+import { TRANSPARENT_MITM_TABLE, TRANSPARENT_MITM_TRANSPORT_VERSION } from "./transparent-mitm";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 export interface RuntimeConvergenceResult {
@@ -123,6 +123,8 @@ export interface RuntimeConvergenceResult {
 		mitmProfileBundle: string | null;
 		mitmSecretFile: string | null;
 		mitmproxy: RuntimeMitmproxyEnsureResult | null;
+		mitmTransparentEnv: string | null;
+		mitmAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
 		instanceSemaphores: string[];
@@ -520,7 +522,7 @@ function writeScopedSecretValues(
 	secretValues: Record<string, string> | undefined,
 	refs: readonly string[],
 	paths: RuntimePaths,
-	owner: "root" | "runtime-user",
+	owner: "root" | "runtime-user" | "mitm-user",
 ): string | null {
 	const scoped = scopedSecretValues(secretValues, refs);
 	if (Object.keys(scoped).length === 0) {
@@ -536,6 +538,9 @@ function writeScopedSecretValues(
 			makeRuntimeUserOwned(dirname(path));
 		}
 		makeRuntimeUserOwned(path);
+	} else if (owner === "mitm-user") {
+		makeRootOwned(dirname(path));
+		makeMitmUserOwned(path);
 	} else {
 		makeRootOwned(dirname(path));
 		makeRootOwned(path);
@@ -699,11 +704,18 @@ function stringValue(value: unknown): string | null {
 }
 
 function makeRuntimeUserOwned(path: string): void {
+	makeSystemUserOwned(path, process.env.CLAWDI_RUNTIME_USER?.trim() ?? "");
+}
+
+function makeMitmUserOwned(path: string): void {
+	makeSystemUserOwned(path, process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm");
+}
+
+function makeSystemUserOwned(path: string, user: string): void {
 	if (!runningAsRoot()) return;
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (!runtimeUser || runtimeUser === "root") return;
-	const result = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
-	const group = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (!user || user === "root") return;
+	const result = spawnSync("id", ["-u", user], { encoding: "utf8" });
+	const group = spawnSync("id", ["-g", user], { encoding: "utf8" });
 	if (result.status !== 0 || group.status !== 0) return;
 	const uid = Number.parseInt(result.stdout.trim(), 10);
 	const gid = Number.parseInt(group.stdout.trim(), 10);
@@ -739,6 +751,16 @@ function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path);
 	makeRuntimeUserOwned(path);
+	try {
+		chmodSync(path, 0o700);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+}
+
+function makeMitmUserPrivateDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeMitmUserOwned(path);
 	try {
 		chmodSync(path, 0o700);
 	} catch {
@@ -1476,7 +1498,7 @@ function writeMitmSecretFile(
 		secretValues,
 		mitmSecretRefs(manifest),
 		paths,
-		"root",
+		"mitm-user",
 	);
 }
 
@@ -2672,7 +2694,7 @@ function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	const uid =
 		runtimeUser && runtimeUser !== "root" && runningAsRoot()
-			? String(runtimeEgressAgentUid(runtimeUser))
+			? String(runtimeUserUid(runtimeUser))
 			: null;
 	const runtimeDir = uid ? `/run/user/${uid}` : null;
 	return {
@@ -2717,7 +2739,7 @@ function waitForUserManagerControlSocket(runtimeDir: string): boolean {
 
 function ensureRuntimeUserManagerReady(runtimeUser: string): void {
 	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
-	const uid = runtimeEgressAgentUid(runtimeUser);
+	const uid = runtimeUserUid(runtimeUser);
 	const gid = runtimeUserGid(runtimeUser);
 	const runtimeDir = `/run/user/${uid}`;
 	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
@@ -2818,6 +2840,81 @@ function writeMitmproxyStatus(
 	makeRootOwned(dirname(paths.mitmproxyStatus));
 	makeRootOwned(paths.mitmproxyStatus);
 	return result;
+}
+
+function writeMitmproxyAddon(paths: RuntimePaths): { path: string; sha256: string } {
+	const source = resolvePackagedMitmproxyAddon();
+	const content = readFileSync(source, "utf-8");
+	writePrivateFileAtomic(paths.mitmAddon, content, { mode: 0o644, dirMode: 0o755 });
+	makeRootOwned(dirname(paths.mitmAddon));
+	makeRootOwned(paths.mitmAddon);
+	return { path: paths.mitmAddon, sha256: sha256String(content) };
+}
+
+function clearMitmproxyAddon(paths: RuntimePaths): null {
+	rmSync(paths.mitmAddon, { force: true });
+	return null;
+}
+
+function resolvePackagedMitmproxyAddon(): string {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(here, "../../mitmproxy-addon/clawdi_mitm_addon.py"),
+		resolve(here, "../mitmproxy-addon/clawdi_mitm_addon.py"),
+		resolve(here, "mitmproxy-addon/clawdi_mitm_addon.py"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	throw new Error("packaged mitmproxy addon is missing");
+}
+
+function writeTransparentMitmEnvFile(input: {
+	program: RuntimeMitmSystemdProgram | null;
+	paths: RuntimePaths;
+	runtimeUser: string;
+	runtimeUid: number;
+	mitmUser: string;
+	mitmUid: number;
+}): string | null {
+	if (!input.program) {
+		rmSync(input.paths.mitmTransparentEnv, { force: true });
+		return null;
+	}
+	const env: Record<string, string> = {
+		CLAWDI_RUNTIME_USER: input.runtimeUser,
+		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
+		CLAWDI_MITM_USER: input.mitmUser,
+		CLAWDI_MITM_UID: String(input.mitmUid),
+		CLAWDI_MITM_TRANSPARENT_PORT: String(input.program.transparentPort),
+		CLAWDI_MITM_NFT_TABLE: TRANSPARENT_MITM_TABLE,
+		CLAWDI_MITM_PROFILE_BUNDLE: input.program.profileBundlePath,
+		CLAWDI_MITM_SECRET_FILE: input.program.secretFilePath ?? "",
+		CLAWDI_MITM_CA_DIR: input.paths.mitmCaDir,
+		CLAWDI_MITM_CA_CERT: input.paths.mitmCaCert,
+		CLAWDI_MITM_SYSTEM_CA_BUNDLE: input.program.systemCaBundle,
+		CLAWDI_MITM_TRANSPORT_VERSION: TRANSPARENT_MITM_TRANSPORT_VERSION,
+		CLAWDI_MITMPROXY_VERSION: input.program.mitmproxy.version,
+		CLAWDI_MITMPROXY_URL: input.program.mitmproxy.url,
+		CLAWDI_MITMPROXY_SHA256: input.program.mitmproxy.sha256,
+		CLAWDI_MITMPROXY_BINARY_PATH: input.program.mitmproxy.binaryPath,
+		CLAWDI_MITMPROXY_ADDON_PATH: input.program.addonPath,
+		CLAWDI_MITMPROXY_ADDON_SHA256: input.program.addonSha256,
+	};
+	const lines = Object.entries(env)
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([key, value]) => `${key}=${systemdEnvironmentFileQuote(value)}`);
+	writePrivateFileAtomic(input.paths.mitmTransparentEnv, `${lines.join("\n")}\n`, {
+		mode: 0o644,
+		dirMode: 0o755,
+	});
+	makeRootOwned(dirname(input.paths.mitmTransparentEnv));
+	makeRootOwned(input.paths.mitmTransparentEnv);
+	return input.paths.mitmTransparentEnv;
+}
+
+function sha256String(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 function removeStaleRuntimeRunConfigs(writtenRunConfigIds: Set<string>, paths: RuntimePaths): void {
@@ -3151,9 +3248,11 @@ interface RuntimeSystemdUserProgram {
 
 interface RuntimeMitmSystemdProgram {
 	profileBundlePath: string;
-	proxyUrl: string;
+	envFilePath: string;
 	transparentPort: number;
-	caFile: string;
+	addonPath: string;
+	addonSha256: string;
+	mitmproxy: Extract<RuntimeMitmproxyEnsureResult, { status: "ready" }>;
 	systemCaBundle: string;
 	secretFilePath: string | null;
 }
@@ -3163,14 +3262,20 @@ function runtimeMitmSystemdProgram(
 	paths: RuntimePaths,
 	profileBundlePath: string | null,
 	secretFilePath: string | null,
+	mitmproxy: RuntimeMitmproxyEnsureResult | null,
+	addon: { path: string; sha256: string } | null,
 ): RuntimeMitmSystemdProgram | null {
 	if (!profileBundlePath) return null;
+	if (mitmproxy?.status !== "ready") return null;
+	if (!addon) return null;
 	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
 	return {
 		profileBundlePath,
-		proxyUrl: `http://127.0.0.1:${port}`,
+		envFilePath: paths.mitmTransparentEnv,
 		transparentPort: port,
-		caFile: paths.mitmSystemCaFile,
+		addonPath: addon.path,
+		addonSha256: addon.sha256,
+		mitmproxy,
 		systemCaBundle: SYSTEM_CA_BUNDLE,
 		secretFilePath,
 	};
@@ -3234,38 +3339,52 @@ export function runtimeSidecarProgramRevision(
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
-		mitmProfiles: manifest.mitmProfiles ?? null,
-		secretValues: secretValues ?? {},
-		runtimeSidecar: "hosted-runtime-sidecar-transparent-v1",
-		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+		bridgeTokenPresent: Boolean(secretValues),
+		runtimeSidecar: "hosted-runtime-sidecar-bridge-v2",
 	});
 }
 
-function runtimeEgressProgramRevision(
+function runtimeMitmProgramRevision(
 	manifest: RuntimeManifest,
 	mitmProgram: RuntimeMitmSystemdProgram,
 ): string {
 	return revisionHash({
-		runtimeEgress: "hosted-runtime-egress-nft-v1",
+		runtimeMitm: "hosted-runtime-mitm-mitmdump-v1",
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		transparentPort: mitmProgram.transparentPort,
-		transport: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
+		profileBundlePath: mitmProgram.profileBundlePath,
+		secretFilePath: mitmProgram.secretFilePath,
+		mitmproxy: mitmProgram.mitmproxy,
+		addonSha256: mitmProgram.addonSha256,
+		transport: TRANSPARENT_MITM_TRANSPORT_VERSION,
 	});
 }
 
-function runtimeEgressAgentUid(runtimeUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_EGRESS_AGENT_UID?.trim() ?? "", 10);
+function runtimeUserUid(runtimeUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_UID?.trim() ?? "", 10);
 	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
 		return explicit;
 	}
-	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
+	return systemUserUid(runtimeUser, runtimeUser === "clawdi" ? 10_001 : null);
+}
+
+function runtimeMitmUid(mitmUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_MITM_UID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
+	return systemUserUid(mitmUser, mitmUser === "clawdi-mitm" ? 10_002 : null);
+}
+
+function systemUserUid(user: string, fallback: number | null): number {
+	const resolved = spawnSync("id", ["-u", user], { encoding: "utf8" });
 	if (resolved.status === 0) {
 		const uid = Number.parseInt(resolved.stdout.trim(), 10);
 		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
 	}
-	if (runtimeUser === "clawdi") return 10_001;
-	throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
+	if (fallback !== null) return fallback;
+	throw new Error(`could not resolve uid for ${user}`);
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
@@ -3774,6 +3893,7 @@ function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string
 		"clawdi-runtime-watch.service",
 		"clawdi-daemon.service",
 		"clawdi-runtime-egress.service",
+		"clawdi-runtime-mitm.service",
 		"clawdi-runtime-sidecar.service",
 	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -3843,7 +3963,7 @@ function writeSystemdUnits(
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const serviceInstallErrors: string[] = [];
-	const egressAgentUid = shouldRunMitm ? runtimeEgressAgentUid(runtimeUser) : null;
+	const runtimeUid = shouldRunMitm ? runtimeUserUid(runtimeUser) : null;
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -3888,32 +4008,25 @@ function writeSystemdUnits(
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
-				name: "clawdi-runtime-egress",
-				description: "Clawdi hosted runtime invisible gateway egress rules",
+				name: "clawdi-runtime-mitm",
+				description: "Clawdi hosted runtime transparent MITM",
 				command: "clawdi",
-				args: ["runtime", "egress", "apply"],
+				args: ["runtime", "mitm", "run"],
 				cwd: workspaceRoot,
 				env: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_EGRESS_AGENT_UID: String(egressAgentUid),
-					CLAWDI_MITM_TRANSPARENT_PORT: String(mitmProgram.transparentPort),
-					CLAWDI_MITM_SIDECAR_UID: "0",
-					CLAWDI_MITM_TRANSPORT_VERSION: INVISIBLE_GATEWAY_TRANSPORT_VERSION,
-					CLAWDI_RUNTIME_REV: runtimeEgressProgramRevision(manifest, mitmProgram),
+					CLAWDI_MITM_ENV_FILE: mitmProgram.envFilePath,
+					CLAWDI_RUNTIME_REV: runtimeMitmProgramRevision(manifest, mitmProgram),
 				},
-				serviceType: "oneshot",
-				restart: false,
-				extraUnitLines: [`Before=clawdi-runtime-sidecar.service user@${egressAgentUid}.service`],
-				extraServiceLines: [
-					"EnvironmentFile=-/etc/clawdi/invisible-gateway.env",
-					"RemainAfterExit=yes",
-				],
+				serviceType: "notify",
+				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
+				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
 	}
 
-	if (shouldRunBridge || shouldRunMitm) {
+	if (shouldRunBridge) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -3927,25 +4040,9 @@ function writeSystemdUnits(
 					CLAWDI_AUTH_TOKEN: "",
 					[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
-					CLAWDI_MITM_PROFILE_BUNDLE:
-						shouldRunMitm && mitmProgram ? mitmProgram.profileBundlePath : "",
-					CLAWDI_MITM_MODE: shouldRunMitm ? "transparent" : "",
-					CLAWDI_MITM_PROXY_URL: shouldRunMitm && mitmProgram ? mitmProgram.proxyUrl : "",
-					CLAWDI_MITM_TRANSPARENT_PORT:
-						shouldRunMitm && mitmProgram ? String(mitmProgram.transparentPort) : "",
-					CLAWDI_MITM_CA_FILE: shouldRunMitm && mitmProgram ? mitmProgram.caFile : "",
-					CLAWDI_MITM_INSTALL_SYSTEM_CA: shouldRunMitm ? "1" : "",
-					CLAWDI_MITM_SYSTEM_CA_BUNDLE:
-						shouldRunMitm && mitmProgram ? mitmProgram.systemCaBundle : "",
-					CLAWDI_MITM_SECRET_FILE:
-						shouldRunMitm && mitmProgram ? (mitmProgram.secretFilePath ?? "") : "",
-					CLAWDI_MITM_TRANSPORT_VERSION: shouldRunMitm ? INVISIBLE_GATEWAY_TRANSPORT_VERSION : "",
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
 				},
 				serviceType: "notify",
-				extraUnitLines: shouldRunMitm
-					? ["Requires=clawdi-runtime-egress.service", "After=clawdi-runtime-egress.service"]
-					: undefined,
 				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
@@ -4088,6 +4185,7 @@ export function convergeRuntimeManifest(
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	makeRootReadableDir(paths.mitmProfileRoot);
 	makeRootReadableDir(paths.mitmRoot);
+	makeMitmUserPrivateDir(paths.mitmCaDir);
 	makeRootReadableDir(dirname(paths.mitmSystemCaFile));
 	makeRuntimeUserPrivateDir(paths.mitmScratchRoot);
 
@@ -4155,6 +4253,7 @@ export function convergeRuntimeManifest(
 		mitmProfileBundlePath ? ensureRuntimeMitmproxy(manifest.mitmproxy, paths) : null,
 		paths,
 	);
+	const mitmAddon = mitmProfileBundlePath ? writeMitmproxyAddon(paths) : clearMitmproxyAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	try {
@@ -4167,12 +4266,26 @@ export function convergeRuntimeManifest(
 		);
 	}
 	const mitmSecretFile = writeMitmSecretFile(manifest, secretValues, paths);
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const mitmUser = process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm";
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,
 		paths,
 		mitmProfileBundlePath,
 		mitmSecretFile,
+		mitmproxy,
+		mitmAddon,
 	);
+	const runtimeUid = mitmSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
+	const mitmUid = mitmSystemdProgram ? runtimeMitmUid(mitmUser) : 0;
+	const mitmTransparentEnv = writeTransparentMitmEnvFile({
+		program: mitmSystemdProgram,
+		paths,
+		runtimeUser,
+		runtimeUid,
+		mitmUser,
+		mitmUid,
+	});
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
@@ -4392,6 +4505,8 @@ export function convergeRuntimeManifest(
 			mitmProfileBundle: mitmProfileBundlePath,
 			mitmSecretFile,
 			mitmproxy,
+			mitmTransparentEnv,
+			mitmAddon: mitmAddon?.path ?? null,
 			liveSyncEnvironments,
 			daemonAuthTokenFile,
 			instanceSemaphores,

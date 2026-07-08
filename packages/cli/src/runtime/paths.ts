@@ -55,6 +55,10 @@ export interface RuntimePaths {
 	runtimeSecretFileRoot: string;
 	mitmRoot: string;
 	mitmScratchRoot: string;
+	mitmTransparentEnv: string;
+	mitmAddon: string;
+	mitmCaDir: string;
+	mitmCaCert: string;
 	mitmSystemCaFile: string;
 	daemonAuthToken: string;
 	instanceData: string;
@@ -164,6 +168,10 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		runtimeSecretFileRoot: join(runRoot, "secrets", "runtimes"),
 		mitmRoot: join(runRoot, "mitm"),
 		mitmScratchRoot: join(runRoot, "mitm-scratch"),
+		mitmTransparentEnv: join(runRoot, "mitm", "transparent-mitm.env"),
+		mitmAddon: join(runRoot, "mitm", "clawdi_mitm_addon.py"),
+		mitmCaDir: join(runRoot, "mitm", "ca"),
+		mitmCaCert: join(runRoot, "mitm", "ca", "mitmproxy-ca-cert.pem"),
 		mitmSystemCaFile: join(runRoot, "mitm", "systemd", "ca.pem"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),

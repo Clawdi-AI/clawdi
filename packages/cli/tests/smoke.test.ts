@@ -279,6 +279,22 @@ chmod +x "$HOME/.local/bin/hermes"
 `,
 		);
 		chmodSync(hermesInstaller, 0o700);
+		const mitmproxy = {
+			version: "12.1.0-test",
+			url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.1.0/mitmproxy-12.1.0-linux-x86_64.tar.gz",
+			sha256: "1".repeat(64),
+		};
+		const mitmdump = join(
+			serviceStateRoot,
+			"maintained",
+			"mitmproxy",
+			mitmproxy.version,
+			mitmproxy.sha256,
+			"mitmdump",
+		);
+		mkdirSync(dirname(mitmdump), { recursive: true });
+		writeFileSync(mitmdump, "#!/usr/bin/env sh\necho fake mitmdump\n");
+		chmodSync(mitmdump, 0o755);
 
 		const manifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -289,6 +305,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			issuedAt: "2026-06-03T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
 			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
+			mitmproxy,
 			runtimes: {
 				openclaw: {
 					enabled: true,
@@ -398,8 +415,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			);
 			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
 			expect(parsed.convergence.systemdSystemUnits).toEqual([
-				join(runRoot, "systemd", "system", "clawdi-runtime-egress.service"),
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
 			]);
 
 			for (const outputPath of [
@@ -430,11 +446,12 @@ chmod +x "$HOME/.local/bin/hermes"
 					"hermes-gateway.service.d",
 					"10-clawdi-hosted.conf",
 				),
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
 				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
-				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
-				join(runRoot, "systemd", "system", "clawdi-runtime-egress.service"),
+				join(runRoot, "systemd", "env", "clawdi-runtime-mitm.service.env"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
+				join(runRoot, "mitm", "transparent-mitm.env"),
+				join(runRoot, "mitm", "clawdi_mitm_addon.py"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
 				join(home, "clawdi"),
@@ -540,8 +557,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				),
 				"utf-8",
 			);
-			const sidecarUnit = readFileSync(
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
+			const mitmUnit = readFileSync(
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
 				"utf-8",
 			);
 			const openclawEnv = readFileSync(
@@ -554,7 +571,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(openclawUnit).toContain(
 				`ExecStart="${join(home, ".openclaw", "bin", "openclaw")}" "gateway" "run"`,
 			);
-			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+			expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+			expect(existsSync(join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"))).toBe(
+				false,
+			);
 			expect(hermesUnit).not.toContain("clawdi run -- hermes");
 			expect(openclawUnit).not.toContain("clawdi run -- openclaw");
 			expect(openclawEnv).toContain('CLAWDI_RUNTIME_REV="');

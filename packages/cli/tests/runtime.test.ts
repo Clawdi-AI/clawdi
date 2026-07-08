@@ -76,6 +76,9 @@ const ENV_KEYS = [
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
 	"CLAWDI_SYSTEMCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
+	"CLAWDI_RUNTIME_UID",
+	"CLAWDI_MITM_USER",
+	"CLAWDI_MITM_UID",
 	"OPENCLAW_GATEWAY_TOKEN",
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
@@ -152,6 +155,25 @@ echo "seeded clawdi"
 			error: null,
 		}),
 	);
+}
+
+const TEST_MITMPROXY_PIN = {
+	version: "12.1.0-test",
+	url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.1.0/mitmproxy-12.1.0-linux-x86_64.tar.gz",
+	sha256: "1".repeat(64),
+};
+
+function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_MITMPROXY_PIN {
+	const binary = join(
+		paths.mitmproxyMaintainedRoot,
+		TEST_MITMPROXY_PIN.version,
+		TEST_MITMPROXY_PIN.sha256,
+		"mitmdump",
+	);
+	mkdirSync(dirname(binary), { recursive: true });
+	writeFileSync(binary, "#!/usr/bin/env sh\necho fake mitmdump\n");
+	chmodSync(binary, 0o755);
+	return TEST_MITMPROXY_PIN;
 }
 
 type HostedRunFixture = {
@@ -3531,11 +3553,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: [
-					"clawdi-runtime-egress.service",
-					"clawdi-runtime-sidecar.service",
-					"clawdi-runtime-watch.service",
-				],
+				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(
@@ -4583,11 +4601,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: [
-					"clawdi-runtime-egress.service",
-					"clawdi-runtime-sidecar.service",
-					"clawdi-runtime-watch.service",
-				],
+				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 		} finally {
@@ -4599,7 +4613,7 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("runtime watch reasserts invisible gateway egress across CLI self-upgrade", async () => {
+	it("runtime watch reapplies transparent MITM across CLI self-upgrade", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4675,23 +4689,25 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		);
 		const paths = getRuntimePaths();
 		seedCurrentCliInstall(state, "clawdi@0.13.1-beta.0", "0.13.1-beta.0");
+		const mitmproxy = seedMitmproxyCache(paths);
 		convergeRuntimeManifest(
 			{
 				source: "fixture-file",
-				sourcePath: "test://self-upgrade-egress-before",
+				sourcePath: "test://self-upgrade-mitm-before",
 				offline: false,
 				secretValues: {
 					"provider.default.apiKey": "sk-before-upgrade",
 				},
 				manifest: {
 					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_cli_egress",
-					environmentId: "env_cli_egress",
-					instanceId: "iid_cli_egress",
+					deploymentId: "dep_cli_mitm",
+					environmentId: "env_cli_mitm",
+					instanceId: "iid_cli_mitm",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					workspaceRoot: join(home, "clawdi"),
 					controlPlane: { apiUrl: "https://cloud-api.test" },
+					mitmproxy,
 					runtimes: {
 						openclaw: { enabled: true },
 					},
@@ -4750,13 +4766,14 @@ printf 'ActiveState=active\\nSubState=running\\n'
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								runtime: "openclaw",
-								deploymentId: "dep_cli_egress",
-								environmentId: "env_cli_egress",
-								instanceId: "iid_cli_egress",
+								deploymentId: "dep_cli_mitm",
+								environmentId: "env_cli_mitm",
+								instanceId: "iid_cli_mitm",
 								generation: 2,
 								issuedAt: "2026-06-06T00:00:00Z",
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								mitmproxy,
 								clawdiCli: {
 									source: "npm:clawdi",
 									packageSpec: "clawdi@0.13.2-beta.0",
@@ -4783,7 +4800,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 							status: 200,
 							headers: {
 								"content-type": "application/json",
-								etag: '"etag-cli-egress-2"',
+								etag: '"etag-cli-mitm-2"',
 							},
 						},
 					),
@@ -4796,7 +4813,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 						status: 200,
 						headers: {
 							"content-type": "application/json",
-							etag: '"channels-cli-egress-1"',
+							etag: '"channels-cli-mitm-1"',
 						},
 					}),
 			},
@@ -4812,23 +4829,20 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.status).toBe("applied");
 			expect(event.selfReexec).toBe(true);
 			expect(event.systemdApply.applied).toBe(true);
-			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-sidecar.service");
+			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-mitm.service");
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			const egressRestart = systemctlCalls.indexOf("restart clawdi-runtime-egress.service");
-			const sidecarRestart = systemctlCalls.indexOf("restart clawdi-runtime-sidecar.service");
-			expect(egressRestart).toBeGreaterThan(-1);
-			expect(sidecarRestart).toBeGreaterThan(-1);
-			expect(egressRestart).toBeLessThan(sidecarRestart);
-			const egressEnv = readSystemdEnvFile(paths, "clawdi-runtime-egress");
-			const egressUnit = readSystemdSystemUnit(paths, "clawdi-runtime-egress");
-			expect(egressEnv).toContain('CLAWDI_MITM_TRANSPORT_VERSION="clawdi-invisible-gateway-v1"');
-			expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');
-			expect(egressEnv).toContain('CLAWDI_RUNTIME_REV="');
-			expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
-			expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
-			expect(readSystemdSystemUnit(paths, "clawdi-runtime-sidecar")).toContain(
-				"After=clawdi-runtime-egress.service",
+			expect(systemctlCalls).toContain("restart clawdi-runtime-mitm.service");
+			const mitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-mitm");
+			const mitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-mitm");
+			const transparentMitmEnv = readFileSync(paths.mitmTransparentEnv, "utf-8");
+			expect(mitmEnv).toContain(`CLAWDI_MITM_ENV_FILE="${paths.mitmTransparentEnv}"`);
+			expect(mitmEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+			expect(mitmUnit).not.toContain("clawdi-runtime-egress.service");
+			expect(transparentMitmEnv).toContain(
+				'CLAWDI_MITM_TRANSPORT_VERSION="clawdi-transparent-mitm-v1"',
 			);
+			expect(transparentMitmEnv).toContain(`CLAWDI_MITMPROXY_ADDON_PATH="${paths.mitmAddon}"`);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -5172,11 +5186,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: [
-					"clawdi-runtime-egress.service",
-					"clawdi-runtime-sidecar.service",
-					"clawdi-runtime-watch.service",
-				],
+				systemUnitsChanged: ["clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
@@ -7128,6 +7138,7 @@ exit 64
 		);
 		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
+		expect(systemUnitNames).not.toContain("clawdi-runtime-mitm.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const runtimeSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
@@ -7160,6 +7171,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		const mitmproxy = seedMitmproxyCache();
 
 		const convergence = convergeRuntimeManifest(
 			{
@@ -7171,6 +7183,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-26T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
+					mitmproxy,
 					runtimes: {
 						openclaw: { enabled: true },
 						hermes: { enabled: false },
@@ -7247,6 +7260,10 @@ exit 64
 		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
 			path.split("/").at(-1),
 		);
+		const mitmSecretPath = join(run, "secrets", "mitm-secrets.json");
+		const runtimeMitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-mitm");
+		const runtimeMitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-mitm");
+		const transparentMitmEnv = readFileSync(paths.mitmTransparentEnv, "utf-8");
 		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -7256,9 +7273,24 @@ exit 64
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
 		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
-		expect(systemUnitNames).toContain("clawdi-runtime-egress.service");
+		expect(systemUnitNames).toContain("clawdi-runtime-mitm.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
+		expect(runtimeMitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+		expect(runtimeMitmUnit).toContain("Before=user@10001.service");
+		expect(runtimeMitmEnv).toContain(`CLAWDI_MITM_ENV_FILE="${paths.mitmTransparentEnv}"`);
+		expect(transparentMitmEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
+		expect(transparentMitmEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
+		expect(transparentMitmEnv).toContain('CLAWDI_MITM_USER="clawdi-mitm"');
+		expect(transparentMitmEnv).toContain('CLAWDI_MITM_UID="10002"');
+		expect(transparentMitmEnv).toContain('CLAWDI_MITM_NFT_TABLE="clawdi_transparent_mitm"');
+		expect(transparentMitmEnv).toContain(
+			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
+		);
+		expect(transparentMitmEnv).toContain(`CLAWDI_MITM_SECRET_FILE="${mitmSecretPath}"`);
+		expect(transparentMitmEnv).toContain(`CLAWDI_MITMPROXY_BINARY_PATH="`);
+		expect(transparentMitmEnv).toContain(`CLAWDI_MITMPROXY_ADDON_PATH="${paths.mitmAddon}"`);
 		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(runtimeSidecarUnit).not.toContain("clawdi-runtime-egress.service");
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
@@ -7271,7 +7303,6 @@ exit 64
 		const aggregateSecretPath = join(run, "secrets", "runtime-secrets.json");
 		expect(statSync(aggregateSecretPath).mode & 0o777).toBe(0o600);
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
-		const mitmSecretPath = join(run, "secrets", "mitm-secrets.json");
 		expect(statSync(mitmSecretPath).mode & 0o777).toBe(0o600);
 		const mitmSecrets = JSON.parse(readFileSync(mitmSecretPath, "utf-8"));
 		expect(mitmSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
@@ -7328,7 +7359,7 @@ exit 64
 		expect(openclawEnv).not.toContain("provider.default.apiKey");
 	});
 
-	it("runs MITM as a transparent systemd sidecar with nft egress", () => {
+	it("runs MITM as a transparent systemd engine with lifecycle nft redirect", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7338,17 +7369,19 @@ exit 64
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		const mitmproxy = seedMitmproxyCache();
 
 		convergeRuntimeManifest(
 			{
 				manifest: {
 					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_mitm_sidecar",
-					environmentId: "env_mitm_sidecar",
-					instanceId: "iid_mitm_sidecar",
+					deploymentId: "dep_transparent_mitm",
+					environmentId: "env_transparent_mitm",
+					instanceId: "iid_transparent_mitm",
 					generation: 1,
 					issuedAt: "2026-06-26T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
+					mitmproxy,
 					runtimes: {
 						openclaw: { enabled: true },
 						hermes: { enabled: false },
@@ -7371,7 +7404,7 @@ exit 64
 					recovery: {},
 				},
 				source: "fixture-file",
-				sourcePath: "test://mitm-sidecar",
+				sourcePath: "test://transparent-mitm",
 				offline: false,
 				secretValues: {},
 			},
@@ -7379,35 +7412,45 @@ exit 64
 		);
 
 		const paths = getRuntimePaths();
-		const egressUnit = readSystemdSystemUnit(paths, "clawdi-runtime-egress");
-		const egressEnv = readSystemdEnvFile(paths, "clawdi-runtime-egress");
-		const mitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
-		const mitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
+		const mitmUnit = readSystemdSystemUnit(paths, "clawdi-runtime-mitm");
+		const mitmEnv = readSystemdEnvFile(paths, "clawdi-runtime-mitm");
+		const transparentMitmEnv = readFileSync(paths.mitmTransparentEnv, "utf-8");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-		expect(egressUnit).toContain("Type=oneshot");
-		expect(egressUnit).toContain("RemainAfterExit=yes");
-		expect(egressUnit).toContain("EnvironmentFile=-/etc/clawdi/invisible-gateway.env");
-		expect(egressUnit).toContain("Before=clawdi-runtime-sidecar.service user@10001.service");
-		expect(egressUnit).toContain('ExecStart="clawdi" "runtime" "egress" "apply"');
-		expect(egressEnv).toContain('CLAWDI_EGRESS_AGENT_UID="10001"');
-		expect(egressEnv).toContain("CLAWDI_MITM_TRANSPARENT_PORT=");
-		expect(egressEnv).toContain('CLAWDI_MITM_TRANSPORT_VERSION="clawdi-invisible-gateway-v1"');
 		expect(mitmUnit).toContain("Type=notify");
-		expect(mitmUnit).toContain("Requires=clawdi-runtime-egress.service");
-		expect(mitmUnit).toContain("After=clawdi-runtime-egress.service");
-		expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(mitmUnit).toContain("Before=user@10001.service");
+		expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+		expect(mitmUnit).not.toContain("clawdi-runtime-egress.service");
+		expect(mitmEnv).toContain(`CLAWDI_MITM_ENV_FILE="${paths.mitmTransparentEnv}"`);
+		expect(transparentMitmEnv).toContain(
+			'CLAWDI_MITM_TRANSPORT_VERSION="clawdi-transparent-mitm-v1"',
+		);
+		expect(transparentMitmEnv).toContain('CLAWDI_MITM_NFT_TABLE="clawdi_transparent_mitm"');
+		expect(transparentMitmEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
+		expect(transparentMitmEnv).toContain('CLAWDI_MITM_UID="10002"');
 		expect(mitmEnv).toContain(
+			`CLAWDI_MITM_ENV_FILE="${join(run, "mitm", "transparent-mitm.env")}"`,
+		);
+		expect(transparentMitmEnv).toContain(
 			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
 		);
-		expect(mitmEnv).toContain('CLAWDI_MITM_MODE="transparent"');
-		expect(mitmEnv).toContain(`CLAWDI_MITM_CA_FILE="${join(run, "mitm", "systemd", "ca.pem")}"`);
-		expect(mitmEnv).toContain('CLAWDI_MITM_INSTALL_SYSTEM_CA="1"');
-		expect(mitmEnv).toContain('CLAWDI_MITM_SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"');
+		expect(transparentMitmEnv).toContain(`CLAWDI_MITMPROXY_ADDON_PATH="${paths.mitmAddon}"`);
+		expect(transparentMitmEnv).toContain(
+			`CLAWDI_MITMPROXY_BINARY_PATH="${join(
+				state,
+				"maintained",
+				"mitmproxy",
+				mitmproxy.version,
+				mitmproxy.sha256,
+				"mitmdump",
+			)}"`,
+		);
 		expect(statSync(join(state, "config", "mitm")).mode & 0o777).toBe(0o755);
 		expect(statSync(join(state, "config", "mitm", "profiles.json")).mode & 0o777).toBe(0o644);
 		expect(statSync(join(run, "mitm")).mode & 0o777).toBe(0o755);
-		expect(statSync(join(run, "mitm", "systemd")).mode & 0o777).toBe(0o755);
+		expect(statSync(paths.mitmAddon).mode & 0o777).toBe(0o644);
+		expect(statSync(paths.mitmTransparentEnv).mode & 0o777).toBe(0o644);
+		expect(statSync(paths.mitmCaDir).mode & 0o777).toBe(0o700);
 		expect(statSync(join(run, "mitm-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawEnv).not.toContain("CLAWDI_MITM_PROFILE_BUNDLE");
@@ -7690,6 +7733,7 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		const mitmproxy = seedMitmproxyCache();
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -7709,6 +7753,7 @@ exit 64
 								manifestUrl: "https://runtime-source.test/desired-state",
 								cloudApiUrl: "https://cloud-api.test",
 							},
+							mitmproxy,
 							runtimes: {
 								openclaw: hostedOpenClawRuntime(),
 							},
@@ -7730,7 +7775,8 @@ exit 64
 
 		try {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
-			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			if (!("manifest" in loaded))
+				throw new Error(`expected manifest load success: ${JSON.stringify(loaded)}`);
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 			expect(convergence.mode).toBe("normal");
@@ -7754,8 +7800,7 @@ exit 64
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
-				join(paths.systemdSystemRoot, "clawdi-runtime-egress.service"),
-				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-mitm.service"),
 			]);
 			expect(convergence.outputs.systemdUserUnits).toEqual([
 				join(paths.systemdUserRoot, "openclaw-gateway.service"),

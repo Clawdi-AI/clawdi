@@ -433,7 +433,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("sk-managed");
 	});
 
-	test("includes secret values in runtime and sidecar program revisions", () => {
+	test("keeps runtime secret revisions separate from bridge sidecar revisions", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(paths, {
 			openclaw: {
@@ -463,7 +463,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
-		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).not.toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
 		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).toBe(sidecarRevision);
 	});
 
