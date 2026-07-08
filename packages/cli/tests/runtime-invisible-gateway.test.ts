@@ -15,11 +15,12 @@ describe("runtime invisible gateway nftables", () => {
 			transparentPort: 25080,
 			resolverIpv4: ["10.43.0.10"],
 			resolverIpv6: ["fd00::10"],
+			replaceExistingTable: true,
 		});
 
 		expect(rules).toContain("# clawdi-invisible-gateway-v1");
 		expect(rules).not.toContain("flush ruleset");
-		expect(rules).toContain("destroy table inet clawdi_invisible_gateway");
+		expect(rules).toContain("delete table inet clawdi_invisible_gateway");
 		expect(rules).toContain("add table inet clawdi_invisible_gateway");
 		expect(rules).toContain(
 			"add chain inet clawdi_invisible_gateway output_nat { type nat hook output priority -100; policy accept; }",

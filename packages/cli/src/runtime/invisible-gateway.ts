@@ -10,6 +10,7 @@ interface InvisibleGatewayNftRulesInput {
 	transparentPort: number;
 	resolverIpv4: string[];
 	resolverIpv6: string[];
+	replaceExistingTable?: boolean;
 }
 
 export interface InvisibleGatewayApplyResult {
@@ -29,7 +30,7 @@ export function buildInvisibleGatewayNftRules(input: InvisibleGatewayNftRulesInp
 	const resolverIpv6 = unique(input.resolverIpv6.filter(isIpv6));
 	const lines = [
 		`# ${INVISIBLE_GATEWAY_TRANSPORT_VERSION}`,
-		`destroy table inet ${INVISIBLE_GATEWAY_TABLE}`,
+		...(input.replaceExistingTable ? [`delete table inet ${INVISIBLE_GATEWAY_TABLE}`] : []),
 		`add table inet ${INVISIBLE_GATEWAY_TABLE}`,
 		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver4 { type ipv4_addr; flags interval; }`,
 		`add set inet ${INVISIBLE_GATEWAY_TABLE} resolver6 { type ipv6_addr; flags interval; }`,
@@ -72,6 +73,7 @@ export function applyInvisibleGatewayRulesFromEnv(
 		transparentPort,
 		resolverIpv4: resolvers.ipv4,
 		resolverIpv6: resolvers.ipv6,
+		replaceExistingTable: nftTableExists(INVISIBLE_GATEWAY_TABLE),
 	});
 	const result = spawnSync("nft", ["-f", "-"], {
 		input: rules,
@@ -90,6 +92,14 @@ export function applyInvisibleGatewayRulesFromEnv(
 		resolverIpv4: resolvers.ipv4,
 		resolverIpv6: resolvers.ipv6,
 	};
+}
+
+function nftTableExists(table: string): boolean {
+	const result = spawnSync("nft", ["list", "table", "inet", table], {
+		encoding: "utf8",
+		stdio: ["ignore", "ignore", "ignore"],
+	});
+	return result.status === 0;
 }
 
 export function readResolverAddresses(path: string): { ipv4: string[]; ipv6: string[] } {
