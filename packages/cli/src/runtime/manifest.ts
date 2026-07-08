@@ -76,6 +76,7 @@ import {
 	hasEnabledMitmProfiles,
 	writeMitmProfileBundle,
 } from "./mitm-profiles";
+import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import {
 	buildRuntimeRunConfig,
@@ -121,6 +122,7 @@ export interface RuntimeConvergenceResult {
 		systemdUserUnits: string[];
 		mitmProfileBundle: string | null;
 		mitmSecretFile: string | null;
+		mitmproxy: RuntimeMitmproxyEnsureResult | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
 		instanceSemaphores: string[];
@@ -2804,6 +2806,20 @@ function clearMitmProfileBundle(paths: RuntimePaths): null {
 	return null;
 }
 
+function writeMitmproxyStatus(
+	result: RuntimeMitmproxyEnsureResult | null,
+	paths: RuntimePaths,
+): RuntimeMitmproxyEnsureResult | null {
+	if (!result) {
+		rmSync(paths.mitmproxyStatus, { force: true });
+		return null;
+	}
+	writeJsonFile(paths.mitmproxyStatus, result);
+	makeRootOwned(dirname(paths.mitmproxyStatus));
+	makeRootOwned(paths.mitmproxyStatus);
+	return result;
+}
+
 function removeStaleRuntimeRunConfigs(writtenRunConfigIds: Set<string>, paths: RuntimePaths): void {
 	if (!existsSync(paths.runConfigRoot)) return;
 	for (const entry of readdirSync(paths.runConfigRoot)) {
@@ -4084,6 +4100,7 @@ export function convergeRuntimeManifest(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		controlPlane: manifest.controlPlane,
+		mitmproxy: manifest.mitmproxy ?? null,
 		auth: {
 			source: "runtime-instance-data",
 			token: "<redacted>",
@@ -4134,6 +4151,10 @@ export function convergeRuntimeManifest(
 	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
+	const mitmproxy = writeMitmproxyStatus(
+		mitmProfileBundlePath ? ensureRuntimeMitmproxy(manifest.mitmproxy, paths) : null,
+		paths,
+	);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	try {
@@ -4370,6 +4391,7 @@ export function convergeRuntimeManifest(
 			systemdUserUnits: systemdUnits.userUnits,
 			mitmProfileBundle: mitmProfileBundlePath,
 			mitmSecretFile,
+			mitmproxy,
 			liveSyncEnvironments,
 			daemonAuthTokenFile,
 			instanceSemaphores,

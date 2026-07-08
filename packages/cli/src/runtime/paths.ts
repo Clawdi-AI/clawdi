@@ -27,6 +27,9 @@ export interface RuntimePaths {
 	cliNpmCache: string;
 	cliBootstrapStatus: string;
 	providerHealthStatus: string;
+	mitmproxyStatus: string;
+	maintainedRoot: string;
+	mitmproxyMaintainedRoot: string;
 	cacheRoot: string;
 	manifestLastGood: string;
 	manifestEtag: string;
@@ -132,6 +135,9 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliNpmCache: join(serviceStateRoot, "npm-cache"),
 		cliBootstrapStatus: join(serviceStateRoot, "status", "cli-bootstrap.json"),
 		providerHealthStatus: join(serviceStateRoot, "status", "provider-health.json"),
+		mitmproxyStatus: join(serviceStateRoot, "status", "mitmproxy.json"),
+		maintainedRoot: join(serviceStateRoot, "maintained"),
+		mitmproxyMaintainedRoot: join(serviceStateRoot, "maintained", "mitmproxy"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		manifestEtag: join(cacheRoot, "manifest.etag"),

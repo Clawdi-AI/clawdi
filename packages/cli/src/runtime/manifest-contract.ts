@@ -57,6 +57,18 @@ const cliPayloadPolicySchema = z
 	})
 	.passthrough();
 
+const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
+
+export const mitmproxyArtifactSchema = z
+	.object({
+		version: z.string().min(1),
+		url: z.string().url(),
+		sha256: sha256Schema,
+	})
+	.strict();
+
+export type MitmproxyArtifactPin = z.infer<typeof mitmproxyArtifactSchema>;
+
 export const DEFAULT_CLAWDI_CLI_POLICY = {
 	source: "npm:clawdi",
 	packageSpec: "clawdi@latest",
@@ -128,6 +140,7 @@ const runtimeDesiredStateShape = {
 		})
 		.strict(),
 	clawdiCli: cliPayloadPolicySchema.optional(),
+	mitmproxy: mitmproxyArtifactSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
 	bridge: runtimeBridgeSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
@@ -259,6 +272,7 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 					path: ["apiUrl"],
 				}),
 			clawdiCli: cliPayloadPolicySchema.optional(),
+			mitmproxy: mitmproxyArtifactSchema.optional(),
 			runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 			bridge: runtimeBridgeSchema.optional(),
 			providers: z

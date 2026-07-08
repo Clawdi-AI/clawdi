@@ -555,6 +555,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
 				}
 			: { ...DEFAULT_CLAWDI_CLI_POLICY },
+		mitmproxy: hosted.mitmproxy,
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,
