@@ -167,8 +167,19 @@ function applyHermesProviderPatch(
 			document.setIn(["providers", providerId], document.createNode({}));
 		}
 		removeHermesGeneratedProviderFields(document, providerId, existingProvider);
+		let wroteGeneratedField = false;
 		for (const [key, value] of Object.entries(patchValue)) {
+			if (value === null) {
+				if (Object.hasOwn(existingProvider, key)) {
+					document.deleteIn(["providers", providerId, key]);
+				}
+				continue;
+			}
 			document.setIn(["providers", providerId, key], value);
+			wroteGeneratedField = true;
+		}
+		if (!wroteGeneratedField && !hasHermesUserOwnedProviderFields(existingProvider)) {
+			document.deleteIn(["providers", providerId]);
 		}
 	}
 }
@@ -215,6 +226,12 @@ function removeHermesGeneratedProviderFields(
 	for (const key of HERMES_GENERATED_PROVIDER_FIELDS) {
 		if (Object.hasOwn(input, key)) document.deleteIn(["providers", providerId, key]);
 	}
+}
+
+function hasHermesUserOwnedProviderFields(input: Record<string, unknown>): boolean {
+	return Object.keys(input).some(
+		(key) => !(HERMES_GENERATED_PROVIDER_FIELDS as readonly string[]).includes(key),
+	);
 }
 
 function isPlainRecord(input: unknown): input is Record<string, unknown> {

@@ -26,7 +26,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import {
 	type AgentPrimaryModel,
@@ -1549,7 +1549,7 @@ function buildHermesHostedProviderPluginProjection(
 			].join("\n"),
 		},
 	];
-	const compatibilityProviders = buildHermesHostedCompatibilityProviders(catalog, primaryModel);
+	const compatibilityProviders = buildHermesHostedCompatibilityProviders(profiles);
 	const modelPatch = buildHermesHostedPluginModelPatch(
 		primaryModel,
 		primaryProvider.pluginProviderName,
@@ -1645,19 +1645,40 @@ function buildHermesHostedPluginInit(
 }
 
 function buildHermesHostedCompatibilityProviders(
-	catalog: AiProviderCatalog,
-	primaryModel: AgentPrimaryModel,
+	profiles: readonly HermesHostedPluginProviderProfile[],
 ): Record<string, unknown> {
-	const legacyProjection = buildAgentTargetProjection("hermes", catalog, primaryModel);
-	const file = legacyProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
-	if (!file) {
-		throw new Error("Hermes projection did not include a config merge YAML file.");
+	const providers: Record<string, unknown> = {};
+	for (const profile of profiles) {
+		const models = buildHermesHostedCompatibilityProviderModels(profile.provider);
+		providers[profile.pluginProviderName] =
+			Object.keys(models).length > 0
+				? {
+						api: profile.provider.base_url,
+						models,
+					}
+				: {
+						models: null,
+					};
 	}
-	const parsed = parseYaml(file.content);
-	if (!isPlainRecord(parsed)) {
-		throw new Error("Hermes hosted compatibility projection must be a YAML object.");
+	return providers;
+}
+
+function buildHermesHostedCompatibilityProviderModels(
+	provider: AiProviderCatalog["providers"][number],
+): Record<string, unknown> {
+	const models: Record<string, unknown> = {};
+	for (const model of provider.models ?? []) {
+		const modelId = model.id.trim();
+		if (!modelId || Object.hasOwn(models, modelId)) continue;
+		const metadata: Record<string, unknown> = {};
+		const contextLength = positiveInteger(model.context_window);
+		if (contextLength !== undefined) metadata.context_length = contextLength;
+		const supportsVision = hermesHostedSupportsVision(model);
+		if (supportsVision !== undefined) metadata.supports_vision = supportsVision;
+		if (Object.keys(metadata).length === 0) continue;
+		models[modelId] = metadata;
 	}
-	return isPlainRecord(parsed.providers) ? parsed.providers : {};
+	return models;
 }
 
 function buildHermesHostedPluginModelPatch(

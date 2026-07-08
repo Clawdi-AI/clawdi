@@ -1584,10 +1584,11 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(hermesModel.max_tokens).toBe(32768);
 		expect(hermesModel.supports_vision).toBe(true);
 		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		const hermesProvider = expectRecord(hermesProviders.hermes, "Hermes provider config");
+		expect(hermesProviders.hermes).toBeUndefined();
+		const hermesProvider = expectRecord(hermesProviders["clawdi-hermes"], "Hermes provider config");
 		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(hermesProvider.transport).toBe("chat_completions");
-		expect(hermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
+		expect(hermesProvider.transport).toBeUndefined();
+		expect(hermesProvider.key_env).toBeUndefined();
 		const hermesProviderModels = expectRecord(
 			hermesProvider.models,
 			"Hermes provider model metadata",
@@ -1597,8 +1598,8 @@ chmod +x "$HOME/.local/bin/hermes"
 			"Hermes provider kimi model metadata",
 		);
 		expect(kimiModel.context_length).toBe(262144);
-		expect(kimiModel.max_tokens).toBe(32768);
 		expect(kimiModel.supports_vision).toBe(true);
+		expect(kimiModel.max_tokens).toBeUndefined();
 		const hermesPlugin = readHermesModelProviderPluginFile(home, "__init__.py");
 		const hermesPluginYaml = readHermesModelProviderPluginFile(home, "plugin.yaml");
 		expect(hermesPlugin).toContain('name="clawdi-hermes"');
@@ -1709,12 +1710,38 @@ chmod +x "$HOME/.local/bin/hermes"
 		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
 		expect(hermesModel.provider).toBe("clawdi-hermes");
 		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		expect(expectRecord(hermesProviders.hermes, "primary Hermes provider").api).toBe(
-			"https://hermes-provider.example.test/v1",
+		expect(hermesProviders.hermes).toBeUndefined();
+		expect(hermesProviders.moonshot).toBeUndefined();
+		const primaryHermesProvider = expectRecord(
+			hermesProviders["clawdi-hermes"],
+			"primary Hermes provider",
 		);
-		expect(expectRecord(hermesProviders.moonshot, "secondary Hermes provider").api).toBe(
-			"https://moonshot-provider.example.test/v1",
+		expect(primaryHermesProvider.api).toBe("https://hermes-provider.example.test/v1");
+		expect(primaryHermesProvider.transport).toBeUndefined();
+		expect(primaryHermesProvider.key_env).toBeUndefined();
+		const primaryHermesModels = expectRecord(
+			primaryHermesProvider.models,
+			"primary Hermes provider models",
 		);
+		expect(
+			expectRecord(primaryHermesModels["kimi/kimi-for-coding"], "primary Hermes model metadata")
+				.context_length,
+		).toBe(262144);
+		const moonshotProvider = expectRecord(
+			hermesProviders["clawdi-moonshot"],
+			"secondary Hermes provider",
+		);
+		expect(moonshotProvider.api).toBe("https://moonshot-provider.example.test/v1");
+		expect(moonshotProvider.transport).toBeUndefined();
+		expect(moonshotProvider.key_env).toBeUndefined();
+		const moonshotModels = expectRecord(
+			moonshotProvider.models,
+			"secondary Hermes provider models",
+		);
+		expect(
+			expectRecord(moonshotModels["moonshot-v1-8k"], "secondary Hermes model metadata")
+				.context_length,
+		).toBe(8192);
 		const hermesRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
@@ -1792,7 +1819,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(initialModelConfig.supports_vision).toBe(true);
 		const initialProviderModels = expectRecord(
 			expectRecord(
-				expectRecord(initialConfig.providers, "initial Hermes providers").hermes,
+				expectRecord(initialConfig.providers, "initial Hermes providers")["clawdi-hermes"],
 				"initial Hermes provider",
 			).models,
 			"initial Hermes provider models",
@@ -1812,11 +1839,9 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(hermesModel.context_length).toBeUndefined();
 		expect(hermesModel.max_tokens).toBeUndefined();
 		expect(hermesModel.supports_vision).toBeUndefined();
-		const hermesProvider = expectRecord(
-			expectRecord(hermesConfig.providers, "Hermes providers config").hermes,
-			"Hermes provider config",
-		);
-		expect(hermesProvider.models).toBeUndefined();
+		expect(
+			expectRecord(hermesConfig.providers, "Hermes providers config")["clawdi-hermes"],
+		).toBeUndefined();
 	});
 
 	it("falls back to Hermes config.yaml provider merges before 0.18.0 and changes revision when plugin support appears", () => {
