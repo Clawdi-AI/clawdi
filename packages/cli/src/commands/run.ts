@@ -26,17 +26,7 @@ import {
 	VAULT_PROJECT_ACCESS_ERROR,
 	VAULT_PROJECT_ACCESS_HINT,
 } from "../lib/vault-errors";
-import {
-	applyMitmSidecarRuntimeEnv,
-	applyMitmTransparentRuntimeEnv,
-	stripMitmSidecarControlEnv,
-} from "../runtime/mitm-env";
-import {
-	type RuntimeMitmSidecar,
-	type RuntimeMitmSidecarFactory,
-	shouldStartRuntimeMitmSidecar,
-	startRuntimeMitmSidecar,
-} from "../runtime/mitm-sidecar";
+import { applyMitmTransparentRuntimeEnv } from "../runtime/mitm-env";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeRunInvocation,
@@ -79,12 +69,7 @@ interface RuntimeChildWrapOptions {
 	commandExists?: (command: string) => boolean;
 }
 
-export async function run(
-	args: string[],
-	opts: RunOpts = {},
-	spawnImpl: SpawnFn = spawn,
-	sidecarFactory: RuntimeMitmSidecarFactory = startRuntimeMitmSidecar,
-) {
+export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn = spawn) {
 	if (args.length === 0 && !opts.runtimeService) {
 		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
 		process.exit(1);
@@ -102,7 +87,6 @@ export async function run(
 				paths,
 			),
 			spawnImpl,
-			sidecarFactory,
 		);
 		return;
 	}
@@ -122,7 +106,6 @@ export async function run(
 		await spawnRuntimeInvocation(
 			buildRuntimeRunInvocation(hostedRuntimeRun, args, baseProcessEnv, paths),
 			spawnImpl,
-			sidecarFactory,
 		);
 		return;
 	}
@@ -135,7 +118,7 @@ export async function run(
 		process.exit(1);
 	}
 	if (hostedGenericRun && !requiresCloudResolution(opts)) {
-		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl, sidecarFactory);
+		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl);
 		return;
 	}
 	if (!isLoggedIn()) {
@@ -224,14 +207,13 @@ export async function run(
 		await spawnRuntimeInvocation(
 			buildRuntimeRunInvocation(hostedRuntimeRun, args, childEnv, paths),
 			spawnImpl,
-			sidecarFactory,
 		);
 		return;
 	}
 
 	const hostedGenericLoggedInRun = hostedGenericRunInvocation(args, childEnv);
 	if (hostedGenericLoggedInRun) {
-		await spawnRuntimeInvocation(hostedGenericLoggedInRun, spawnImpl, sidecarFactory);
+		await spawnRuntimeInvocation(hostedGenericLoggedInRun, spawnImpl);
 		return;
 	}
 
@@ -345,36 +327,14 @@ function hostedRuntimeRunError(
 async function spawnRuntimeInvocation(
 	invocation: RuntimeRunInvocation,
 	spawnImpl: SpawnFn,
-	sidecarFactory: RuntimeMitmSidecarFactory,
 ): Promise<void> {
 	delete invocation.env.CLAWDI_AUTH_TOKEN;
-	let sidecar: RuntimeMitmSidecar | null = null;
-	if (shouldStartRuntimeMitmSidecar(invocation.env)) {
-		try {
-			sidecar = await sidecarFactory({
-				runtime: invocation.runtime,
-				env: invocation.env,
-				profileBundlePath: invocation.env.CLAWDI_MITM_PROFILE_BUNDLE ?? invocation.configPath,
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			console.log(chalk.red(`Failed to start MITM sidecar for ${invocation.runtime}: ${message}`));
-			process.exit(1);
-		}
-	}
-	if (sidecar) {
-		// Local `clawdi run` uses an unprivileged per-run forward proxy. Hosted runtime
-		// uses the root/system transparent gateway and must never receive proxy vars here.
-		applyMitmSidecarRuntimeEnv(invocation.env, sidecar);
-		stripMitmSidecarControlEnv(invocation.env);
-	}
 	let childSpawn: RuntimeChildSpawn;
 	try {
 		childSpawn = buildRuntimeChildSpawn(invocation);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.log(chalk.red(`Failed to prepare ${invocation.runtime}: ${message}`));
-		await sidecar?.stop();
 		process.exit(1);
 	}
 	const child = spawnImpl(childSpawn.command, childSpawn.args, {
@@ -384,11 +344,7 @@ async function spawnRuntimeInvocation(
 	});
 
 	const code = await waitForChildExit(child, invocation.runtime);
-	try {
-		await sidecar?.stop();
-	} finally {
-		process.exitCode = code;
-	}
+	process.exitCode = code;
 }
 
 export function buildRuntimeChildSpawn(

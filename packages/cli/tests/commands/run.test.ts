@@ -7,10 +7,6 @@ import { join } from "node:path";
 
 import { buildRuntimeChildSpawn, run } from "../../src/commands/run";
 import { setProjectFolderLink } from "../../src/lib/project-folders";
-import type {
-	RuntimeMitmSidecarFactory,
-	RuntimeMitmSidecarInput,
-} from "../../src/runtime/mitm-sidecar";
 import { jsonResponse, mockFetch } from "./helpers";
 
 interface SpawnCall {
@@ -18,15 +14,6 @@ interface SpawnCall {
 	args: string[];
 	env: NodeJS.ProcessEnv;
 	cwd?: string;
-}
-
-interface SidecarCall {
-	runtime: string;
-	profileBundlePath: string;
-	proxyUrl?: string;
-	caFile?: string;
-	secretFile?: string;
-	authToken?: string;
 }
 
 let tmpRoot: string;
@@ -94,33 +81,6 @@ function recordSpawn(opts: { autoExit?: boolean } = {}): {
 		return child;
 	}) as NonNullable<Parameters<typeof run>[2]>;
 	return { calls, children, spawnImpl };
-}
-
-function recordSidecar(output?: { proxyUrl?: string; caFile?: string }): {
-	calls: SidecarCall[];
-	sidecarFactory: RuntimeMitmSidecarFactory;
-	stopCount: () => number;
-} {
-	const calls: SidecarCall[] = [];
-	let stops = 0;
-	const sidecarFactory: RuntimeMitmSidecarFactory = async (input: RuntimeMitmSidecarInput) => {
-		calls.push({
-			runtime: input.runtime,
-			profileBundlePath: input.profileBundlePath,
-			proxyUrl: input.env.CLAWDI_MITM_PROXY_URL,
-			caFile: input.env.CLAWDI_MITM_CA_FILE,
-			secretFile: input.env.CLAWDI_MITM_SECRET_FILE,
-			authToken: input.env.CLAWDI_AUTH_TOKEN,
-		});
-		return {
-			proxyUrl: output?.proxyUrl ?? input.env.CLAWDI_MITM_PROXY_URL ?? "http://127.0.0.1:18080",
-			caFile: output?.caFile ?? input.env.CLAWDI_MITM_CA_FILE ?? "/run/clawdi/mitm-scratch/ca.pem",
-			stop: async () => {
-				stops += 1;
-			},
-		};
-	};
-	return { calls, sidecarFactory, stopCount: () => stops };
 }
 
 function linkCurrentProjectFolder(): void {
@@ -408,16 +368,14 @@ describe("run command project folder selection", () => {
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
 
-		await run(["openclaw"], {}, spawnImpl, sidecar.sidecarFactory);
+		await run(["openclaw"], {}, spawnImpl);
 
 		expect(calls).toHaveLength(1);
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls[0].args).toEqual(["gateway", "run"]);
 		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
@@ -591,11 +549,9 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.CLAWDI_AUTH_TOKEN = "hosted-runtime-token";
-		const sidecar = recordSidecar();
 
-		await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
+		await run(["hermes", "serve"], {}, spawnImpl);
 
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
 		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
@@ -659,10 +615,8 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 
-		const sidecar = recordSidecar();
-		await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
+		await run(["hermes", "serve"], {}, spawnImpl);
 
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 	});
 
@@ -707,7 +661,6 @@ describe("run command project folder selection", () => {
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
@@ -715,12 +668,11 @@ describe("run command project folder selection", () => {
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
 		try {
-			await run(["hermes", "serve"], {}, spawnImpl, sidecar.sidecarFactory);
+			await run(["hermes", "serve"], {}, spawnImpl);
 		} finally {
 			delete process.env.CLAWDI_MITM_PROXY_PORT;
 		}
 
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
@@ -751,15 +703,13 @@ describe("run command project folder selection", () => {
 			}),
 		);
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
-		await run(["codex", "exec", "hello"], {}, spawnImpl, sidecar.sidecarFactory);
+		await run(["codex", "exec", "hello"], {}, spawnImpl);
 
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("codex");
 		expect(calls[0].args).toEqual(["exec", "hello"]);
@@ -777,16 +727,14 @@ describe("run command project folder selection", () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		process.env.PATH = `${join(serviceStateRoot, "bin")}:/usr/local/bin:/usr/bin`;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
-		await run(["node", "--version"], {}, spawnImpl, sidecar.sidecarFactory);
+		await run(["node", "--version"], {}, spawnImpl);
 
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].command).toBe("node");
 		expect(calls[0].args).toEqual(["--version"]);
@@ -831,10 +779,6 @@ describe("run command project folder selection", () => {
 			}),
 		);
 		const { calls, spawnImpl } = recordSpawn();
-		const sidecar = recordSidecar({
-			proxyUrl: "http://127.0.0.1:19191",
-			caFile: join(runRoot, "mitm-scratch", "sidecars", "actual", "ca.pem"),
-		});
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
@@ -846,18 +790,12 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
 		try {
-			await run(
-				["codex", "exec", "hello"],
-				{ allVaultEnv: true, projectFolder: false },
-				spawnImpl,
-				sidecar.sidecarFactory,
-			);
+			await run(["codex", "exec", "hello"], { allVaultEnv: true, projectFolder: false }, spawnImpl);
 		} finally {
 			restore();
 		}
 
 		expect(captured.map((request) => request.path)).toEqual(["/v1/vault/resolve"]);
-		expect(sidecar.calls).toHaveLength(0);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
 		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();

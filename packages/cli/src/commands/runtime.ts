@@ -30,7 +30,6 @@ import {
 	type RuntimeManifestLoad,
 	type RuntimeManifestNotModified,
 } from "../runtime/manifest-source";
-import { startRuntimeMitmSidecar } from "../runtime/mitm-sidecar";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -2143,62 +2142,31 @@ export async function runtimeSidecar(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
 		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
-	const profileBundlePath = process.env.CLAWDI_MITM_PROFILE_BUNDLE?.trim();
 	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
-	const shouldStartMitm = Boolean(profileBundlePath);
-	if (!shouldStartBridge && !shouldStartMitm) {
-		throw new Error(
-			`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV} or CLAWDI_MITM_PROFILE_BUNDLE.`,
-		);
+	if (!shouldStartBridge) {
+		throw new Error(`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV}.`);
 	}
 
 	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
-	let mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null = null;
 	try {
-		if (shouldStartBridge) {
-			bridge = await startRuntimeBridge();
-			console.error(
-				`runtime sidecar bridge module listening on ${bridge.surfaces
-					.map(
-						(surface) =>
-							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-					)
-					.join(", ")}`,
-			);
-		}
-		if (shouldStartMitm && profileBundlePath) {
-			mitm = await startRuntimeMitmSidecar({
-				runtime: "systemd",
-				env: process.env,
-				profileBundlePath,
-			});
-			console.error(`runtime sidecar MITM module listening on ${mitm.proxyUrl}`);
-		}
+		bridge = await startRuntimeBridge();
+		console.error(
+			`runtime sidecar bridge module listening on ${bridge.surfaces
+				.map(
+					(surface) =>
+						`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
+				)
+				.join(", ")}`,
+		);
 		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
-		await stopRuntimeSidecarModules(bridge, mitm);
+		await bridge?.close();
 		throw error;
 	}
 
 	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
-	const waiters: Array<
-		Promise<
-			| { kind: "shutdown" }
-			| { kind: "mitm-closed"; code: number | null; signal: NodeJS.Signals | null }
-		>
-	> = [shutdown];
-	if (mitm?.closed) {
-		waiters.push(mitm.closed.then((result) => ({ kind: "mitm-closed" as const, ...result })));
-	}
-	const result = await Promise.race(waiters);
-	if (result.kind === "shutdown") {
-		await stopRuntimeSidecarModules(bridge, mitm);
-		return;
-	}
-	await stopRuntimeSidecarModules(bridge, mitm);
-	throw new Error(
-		`runtime sidecar MITM module exited unexpectedly: code=${result.code} signal=${result.signal}`,
-	);
+	await shutdown;
+	await bridge.close();
 }
 
 export function runtimeEgressApply(): void {
@@ -2207,13 +2175,6 @@ export function runtimeEgressApply(): void {
 	}
 	const result = applyInvisibleGatewayRulesFromEnv(process.env);
 	console.log(JSON.stringify({ ready: true, ...result }));
-}
-
-async function stopRuntimeSidecarModules(
-	bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null,
-	mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null,
-): Promise<void> {
-	await Promise.allSettled([mitm?.stop(), bridge?.close()].filter(Boolean));
 }
 
 function waitForShutdownSignal(): Promise<void> {

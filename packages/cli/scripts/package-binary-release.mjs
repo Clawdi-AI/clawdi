@@ -16,7 +16,6 @@ rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
 
 run("test", ["-x", resolve(distBin, "clawdi")]);
-run("test", ["-x", resolve(distBin, "clawdi-mitm-sidecar", "bin", "clawdi-mitm-sidecar")]);
 run("tar", [
 	"-C",
 	distBin,
@@ -26,7 +25,6 @@ run("tar", [
 	"-czf",
 	assetPath,
 	"clawdi",
-	"clawdi-mitm-sidecar",
 ]);
 
 const checksum = run("sha256sum", [assetPath]).trim().split(/\s+/)[0];
