@@ -40,6 +40,7 @@ import {
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
@@ -2460,17 +2461,8 @@ function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: Runt
 }
 
 function writeDaemonAuthToken(paths: RuntimePaths): string | null {
-	const path = paths.daemonAuthToken;
-	const legacyPath = join(paths.runRoot, "sync", "auth-token");
-	const token = process.env.CLAWDI_AUTH_TOKEN?.trim();
-	if (!token) {
-		if (existsSync(path)) return path;
-		rmSync(path, { force: true });
-		rmSync(legacyPath, { force: true });
-		return null;
-	}
-	rmSync(legacyPath, { force: true });
-	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
+	const path = ensureRuntimeAuthTokenFile(paths);
+	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
@@ -3284,10 +3276,22 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 	}
 }
 
+function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): string {
+	const controlPlane = manifest.controlPlane;
+	const manifestUrl =
+		"manifestUrl" in controlPlane && typeof controlPlane.manifestUrl === "string"
+			? controlPlane.manifestUrl.trim()
+			: "";
+	if (manifestUrl) return manifestUrl;
+	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
+	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
+}
+
 function writeSystemdUnits(
 	runtimePrograms: RuntimeSystemdUserProgram[],
 	mitmProgram: RuntimeMitmSystemdProgram | null,
 	manifest: RuntimeManifest,
+	sourcePath: string,
 	paths: RuntimePaths,
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
@@ -3303,6 +3307,9 @@ function writeSystemdUnits(
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(manifest, sourcePath),
+		CLAWDI_RUNTIME_SOURCE_PATH:
+			process.env.CLAWDI_RUNTIME_SOURCE_PATH?.trim() || paths.runtimeSource,
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
@@ -3753,6 +3760,7 @@ export function convergeRuntimeManifest(
 		runtimeSystemdUserPrograms,
 		mitmSystemdProgram,
 		manifest,
+		load.sourcePath,
 		paths,
 		workspaceRoot,
 		daemonAuthTokenFile,

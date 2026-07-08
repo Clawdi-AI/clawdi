@@ -63,7 +63,6 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_MANIFEST_PATH",
 	"CLAWDI_RUNTIME_MANIFEST_URL",
 	"CLAWDI_RUNTIME_SOURCE_PATH",
-	"CLAWDI_RUNTIME_AUTH_ENV",
 	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
@@ -2381,18 +2380,21 @@ exit 64
 		);
 	});
 
-	it("honors the auth env declared by the runtime source", async () => {
+	it("ignores runtime source auth env and uses the runtime auth token env before the file", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
 		mkdirSync(home, { recursive: true });
+		mkdirSync(join(run, "secrets"), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
-		process.env.CUSTOM_RUNTIME_TOKEN = "custom-token";
+		process.env.CLAWDI_AUTH_TOKEN = "bootstrap-token";
+		process.env.CUSTOM_RUNTIME_TOKEN = "stale-token";
+		writeFileSync(join(run, "secrets", "auth-token"), "stale-file-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2428,7 +2430,121 @@ exit 64
 		try {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			expect("manifest" in loaded).toBe(true);
-			expect(captured[0].headers.authorization).toBe("Bearer custom-token");
+			expect(captured[0].headers.authorization).toBe("Bearer bootstrap-token");
+			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe("bootstrap-token\n");
+		} finally {
+			restore();
+		}
+	});
+
+	it("uses the same canonical file token for initial fetch and persistent watch fetches", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const wrongSourcePath = join(root, "wrong-runtime-source.json");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = wrongSourcePath;
+		process.env.CLAWDI_AUTH_TOKEN = "runtime-file-token";
+		writeFileSync(
+			wrongSourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://wrong-runtime.test/wrong-manifest",
+				auth: { type: "bearer-env", env: "STALE_RUNTIME_TOKEN_ENV" },
+			}),
+		);
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
+							deploymentId: "dep_same_token",
+							environmentId: "env_same_token",
+							instanceId: "iid_same_token",
+							generation: 1,
+							issuedAt: "2026-06-06T00:00:00Z",
+							system: { home, workspace: join(home, "clawdi") },
+							controlPlane: {
+								manifestUrl: "https://runtime.test/manifest",
+								cloudApiUrl: "https://cloud-api.test",
+							},
+							runtimes: { openclaw: hostedOpenClawRuntime() },
+							liveSync: {
+								enabled: true,
+								agents: [{ agentType: "openclaw", environmentId: "env_same_token" }],
+							},
+						},
+						secretValues: {},
+					}),
+			},
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					jsonResponse({
+						manifest: {
+							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							runtime: "openclaw",
+							deploymentId: "dep_same_token",
+							environmentId: "env_same_token",
+							instanceId: "iid_same_token",
+							generation: 2,
+							issuedAt: "2026-06-06T00:01:00Z",
+							system: { home, workspace: join(home, "clawdi") },
+							controlPlane: {
+								manifestUrl: "https://runtime.test/manifest",
+								cloudApiUrl: "https://cloud-api.test",
+							},
+							runtimes: { openclaw: hostedOpenClawRuntime() },
+							liveSync: {
+								enabled: true,
+								agents: [{ agentType: "openclaw", environmentId: "env_same_token" }],
+							},
+						},
+						secretValues: {},
+					}),
+			},
+		]);
+
+		try {
+			const paths = getRuntimePaths();
+			const initial = await loadRuntimeManifest(paths);
+			if (!("manifest" in initial)) throw new Error("expected initial manifest load success");
+			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "";
+			const convergence = convergeRuntimeManifest(initial, paths);
+			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
+			const watchManifestUrl = watchEnv.match(/^CLAWDI_RUNTIME_MANIFEST_URL="([^"]+)"$/m)?.[1];
+			process.env.CLAWDI_AUTH_TOKEN = "";
+			process.env.CLAWDI_RUNTIME_MANIFEST_URL = watchManifestUrl ?? "";
+			process.env.CLAWDI_RUNTIME_SOURCE_PATH = wrongSourcePath;
+			const watched = await loadRemoteRuntimeManifest(paths);
+
+			expect("manifest" in watched).toBe(true);
+			expect(watchManifestUrl).toBe("https://runtime.test/manifest");
+			expect(captured.map((entry) => entry.url)).toEqual([
+				"https://runtime.test/manifest",
+				"https://runtime.test/manifest",
+			]);
+			expect(captured.map((entry) => entry.headers.authorization)).toEqual([
+				"Bearer runtime-file-token",
+				"Bearer runtime-file-token",
+			]);
+			expect(convergence.outputs.daemonAuthTokenFile).toBe(join(run, "secrets", "auth-token"));
+			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
+				"runtime-file-token\n",
+			);
+			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
+			expect(watchEnv).not.toContain("runtime-file-token");
 		} finally {
 			restore();
 		}
@@ -2446,6 +2562,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_AUTH_TOKEN = "";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -7225,12 +7342,14 @@ exit 64
 		try {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "";
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 			const paths = getRuntimePaths();
 			const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
 				path.split("/").at(-1),
 			);
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
+			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			const openclawEnv = JSON.parse(
@@ -7264,6 +7383,12 @@ exit 64
 			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
 			expect(daemonEnv).toContain('CLAWDI_RUNTIME_REV="');
 			expect(daemonEnv).toContain("https://cloud-api.test");
+			expect(watchEnv).toContain(
+				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/desired-state"',
+			);
+			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
+			expect(watchUnit).not.toContain("runtime-auth-token");
+			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).not.toContain("runtime-auth-token");
 			expect(daemonEnv).not.toContain("runtime-auth-token");
 		} finally {
