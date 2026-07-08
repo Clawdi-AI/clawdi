@@ -2198,7 +2198,7 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
-	it("projects WhatsApp tenant credentials as secret-backed auth state", () => {
+	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const linkId = "link-whatsapp-1";
 		const credentialId = "credential-whatsapp-1";
@@ -2269,43 +2269,15 @@ exit 64
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
 
-		const accountKey = "clawdi_000000000000";
-		const authDir = join("/home/clawdi", ".openclaw", "credentials", "whatsapp", accountKey);
-		const channelProjection = projected.manifest.projection?.channels as Record<string, unknown>;
-		const whatsapp = channelProjection.whatsapp as {
-			accounts: Record<string, { authDir?: string; token?: string }>;
-		};
-		expect(whatsapp.accounts[accountKey]).toMatchObject({
-			authDir,
-			token: "wa-agent-token",
-		});
-		const credentialProjection = projected.manifest.projection?.channelCredentials;
-		expect(credentialProjection).toEqual([
-			{
-				provider: "whatsapp",
-				kind: "whatsapp_baileys_auth_state",
-				accountId,
-				accountKey,
-				linkId,
-				credentialId,
-				authDir,
-				files: [
-					{
-						path: "creds.json",
-						secretRef: `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`,
-					},
-				],
-				targets: {
-					openclaw: { authDir },
-				},
-			},
-		]);
+		expect(projected.manifest.projection?.channels).toEqual({});
+		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
+		expect(projected.manifest.mitmProfiles?.profiles ?? []).toEqual([]);
+		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
+		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
+		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(
-			projected.secretValues?.[
-				`secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`
-			],
-		).toContain("wa-adv-secret");
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
 	});
 
 	it("removes stale channel-driven MITM profiles when runtime channels are disabled", () => {
@@ -4958,7 +4930,7 @@ exit 0
 		expect(patchText).not.toContain('"botToken"');
 	});
 
-	it("materializes, rotates, and cleans up WhatsApp auth state for OpenClaw", () => {
+	it("keeps OpenClaw WhatsApp materialization disabled until upstream support is ready", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5116,24 +5088,16 @@ exit 64
 
 		expect(initial.installErrors).toEqual([]);
 		expect(rotated.installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(join(authDir, "creds.json"), "utf-8"))).toEqual(rotatedCreds);
-		const markerText = readFileSync(join(authDir, ".clawdi-managed-whatsapp-auth.json"), "utf-8");
-		expect(markerText).toContain("credential-whatsapp-2");
-		expect(markerText).not.toContain("wa-rotated-secret");
 		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"authDir"');
-		expect(patchText).toContain(authDir);
+		expect(patchText).toContain('"whatsapp": null');
+		expect(patchText).not.toContain('"wsUrl"');
+		expect(patchText).not.toContain('"authDir"');
+		expect(patchText).not.toContain(authDir);
+		expect(patchText).not.toContain("wa-runtime-agent-token");
 		expect(patchText).not.toContain("wa-materialized-secret");
 		expect(patchText).not.toContain("wa-rotated-secret");
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toContain("clawhub:@openclaw/whatsapp");
-		const lastGoodManifest = readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8");
-		expect(lastGoodManifest).toContain("credential-whatsapp-2");
-		expect(lastGoodManifest).not.toContain("wa-rotated-secret");
-		const lastGoodSecrets = readFileSync(
-			join(state, "cache", "runtime-secrets.last-good.json"),
-			"utf-8",
-		);
-		expect(lastGoodSecrets).toContain("wa-rotated-secret");
+		expect(existsSync(openclawPluginInstalls)).toBe(false);
+		expect(existsSync(authDir)).toBe(false);
 
 		const removed = convergeRuntimeManifest(unlinkedManifest, getRuntimePaths());
 
@@ -5141,7 +5105,7 @@ exit 64
 		expect(existsSync(authDir)).toBe(false);
 	});
 
-	it("fails closed and removes stale WhatsApp auth state when creds secret is missing", () => {
+	it("removes stale OpenClaw WhatsApp auth state while upstream support is gated", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5249,11 +5213,13 @@ exit 64
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
-		expect(convergence.installErrors.join("\n")).toContain(
-			"runtime channel credential materialization failed: missing WhatsApp auth state secret",
-		);
+		expect(convergence.installErrors).toEqual([]);
 		expect(existsSync(authDir)).toBe(false);
-		expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(false);
+		const patchText = readFileSync(openclawPatch, "utf-8");
+		expect(patchText).toContain('"whatsapp": null');
+		expect(patchText).not.toContain('"wsUrl"');
+		expect(patchText).not.toContain("wa-runtime-agent-token");
+		expect(existsSync(openclawPluginInstalls)).toBe(false);
 		expect(JSON.stringify(convergence.manifest)).not.toContain("stale-whatsapp-secret");
 	});
 

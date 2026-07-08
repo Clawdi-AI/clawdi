@@ -74,6 +74,10 @@ import {
 } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import {
+	WHATSAPP_COMING_SOON_MESSAGE,
+	WHATSAPP_LINKING_READY,
+} from "@/hosted/v2/channels/link-agent-dialog.logic";
+import {
 	type AgentOwnership,
 	agentOwnershipKindFromId,
 	useAgentOwnership,
@@ -516,13 +520,21 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 
 	return (
 		<div className="flex flex-col gap-4">
-			<InfoCard icon={Smartphone} title="Link a WhatsApp number">
-				WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by
-				scanning it in WhatsApp → Linked devices. The credential is handed to the agent runtime to
-				complete pairing.
+			<InfoCard
+				icon={Smartphone}
+				title={WHATSAPP_LINKING_READY ? "Link a WhatsApp number" : "WhatsApp is coming soon"}
+			>
+				{WHATSAPP_LINKING_READY
+					? "WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by scanning it in WhatsApp -> Linked devices. The credential is handed to the agent runtime to complete pairing."
+					: WHATSAPP_COMING_SOON_MESSAGE}
 			</InfoCard>
 
-			{links.isLoading ? (
+			{!WHATSAPP_LINKING_READY ? (
+				<Button disabled>
+					<Smartphone className="size-4" />
+					Coming soon
+				</Button>
+			) : links.isLoading ? (
 				<Skeleton className="h-16 w-full rounded-lg" />
 			) : links.error ? (
 				<ApiErrorPanel
@@ -722,6 +734,14 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					generateLocked.current = false;
 				},
 			},
+		);
+	}
+
+	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) {
+		return (
+			<InfoCard icon={TriangleAlert} title="WhatsApp is coming soon">
+				{WHATSAPP_COMING_SOON_MESSAGE}
+			</InfoCard>
 		);
 	}
 

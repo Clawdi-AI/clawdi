@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { HERMES_WHATSAPP_UPSTREAM_READY } from "./hermes-whatsapp-gate";
 import { directProviderPassthroughProfiles } from "./hosted-mitm-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
@@ -9,6 +8,7 @@ import type {
 	RuntimeManifestLoad,
 } from "./manifest-source";
 import type { MitmProfileInputBundle } from "./mitm-profiles";
+import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type MitmProfile = MitmProfileInputBundle["profiles"][number];
 type ChannelProvider = RuntimeChannelAccount["provider"];
@@ -81,6 +81,7 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
+		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
@@ -214,7 +215,7 @@ function applyHermesRuntimeChannelSettings(
 
 	const telegram = firstLinkForProvider(links, "telegram");
 	const discord = firstLinkForProvider(links, "discord");
-	const whatsapp = HERMES_WHATSAPP_UPSTREAM_READY ? firstLinkForProvider(links, "whatsapp") : null;
+	const whatsapp = WHATSAPP_UPSTREAM_READY ? firstLinkForProvider(links, "whatsapp") : null;
 	const whatsappCredentials = whatsapp ? whatsappBaileysCredentials(whatsapp) : [];
 	const whatsappCredential = whatsappCredentials.find(
 		(credential) => whatsappCredentialCreds(credential) !== null,
@@ -491,6 +492,7 @@ function whatsappBaileysCredentialProjection(
 	runtimeHome: string,
 	targets: RuntimeCredentialTargets,
 ): RuntimeChannelCredentialProjection | null {
+	if (!WHATSAPP_UPSTREAM_READY) return null;
 	const credential = whatsappBaileysCredentials(link)[0];
 	if (!credential || whatsappCredentialCreds(credential) === null) return null;
 	const openclawAuthDir = openClawWhatsAppAuthDir(runtimeHome, link.accountKey);
@@ -498,7 +500,7 @@ function whatsappBaileysCredentialProjection(
 	if (targets.openclaw) {
 		targetProjection.openclaw = { authDir: openclawAuthDir };
 	}
-	if (targets.hermes && HERMES_WHATSAPP_UPSTREAM_READY) {
+	if (targets.hermes) {
 		targetProjection.hermes = {
 			sessionDir: hermesWhatsAppSessionDir(runtimeHome),
 			credsJsonEnv: "HERMES_WA_CREDS_JSON",

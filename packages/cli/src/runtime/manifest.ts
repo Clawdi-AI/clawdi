@@ -35,7 +35,6 @@ import {
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { HERMES_WHATSAPP_UPSTREAM_READY } from "./hermes-whatsapp-gate";
 import { normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
@@ -83,6 +82,7 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
+import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -227,6 +227,10 @@ function materializeHostedChannelCredentials(
 	secretValues: Record<string, string> | undefined,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) return;
+	if (!WHATSAPP_UPSTREAM_READY) {
+		removeStaleManagedWhatsAppAuthDirs(manifest, new Set());
+		return;
+	}
 	const credentials = hostedWhatsAppAuthCredentials(manifest);
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	const expectedAuthDirs = new Set<string>();
@@ -1610,7 +1614,7 @@ function hermesWhatsAppProjection(
 	channelCredentials: unknown,
 	baseUrl: string,
 ): { sessionDir: string; wsUrl: string } | null {
-	if (!HERMES_WHATSAPP_UPSTREAM_READY) return null;
+	if (!WHATSAPP_UPSTREAM_READY) return null;
 	if (!channelHasAccounts(channels.whatsapp)) return null;
 	if (!Array.isArray(channelCredentials)) return null;
 	for (const credential of channelCredentials) {
@@ -1651,18 +1655,26 @@ function toWebSocketUrl(baseUrl: string): string {
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
 	const deleteEntries = openClawManagedChannelDeletes();
+	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
 	return {
 		channels: {
 			...deleteEntries,
-			...channels,
+			...runtimeReadyChannels,
 		},
 		plugins: {
 			entries: {
 				...deleteEntries,
-				...channelPluginEntries(channels),
+				...channelPluginEntries(runtimeReadyChannels),
 			},
 		},
 	};
+}
+
+function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record<string, unknown> {
+	if (WHATSAPP_UPSTREAM_READY || !Object.hasOwn(channels, "whatsapp")) return channels;
+	const runtimeReadyChannels = { ...channels };
+	delete runtimeReadyChannels.whatsapp;
+	return runtimeReadyChannels;
 }
 
 function openClawManagedChannelDeletes(): Record<string, null> {
@@ -1679,6 +1691,7 @@ function installOpenClawChannelPlugins(
 	workspaceRoot: string,
 ): void {
 	for (const channel of Object.keys(channels).sort()) {
+		if (channel === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
 		runPluginInstallWithFallback(commandPath, specs, home, workspaceRoot);

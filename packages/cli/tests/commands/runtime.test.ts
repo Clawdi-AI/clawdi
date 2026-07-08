@@ -619,7 +619,7 @@ channels:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("writes WhatsApp Baileys credentials when requested", async () => {
+	it("skips WhatsApp Baileys credentials while upstream support is gated", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -640,7 +640,7 @@ outputs:
 		const credsDir = join(tmpHome, ".wa-creds");
 		mkdirSync(credsDir, { recursive: true, mode: 0o755 });
 		if (process.platform !== "win32") chmodSync(credsDir, 0o755);
-		const { restore } = mockFetch([
+		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: /^\/v1\/channels\/channel-wa$/,
@@ -671,42 +671,21 @@ outputs:
 						},
 					]),
 			},
-			{
-				method: "POST",
-				path: /^\/v1\/channels\/whatsapp\/channel-wa\/tenant-creds$/,
-				response: () =>
-					jsonResponse(
-						{
-							channel: "whatsapp",
-							credential_id: "cred-1",
-							agent_link_id: "link-1",
-							agent_id: "agent-1",
-							jid: "1@s.whatsapp.net",
-							identity_pub_key_hex: "abcd",
-							creds: { noiseKey: "n" },
-							auth_cert: { cert: "c" },
-							websocket_url: "wss://api.test/v1/channels/whatsapp/channel-wa/baileys",
-							media_proxy_base_url: "https://api.test/v1/channels/whatsapp/media",
-						},
-						201,
-					),
-			},
 		]);
 
 		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
 		restore();
 
-		expect(JSON.parse(readFileSync(join(tmpHome, ".wa-creds", "creds.json"), "utf-8"))).toEqual({
-			noiseKey: "n",
-		});
-		expect(readFileSync(join(tmpHome, ".env.channels"), "utf-8")).toContain(
-			"WHATSAPP_AGENT_TOKEN=wa-token",
-		);
-		expect(readFileSync(join(tmpHome, ".env.channels"), "utf-8")).toContain(
-			`CLAWDI_WHATSAPP_AUTH_DIR=${join(tmpHome, ".wa-creds")}`,
-		);
+		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			"GET /v1/channels/channel-wa",
+			"GET /v1/channels/channel-wa/agent-links",
+		]);
+		expect(existsSync(join(tmpHome, ".wa-creds", "creds.json"))).toBe(false);
+		expect(existsSync(join(tmpHome, ".wa-creds", "auth-cert.json"))).toBe(false);
+		expect(existsSync(join(tmpHome, ".wa-creds", "clawdi-whatsapp.json"))).toBe(false);
+		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
 		if (process.platform !== "win32") {
-			expect(statSync(credsDir).mode & 0o777).toBe(0o700);
+			expect(statSync(credsDir).mode & 0o777).toBe(0o755);
 		}
 	});
 
@@ -789,7 +768,7 @@ outputs:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("preflights channel-specific runtime env conflicts before API calls", async () => {
+	it("skips WhatsApp runtime env conflict preflight while upstream support is gated", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -814,17 +793,77 @@ channels:
 outputs:
   dotenv: .env.channels
 `);
-		const { captured, restore } = mockFetch([]);
-		await expect(runtimeApplyCommand({ file: manifestPath, json: true })).rejects.toThrow(
-			"Runtime output WA_WEBSOCKET_URL has conflicting values before apply",
-		);
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: /^\/v1\/channels\/channel-wa-a$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-wa-a",
+						provider: "whatsapp",
+						name: "wa-a",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-a/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+			{
+				method: "GET",
+				path: /^\/v1\/channels\/channel-wa-a\/agent-links$/,
+				response: () =>
+					jsonResponse([
+						{
+							id: "link-a",
+							account_id: "channel-wa-a",
+							agent_id: "agent-1",
+							status: "active",
+							created_at: "2026-06-08T00:00:01Z",
+							agent_token: "token-a",
+						},
+					]),
+			},
+			{
+				method: "GET",
+				path: /^\/v1\/channels\/channel-wa-b$/,
+				response: () =>
+					jsonResponse({
+						id: "channel-wa-b",
+						provider: "whatsapp",
+						name: "wa-b",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-b/webhook",
+						created_at: "2026-06-08T00:00:00Z",
+					}),
+			},
+			{
+				method: "GET",
+				path: /^\/v1\/channels\/channel-wa-b\/agent-links$/,
+				response: () =>
+					jsonResponse([
+						{
+							id: "link-b",
+							account_id: "channel-wa-b",
+							agent_id: "agent-2",
+							status: "active",
+							created_at: "2026-06-08T00:00:01Z",
+							agent_token: "token-b",
+						},
+					]),
+			},
+		]);
+
+		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
 		restore();
 
-		expect(captured).toHaveLength(0);
+		expect(captured).toHaveLength(4);
 		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
 	});
 
-	it("allows explicit env names for multiple WhatsApp runtime accounts", async () => {
+	it("skips explicit WhatsApp runtime env names while upstream support is gated", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -920,13 +959,7 @@ outputs:
 		restore();
 
 		expect(captured).toHaveLength(4);
-		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
-		expect(dotenv).toContain(
-			"WA_A_WEBSOCKET_URL=wss://api.test/v1/channels/whatsapp/channel-wa-a/baileys",
-		);
-		expect(dotenv).toContain(
-			"WA_B_WEBSOCKET_URL=wss://api.test/v1/channels/whatsapp/channel-wa-b/baileys",
-		);
+		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
 	});
 
 	it("reuses account link reads across multiple links for the same bot", async () => {

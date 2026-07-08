@@ -9,18 +9,14 @@ type AgentChannelLink = {
 	};
 };
 
-export const HERMES_WHATSAPP_UNSUPPORTED_MESSAGE =
-	"WhatsApp for Hermes agents is coming soon - pending an upstream Hermes release.";
+export const WHATSAPP_LINKING_READY = false;
+export const WHATSAPP_COMING_SOON_MESSAGE =
+	"WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now.";
 
 const HERMES_SINGLE_LINK_PROVIDERS = new Set(["telegram", "discord"]);
 
 export function shouldMintWhatsappTenantCredential(provider: string, agent: Agent): boolean {
-	return (
-		provider === "whatsapp" &&
-		agent !== null &&
-		agent !== undefined &&
-		agent.agent_type !== "hermes"
-	);
+	return WHATSAPP_LINKING_READY && provider === "whatsapp" && agent !== null && agent !== undefined;
 }
 
 export function linkAgentBlockReason({
@@ -34,8 +30,8 @@ export function linkAgentBlockReason({
 	existingAgentLinks: AgentChannelLink[];
 	accountId: string;
 }): string | null {
+	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) return WHATSAPP_COMING_SOON_MESSAGE;
 	if (selectedAgent?.agent_type !== "hermes") return null;
-	if (provider === "whatsapp") return HERMES_WHATSAPP_UNSUPPORTED_MESSAGE;
 	if (!HERMES_SINGLE_LINK_PROVIDERS.has(provider)) return null;
 
 	const hasExistingProviderLink = existingAgentLinks.some(

@@ -4,7 +4,7 @@
  *   - telegram:  bot token (BotFather)                → provider_token
  *   - discord:   bot token + application_id + public_key (+ optional guild_id)
  *                                                       → provider_token + config
- *   - whatsapp:  NO token — Baileys device link via the tenant-creds flow
+ *   - whatsapp:  no token; agent/device linking is gated during the beta
  * Tints reuse the app identity palette so channel chips match the chrome.
  */
 export const CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
@@ -55,7 +55,7 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 		label: "WhatsApp",
 		tint: "bg-identity-2-bg text-identity-2-fg",
 		connect: "whatsapp",
-		hint: "No bot token — connect, then link your WhatsApp number by scanning a code (Linked devices).",
+		hint: "No bot token. WhatsApp agent linking is coming soon for hosted agents.",
 	},
 };
 

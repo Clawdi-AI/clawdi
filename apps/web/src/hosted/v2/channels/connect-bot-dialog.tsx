@@ -24,12 +24,13 @@ import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
 import { discordPublicKeyError } from "@/hosted/v2/channels/connect-bot-dialog.logic";
+import { WHATSAPP_COMING_SOON_MESSAGE } from "@/hosted/v2/channels/link-agent-dialog.logic";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
  * cloud-api): Telegram = bot token; Discord = bot token + application_id +
- * public_key (+ guild_id); WhatsApp = no token (device is linked afterwards
- * via the Baileys tenant-creds flow on the channel page). On success the
+ * public_key (+ guild_id); WhatsApp = no token (agent/device linking is
+ * gated during the beta). On success the
  * scoped agent token may be revealed once when an agent is auto-linked.
  */
 export function ConnectBotDialog({
@@ -93,7 +94,7 @@ export function ConnectBotDialog({
 		if (meta.connect === "token") {
 			return { provider, name: trimmedName, provider_token: token.trim() };
 		}
-		// whatsapp — no token; the device is linked afterwards (tenant-creds)
+		// whatsapp — no token; device linking is gated during the beta
 		return { provider, name: trimmedName };
 	}
 
@@ -128,10 +129,7 @@ export function ConnectBotDialog({
 							/>
 						) : null}
 						{provider === "whatsapp" ? (
-							<p className="text-sm text-muted-foreground">
-								Next: open the channel and link your WhatsApp number under{" "}
-								<span className="font-medium">Linked devices</span>.
-							</p>
+							<p className="text-sm text-muted-foreground">{WHATSAPP_COMING_SOON_MESSAGE}</p>
 						) : null}
 						<DialogFooter>
 							<Button variant="outline" onClick={() => onOpenChange(false)}>

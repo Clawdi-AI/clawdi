@@ -15,6 +15,7 @@ import type { ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import { AccessBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
+import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
 import { cn } from "@/lib/utils";
 
 const BOT_GRID_CLASS = ENTITY_GRID_CLASS;
@@ -121,7 +122,9 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 			: `${item.link_count} of ${item.max_links} linked`;
 
 	const meta = providerMeta(item.provider);
-	const linkable = !meta.unavailable && item.available && item.capabilities.link_agent;
+	const whatsappLinkingGated = item.provider === "whatsapp" && !WHATSAPP_LINKING_READY;
+	const linkable =
+		!whatsappLinkingGated && !meta.unavailable && item.available && item.capabilities.link_agent;
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
@@ -157,8 +160,14 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 			) : (
 				<Button size="sm" variant="outline" className="w-full" disabled>
 					{/* `available` false = genuinely full; otherwise the bot just
-					    isn't linkable (capability-gated) — don't mislabel as capacity. */}
-					{meta.unavailable ? "Unavailable" : item.available ? "Not linkable" : "At capacity"}
+						    isn't linkable (capability-gated) — don't mislabel as capacity. */}
+					{whatsappLinkingGated
+						? "Coming soon"
+						: meta.unavailable
+							? "Unavailable"
+							: item.available
+								? "Not linkable"
+								: "At capacity"}
 				</Button>
 			)}
 		</div>

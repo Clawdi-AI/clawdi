@@ -98,9 +98,11 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 HERMES_AGENT_TYPE = "hermes"
+OPENCLAW_AGENT_TYPE = "openclaw"
+HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 HERMES_SINGLE_LINK_PROVIDERS = frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD})
-HERMES_WHATSAPP_UNSUPPORTED_DETAIL = (
-    "WhatsApp for Hermes agents is coming soon - pending an upstream Hermes release."
+WHATSAPP_COMING_SOON_DETAIL = (
+    "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
 )
 
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
@@ -328,7 +330,7 @@ async def get_or_create_bot_agent_link(
     )
     link = result.scalar_one_or_none()
     if link is not None:
-        await ensure_hermes_agent_provider_link_available(
+        await ensure_hosted_agent_provider_link_available(
             db,
             account=account,
             agent_id=agent_id,
@@ -337,7 +339,7 @@ async def get_or_create_bot_agent_link(
         )
         return link, None
 
-    await ensure_hermes_agent_provider_link_available(
+    await ensure_hosted_agent_provider_link_available(
         db,
         account=account,
         agent_id=agent_id,
@@ -357,7 +359,7 @@ async def get_or_create_bot_agent_link(
     return link, raw_token
 
 
-async def ensure_hermes_agent_provider_link_available(
+async def ensure_hosted_agent_provider_link_available(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -375,14 +377,19 @@ async def ensure_hermes_agent_provider_link_available(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    if agent is None or agent.agent_type != HERMES_AGENT_TYPE:
+    if agent is None:
         return
 
-    if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+    if (
+        account.provider == CHANNEL_PROVIDER_WHATSAPP
+        and agent.agent_type in HOSTED_RUNTIME_AGENT_TYPES
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=HERMES_WHATSAPP_UNSUPPORTED_DETAIL,
+            detail=WHATSAPP_COMING_SOON_DETAIL,
         )
+    if agent.agent_type != HERMES_AGENT_TYPE:
+        return
     if existing_same_account_link or account.provider not in HERMES_SINGLE_LINK_PROVIDERS:
         return
 
