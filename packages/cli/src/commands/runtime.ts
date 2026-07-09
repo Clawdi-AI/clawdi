@@ -1,6 +1,16 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	constants,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { connect } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
@@ -30,6 +40,7 @@ import {
 	type RuntimeManifestLoad,
 	type RuntimeManifestNotModified,
 } from "../runtime/manifest-source";
+import { SYSTEM_CA_BUNDLE } from "../runtime/mitm-env";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -2189,6 +2200,8 @@ export async function runtimeMitmRun(): Promise<void> {
 	process.once("SIGINT", stop);
 	try {
 		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () => mitmdump.exitCode);
+		await waitForFile(config.caCertPath, 10_000, () => mitmdump.exitCode);
+		publishMitmSystemCaBundle(config);
 		applyTransparentMitmNftRulesFromEnv(process.env);
 		redirectApplied = true;
 		notifySystemdReady("runtime transparent MITM ready");
@@ -2301,6 +2314,46 @@ function waitForTcpPort(
 		};
 		attempt();
 	});
+}
+
+function waitForFile(
+	path: string,
+	timeoutMs: number,
+	exitCode: () => number | null,
+): Promise<void> {
+	const startedAt = Date.now();
+	return new Promise((resolve, reject) => {
+		const attempt = () => {
+			const code = exitCode();
+			if (code !== null) {
+				reject(new Error(`mitmdump exited before writing ${path}`));
+				return;
+			}
+			if (existsSync(path)) {
+				resolve();
+				return;
+			}
+			if (Date.now() - startedAt >= timeoutMs) {
+				reject(new Error(`timed out waiting for ${path}`));
+				return;
+			}
+			setTimeout(attempt, 100);
+		};
+		attempt();
+	});
+}
+
+function publishMitmSystemCaBundle(config: TransparentMitmEnvConfig): void {
+	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
+		throw new Error("CLAWDI_MITM_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
+	}
+	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
+	const mitmCa = readFileSync(config.caCertPath, "utf-8");
+	mkdirSync(dirname(config.systemCaBundle), { recursive: true });
+	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${mitmCa.trimEnd()}\n`, {
+		mode: 0o644,
+	});
+	chmodSync(config.systemCaBundle, 0o644);
 }
 
 function runningAsRootCommand(): boolean {

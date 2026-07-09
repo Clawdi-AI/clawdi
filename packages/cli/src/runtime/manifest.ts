@@ -3333,7 +3333,7 @@ function runtimeMitmSystemdProgram(
 		addonPath: addon.path,
 		addonSha256: addon.sha256,
 		mitmproxy,
-		systemCaBundle: SYSTEM_CA_BUNDLE,
+		systemCaBundle: paths.mitmSystemCaFile,
 		secretFilePath,
 	};
 }

@@ -7476,6 +7476,9 @@ exit 64
 		expect(transparentMitmEnv).toContain(
 			`CLAWDI_MITM_PROFILE_BUNDLE="${join(state, "config", "mitm", "profiles.json")}"`,
 		);
+		expect(transparentMitmEnv).toContain(
+			`CLAWDI_MITM_SYSTEM_CA_BUNDLE="${join(run, "mitm", "systemd", "ca.pem")}"`,
+		);
 		expect(transparentMitmEnv).toContain(`CLAWDI_MITMPROXY_ADDON_PATH="${paths.mitmAddon}"`);
 		expect(transparentMitmEnv).toContain(
 			`CLAWDI_MITMPROXY_BINARY_PATH="${join(
@@ -7500,7 +7503,9 @@ exit 64
 		expect(openclawEnv).not.toContain("HTTPS_PROXY=");
 		expect(openclawEnv).not.toContain("OPENCLAW_PROXY_URL=");
 		expect(openclawEnv).not.toContain("NODE_USE_ENV_PROXY=");
-		expect(openclawEnv).toContain('NODE_EXTRA_CA_CERTS="/etc/ssl/certs/ca-certificates.crt"');
+		expect(openclawEnv).toContain(
+			`NODE_EXTRA_CA_CERTS="${join(run, "mitm", "systemd", "ca.pem")}"`,
+		);
 		expect(openclawUnit).not.toContain("clawdi run -- openclaw");
 	});
 
