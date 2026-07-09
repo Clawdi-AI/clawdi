@@ -73,6 +73,11 @@ describe("handleTopupStartResult", () => {
 				flow_type: "payment_intent",
 				payment_intent_id: "pi_123",
 				client_secret: "pi_123_secret_456",
+				// The real backend response ALWAYS carries credits_added (the
+				// credits this top-up will add once paid). Regression guard: this
+				// used to be misread as "already succeeded", closing the dialog
+				// before the card form ever showed.
+				credits_added: 25_000,
 			}),
 			{
 				queryClient: qc,

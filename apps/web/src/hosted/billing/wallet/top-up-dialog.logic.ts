@@ -45,7 +45,12 @@ export function handleTopupStartResult(
 	result: WalletTopupResult,
 	controls: TopupStartResultControls,
 ): void {
-	if (result.status === "succeeded" || result.credits_added != null) {
+	// Only the PaymentIntent STATUS decides success. The backend includes
+	// `credits_added` (the credits this top-up WILL add) on every response —
+	// including `requires_payment_method` — so treating its presence as success
+	// closed the dialog before the card form ever showed and the top-up never
+	// charged.
+	if (result.status === "succeeded") {
 		completeTopup("succeeded", controls);
 		return;
 	}

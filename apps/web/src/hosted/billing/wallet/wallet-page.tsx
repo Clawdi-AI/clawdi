@@ -1,11 +1,9 @@
 "use client";
 
-import { CreditCard } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Button } from "@/components/ui/button";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -57,15 +55,9 @@ export function WalletPage() {
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-			<PageHeader
-				title="Wallet"
-				description={DESCRIPTION}
-				actions={
-					<Button onClick={() => setTopUpOpen(true)}>
-						<CreditCard /> Top up
-					</Button>
-				}
-			/>
+			{/* The balance card below carries the primary Top up CTA; a second
+			    header button duplicated it in the same viewport. */}
+			<PageHeader title="Wallet" description={DESCRIPTION} />
 
 			<LowBalanceBanner
 				wallet={w}
