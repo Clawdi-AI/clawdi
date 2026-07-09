@@ -1,4 +1,12 @@
-import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
+import { CODEX_OAUTH_MODEL_CATALOG } from "@clawdi/shared";
+import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
+import {
+	type ApiMode,
+	type ProviderTypeId,
+	providerTypeMeta,
+	toProviderId,
+} from "@/hosted/v2/ai-providers/provider-types";
+import type { AiProvider, AiProviderAuth, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 export type AuthMethod = "api_key" | "oauth" | "none";
 
@@ -12,6 +20,18 @@ export interface ApiKeyEditState {
 	keyRequired: boolean;
 	labelSuffix: string;
 	helpText: string;
+}
+
+export interface ProviderFormIdentity {
+	providerId: string;
+	label: string | null;
+}
+
+export interface DerivedProviderFields {
+	baseUrl: string;
+	apiMode: ApiMode;
+	runtimeEnv: string;
+	modelsText: string;
 }
 
 export function isAuthMethod(value: string | null): value is AuthMethod {
@@ -59,6 +79,100 @@ export function providerAuthForSubmit({
 	return authFor("api_key");
 }
 
+export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {
+	return (models ?? []).map((model) => model.id).join("\n");
+}
+
+export function parseModelIds(input: string): string[] {
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	for (const raw of input.split(/[,\n]/)) {
+		const id = raw.trim();
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+	return ids;
+}
+
+export function modelsFromText(
+	input: string,
+	existing: AiProvider["models"],
+): AiProviderUpsert["models"] {
+	const existingById = new Map((existing ?? []).map((model) => [model.id, model]));
+	const models = parseModelIds(input).map((id) => existingById.get(id) ?? { id });
+	return models.length > 0 ? models : null;
+}
+
+export function derivedProviderFields(
+	type: ProviderTypeId,
+	authMethod: AuthMethod,
+): DerivedProviderFields {
+	const meta = providerTypeMeta(type);
+	if (authMethod === "oauth") {
+		return {
+			baseUrl: providerTypeMeta("openai").defaultBaseUrl,
+			apiMode: "openai_responses",
+			runtimeEnv: providerTypeMeta("openai").defaultRuntimeEnv,
+			modelsText: modelsToText(CODEX_OAUTH_MODEL_CATALOG),
+		};
+	}
+	return {
+		baseUrl: meta.defaultBaseUrl,
+		apiMode: meta.defaultApiMode,
+		runtimeEnv: meta.defaultRuntimeEnv,
+		modelsText: modelsToText(meta.defaultModels),
+	};
+}
+
+export function shouldUseCatalogModels(type: ProviderTypeId, authMethod: AuthMethod): boolean {
+	return authMethod === "oauth" || providerTypeMeta(type).custom !== true;
+}
+
+export function providerFormIdentity({
+	type,
+	authMethod,
+	labelInput,
+	existingProviderIds,
+	editing,
+}: {
+	type: ProviderTypeId;
+	authMethod: AuthMethod;
+	labelInput: string;
+	existingProviderIds: readonly string[];
+	editing?: Pick<AiProvider, "provider_id" | "label"> | null;
+}): ProviderFormIdentity {
+	if (authMethod === "oauth") {
+		return {
+			providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
+			label: "Codex (ChatGPT)",
+		};
+	}
+	if (editing) {
+		return {
+			providerId: editing.provider_id,
+			label: normalizeLabel(labelInput) ?? null,
+		};
+	}
+	const baseLabel =
+		providerTypeMeta(type).custom === true
+			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
+			: defaultProviderLabel(type);
+	const baseId = toProviderId(baseLabel);
+	if (!baseId) return { providerId: "", label: baseLabel };
+	if (!existingProviderIds.includes(baseId)) {
+		return { providerId: baseId, label: baseLabel };
+	}
+	let suffix = 2;
+	while (existingProviderIds.includes(`${baseId}-${suffix}`)) {
+		suffix += 1;
+	}
+	return {
+		providerId: `${baseId}-${suffix}`,
+		label: `${baseLabel} ${suffix}`,
+	};
+}
+
 function keepableExistingApiKeyAuth(
 	auth: AiProviderAuth | null | undefined,
 ): { kind: ApiKeyKeepKind; auth: AiProviderAuth } | null {
@@ -90,4 +204,14 @@ function apiKeyHelpText(kind: ApiKeyKeepKind | undefined): string {
 		return "Leave blank to keep the current managed key. Enter a key to replace it.";
 	}
 	return "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again.";
+}
+
+function normalizeLabel(value: string | null | undefined): string | null {
+	const trimmed = value?.trim();
+	return trimmed ? trimmed : null;
+}
+
+function defaultProviderLabel(type: ProviderTypeId): string {
+	if (type === "custom_openai_compatible") return "Custom endpoint";
+	return providerTypeMeta(type).label;
 }
