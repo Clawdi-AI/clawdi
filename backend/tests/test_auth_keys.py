@@ -108,6 +108,64 @@ async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_managed_api_key_is_hidden_from_user_list(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    visible = (await client.post("/v1/auth/keys", json={"label": "visible"})).json()
+    raw = "clawdi_managed_hidden"
+    hidden = ApiKey(
+        user_id=seed_user.id,
+        key_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        key_prefix=raw[:16],
+        label="platform-managed",
+        managed=True,
+    )
+    db_session.add(hidden)
+    await db_session.commit()
+
+    listing = await client.get("/v1/auth/keys")
+    assert listing.status_code == 200, listing.text
+    labels = {item["label"] for item in listing.json()}
+    assert labels == {"visible"}
+    assert visible["id"] in {item["id"] for item in listing.json()}
+    assert (
+        await db_session.scalar(select(ApiKey.managed).where(ApiKey.label == "platform-managed"))
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_revoke_rejects_managed_api_key(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    raw = "clawdi_managed_revoke"
+    key = ApiKey(
+        user_id=seed_user.id,
+        key_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        key_prefix=raw[:16],
+        label="platform-managed",
+        managed=True,
+    )
+    db_session.add(key)
+    await db_session.commit()
+    await db_session.refresh(key)
+
+    response = await client.delete(f"/v1/auth/keys/{key.id}")
+    assert response.status_code == 403, response.text
+
+    revoked_at = await db_session.scalar(select(ApiKey.revoked_at).where(ApiKey.id == key.id))
+    assert revoked_at is None
+
+
+@pytest.mark.asyncio
 async def test_deploy_key_minted_with_full_access_by_default(
     client: httpx.AsyncClient, db_session, seed_user
 ):

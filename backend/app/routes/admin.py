@@ -35,7 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_admin_api_key
+from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.channel import (
@@ -177,6 +177,7 @@ async def admin_mint_api_key(
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
+            managed=body.managed,
         )
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
@@ -194,10 +195,11 @@ async def admin_mint_api_key(
 
     api_key = minted.api_key
     logger.info(
-        "admin_api_key_minted target_clerk_id=%s key_id=%s environment_id=%s",
+        "admin_api_key_minted target_clerk_id=%s key_id=%s environment_id=%s managed=%s",
         body.target_clerk_id,
         api_key.id,
         api_key.environment_id,
+        api_key.managed,
     )
     return ApiKeyCreated(
         id=str(api_key.id),
@@ -233,6 +235,7 @@ async def admin_revoke_api_key(
 
     api_key.revoked_at = datetime.now(UTC)
     await db.commit()
+    invalidate_api_key_auth_cache(api_key.id)
     logger.info(
         "admin_api_key_revoked target_user_id=%s key_id=%s",
         api_key.user_id,

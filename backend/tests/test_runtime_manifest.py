@@ -869,9 +869,7 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
         },
     }
     assert "apiKeySecretRef" not in provider
-    assert body["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "missing-key-provider"
-    ]
+    assert body["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["missing-key-provider"]
     assert body["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "missing-key-provider",
         "model": "claude-opus-4-6",
@@ -1047,16 +1045,12 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "clawdi-managed-v2"
-    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["clawdi-managed-v2"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "clawdi-managed-v2",
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed-v2.apiKey": "sk-managed-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed-v2.apiKey": "sk-managed-provider"}
 
 
 @pytest.mark.asyncio
@@ -1558,7 +1552,7 @@ async def test_runtime_manifest_rejects_bound_cli_key_environment_id_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_projects_provider_secret_values(
+async def test_runtime_manifest_projects_provider_secret_values_for_managed_account_key(
     admin_client,
     db_session,
     seed_user,
@@ -1611,9 +1605,12 @@ async def test_runtime_manifest_projects_provider_secret_values(
     await db_session.commit()
     await _write_runtime_state(admin_client, str(env.id))
 
-    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    api_key = ApiKey(user_id=seed_user.id, environment_id=None, managed=True, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/v1/runtime/manifest")
+        response = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -1628,16 +1625,12 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "clawdi-managed-v2"
-    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["clawdi-managed-v2"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "clawdi-managed-v2",
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed-v2.apiKey": "sk-test-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed-v2.apiKey": "sk-test-provider"}
     etag = response.headers["etag"]
 
     ciphertext, nonce = encrypt("sk-rotated-provider")
@@ -1661,7 +1654,11 @@ async def test_runtime_manifest_projects_provider_secret_values(
     await db_session.commit()
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        rotated = await client.get("/v1/runtime/manifest", headers={"If-None-Match": etag})
+        rotated = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": etag},
+        )
     app.dependency_overrides.clear()
 
     assert rotated.status_code == 200, rotated.text
@@ -1734,9 +1731,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "provider_id": "clawdi-managed",
         "model": "openai-codex/gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed.apiKey": "sk-test-legacy-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed.apiKey": "sk-test-legacy-provider"}
 
 
 @pytest.mark.asyncio

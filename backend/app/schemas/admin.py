@@ -94,6 +94,7 @@ class AdminApiKeyCreate(BaseModel):
     label: str
     environment_id: str | None = None
     scopes: list[str] | None = None
+    managed: bool = False
 
 
 class AdminRuntimeStateUpsert(BaseModel):
