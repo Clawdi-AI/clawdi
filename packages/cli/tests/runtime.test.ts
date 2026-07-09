@@ -2986,7 +2986,7 @@ exit 64
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/prefix/v1/runtime/manifest?ignored=1",
+				url: "https://runtime.test/prefix/v1/runtime/manifest?environment_id=env_runtime",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -3053,7 +3053,7 @@ exit 64
 			expect(loaded.channels[0]?.provider).toBe("telegram");
 			expect(loaded.channels[0]?.runtime_links[0]?.agent_token).toBe("agent-token-runtime");
 			expect(captured).toHaveLength(1);
-			expect(captured[0].path).toBe("/prefix/v1/channels");
+			expect(captured[0].path).toBe("/prefix/v1/channels?environment_id=env_runtime");
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers["if-none-match"]).toBe('"channels-etag-0"');
 		} finally {

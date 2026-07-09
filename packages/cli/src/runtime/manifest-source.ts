@@ -364,6 +364,7 @@ async function fetchRuntimeManifestPayload(
 
 function runtimeChannelsUrl(source: RuntimeSource): string {
 	const url = new URL(source.url);
+	const environmentId = url.searchParams.get("environment_id");
 	const path = url.pathname.replace(/\/+$/, "");
 	// Manifest URLs persisted before the /v1 migration still use /api.
 	const manifestSuffix = ["/v1/runtime/manifest", "/api/runtime/manifest"].find((suffix) =>
@@ -376,6 +377,9 @@ function runtimeChannelsUrl(source: RuntimeSource): string {
 		url.pathname = new URL("v1/channels", url).pathname;
 	}
 	url.search = "";
+	if (environmentId) {
+		url.searchParams.set("environment_id", environmentId);
+	}
 	url.hash = "";
 	return url.toString();
 }

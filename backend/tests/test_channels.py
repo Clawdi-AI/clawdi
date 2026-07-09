@@ -1113,6 +1113,43 @@ async def test_env_bound_list_channels_returns_runtime_agent_token(
 
 
 @pytest.mark.asyncio
+async def test_account_level_managed_key_lists_runtime_channels_with_environment_query(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"runtime-managed-list-{uuid4().hex}",
+            "provider_token": "123456:telegram-secret",
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        environment_id=None,
+        managed=True,
+        label="hosted",
+    )
+    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
+        listed = await runtime_client.get(f"/v1/channels?environment_id={channel_agent.id}")
+
+    assert listed.status_code == 200, listed.text
+    payload = listed.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == created["id"]
+    assert payload[0]["runtime_links"][0]["agent_id"] == str(channel_agent.id)
+    assert payload[0]["runtime_links"][0]["agent_token"] == created["agent_token"]
+    assert "telegram-secret" not in listed.text
+    assert "webhook_secret" not in listed.text
+
+
+@pytest.mark.asyncio
 async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
