@@ -183,7 +183,7 @@ actual HTTP/WebSocket listener for it.
 | Area | Contains | Must not contain |
 | --- | --- | --- |
 | Host envelope | runtime user, home directory, base packages, process manager, host policy | runtime-specific shell wrappers |
-| Clawdi | managed `clawdi`, native `clawdi-mitm-sidecar`, status/doctor tooling, `clawdi-*` support units | per-agent command shims, OpenClaw/Hermes binaries |
+| Clawdi | managed `clawdi`, runtime-fetched `mitmdump` (mitmproxy) transparent gateway, status/doctor tooling, `clawdi-*` support units | per-agent command shims, OpenClaw/Hermes binaries |
 | Hermes | official install and official `hermes` binary | Clawdi-owned `hermes` wrapper |
 | OpenClaw | official install and official `openclaw` binary | Clawdi-owned `openclaw` wrapper |
 | Runtime state | `/var/lib/clawdi`, `$CLAWDI_RUN_DIR`, workspace, short-lived secret files | durable plaintext provider secrets |
@@ -394,12 +394,17 @@ EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured"
 ```
 
-When bridge surfaces or MITM profiles are enabled, systemd runs one Clawdi
-support process (`clawdi runtime sidecar`). Bridge token/surface config and MITM
-profile/CA config stay inside that sidecar process. Runtime programs receive
-only final proxy and CA env such as `HTTPS_PROXY`, `OPENCLAW_PROXY_URL`, and
-`NODE_EXTRA_CA_CERTS`; sidecar control env and secret-file paths stay out of the
-official runtime process.
+When bridge surfaces or MITM profiles are enabled, systemd runs the Clawdi
+support processes: the bridge surface process and, for egress interception, a
+runtime-fetched `mitmdump` (mitmproxy) transparent gateway owned by a dedicated
+`clawdi-mitm` user. Engagement is a minimal nft redirect of the runtime UID's
+outbound :80/:443 to the local mitmproxy port (default-allow: non-profiled hosts
+pass through end-to-end against the real upstream CA); no forward-proxy env is
+injected. Bridge token/surface config and MITM profile/CA/secret config stay
+inside those support processes. Runtime programs therefore receive only CA-trust
+env such as `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`;
+support control env and secret-file paths stay out of the official runtime
+process.
 
 Hermes has multiple official long-running surfaces. The Linux-like host should
 use official service installers for each runtime-owned surface when both are

@@ -1,5 +1,20 @@
 # MITM Channel Transport Architecture Research
 
+> **SUPERSEDED (2026-07-09).** This is a point-in-time research snapshot of the
+> *old* transport, which engaged interception via a **forward HTTP proxy plus
+> injected `HTTPS_PROXY`/`OPENCLAW_PROXY_URL` env** and a **native Go sidecar**
+> (`packages/cli/native/mitm-sidecar/main.go`). That model — and every `file:line`
+> below pointing at `native/mitm-sidecar/*`, `build-mitm-sidecar-bundle.mjs`, or
+> proxy-env engagement — **no longer exists**. The current gateway is a
+> **default-allow, profile-driven, transparent MITM**: a minimal nft redirect of
+> the runtime UID's :80/:443 to a runtime-fetched `mitmdump` (mitmproxy) running a
+> generic Python addon; no proxy env is injected, only CA-trust env. Non-profiled
+> hosts pass through end-to-end against the real upstream CA. For the current
+> source of truth see `packages/cli/mitmproxy-addon/clawdi_mitm_addon.py`,
+> `packages/cli/src/runtime/transparent-mitm.ts`,
+> `packages/cli/src/runtime/mitmproxy-fetch.ts`, and the runtime section of
+> `docs/managed-runtime.md`. Kept for historical context only.
+
 Date: 2026-07-08
 
 Scope: establish whether Clawdi's channel transport is intended to be a transparent outbound MITM relay, and identify which explicit channel URL shims are necessary, redundant, or wrong. This document is architecture-only and cites committed/source-controlled code with `file:line` evidence.
