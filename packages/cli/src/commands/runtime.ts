@@ -11,7 +11,6 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { connect } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -2298,22 +2297,38 @@ function waitForTcpPort(
 				reject(new Error(`mitmdump exited before listening on ${host}:${port}`));
 				return;
 			}
-			const socket = connect({ host, port });
-			socket.once("connect", () => {
-				socket.destroy();
+			if (tcpPortIsListening(host, port)) {
 				resolve();
-			});
-			socket.once("error", () => {
-				socket.destroy();
-				if (Date.now() - startedAt >= timeoutMs) {
-					reject(new Error(`timed out waiting for mitmdump on ${host}:${port}`));
-					return;
-				}
-				setTimeout(attempt, 100);
-			});
+				return;
+			}
+			if (Date.now() - startedAt >= timeoutMs) {
+				reject(new Error(`timed out waiting for mitmdump on ${host}:${port}`));
+				return;
+			}
+			setTimeout(attempt, 100);
 		};
 		attempt();
 	});
+}
+
+function tcpPortIsListening(host: string, port: number): boolean {
+	const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+	const allowedHosts =
+		host === "127.0.0.1" ? new Set(["0100007F"]) : new Set(["00000000", "0100007F"]);
+	try {
+		for (const raw of readFileSync("/proc/net/tcp", "utf-8").split(/\r?\n/).slice(1)) {
+			const fields = raw.trim().split(/\s+/);
+			const localAddress = fields[1] ?? "";
+			const state = fields[3] ?? "";
+			const [address, localPort] = localAddress.split(":");
+			if (state === "0A" && localPort === portHex && address && allowedHosts.has(address)) {
+				return true;
+			}
+		}
+	} catch {
+		return false;
+	}
+	return false;
 }
 
 function waitForFile(
