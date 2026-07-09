@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import runpy
 import sys
 import tempfile
 import unittest
@@ -72,6 +73,12 @@ def bundle(profiles):
 
 
 class AddonProfileInterpreterTest(unittest.TestCase):
+    def test_addon_loads_when_executed_as_a_script_path(self):
+        loaded = runpy.run_path(str(ADDON_PATH))
+
+        self.assertIn("addons", loaded)
+        self.assertEqual(len(loaded["addons"]), 1)
+
     def load(self, profiles, secrets=None):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)

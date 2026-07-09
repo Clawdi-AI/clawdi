@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -48,11 +47,16 @@ SCHEMA_VERSION = "clawdi.mitmProfiles.v1"
 ENV_FILE_KEY = "CLAWDI_MITM_ENV_FILE"
 
 
-@dataclass(frozen=True)
 class ProfileDecision:
-    action: str
-    profile_id: str | None = None
-    reason: str | None = None
+    def __init__(
+        self,
+        action: str,
+        profile_id: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        self.action = action
+        self.profile_id = profile_id
+        self.reason = reason
 
 
 class ConfigError(RuntimeError):
