@@ -201,15 +201,6 @@ class Settings(BaseSettings):
     # AI Provider auth through local agent CLIs.
     ai_provider_oauth_config_json: str = ""
 
-    # Managed AI catalog source for the hosted deploy surfaces. When both are
-    # set, cloud-api fetches the gateway's OpenAI-compatible `/v1/models`
-    # response with the service user key and exposes it as a user-facing
-    # read-only catalog. If that fetch fails, `managed_ai_catalog_fallback_json`
-    # becomes the single global fallback list for every user.
-    managed_ai_catalog_base_url: str = ""
-    managed_ai_catalog_api_key: str = ""
-    managed_ai_catalog_fallback_json: str = ""
-
     # Channels provider endpoints. The backend owns channel state directly;
     # these base URLs are only for outbound provider calls.
     channel_telegram_api_base_url: str = "https://api.telegram.org"

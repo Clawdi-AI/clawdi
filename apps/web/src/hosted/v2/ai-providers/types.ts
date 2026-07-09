@@ -15,5 +15,3 @@ export type AiProviderPatch = Schemas["AiProviderPatch"];
 export type AiProviderValidation = Schemas["AiProviderValidationResponse"];
 export type AiProviderOAuthStart = Schemas["AiProviderOAuthStartResponse"];
 export type AiProviderDeleted = Schemas["AiProviderDeleteResponse"];
-export type ManagedAiCatalog = Schemas["ManagedAiCatalogResponse"];
-export type ManagedAiModel = ManagedAiCatalog["models"][number];

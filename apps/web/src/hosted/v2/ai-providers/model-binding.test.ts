@@ -5,15 +5,13 @@ import {
 	MANAGED_PRIMARY_MODEL_FALLBACK,
 	modelIdsForProvider,
 } from "@/hosted/v2/ai-providers/model-binding";
-import type { AiProvider, ManagedAiModel } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 describe("model binding", () => {
-	test("uses the served managed model as the fallback", () => {
+	test("uses the default managed model fallback", () => {
 		expect(MANAGED_PRIMARY_MODEL_FALLBACK).toBe("gpt-5.5");
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("gpt-5.5");
-		const managedModels = [{ id: "gpt-5.4-mini" }] satisfies ManagedAiModel[];
-		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(["gpt-5.4-mini"]);
-		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.4-mini");
+		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual(["gpt-5.5"]);
 	});
 
 	test("uses the first catalog model for a selected provider", () => {

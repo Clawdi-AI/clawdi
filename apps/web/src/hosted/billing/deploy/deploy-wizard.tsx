@@ -71,7 +71,7 @@ import {
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
-import { useAiProviders, useManagedAiCatalog } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	dedupeProviderIds,
@@ -89,7 +89,7 @@ import {
 	buildAiProviderPoolBootstrap,
 	type RuntimeAiProviderAuthKind,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider, ManagedAiModel } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
@@ -261,7 +261,6 @@ export function DeployWizard() {
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
-	const managedAiCatalog = useManagedAiCatalog();
 	const channels = useChannels();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
@@ -316,7 +315,6 @@ export function DeployWizard() {
 		[aiProviders.data?.providers],
 	);
 	const channelList = channels.data ?? [];
-	const managedModels = managedAiCatalog.data?.models ?? [];
 	const computePlanReady =
 		compute === "performance"
 			? !!perfPlan && !!perfOfferSelection
@@ -417,10 +415,9 @@ export function DeployWizard() {
 		const fallback = firstModelForProvider(
 			primaryProviderChoice,
 			aiProviders.data?.providers ?? [],
-			managedModels,
 		);
 		if (fallback) setPrimaryModel(fallback);
-	}, [aiProviders.data?.providers, managedModels, primaryModel, primaryProviderChoice]);
+	}, [aiProviders.data?.providers, primaryModel, primaryProviderChoice]);
 
 	useEffect(() => {
 		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
@@ -437,9 +434,9 @@ export function DeployWizard() {
 
 	function setPrimaryProvider(choice: string) {
 		const providers = aiProviders.data?.providers ?? [];
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
-		const nextCatalog = modelIdsForProvider(choice, providers, managedModels);
-		const fallback = firstModelForProvider(choice, providers, managedModels);
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers);
+		const nextCatalog = modelIdsForProvider(choice, providers);
+		const fallback = firstModelForProvider(choice, providers);
 		setPrimaryProviderChoice(choice);
 		setAiProviderChoices((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
@@ -739,7 +736,6 @@ export function DeployWizard() {
 					</div>
 					<PrimaryModelPicker
 						providers={aiProviders.data?.providers ?? []}
-						managedModels={managedModels}
 						customProviders={providerList}
 						selectedProviderChoices={normalizeSelectedProviderIds(
 							aiProviderChoices,
@@ -955,7 +951,6 @@ function providerCatalogDescription(provider: AiProvider): string {
 
 function PrimaryModelPicker({
 	providers,
-	managedModels,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -964,7 +959,6 @@ function PrimaryModelPicker({
 	onPrimaryModelChange,
 }: {
 	providers: readonly AiProvider[];
-	managedModels: readonly ManagedAiModel[];
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -972,7 +966,7 @@ function PrimaryModelPicker({
 	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)

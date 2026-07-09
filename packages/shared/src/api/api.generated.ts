@@ -2105,23 +2105,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/managed-ai/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Managed Ai Models */
-        get: operations["list_managed_ai_models_v1_managed_ai_models_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/search": {
         parameters: {
             query?: never;
@@ -4104,16 +4087,6 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-        };
-        /** ManagedAiCatalogResponse */
-        ManagedAiCatalogResponse: {
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "gateway" | "fallback";
-            /** Models */
-            models: components["schemas"]["AiProviderModel"][];
         };
         /**
          * MemberResponse
@@ -9569,26 +9542,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_managed_ai_models_v1_managed_ai_models_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManagedAiCatalogResponse"];
                 };
             };
         };

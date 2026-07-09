@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	convergeRuntimeManifest,
+	hostedAiProviderCatalog,
 	type RuntimeManifest,
 	runtimeProgramRevision,
 	runtimeSecretValue,
@@ -436,6 +437,43 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
 		expect(envFile).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
 		expect(envFile).not.toContain("sk-managed");
+	});
+
+	test("projects managed hosted providers with only the live primary model seed", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					primary_model: { provider_id: "default", model: "gpt-live" },
+					services: {},
+				},
+			},
+			{
+				projection: {
+					providers: {
+						default: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							model: "gpt-legacy",
+							models: [{ id: "stale-a" }, { id: "stale-b" }],
+							apiMode: "openai_chat",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+
+		const projection = hostedAiProviderCatalog(manifest, "openclaw");
+		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "gpt-live" });
+		expect(projection?.catalog.providers[0]?.models).toEqual([
+			{ id: "gpt-live", api_mode: "openai_chat" },
+		]);
 	});
 
 	test("keeps runtime secret revisions separate from bridge sidecar revisions", () => {

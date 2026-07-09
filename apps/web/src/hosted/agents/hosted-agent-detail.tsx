@@ -121,7 +121,7 @@ import {
 } from "@/hosted/deployment-status";
 import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
-import { useAiProviders, useManagedAiCatalog } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	dedupeProviderIds,
@@ -142,7 +142,7 @@ import {
 	aiProviderRuntimeId,
 	buildAiProviderPoolBootstrap,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider, ManagedAiModel } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
@@ -1105,11 +1105,9 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
-	const managedAiCatalog = useManagedAiCatalog();
 	const setProvider = useSetAgentAiProvider();
 	const ci = deployment.config_info;
 	const list = providers.data?.providers ?? [];
-	const managedModels = managedAiCatalog.data?.models ?? [];
 	const customProviders = useMemo(
 		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
 		[list],
@@ -1142,7 +1140,7 @@ function AiProviderTab({
 	const currentModel =
 		primaryModelValue(binding?.primary_model) ||
 		primaryModelValue(ci?.primary_model) ||
-		firstModelForProvider(initialPrimaryChoice, list, managedModels);
+		firstModelForProvider(initialPrimaryChoice, list);
 
 	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
@@ -1179,9 +1177,9 @@ function AiProviderTab({
 		primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
 
 	function setPrimaryProvider(choice: string) {
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list, managedModels);
-		const nextCatalog = modelIdsForProvider(choice, list, managedModels);
-		const fallback = firstModelForProvider(choice, list, managedModels);
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list);
+		const nextCatalog = modelIdsForProvider(choice, list);
+		const fallback = firstModelForProvider(choice, list);
 		setPrimaryProviderChoice(choice);
 		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
@@ -1363,7 +1361,6 @@ function AiProviderTab({
 
 			<AgentPrimaryModelPicker
 				providers={list}
-				managedModels={managedModels}
 				customProviders={customProviders}
 				selectedProviderChoices={normalizeSelectedProviderIds(
 					selectedProviders,
@@ -1410,7 +1407,6 @@ function AiProviderTab({
 
 function AgentPrimaryModelPicker({
 	providers,
-	managedModels,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -1419,7 +1415,6 @@ function AgentPrimaryModelPicker({
 	onPrimaryModelChange,
 }: {
 	providers: readonly AiProvider[];
-	managedModels: readonly ManagedAiModel[];
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -1427,7 +1422,7 @@ function AgentPrimaryModelPicker({
 	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
