@@ -192,7 +192,7 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.status).toBe("error");
 			expect(parsed.stage).toBe("detect");
 			expect(parsed.errors).toContain(
-				"missing CLAWDI_AUTH_TOKEN and no last-good runtime manifest cache",
+				`missing ${join(runRoot, "secrets", "auth-token")} and no last-good runtime manifest cache`,
 			);
 			expect(parsed.datasource).toBe("RuntimeSource");
 			expect(parsed.hostPolicy.valid).toBe(true);
@@ -280,9 +280,9 @@ chmod +x "$HOME/.local/bin/hermes"
 		);
 		chmodSync(hermesInstaller, 0o700);
 		const mitmproxy = {
-			version: "12.1.0-test",
-			url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.1.0/mitmproxy-12.1.0-linux-x86_64.tar.gz",
-			sha256: "1".repeat(64),
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
 		};
 		const mitmdump = join(
 			serviceStateRoot,

@@ -104,11 +104,12 @@ function validateMitmproxyPin(
 	if (url.protocol !== "https:") {
 		throw new Error("mitmproxy URL must use https");
 	}
-	if (url.hostname !== "github.com") {
-		throw new Error("mitmproxy URL must use official GitHub releases");
+	if (url.hostname !== "downloads.mitmproxy.org") {
+		throw new Error("mitmproxy URL must use official mitmproxy downloads");
 	}
-	if (!url.pathname.startsWith("/mitmproxy/mitmproxy/releases/download/")) {
-		throw new Error("mitmproxy URL must use official GitHub release assets");
+	const expectedPath = `/${pin.version}/mitmproxy-${pin.version}-linux-x86_64.tar.gz`;
+	if (url.pathname !== expectedPath) {
+		throw new Error("mitmproxy URL must use the pinned linux x86_64 release archive");
 	}
 }
 

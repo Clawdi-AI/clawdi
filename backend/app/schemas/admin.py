@@ -113,6 +113,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     system: dict[str, Any] | None = None
     control_plane: dict[str, Any] | None = None
     clawdi_cli: dict[str, Any] | None = None
+    mitmproxy: dict[str, Any] | None = None
     runtimes: dict[str, Any] = Field(default_factory=dict)
     bridge: dict[str, Any] | None = None
     live_sync: dict[str, Any] | None = None

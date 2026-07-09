@@ -79,13 +79,13 @@ describe("runtime mitmproxy maintained fetch", () => {
 		expect(existsSync(join(paths.mitmproxyMaintainedRoot, "12.2.3-test"))).toBe(false);
 	});
 
-	it("requires official GitHub release URLs outside tests", () => {
+	it("requires official mitmproxy download URLs outside tests", () => {
 		const paths = runtimePaths();
 
 		const result = ensureRuntimeMitmproxy(
 			{
 				version: "12.2.3",
-				url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+				url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
 				sha256: "a".repeat(64),
 			},
 			paths,
@@ -93,7 +93,22 @@ describe("runtime mitmproxy maintained fetch", () => {
 
 		expect(result.status).toBe("degraded");
 		if (result.status !== "degraded") throw new Error("expected degraded");
-		expect(result.error).toContain("official GitHub releases");
+		expect(result.error).toContain("official mitmproxy downloads");
+	});
+
+	it("rejects downloads that do not match the pinned version archive", () => {
+		const result = ensureRuntimeMitmproxy(
+			{
+				version: "12.2.3",
+				url: "https://downloads.mitmproxy.org/12.2.2/mitmproxy-12.2.2-linux-x86_64.tar.gz",
+				sha256: "a".repeat(64),
+			},
+			runtimePaths(),
+		);
+
+		expect(result.status).toBe("degraded");
+		if (result.status !== "degraded") throw new Error("expected degraded");
+		expect(result.error).toContain("pinned linux x86_64 release archive");
 	});
 
 	it("degrades cleanly when the manifest has no pin", () => {

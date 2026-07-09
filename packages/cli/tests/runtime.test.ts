@@ -158,9 +158,9 @@ echo "seeded clawdi"
 }
 
 const TEST_MITMPROXY_PIN = {
-	version: "12.1.0-test",
-	url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.1.0/mitmproxy-12.1.0-linux-x86_64.tar.gz",
-	sha256: "1".repeat(64),
+	version: "12.2.3",
+	url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+	sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
 };
 
 function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_MITMPROXY_PIN {
