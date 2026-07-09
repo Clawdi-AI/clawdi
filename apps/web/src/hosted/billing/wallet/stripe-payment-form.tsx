@@ -1,28 +1,14 @@
 "use client";
 
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { loadStripe, type Stripe } from "@stripe/stripe-js";
+import type { Stripe } from "@stripe/stripe-js";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
 import { env } from "@/lib/env";
-
-/**
- * Stripe.js singleton. `loadStripe` injects the v3 script; keep one promise so
- * remounting the top-up dialog doesn't re-inject it. `resetStripeCache` clears
- * it so a retry after a failed (network) load actually re-injects rather than
- * re-awaiting the same rejected promise.
- */
-let stripePromise: Promise<Stripe | null> | null = null;
-function getStripe(key: string): Promise<Stripe | null> {
-	if (!stripePromise) stripePromise = loadStripe(key);
-	return stripePromise;
-}
-function resetStripeCache() {
-	stripePromise = null;
-}
 
 /** Terminal outcomes only — `requires_action` (3DS) is resolved inside the form. */
 export type PaymentOutcome = "succeeded" | "processing";
