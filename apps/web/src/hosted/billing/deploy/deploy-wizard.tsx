@@ -273,7 +273,7 @@ export function DeployWizard() {
 		null,
 	);
 
-	const [runtime, setRuntime] = useState<HostedRuntime>("openclaw");
+	const [runtime, setRuntime] = useState<HostedRuntime>("hermes");
 	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
 	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
@@ -658,15 +658,6 @@ export function DeployWizard() {
 				>
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={runtime === "openclaw"}
-							onClick={() => setRuntime("openclaw")}
-							icon={
-								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
-							}
-							title={runtimeDisplayName("openclaw")}
-							description={runtimeBlurb("openclaw")}
-						/>
-						<EntityChoiceCard
 							selected={runtime === "hermes"}
 							onClick={() => setRuntime("hermes")}
 							icon={
@@ -674,6 +665,15 @@ export function DeployWizard() {
 							}
 							title={runtimeDisplayName("hermes")}
 							description={runtimeBlurb("hermes")}
+						/>
+						<EntityChoiceCard
+							selected={runtime === "openclaw"}
+							onClick={() => setRuntime("openclaw")}
+							icon={
+								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
+							}
+							title={runtimeDisplayName("openclaw")}
+							description={runtimeBlurb("openclaw")}
 						/>
 					</div>
 				</SettingsSection>
@@ -838,7 +838,8 @@ export function DeployWizard() {
 							/>
 						</div>
 						{compute === "performance" && perfOffers.length > 1 ? (
-							<div className="flex flex-col gap-2">
+							<div className="flex flex-col gap-1.5 sm:max-w-xs">
+								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
 									offers={perfOffers}
 									value={perfBillingTermMonths}
@@ -865,32 +866,30 @@ export function DeployWizard() {
 					}
 					description="Choose the agent's language and timezone."
 				>
-					<div className="flex max-w-2xl flex-col gap-4">
-						<div className="grid gap-4 sm:grid-cols-2">
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="agent-language" className="text-sm text-muted-foreground">
-									Language
-								</label>
-								<Select
-									items={LANGUAGE_SELECT_ITEMS}
-									value={language || "default"}
-									onValueChange={(v) => {
-										setLanguage(v === null || v === "default" ? "" : v);
-									}}
-								>
-									<SelectTrigger id="agent-language">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="default">Default</SelectItem>
-										{LANGUAGE_OPTIONS.map((l) => (
-											<SelectItem key={l.code} value={l.code}>
-												{l.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
+					<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
+						<div className="flex flex-col gap-1.5">
+							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
+								Language
+							</label>
+							<Select
+								items={LANGUAGE_SELECT_ITEMS}
+								value={language || "default"}
+								onValueChange={(v) => {
+									setLanguage(v === null || v === "default" ? "" : v);
+								}}
+							>
+								<SelectTrigger id="agent-language">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="default">Default</SelectItem>
+									{LANGUAGE_OPTIONS.map((l) => (
+										<SelectItem key={l.code} value={l.code}>
+											{l.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
 						</div>
 						{tzOptions.length > 0 ? (
 							<div className="flex flex-col gap-1.5">
@@ -1039,21 +1038,28 @@ function PrimaryModelPicker({
 					</div>
 				) : null}
 			</div>
-			<div className="flex flex-col gap-1.5">
-				<Label htmlFor="deploy-primary-model">Primary model</Label>
-				<Input
-					id="deploy-primary-model"
-					value={primaryModel}
-					onChange={(event) => onPrimaryModelChange(event.target.value)}
-					placeholder={
-						primaryProviderChoice === MANAGED_AI_CHOICE
-							? MANAGED_PRIMARY_MODEL_FALLBACK
-							: "model id"
-					}
-					autoComplete="off"
-					spellCheck={false}
-				/>
-			</div>
+			{/* The free-text model id is only needed when the catalog dropdown is
+			    on "Custom model" (or the provider has no catalog). When a catalog
+			    model is selected it just duplicates the dropdown, so hide it. */}
+			{modelChoice === CUSTOM_MODEL_CHOICE ? (
+				<div className="flex flex-col gap-1.5">
+					<Label htmlFor="deploy-primary-model">
+						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
+					</Label>
+					<Input
+						id="deploy-primary-model"
+						value={primaryModel}
+						onChange={(event) => onPrimaryModelChange(event.target.value)}
+						placeholder={
+							primaryProviderChoice === MANAGED_AI_CHOICE
+								? MANAGED_PRIMARY_MODEL_FALLBACK
+								: "model id"
+						}
+						autoComplete="off"
+						spellCheck={false}
+					/>
+				</div>
+			) : null}
 		</div>
 	);
 }

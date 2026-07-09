@@ -1503,21 +1503,28 @@ function AgentPrimaryModelPicker({
 					</div>
 				) : null}
 			</div>
-			<div className="flex flex-col gap-1.5">
-				<Label htmlFor="agent-primary-model">Primary model</Label>
-				<Input
-					id="agent-primary-model"
-					value={primaryModel}
-					onChange={(event) => onPrimaryModelChange(event.target.value)}
-					placeholder={
-						primaryProviderChoice === MANAGED_AI_CHOICE
-							? MANAGED_PRIMARY_MODEL_FALLBACK
-							: "model id"
-					}
-					autoComplete="off"
-					spellCheck={false}
-				/>
-			</div>
+			{/* Free-text model id only when the catalog dropdown is on "Custom
+			    model" (or the provider has no catalog); otherwise it just
+			    duplicates the dropdown selection, so hide it. */}
+			{modelChoice === CUSTOM_MODEL_CHOICE ? (
+				<div className="flex flex-col gap-1.5">
+					<Label htmlFor="agent-primary-model">
+						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
+					</Label>
+					<Input
+						id="agent-primary-model"
+						value={primaryModel}
+						onChange={(event) => onPrimaryModelChange(event.target.value)}
+						placeholder={
+							primaryProviderChoice === MANAGED_AI_CHOICE
+								? MANAGED_PRIMARY_MODEL_FALLBACK
+								: "model id"
+						}
+						autoComplete="off"
+						spellCheck={false}
+					/>
+				</div>
+			) : null}
 		</div>
 	);
 }
