@@ -252,6 +252,10 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                             }
                         },
                     },
+                    "logging": {
+                        "redactHeaders": ["authorization"],
+                        "redactUrlPatterns": ["/bot[^/]+"],
+                    },
                     "priority": 10,
                 }
             ],
@@ -266,11 +270,17 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         decision = mitm.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "http")
+        self.assertIsNotNone(decision.profile)
         self.assertEqual(flow.request.scheme, "https")
         self.assertEqual(flow.request.host, "control.test")
         self.assertEqual(flow.request.path, "/v1/relay/botreal-agent-token/send?x=1")
         self.assertEqual(flow.request.headers["host"], "control.test")
         self.assertEqual(flow.request.headers["authorization"], "Bearer control-token")
+        redacted = addon.redact_url(
+            "https://control.test/v1/relay/botreal-agent-token/send?x=1",
+            decision.profile,
+        )
+        self.assertNotIn("real-agent-token", redacted)
 
     def test_websocket_profile_rewrites_upgrade_request(self):
         mitm = self.load(

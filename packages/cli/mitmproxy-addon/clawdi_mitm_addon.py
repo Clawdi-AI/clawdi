@@ -53,10 +53,12 @@ class ProfileDecision:
         action: str,
         profile_id: str | None = None,
         reason: str | None = None,
+        profile: dict[str, Any] | None = None,
     ) -> None:
         self.action = action
         self.profile_id = profile_id
         self.reason = reason
+        self.profile = profile
 
 
 class ConfigError(RuntimeError):
@@ -90,7 +92,7 @@ class ClawdiMitmAddon:
         if decision.profile_id:
             ctx.log.info(
                 f"clawdi mitm action={decision.action} profile={decision.profile_id} "
-                f"url={redact_url(flow.request.url, matched_profile(flow, self.profiles))}"
+                f"url={redact_url(flow.request.url, decision.profile)}"
             )
 
     def reload_from_environment(self, environ: dict[str, str | None]) -> None:
@@ -125,16 +127,16 @@ class ClawdiMitmAddon:
                 b"Request blocked by managed egress policy.\n",
                 {"content-type": "text/plain; charset=utf-8"},
             )
-            return ProfileDecision("deny", str(profile.get("id")))
+            return ProfileDecision("deny", str(profile.get("id")), profile=profile)
         if kind == "passthrough":
-            return ProfileDecision("passthrough", str(profile.get("id")))
+            return ProfileDecision("passthrough", str(profile.get("id")), profile=profile)
         if kind == "provider":
             apply_rewrite_headers(flow, profile, self.secrets)
-            return ProfileDecision("provider", str(profile.get("id")))
+            return ProfileDecision("provider", str(profile.get("id")), profile=profile)
         if kind in {"http", "websocket"}:
             apply_http_rewrite(flow, profile, self.secrets)
-            return ProfileDecision(kind, str(profile.get("id")))
-        return ProfileDecision("allow", str(profile.get("id")), "unknown-kind")
+            return ProfileDecision(kind, str(profile.get("id")), profile=profile)
+        return ProfileDecision("allow", str(profile.get("id")), "unknown-kind", profile)
 
 
 def merged_config(environ: dict[str, str | None]) -> dict[str, str]:
