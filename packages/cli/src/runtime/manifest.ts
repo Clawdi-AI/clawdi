@@ -42,6 +42,11 @@ import {
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-mitm-profiles";
+import {
+	buildManagedModelsEndpoint,
+	extractManagedLiveModelIds,
+	resolveManagedPrimaryModel,
+} from "./managed-model-resolution";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import { manifestSchema } from "./manifest-contract";
 import {
@@ -1151,11 +1156,13 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
+	options: { primaryModelOverride?: AgentPrimaryModel } = {},
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
-	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
+	const primaryModel =
+		options.primaryModelOverride ?? hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
 	if (!primaryModel) return null;
 	const entries = rawEntries
 		.map(([id, raw]) => {
@@ -1293,6 +1300,177 @@ function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMod
 		return raw;
 	}
 	return "openai_chat";
+}
+
+function managedProviderSupportsLiveModelProbe(apiMode: AiProviderApiMode): boolean {
+	return apiMode === "openai_chat" || apiMode === "openai_responses";
+}
+
+function managedGatewayPrimaryModelTarget(
+	manifest: RuntimeManifest,
+	runtimeName: string,
+): {
+	baseUrl: string;
+	providerId: string;
+	seedModel: string | null;
+} | null {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return null;
+	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
+	if (rawEntries.length === 0) return null;
+	const currentPrimary = hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
+	const selectedProviderId = currentPrimary?.provider_id ?? rawEntries[0]?.[0] ?? null;
+	if (!selectedProviderId) return null;
+	const selectedProvider = rawEntries.find(
+		([providerId]) => providerId === selectedProviderId,
+	)?.[1];
+	const provider = recordValue(selectedProvider);
+	if (!provider || !isClawdiManagedProviderProjection(provider)) return null;
+	const baseUrl = stringValue(provider.baseUrl);
+	if (!baseUrl) return null;
+	const apiMode = hostedProviderApiMode(provider);
+	if (!managedProviderSupportsLiveModelProbe(apiMode)) return null;
+	return {
+		baseUrl,
+		providerId: selectedProviderId,
+		seedModel:
+			currentPrimary && currentPrimary.provider_id === selectedProviderId
+				? currentPrimary.model
+				: null,
+	};
+}
+
+function resolveManagedGatewayPrimaryModelOverrides(
+	manifest: RuntimeManifest,
+	enabledRuntimes: readonly string[],
+	home: string,
+	workspaceRoot: string,
+	mitmSystemCaFile: string | null,
+	fetcher: ManagedGatewayModelListFetcher,
+): Partial<Record<string, AgentPrimaryModel>> {
+	const overrides: Partial<Record<string, AgentPrimaryModel>> = {};
+	const fetchCache = new Map<string, ManagedGatewayModelFetchResult>();
+	for (const runtimeName of enabledRuntimes) {
+		const target = managedGatewayPrimaryModelTarget(manifest, runtimeName);
+		if (!target) continue;
+		const cacheKey = `${target.providerId}\n${target.baseUrl}`;
+		let fetchResult = fetchCache.get(cacheKey);
+		if (!fetchResult) {
+			fetchResult = fetcher({
+				baseUrl: target.baseUrl,
+				home,
+				mitmSystemCaFile,
+				providerId: target.providerId,
+				runtimeName,
+				workspaceRoot,
+			});
+			fetchCache.set(cacheKey, fetchResult);
+			if (fetchResult.status === "failed") {
+				console.warn(
+					`managed model probe failed for ${runtimeName}/${target.providerId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured seed`,
+				);
+			}
+		}
+		const resolution = resolveManagedPrimaryModel({
+			seedModel: target.seedModel,
+			liveModelIds: fetchResult.status === "ok" ? fetchResult.modelIds : null,
+		});
+		if (!resolution.resolvedModel) continue;
+		if (resolution.resolvedModel === target.seedModel) continue;
+		overrides[runtimeName] = {
+			provider_id: target.providerId,
+			model: resolution.resolvedModel,
+		};
+	}
+	return overrides;
+}
+
+const MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS = 3_000;
+
+const MANAGED_GATEWAY_MODEL_FETCH_SCRIPT = [
+	"const [url, timeoutRaw] = process.argv.slice(1);",
+	"const timeoutMs = Number.parseInt(timeoutRaw ?? '', 10) || 3000;",
+	"const controller = new AbortController();",
+	"const timer = setTimeout(() => controller.abort(), timeoutMs);",
+	"(async () => {",
+	"  try {",
+	"    const response = await fetch(url, {",
+	"      method: 'GET',",
+	"      headers: { accept: 'application/json' },",
+	"      signal: controller.signal,",
+	"    });",
+	"    const body = await response.text();",
+	"    process.stdout.write(JSON.stringify({ ok: response.ok, status: response.status, body }));",
+	"    process.exit(response.ok ? 0 : 1);",
+	"  } catch (error) {",
+	"    const detail = error && typeof error === 'object' && 'name' in error && error.name === 'AbortError'",
+	"      ? 'request timed out'",
+	"      : (error instanceof Error ? error.message : String(error));",
+	"    process.stderr.write(detail);",
+	"    process.exit(2);",
+	"  } finally {",
+	"    clearTimeout(timer);",
+	"  }",
+	"})();",
+].join("\n");
+
+function fetchManagedGatewayModelList(
+	input: ManagedGatewayModelFetchInput,
+): ManagedGatewayModelFetchResult {
+	const endpoint = buildManagedModelsEndpoint(input.baseUrl);
+	if (!input.mitmSystemCaFile || !existsSync(input.mitmSystemCaFile)) {
+		return {
+			status: "failed",
+			detail: "transparent managed gateway CA bundle is unavailable",
+			endpoint,
+		};
+	}
+	const result = spawnRuntimeUserCommand(
+		process.execPath,
+		[
+			"-e",
+			MANAGED_GATEWAY_MODEL_FETCH_SCRIPT,
+			endpoint,
+			String(MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS),
+		],
+		input.home,
+		input.workspaceRoot,
+		{
+			transparentMitmCaFile: input.mitmSystemCaFile,
+		},
+	);
+	const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
+	const stderr = typeof result.stderr === "string" ? result.stderr : result.stderr.toString("utf8");
+	if (result.status !== 0) {
+		const detail = parseManagedGatewayFetchFailure(stdout, stderr, result.status);
+		return { status: "failed", detail, endpoint };
+	}
+	try {
+		const payload = JSON.parse(stdout) as { body?: string };
+		const body = payload.body ? JSON.parse(payload.body) : null;
+		return { status: "ok", endpoint, modelIds: extractManagedLiveModelIds(body) };
+	} catch (error) {
+		return {
+			status: "failed",
+			detail: `invalid /models response: ${error instanceof Error ? error.message : String(error)}`,
+			endpoint,
+		};
+	}
+}
+
+function parseManagedGatewayFetchFailure(
+	stdout: string,
+	stderr: string,
+	status: number | null,
+): string {
+	try {
+		const payload = JSON.parse(stdout) as { status?: unknown };
+		if (typeof payload.status === "number") return `HTTP ${payload.status}`;
+	} catch {
+		// Best-effort parse only.
+	}
+	const detail = stderr.trim() || stdout.trim();
+	return detail || `exit ${status ?? "unknown"}`;
 }
 
 function hostedProviderType(input: Record<string, unknown>): AiProviderType {
@@ -1614,6 +1792,31 @@ type HostedAiProviderProjectionInput = {
 	primaryModel: AgentPrimaryModel;
 };
 
+interface ManagedGatewayModelFetchInput {
+	baseUrl: string;
+	home: string;
+	mitmSystemCaFile: string | null;
+	providerId: string;
+	runtimeName: string;
+	workspaceRoot: string;
+}
+
+type ManagedGatewayModelFetchResult =
+	| {
+			status: "ok";
+			endpoint: string;
+			modelIds: string[];
+	  }
+	| {
+			status: "failed";
+			detail: string;
+			endpoint: string;
+	  };
+
+type ManagedGatewayModelListFetcher = (
+	input: ManagedGatewayModelFetchInput,
+) => ManagedGatewayModelFetchResult;
+
 interface HermesHostedProviderPluginProjection {
 	modelPatch: string;
 	pluginFiles: ProjectionFile[];
@@ -1650,11 +1853,14 @@ function applyHostedAiProviderProjection(
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 	previousManifest: RuntimeManifest | null,
+	managedPrimaryModelOverrides: Partial<Record<string, AgentPrimaryModel>>,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null };
 	}
-	const projectionInput = hostedAiProviderCatalog(manifest, name);
+	const projectionInput = hostedAiProviderCatalog(manifest, name, {
+		primaryModelOverride: managedPrimaryModelOverrides[name],
+	});
 	const previousProjectionInput = previousManifest
 		? hostedAiProviderCatalog(previousManifest, name)
 		: null;
@@ -2137,8 +2343,11 @@ function applyOpenClawHostedProjectionAfterOfficialInstall(
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
+	primaryModelOverride?: AgentPrimaryModel,
 ): void {
-	const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
+	const projectionInput = hostedAiProviderCatalog(manifest, "openclaw", {
+		primaryModelOverride,
+	});
 	if (projectionInput) {
 		applyOpenClawHostedProviderProjection(command, projectionInput, [], home, workspaceRoot);
 	}
@@ -2755,14 +2964,17 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
+function runtimeUserCommandEnv(
+	home: string,
+	options: { transparentMitmCaFile?: string } = {},
+): NodeJS.ProcessEnv {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	const uid =
 		runtimeUser && runtimeUser !== "root" && runningAsRoot()
 			? String(runtimeUserUid(runtimeUser))
 			: null;
 	const runtimeDir = uid ? `/run/user/${uid}` : null;
-	return {
+	const env = {
 		...process.env,
 		HOME: home,
 		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
@@ -2775,6 +2987,10 @@ function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
 				}
 			: {}),
 	};
+	if (options.transparentMitmCaFile) {
+		applyMitmTransparentRuntimeEnv(env, { caFile: options.transparentMitmCaFile });
+	}
+	return env;
 }
 
 function runtimeUserGid(runtimeUser: string): number {
@@ -2827,8 +3043,9 @@ function spawnRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
+	options: { transparentMitmCaFile?: string } = {},
 ): ReturnType<typeof spawnSync> {
-	const env = runtimeUserCommandEnv(home);
+	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
 		ensureRuntimeUserManagerReady(runtimeUser);
@@ -2859,8 +3076,9 @@ function runRuntimeUserCommand(
 	stdin: string,
 	home: string,
 	cwd: string,
+	options: { transparentMitmCaFile?: string } = {},
 ): void {
-	const env = runtimeUserCommandEnv(home);
+	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
 		ensureRuntimeUserManagerReady(runtimeUser);
@@ -4001,6 +4219,7 @@ function writeSystemdUnits(
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
+	managedPrimaryModelOverrides: Partial<Record<string, AgentPrimaryModel>>,
 ): { systemUnits: string[]; userUnits: string[]; serviceInstallErrors: string[] } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const runtimeBridgeToken = hostedRuntimeBridgeToken();
@@ -4131,6 +4350,7 @@ function writeSystemdUnits(
 					manifest,
 					paths.userHome,
 					workspaceRoot,
+					managedPrimaryModelOverrides.openclaw,
 				);
 			} catch (error) {
 				serviceInstallErrors.push(
@@ -4218,7 +4438,10 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 export function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: { cacheLastGood?: boolean } = {},
+	opts: {
+		cacheLastGood?: boolean;
+		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
 	const secretValues = runtimeSecretValues(load);
@@ -4355,6 +4578,14 @@ export function convergeRuntimeManifest(
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
 	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
+	const managedPrimaryModelOverrides = resolveManagedGatewayPrimaryModelOverrides(
+		manifest,
+		enabledRuntimes,
+		paths.userHome,
+		workspaceRoot,
+		mitmSystemdProgram?.systemCaBundle ?? null,
+		opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
+	);
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
@@ -4398,6 +4629,7 @@ export function convergeRuntimeManifest(
 				manifest,
 				workspaceRoot,
 				previousManifest,
+				managedPrimaryModelOverrides,
 			);
 			providerProjectionRevisions[name] = providerProjection.revision;
 		} catch (error) {
@@ -4533,6 +4765,7 @@ export function convergeRuntimeManifest(
 		daemonAuthTokenFile,
 		secretValues,
 		providerProjectionRevisions,
+		managedPrimaryModelOverrides,
 	);
 	installErrors.push(...systemdUnits.serviceInstallErrors);
 

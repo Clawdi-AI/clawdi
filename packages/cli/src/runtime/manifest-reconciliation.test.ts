@@ -476,6 +476,41 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
+	test("applies a managed primary model override to the hosted provider seed projection", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				projection: {
+					providers: {
+						default: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							apiMode: "openai_chat",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+
+		const projection = hostedAiProviderCatalog(manifest, "openclaw", {
+			primaryModelOverride: { provider_id: "default", model: "gpt-5.6" },
+		});
+		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "gpt-5.6" });
+		expect(projection?.catalog.providers[0]?.models).toEqual([
+			{ id: "gpt-5.6", api_mode: "openai_chat" },
+		]);
+	});
+
 	test("keeps runtime secret revisions separate from bridge sidecar revisions", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(paths, {
