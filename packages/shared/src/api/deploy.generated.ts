@@ -482,7 +482,7 @@ export interface components {
             upgrade_deployment_id?: string | null;
             /**
              * Ui Mode
-             * @default embedded
+             * @default custom
              */
             ui_mode: string;
             /** Locale */
