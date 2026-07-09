@@ -1,6 +1,11 @@
 import { CODEX_OAUTH_MODEL_CATALOG } from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
 import {
+	type ProviderPreset,
+	presetCatalogToProviderModels,
+	presetRuntimeEnvName,
+} from "@/hosted/v2/ai-providers/provider-presets";
+import {
 	type ApiMode,
 	type ProviderTypeId,
 	providerTypeMeta,
@@ -32,6 +37,7 @@ export interface DerivedProviderFields {
 	apiMode: ApiMode;
 	runtimeEnv: string;
 	modelsText: string;
+	suggestedPrimaryModel?: string;
 }
 
 export function isAuthMethod(value: string | null): value is AuthMethod {
@@ -98,15 +104,24 @@ export function parseModelIds(input: string): string[] {
 export function modelsFromText(
 	input: string,
 	existing: AiProvider["models"],
+	catalog: AiProvider["models"] = [],
 ): AiProviderUpsert["models"] {
-	const existingById = new Map((existing ?? []).map((model) => [model.id, model]));
-	const models = parseModelIds(input).map((id) => existingById.get(id) ?? { id });
+	type UpsertModel = NonNullable<AiProviderUpsert["models"]>[number];
+	const knownById = new Map<string, UpsertModel>();
+	for (const model of catalog ?? []) {
+		knownById.set(model.id, model);
+	}
+	for (const model of existing ?? []) {
+		knownById.set(model.id, model);
+	}
+	const models = parseModelIds(input).map((id) => knownById.get(id) ?? { id });
 	return models.length > 0 ? models : null;
 }
 
 export function derivedProviderFields(
 	type: ProviderTypeId,
 	authMethod: AuthMethod,
+	preset?: ProviderPreset | null,
 ): DerivedProviderFields {
 	const meta = providerTypeMeta(type);
 	if (authMethod === "oauth") {
@@ -117,6 +132,15 @@ export function derivedProviderFields(
 			modelsText: modelsToText(CODEX_OAUTH_MODEL_CATALOG),
 		};
 	}
+	if (preset) {
+		return {
+			baseUrl: preset.base_url,
+			apiMode: preset.api_mode,
+			runtimeEnv: presetRuntimeEnvName(preset),
+			modelsText: modelsToText(presetCatalogToProviderModels(preset)),
+			suggestedPrimaryModel: preset.suggested_primary_model,
+		};
+	}
 	return {
 		baseUrl: meta.defaultBaseUrl,
 		apiMode: meta.defaultApiMode,
@@ -125,7 +149,12 @@ export function derivedProviderFields(
 	};
 }
 
-export function shouldUseCatalogModels(type: ProviderTypeId, authMethod: AuthMethod): boolean {
+export function shouldUseCatalogModels(
+	type: ProviderTypeId,
+	authMethod: AuthMethod,
+	preset?: ProviderPreset | null,
+): boolean {
+	if (preset) return true;
 	return authMethod === "oauth" || providerTypeMeta(type).custom !== true;
 }
 
@@ -135,12 +164,14 @@ export function providerFormIdentity({
 	labelInput,
 	existingProviderIds,
 	editing,
+	preset,
 }: {
 	type: ProviderTypeId;
 	authMethod: AuthMethod;
 	labelInput: string;
 	existingProviderIds: readonly string[];
 	editing?: Pick<AiProvider, "provider_id" | "label"> | null;
+	preset?: ProviderPreset | null;
 }): ProviderFormIdentity {
 	if (authMethod === "oauth") {
 		return {
@@ -155,10 +186,11 @@ export function providerFormIdentity({
 		};
 	}
 	const baseLabel =
-		providerTypeMeta(type).custom === true
+		preset?.label ??
+		(providerTypeMeta(type).custom === true
 			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
-			: defaultProviderLabel(type);
-	const baseId = toProviderId(baseLabel);
+			: defaultProviderLabel(type));
+	const baseId = toProviderId(preset?.id ?? baseLabel);
 	if (!baseId) return { providerId: "", label: baseLabel };
 	if (!existingProviderIds.includes(baseId)) {
 		return { providerId: baseId, label: baseLabel };
