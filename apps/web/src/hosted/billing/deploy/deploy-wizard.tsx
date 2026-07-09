@@ -26,6 +26,13 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import {
+	buildHostedCheckoutFallbackRequest,
+	checkoutRedirectUrl,
+	findNewDeploymentId,
+	hasEmbeddedCheckoutClientSecret,
+} from "@/hosted/billing/components/embedded-checkout.logic";
+import { StripeEmbeddedCheckoutDialog } from "@/hosted/billing/components/stripe-embedded-checkout-dialog";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
 	BillingOffer,
@@ -99,6 +106,11 @@ import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
+type EmbeddedDeployCheckout = {
+	clientSecret: string;
+	previousDeploymentIds: string[];
+	request: CheckoutRequest;
+};
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
@@ -242,7 +254,7 @@ function computeStatusLine({
 	if (perfOffer && perfOffer.billing_term_months !== 1) {
 		return {
 			tone: "muted",
-			message: `You’ll be sent to checkout. Billed ${formatCentsCompact(
+			message: `Checkout opens here. Billed ${formatCentsCompact(
 				perfOffer.price_cents,
 			)}${billingTermSuffix(
 				perfOffer.billing_term_months,
@@ -251,7 +263,7 @@ function computeStatusLine({
 	}
 	return {
 		tone: "muted",
-		message: "You’ll be sent to checkout. Each Performance agent uses its own subscription.",
+		message: "Checkout opens here. Each Performance agent uses its own subscription.",
 	};
 }
 
@@ -281,6 +293,7 @@ export function DeployWizard() {
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
+	const [embeddedCheckout, setEmbeddedCheckout] = useState<EmbeddedDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 
@@ -544,6 +557,51 @@ export function DeployWizard() {
 		return false;
 	}
 
+	async function fallbackToHostedCheckout(request: CheckoutRequest) {
+		const hostedBody = buildHostedCheckoutFallbackRequest(request);
+		checkoutAttemptRef.current = idempotencyAttemptFor(
+			checkoutAttemptRef.current,
+			"subscription-checkout-hosted-fallback",
+			idempotencyFingerprint(hostedBody),
+			newIdempotencyKey,
+		);
+		const result = await checkout.mutateAsync({
+			body: hostedBody,
+			idempotencyKey: checkoutAttemptRef.current.key,
+		});
+		if (redirectTo(checkoutRedirectUrl(result))) return;
+		throw new Error("No checkout URL was returned.");
+	}
+
+	async function handleEmbeddedCheckoutComplete(previousDeploymentIds: readonly string[]) {
+		setEmbeddedCheckout(null);
+		let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
+		try {
+			refreshedDeployments = await refreshCheckoutReturn();
+		} catch {
+			toast.success("Checkout complete", {
+				description:
+					"Your Performance deployment is provisioning. We’ll refresh it on the next load.",
+			});
+			return;
+		}
+		const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
+		if (deploymentId) {
+			toast.success("Checkout complete", {
+				description: "Your Performance deployment is provisioning now.",
+			});
+			void router.navigate({
+				href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+				replace: true,
+			});
+			return;
+		}
+		toast.success("Checkout complete", {
+			description:
+				"Your Performance deployment is provisioning. Check your agents list in a moment.",
+		});
+	}
+
 	async function onDeploy() {
 		if (!canSubmit) return;
 		setSubmitting(true);
@@ -556,7 +614,7 @@ export function DeployWizard() {
 				const body: CheckoutRequest = {
 					plan_slug: perfPlan.slug,
 					billing_term_months: perfOfferSelection.billingTermMonths,
-					ui_mode: "hosted",
+					ui_mode: "embedded",
 					deploy_config: deployConfig,
 				};
 				checkoutAttemptRef.current = idempotencyAttemptFor(
@@ -569,7 +627,15 @@ export function DeployWizard() {
 					body,
 					idempotencyKey: checkoutAttemptRef.current.key,
 				});
-				if (redirectTo(result.action_url || result.checkout_url)) return;
+				if (hasEmbeddedCheckoutClientSecret(result)) {
+					setEmbeddedCheckout({
+						clientSecret: result.client_secret,
+						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
+						request: body,
+					});
+					return;
+				}
+				if (redirectTo(checkoutRedirectUrl(result))) return;
 				toast.error("Couldn't start checkout", {
 					description: "No checkout URL was returned. Please try again.",
 				});
@@ -931,6 +997,23 @@ export function DeployWizard() {
 				open={addProviderOpen}
 				onOpenChange={setAddProviderOpen}
 				onCreated={selectCreatedProvider}
+			/>
+			<StripeEmbeddedCheckoutDialog
+				open={embeddedCheckout !== null}
+				onOpenChange={(next) => {
+					if (!next) setEmbeddedCheckout(null);
+				}}
+				clientSecret={embeddedCheckout?.clientSecret ?? null}
+				title="Complete Performance checkout"
+				description="Secure checkout stays on this page. Redirect-based payment methods may briefly open Stripe and then return."
+				onComplete={() =>
+					void handleEmbeddedCheckoutComplete(embeddedCheckout?.previousDeploymentIds ?? [])
+				}
+				onFallback={() =>
+					embeddedCheckout
+						? fallbackToHostedCheckout(embeddedCheckout.request)
+						: Promise.reject(new Error("Missing checkout request."))
+				}
 			/>
 		</div>
 	);
