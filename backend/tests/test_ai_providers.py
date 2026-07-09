@@ -90,6 +90,60 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_accepts_catalog_derived_known_provider_bodies(
+    client: httpx.AsyncClient,
+):
+    known = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-derived",
+            "type": "openai",
+            "label": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "models": [{"id": "gpt-5.5"}, {"id": "gpt-5.4"}, {"id": "gpt-5.4-mini"}],
+            "api_mode": "openai_responses",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "user",
+            "runtime_env_name": "OPENAI_API_KEY",
+        },
+    )
+    assert known.status_code == 200, known.text
+    assert known.json()["provider_id"] == "openai-derived"
+    assert known.json()["runtime_env_name"] == "OPENAI_API_KEY"
+    assert known.json()["models"] == [
+        {"id": "gpt-5.5"},
+        {"id": "gpt-5.4"},
+        {"id": "gpt-5.4-mini"},
+    ]
+
+    codex = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "label": "Codex (ChatGPT)",
+            "base_url": "https://api.openai.com/v1",
+            "models": [
+                {"id": "gpt-5.5"},
+                {"id": "gpt-5.4"},
+                {"id": "gpt-5.3-codex"},
+                {"id": "gpt-5.4-mini"},
+            ],
+            "api_mode": "openai_responses",
+            "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+            "managed_by": "user",
+        },
+    )
+    assert codex.status_code == 200, codex.text
+    assert codex.json()["provider_id"] == "openai-codex"
+    assert codex.json()["auth"] == {
+        "type": "agent_profile",
+        "tool": "codex",
+        "profile": "default",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.AsyncClient):
     invalid_mode = await client.post(
         "/v1/ai-providers",

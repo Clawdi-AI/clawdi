@@ -121,6 +121,33 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderType, string>> = {
 	mistral: "https://api.mistral.ai/v1",
 };
 
+const DEFAULT_RUNTIME_ENV_NAME: Partial<Record<AiProviderType, string>> = {
+	openai: "OPENAI_API_KEY",
+	anthropic: "ANTHROPIC_API_KEY",
+	openrouter: "OPENROUTER_API_KEY",
+	gemini: "GEMINI_API_KEY",
+	mistral: "MISTRAL_API_KEY",
+};
+
+const DEFAULT_MODEL_CATALOG: Partial<Record<AiProviderType, readonly AiProviderModel[]>> = {
+	openai: [{ id: "gpt-5.5" }, { id: "gpt-5.4" }, { id: "gpt-5.4-mini" }],
+	anthropic: [{ id: "claude-sonnet-5" }, { id: "claude-opus-4-6" }, { id: "claude-haiku-4-5" }],
+	openrouter: [
+		{ id: "anthropic/claude-sonnet-5" },
+		{ id: "anthropic/claude-opus-4.6" },
+		{ id: "openai/gpt-5.5" },
+	],
+	gemini: [{ id: "gemini-2.5-pro" }, { id: "gemini-3.5-flash" }],
+	mistral: [{ id: "mistral-large-latest" }],
+};
+
+export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
+	{ id: "gpt-5.5" },
+	{ id: "gpt-5.4" },
+	{ id: "gpt-5.3-codex" },
+	{ id: "gpt-5.4-mini" },
+];
+
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
 export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-managed-v2";
@@ -188,6 +215,14 @@ export function defaultAiProviderApiMode(type: AiProviderType): AiProviderApiMod
 
 export function defaultAiProviderBaseUrl(type: AiProviderType): string | undefined {
 	return DEFAULT_BASE_URL[type];
+}
+
+export function defaultAiProviderRuntimeEnvName(type: AiProviderType): string | undefined {
+	return DEFAULT_RUNTIME_ENV_NAME[type];
+}
+
+export function defaultAiProviderModels(type: AiProviderType): readonly AiProviderModel[] {
+	return DEFAULT_MODEL_CATALOG[type] ?? [];
 }
 
 export function validateAiProviderCatalog(

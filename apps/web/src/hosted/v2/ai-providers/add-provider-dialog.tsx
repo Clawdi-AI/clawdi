@@ -28,8 +28,14 @@ import { Textarea } from "@/components/ui/textarea";
 import {
 	type AuthMethod,
 	apiKeyEditState,
+	derivedProviderFields,
 	isAuthMethod,
+	modelsFromText,
+	modelsToText,
+	parseModelIds,
 	providerAuthForSubmit,
+	providerFormIdentity,
+	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	useAiProviders,
@@ -57,9 +63,8 @@ import {
 	PROVIDER_TYPES,
 	type ProviderTypeId,
 	providerTypeMeta,
-	toProviderId,
 } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 function isApiMode(value: string | null): value is ApiMode {
 	return (
@@ -94,28 +99,6 @@ function providerTypeDescription(type: ProviderTypeId): string {
 	if (type === "gemini") return "Google models";
 	if (type === "mistral") return "Mistral APIs";
 	return "Custom endpoint";
-}
-
-function modelsToText(models: AiProvider["models"]): string {
-	return (models ?? []).map((model) => model.id).join("\n");
-}
-
-function parseModelIds(input: string): string[] {
-	const seen = new Set<string>();
-	const ids: string[] = [];
-	for (const raw of input.split(/[,\n]/)) {
-		const id = raw.trim();
-		if (!id || seen.has(id)) continue;
-		seen.add(id);
-		ids.push(id);
-	}
-	return ids;
-}
-
-function modelsFromText(input: string, existing: AiProvider["models"]): AiProviderUpsert["models"] {
-	const existingById = new Map((existing ?? []).map((model) => [model.id, model]));
-	const models = parseModelIds(input).map((id) => existingById.get(id) ?? { id });
-	return models.length > 0 ? models : null;
 }
 
 export function AddProviderDialog({
@@ -175,8 +158,37 @@ export function AddProviderDialog({
 	const createdFreshRef = useRef(false);
 
 	const meta = providerTypeMeta(type);
+	const existingProviderIds =
+		providers.data?.providers.map((provider) => provider.provider_id) ?? [];
+	const catalogManaged = shouldUseCatalogModels(type, authMethod);
+	const identity = providerFormIdentity({
+		type,
+		authMethod,
+		labelInput: label,
+		existingProviderIds,
+		editing,
+	});
+	const providerId = identity.providerId;
+	const providerLabel = identity.label ?? (providerId || meta.label);
 	const runtimeEnvForSubmit = runtimeEnv.trim() || meta.defaultRuntimeEnv;
-	const showRuntimeEnvField = authMethod === "api_key" && meta.custom === true;
+	const authMethodItems = [
+		{ value: "api_key", label: "API key" },
+		...(meta.oauth ? [{ value: "oauth", label: "Sign in with ChatGPT (Codex)" }] : []),
+		...(meta.custom ? [{ value: "none", label: "No auth (local)" }] : []),
+	];
+	const showAuthMethodField = authMethodItems.length > 1;
+	const showNameField = meta.custom === true;
+	const showAdvancedFields = meta.custom === true;
+	const showRuntimeEnvField = authMethod === "api_key" && showAdvancedFields;
+	const apiModeItems = meta.apiModes.map((mode) => ({
+		value: mode,
+		label: API_MODE_LABEL[mode],
+	}));
+	const catalogModelIds = parseModelIds(modelsText);
+	const catalogSummary =
+		catalogModelIds.length > 3
+			? `${catalogModelIds.slice(0, 3).join(", ")} +${catalogModelIds.length - 3} more`
+			: catalogModelIds.join(", ");
 
 	// Initialize when (re)opened.
 	useEffect(() => {
@@ -190,46 +202,66 @@ export function AddProviderDialog({
 		createdFreshRef.current = false;
 		popupRef.current = null;
 		if (editing) {
-			const m = providerTypeMeta(editing.type);
-			setType(editing.type as ProviderTypeId);
-			setLabel(editing.label ?? "");
-			setBaseUrl(editing.base_url);
-			setModelsText(modelsToText(editing.models));
-			setApiMode(editing.api_mode ?? m.defaultApiMode);
-			setRuntimeEnv(editing.runtime_env_name ?? m.defaultRuntimeEnv);
-			setAuthMethod(
+			const nextType = editing.type as ProviderTypeId;
+			const nextAuthMethod =
 				editing.auth.type === "none"
 					? "none"
 					: editing.auth.type === "api_key" || editing.auth.type === "secret_ref"
 						? "api_key"
-						: "oauth",
+						: "oauth";
+			const defaults = derivedProviderFields(nextType, nextAuthMethod);
+			const existingModels = editing.models ?? [];
+			setType(nextType);
+			setLabel(editing.label ?? "");
+			setBaseUrl(editing.base_url || defaults.baseUrl);
+			setModelsText(
+				existingModels.length > 0 || !shouldUseCatalogModels(nextType, nextAuthMethod)
+					? modelsToText(existingModels)
+					: defaults.modelsText,
 			);
+			setApiMode(editing.api_mode ?? defaults.apiMode);
+			setRuntimeEnv(editing.runtime_env_name ?? defaults.runtimeEnv);
+			setAuthMethod(nextAuthMethod);
 		} else {
-			const m = providerTypeMeta("openai");
+			const defaults = derivedProviderFields("openai", "api_key");
 			setType("openai");
 			setLabel("");
-			setBaseUrl(m.defaultBaseUrl);
-			setModelsText("");
-			setApiMode(m.defaultApiMode);
-			setRuntimeEnv(m.defaultRuntimeEnv);
+			setBaseUrl(defaults.baseUrl);
+			setModelsText(defaults.modelsText);
+			setApiMode(defaults.apiMode);
+			setRuntimeEnv(defaults.runtimeEnv);
 			setAuthMethod("api_key");
 		}
 	}, [open, editing]);
 
 	// Prefill when the type changes (add mode only).
 	function changeType(next: ProviderTypeId) {
-		setType(next);
 		const m = providerTypeMeta(next);
-		setBaseUrl(m.defaultBaseUrl);
-		setModelsText("");
-		setApiMode(m.defaultApiMode);
-		setRuntimeEnv(m.defaultRuntimeEnv);
+		let nextAuthMethod = authMethod;
+		if (!m.oauth && nextAuthMethod === "oauth") nextAuthMethod = "api_key";
+		if (!m.custom && nextAuthMethod === "none") nextAuthMethod = "api_key";
+		const defaults = derivedProviderFields(next, nextAuthMethod);
+		setType(next);
+		setBaseUrl(defaults.baseUrl);
+		setModelsText(defaults.modelsText);
+		setApiMode(defaults.apiMode);
+		setRuntimeEnv(defaults.runtimeEnv);
+		setAuthMethod(nextAuthMethod);
 		setApiKey("");
-		if (!m.oauth && authMethod === "oauth") setAuthMethod("api_key");
-		if (!m.custom && authMethod === "none") setAuthMethod("api_key");
+		if (next === "custom_openai_compatible") setLabel("");
 	}
 
-	const providerId = isEdit ? (editing?.provider_id ?? "") : toProviderId(label || meta.label);
+	function changeAuthMethod(next: AuthMethod) {
+		setAuthMethod(next);
+		setApiKey("");
+		if (meta.custom) return;
+		const defaults = derivedProviderFields(type, next);
+		setBaseUrl(defaults.baseUrl);
+		setModelsText(defaults.modelsText);
+		setApiMode(defaults.apiMode);
+		setRuntimeEnv(defaults.runtimeEnv);
+	}
+
 	// `none` auth only works with a loopback/private base_url (backend rule).
 	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
 	const apiKeyState = isEdit
@@ -241,15 +273,6 @@ export function AddProviderDialog({
 		Boolean(baseUrl.trim()) &&
 		noneAuthOk &&
 		(!keyRequired || apiKey.trim().length > 0);
-	const authMethodItems = [
-		{ value: "api_key", label: "API key" },
-		...(meta.oauth ? [{ value: "oauth", label: "Sign in with ChatGPT (Codex)" }] : []),
-		...(meta.custom ? [{ value: "none", label: "No auth (local)" }] : []),
-	];
-	const apiModeItems = meta.apiModes.map((mode) => ({
-		value: mode,
-		label: API_MODE_LABEL[mode],
-	}));
 
 	async function submit() {
 		if (!canSubmit) return;
@@ -327,7 +350,7 @@ export function AddProviderDialog({
 		const body = {
 			provider_id: providerId,
 			type,
-			label: label.trim() || null,
+			label: identity.label,
 			base_url: baseUrl.trim(),
 			models: modelsFromText(modelsText, editing?.models),
 			api_mode: apiMode,
@@ -700,154 +723,173 @@ export function AddProviderDialog({
 
 								<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
 									<ProviderTypeChip type={type} />
-									<div className="min-w-0 text-xs text-muted-foreground">
-										Saved as <code className="font-mono">{providerId || "—"}</code>
+									<div className="min-w-0 flex-1">
+										<p className="text-sm font-medium text-foreground">{providerLabel}</p>
+										<p className="text-xs text-muted-foreground">
+											Saved as <code className="font-mono">{providerId || "—"}</code>
+										</p>
+										{catalogManaged ? (
+											<>
+												<p className="mt-1 text-xs text-muted-foreground">
+													{authMethod === "oauth"
+														? `ChatGPT/Codex mapping · ${catalogSummary || "No catalog models"}`
+														: `Runtime mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
+												</p>
+												<p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+													{baseUrl}
+													{authMethod === "api_key" && runtimeEnvForSubmit
+														? ` · ${runtimeEnvForSubmit}`
+														: ""}
+												</p>
+											</>
+										) : null}
 									</div>
 								</div>
 
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="provider-label">Name</Label>
-									<Input
-										id="provider-label"
-										name="provider-label"
-										value={label}
-										onChange={(e) => setLabel(e.target.value)}
-										placeholder={`${meta.label} (my key)`}
-										autoComplete="off"
-									/>
-								</div>
-
-								{/* Auth method */}
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="provider-auth">Authentication</Label>
-									<Select
-										items={authMethodItems}
-										value={authMethod}
-										onValueChange={(value) => {
-											if (isAuthMethod(value)) setAuthMethod(value);
-										}}
-									>
-										<SelectTrigger id="provider-auth">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="api_key">API key</SelectItem>
-											{meta.oauth ? (
-												<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
-											) : null}
-											{meta.custom ? <SelectItem value="none">No auth (local)</SelectItem> : null}
-										</SelectContent>
-									</Select>
-								</div>
-
-								{authMethod === "api_key" ? (
-									<>
-										<div className="flex flex-col gap-1.5">
-											<Label htmlFor="provider-key">API key{apiKeyLabelSuffix}</Label>
-											<Input
-												id="provider-key"
-												name="provider-key"
-												type="password"
-												value={apiKey}
-												onChange={(e) => setApiKey(e.target.value)}
-												placeholder="sk-…"
-												autoComplete="off"
-												spellCheck={false}
-											/>
-											<p className="text-xs text-muted-foreground">{apiKeyHelpText}</p>
-											{keyRequired && isEdit && !apiKey.trim() ? (
-												<p className="text-xs text-destructive">
-													Enter a key to switch this provider to managed API-key auth.
-												</p>
-											) : null}
-										</div>
-										{showRuntimeEnvField ? (
-											<details
-												className="rounded-md border bg-muted/30 p-3"
-												open={isEdit || undefined}
-											>
-												<summary className="cursor-pointer text-sm font-medium text-foreground">
-													Advanced
-												</summary>
-												<div className="mt-3 flex flex-col gap-1.5">
-													<Label htmlFor="provider-env">Runtime env var</Label>
-													<Input
-														id="provider-env"
-														name="provider-env"
-														value={runtimeEnv}
-														onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
-														placeholder="OPENAI_API_KEY"
-														autoComplete="off"
-														spellCheck={false}
-													/>
-													<p className="text-xs text-muted-foreground">
-														Environment variable your endpoint's API key is exposed under to the
-														agent, e.g. OPENAI_API_KEY.
-													</p>
-												</div>
-											</details>
-										) : null}
-									</>
-								) : null}
-
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="provider-base">Base URL</Label>
-									<Input
-										id="provider-base"
-										name="provider-base"
-										value={baseUrl}
-										onChange={(e) => setBaseUrl(e.target.value)}
-										placeholder="https://api.example.com/v1"
-										autoComplete="off"
-										spellCheck={false}
-									/>
-									{authMethod === "none" && baseUrl.trim() && !noneAuthOk ? (
-										<p className="text-xs text-destructive">
-											No-auth providers must use a loopback or private-network URL (e.g.
-											http://127.0.0.1:11434/v1).
-										</p>
-									) : null}
-								</div>
-
-								<div className="grid gap-3 sm:grid-cols-2">
+								{showNameField ? (
 									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-models">Model catalog</Label>
-										<Textarea
-											id="provider-models"
-											name="provider-models"
-											value={modelsText}
-											onChange={(e) => setModelsText(e.target.value)}
-											placeholder={meta.modelPlaceholder}
+										<Label htmlFor="provider-label">Name</Label>
+										<Input
+											id="provider-label"
+											name="provider-label"
+											value={label}
+											onChange={(e) => setLabel(e.target.value)}
+											placeholder="Custom endpoint"
 											autoComplete="off"
-											spellCheck={false}
-											className="min-h-24 resize-y"
 										/>
 										<p className="text-xs text-muted-foreground">
-											Optional. Enter one model id per line, or separate ids with commas.
+											Optional. Used only to label this custom endpoint.
 										</p>
 									</div>
+								) : null}
+
+								{showAuthMethodField ? (
 									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-mode">API mode</Label>
+										<Label htmlFor="provider-auth">Authentication</Label>
 										<Select
-											items={apiModeItems}
-											value={apiMode}
+											items={authMethodItems}
+											value={authMethod}
 											onValueChange={(value) => {
-												if (isApiMode(value)) setApiMode(value);
+												if (isAuthMethod(value)) changeAuthMethod(value);
 											}}
 										>
-											<SelectTrigger id="provider-mode">
+											<SelectTrigger id="provider-auth">
 												<SelectValue />
 											</SelectTrigger>
 											<SelectContent>
-												{meta.apiModes.map((m) => (
-													<SelectItem key={m} value={m}>
-														{API_MODE_LABEL[m]}
-													</SelectItem>
-												))}
+												<SelectItem value="api_key">API key</SelectItem>
+												{meta.oauth ? (
+													<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
+												) : null}
+												{meta.custom ? <SelectItem value="none">No auth (local)</SelectItem> : null}
 											</SelectContent>
 										</Select>
 									</div>
-								</div>
+								) : null}
+
+								{authMethod === "api_key" ? (
+									<div className="flex flex-col gap-1.5">
+										<Label htmlFor="provider-key">API key{apiKeyLabelSuffix}</Label>
+										<Input
+											id="provider-key"
+											name="provider-key"
+											type="password"
+											value={apiKey}
+											onChange={(e) => setApiKey(e.target.value)}
+											placeholder="sk-…"
+											autoComplete="off"
+											spellCheck={false}
+										/>
+										<p className="text-xs text-muted-foreground">{apiKeyHelpText}</p>
+										{keyRequired && isEdit && !apiKey.trim() ? (
+											<p className="text-xs text-destructive">
+												Enter a key to switch this provider to managed API-key auth.
+											</p>
+										) : null}
+									</div>
+								) : null}
+
+								{showAdvancedFields ? (
+									<div className="rounded-md border bg-muted/30 p-3">
+										<div className="text-sm font-medium text-foreground">Advanced</div>
+										<div className="mt-3 flex flex-col gap-3">
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="provider-base">Base URL</Label>
+												<Input
+													id="provider-base"
+													name="provider-base"
+													value={baseUrl}
+													onChange={(e) => setBaseUrl(e.target.value)}
+													placeholder="https://api.example.com/v1"
+													autoComplete="off"
+													spellCheck={false}
+												/>
+												{authMethod === "none" && baseUrl.trim() && !noneAuthOk ? (
+													<p className="text-xs text-destructive">
+														No-auth providers must use a loopback or private-network URL (e.g.
+														http://127.0.0.1:11434/v1).
+													</p>
+												) : null}
+											</div>
+
+											<div className="grid gap-3 sm:grid-cols-2">
+												<div className="flex flex-col gap-1.5">
+													<Label htmlFor="provider-mode">API mode</Label>
+													<Select
+														items={apiModeItems}
+														value={apiMode}
+														onValueChange={(value) => {
+															if (isApiMode(value)) setApiMode(value);
+														}}
+													>
+														<SelectTrigger id="provider-mode">
+															<SelectValue />
+														</SelectTrigger>
+														<SelectContent>
+															{meta.apiModes.map((m) => (
+																<SelectItem key={m} value={m}>
+																	{API_MODE_LABEL[m]}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
+
+												{showRuntimeEnvField ? (
+													<div className="flex flex-col gap-1.5">
+														<Label htmlFor="provider-env">Runtime env var</Label>
+														<Input
+															id="provider-env"
+															name="provider-env"
+															value={runtimeEnv}
+															onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
+															placeholder="OPENAI_API_KEY"
+															autoComplete="off"
+															spellCheck={false}
+														/>
+													</div>
+												) : null}
+											</div>
+
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="provider-models">Model catalog</Label>
+												<Textarea
+													id="provider-models"
+													name="provider-models"
+													value={modelsText}
+													onChange={(e) => setModelsText(e.target.value)}
+													placeholder={meta.modelPlaceholder}
+													autoComplete="off"
+													spellCheck={false}
+													className="min-h-24 resize-y"
+												/>
+												<p className="text-xs text-muted-foreground">
+													Optional. Enter one model id per line, or separate ids with commas.
+												</p>
+											</div>
+										</div>
+									</div>
+								) : null}
 							</div>
 						</div>
 

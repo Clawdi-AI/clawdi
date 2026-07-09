@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import {
 	aiProviderRuntimeId,
 	buildAiProviderBootstrap,
@@ -123,5 +124,26 @@ describe("AI provider runtime bootstrap", () => {
 		);
 
 		expect(bootstrap.selected_provider_id).toBe("local-no-auth");
+	});
+
+	test("passes through the derived catalog and runtime env for known providers", () => {
+		const defaults = providerTypeMeta("openai");
+		const bootstrap = buildAiProviderBootstrap(
+			{
+				...provider,
+				provider_id: "openai-main",
+				label: "OpenAI",
+				auth: { type: "api_key", source: "managed" },
+				models: defaults.defaultModels.map((model) => ({ ...model })),
+				runtime_env_name: defaults.defaultRuntimeEnv,
+			},
+			"api_key",
+		);
+
+		expect(bootstrap.catalog.providers[0]).toMatchObject({
+			id: "openai-main",
+			models: defaults.defaultModels,
+			runtime_env_name: "OPENAI_API_KEY",
+		});
 	});
 });

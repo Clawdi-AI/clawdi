@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	CODEX_OAUTH_MODEL_CATALOG,
+	defaultAiProviderModels,
+	defaultAiProviderRuntimeEnvName,
 	isFirstPartyManagedAiProvider,
 	isProviderAuthProfileId,
 	validateAiProviderCatalog,
@@ -259,5 +262,36 @@ describe("isFirstPartyManagedAiProvider", () => {
 		expect(isFirstPartyManagedAiProvider({ provider_id: "openai-prod", managed_by: "user" })).toBe(
 			false,
 		);
+	});
+});
+
+describe("known AI provider defaults", () => {
+	test("exposes runtime env defaults for built-in providers", () => {
+		expect(defaultAiProviderRuntimeEnvName("openai")).toBe("OPENAI_API_KEY");
+		expect(defaultAiProviderRuntimeEnvName("anthropic")).toBe("ANTHROPIC_API_KEY");
+		expect(defaultAiProviderRuntimeEnvName("openrouter")).toBe("OPENROUTER_API_KEY");
+		expect(defaultAiProviderRuntimeEnvName("gemini")).toBe("GEMINI_API_KEY");
+		expect(defaultAiProviderRuntimeEnvName("mistral")).toBe("MISTRAL_API_KEY");
+		expect(defaultAiProviderRuntimeEnvName("custom_openai_compatible")).toBeUndefined();
+	});
+
+	test("provides a non-empty model catalog for built-in providers and Codex OAuth", () => {
+		expect(defaultAiProviderModels("openai").map((model) => model.id)).toEqual([
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.4-mini",
+		]);
+		expect(defaultAiProviderModels("anthropic").map((model) => model.id)).toEqual([
+			"claude-sonnet-5",
+			"claude-opus-4-6",
+			"claude-haiku-4-5",
+		]);
+		expect(defaultAiProviderModels("custom_openai_compatible")).toEqual([]);
+		expect(CODEX_OAUTH_MODEL_CATALOG.map((model) => model.id)).toEqual([
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.3-codex",
+			"gpt-5.4-mini",
+		]);
 	});
 });
