@@ -137,6 +137,31 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     return user
 
 
+async def _assert_admin_target_owns_environment(
+    db: AsyncSession,
+    *,
+    env: AgentEnvironment,
+    target_clerk_id: str | None,
+) -> UUID:
+    if target_clerk_id is None:
+        return env.user_id
+    target = (
+        await db.execute(select(User).where(User.clerk_id == target_clerk_id))
+    ).scalar_one_or_none()
+    if target is None or env.user_id != target.id:
+        logger.warning(
+            "admin_environment_owner_rejected target_clerk_id=%s env_id=%s owner_user_id=%s",
+            target_clerk_id,
+            env.id,
+            env.user_id,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Agent environment is not owned by target user",
+        )
+    return target.id
+
+
 @router.post("/auth/keys", response_model=ApiKeyCreated)
 async def admin_mint_api_key(
     body: AdminApiKeyCreate,
@@ -201,6 +226,24 @@ async def admin_mint_api_key(
         api_key.environment_id,
         api_key.managed,
     )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="api_key.mint",
+        resource_type="api_key",
+        resource_id=str(api_key.id),
+        environment_id=api_key.environment_id,
+        target_user_id=target.id,
+        source="api.admin",
+        details={
+            "label": api_key.label,
+            "key_prefix": api_key.key_prefix,
+            "managed": api_key.managed,
+            "has_environment_binding": api_key.environment_id is not None,
+            "scope_count": None if api_key.scopes is None else len(api_key.scopes),
+        },
+    )
+    await db.commit()
     return ApiKeyCreated(
         id=str(api_key.id),
         label=api_key.label,
@@ -234,6 +277,22 @@ async def admin_revoke_api_key(
         return ApiKeyRevokeResponse(status="revoked")
 
     api_key.revoked_at = datetime.now(UTC)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="api_key.revoke",
+        resource_type="api_key",
+        resource_id=str(api_key.id),
+        environment_id=api_key.environment_id,
+        target_user_id=api_key.user_id,
+        source="api.admin",
+        details={
+            "label": api_key.label,
+            "key_prefix": api_key.key_prefix,
+            "managed": api_key.managed,
+            "has_environment_binding": api_key.environment_id is not None,
+        },
+    )
     await db.commit()
     invalidate_api_key_auth_cache(api_key.id)
     logger.info(
@@ -624,6 +683,7 @@ async def admin_register_environment(
 
 async def _admin_delete_environment(
     environment_id: UUID,
+    target_clerk_id: str | None,
     db: AsyncSession,
 ) -> None:
     env = (
@@ -631,18 +691,43 @@ async def _admin_delete_environment(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    target_user_id = await _assert_admin_target_owns_environment(
+        db,
+        env=env,
+        target_clerk_id=target_clerk_id,
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="agent_environment.delete",
+        resource_type="agent_environment",
+        resource_id=str(env.id),
+        environment_id=env.id,
+        target_user_id=target_user_id,
+        source="api.admin",
+        details={
+            "agent_type": env.agent_type,
+            "machine_id": env.machine_id,
+            "explicit_identity": env.registration_key is None,
+        },
+    )
     await db.delete(env)
     await db.commit()
-    logger.info("admin_environment_deleted env_id=%s", environment_id)
+    logger.info(
+        "admin_environment_deleted target_clerk_id=%s env_id=%s",
+        target_clerk_id,
+        environment_id,
+    )
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_delete_agent(
     agent_id: UUID,
+    target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    await _admin_delete_environment(agent_id, db)
+    await _admin_delete_environment(agent_id, target_clerk_id, db)
 
 
 @router.delete(
@@ -652,6 +737,7 @@ async def admin_delete_agent(
 )
 async def admin_delete_environment(
     environment_id: UUID,
+    target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> None:
@@ -661,7 +747,7 @@ async def admin_delete_environment(
     user-facing `/v1/environments/{id}` semantics. Unlike the dashboard route,
     first-party cleanup may delete explicit-identity rows.
     """
-    await _admin_delete_environment(environment_id, db)
+    await _admin_delete_environment(environment_id, target_clerk_id, db)
 
 
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
@@ -685,6 +771,11 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+    target_user_id = await _assert_admin_target_owns_environment(
+        db,
+        env=env,
+        target_clerk_id=body.target_clerk_id,
+    )
 
     state = (
         await db.execute(
@@ -727,7 +818,7 @@ async def _admin_upsert_runtime_state(
         resource_type="hosted_runtime_state",
         resource_id=str(environment_id),
         environment_id=environment_id,
-        target_user_id=env.user_id,
+        target_user_id=target_user_id,
         source="api.admin",
         details={
             "deployment_id": body.deployment_id,
@@ -745,7 +836,9 @@ async def _admin_upsert_runtime_state(
     )
     await db.commit()
     logger.info(
-        "admin_runtime_state_upserted environment_id=%s deployment_id=%s generation=%s",
+        "admin_runtime_state_upserted target_clerk_id=%s environment_id=%s "
+        "deployment_id=%s generation=%s",
+        body.target_clerk_id,
         environment_id,
         body.deployment_id,
         body.generation,
@@ -787,6 +880,7 @@ async def admin_upsert_runtime_state(
 
 async def _admin_delete_runtime_state(
     environment_id: UUID,
+    target_clerk_id: str | None,
     db: AsyncSession,
 ) -> None:
     env = (
@@ -794,6 +888,11 @@ async def _admin_delete_runtime_state(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+    target_user_id = await _assert_admin_target_owns_environment(
+        db,
+        env=env,
+        target_clerk_id=target_clerk_id,
+    )
 
     state = (
         await db.execute(
@@ -825,13 +924,14 @@ async def _admin_delete_runtime_state(
         resource_type="hosted_runtime_state",
         resource_id=str(environment_id),
         environment_id=environment_id,
-        target_user_id=env.user_id,
+        target_user_id=target_user_id,
         source="api.admin",
         details=details,
     )
     await db.commit()
     logger.info(
-        "admin_runtime_state_deleted environment_id=%s existed=%s",
+        "admin_runtime_state_deleted target_clerk_id=%s environment_id=%s existed=%s",
+        target_clerk_id,
         environment_id,
         state is not None,
     )
@@ -843,10 +943,11 @@ async def _admin_delete_runtime_state(
 )
 async def admin_delete_agent_runtime_state(
     agent_id: UUID,
+    target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    await _admin_delete_runtime_state(agent_id, db)
+    await _admin_delete_runtime_state(agent_id, target_clerk_id, db)
 
 
 @router.delete(
@@ -856,10 +957,11 @@ async def admin_delete_agent_runtime_state(
 )
 async def admin_delete_runtime_state(
     environment_id: UUID,
+    target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    await _admin_delete_runtime_state(environment_id, db)
+    await _admin_delete_runtime_state(environment_id, target_clerk_id, db)
 
 
 async def _admin_get_channel_row(

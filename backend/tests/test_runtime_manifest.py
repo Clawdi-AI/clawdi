@@ -61,7 +61,12 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: str, **overrides):
+async def _write_runtime_state(
+    admin_client: httpx.AsyncClient,
+    environment_id: str,
+    target_clerk_id: str | None = None,
+    **overrides,
+):
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
@@ -77,6 +82,8 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
             "hermes": {"enabled": False},
         },
     }
+    if target_clerk_id is not None:
+        body["target_clerk_id"] = target_clerk_id
     body.update(overrides)
     response = await admin_client.put(
         f"/v1/admin/environments/{environment_id}/runtime-state",
@@ -84,7 +91,7 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
         json=body,
     )
     assert response.status_code == 200, response.text
-    return body
+    return {key: value for key, value in body.items() if key != "target_clerk_id"}
 
 
 @pytest.mark.asyncio
@@ -100,7 +107,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
         machine_name="Runtime v2",
         agent_type="openclaw",
     )
-    expected = await _write_runtime_state(admin_client, str(env.id))
+    expected = await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -151,7 +158,9 @@ async def test_runtime_manifest_includes_mitmproxy_pin(
         machine_name="Runtime mitmproxy",
         agent_type="openclaw",
     )
-    await _write_runtime_state(admin_client, str(env.id), mitmproxy=TEST_MITMPROXY_PIN)
+    await _write_runtime_state(
+        admin_client, str(env.id), seed_user.clerk_id, mitmproxy=TEST_MITMPROXY_PIN
+    )
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -186,7 +195,7 @@ async def test_runtime_manifest_includes_declared_bridge_surfaces(
             }
         ]
     }
-    await _write_runtime_state(admin_client, str(env.id), bridge=bridge)
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id, bridge=bridge)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -211,7 +220,7 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
         machine_name="Runtime heartbeat",
         agent_type="openclaw",
     )
-    expected = await _write_runtime_state(admin_client, str(env.id))
+    expected = await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -258,9 +267,9 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
         machine_name="Runtime Audit",
         agent_type="openclaw",
     )
-    initial = await _write_runtime_state(admin_client, str(env.id))
+    initial = await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
     updated = {**initial, "generation": 8}
-    await _write_runtime_state(admin_client, str(env.id), **updated)
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id, **updated)
 
     async with await _runtime_client(db_session, seed_user, None) as client:
         response = await client.get(
@@ -301,7 +310,7 @@ async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit
         machine_name="Runtime Delete",
         agent_type="openclaw",
     )
-    expected = await _write_runtime_state(admin_client, str(env.id))
+    expected = await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -312,6 +321,7 @@ async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit
     deleted = await admin_client.delete(
         f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
     )
 
     assert deleted.status_code == 204, deleted.text
@@ -366,6 +376,7 @@ async def test_admin_delete_runtime_state_missing_row_is_idempotent(
     deleted = await admin_client.delete(
         f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
     )
 
     assert deleted.status_code == 204, deleted.text
@@ -403,12 +414,102 @@ async def test_admin_delete_runtime_state_requires_admin_key(
         machine_name="Runtime Delete Auth",
         agent_type="openclaw",
     )
-    await _write_runtime_state(admin_client, str(env.id))
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
-    rejected = await admin_client.delete(f"/v1/admin/environments/{env.id}/runtime-state")
+    rejected = await admin_client.delete(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
 
     assert rejected.status_code == 401, rejected.text
     assert await db_session.get(HostedRuntimeState, env.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_without_target_clerk_id_preserves_backward_compat(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-compat-{uuid4().hex[:8]}",
+        machine_name="Runtime Compat",
+        agent_type="openclaw",
+    )
+
+    body = await _write_runtime_state(admin_client, str(env.id))
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.deployment_id == body["deployment_id"]
+
+    deleted = await admin_client.delete(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+    )
+
+    assert deleted.status_code == 204, deleted.text
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_cross_tenant_target_without_mutating(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    other_user = User(
+        clerk_id=f"runtime_owner_{uuid4().hex[:12]}",
+        email=f"runtime-owner-{uuid4().hex[:8]}@clawdi.local",
+        name="Runtime Owner",
+    )
+    db_session.add(other_user)
+    await db_session.commit()
+    await db_session.refresh(other_user)
+    upsert_env = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"runtime-upsert-owner-{uuid4().hex[:8]}",
+        machine_name="Runtime Upsert Owner",
+        agent_type="openclaw",
+    )
+    delete_env = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"runtime-delete-owner-{uuid4().hex[:8]}",
+        machine_name="Runtime Delete Owner",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(delete_env.id), other_user.clerk_id)
+
+    try:
+        upsert_response = await admin_client.put(
+            f"/v1/admin/environments/{upsert_env.id}/runtime-state",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "deployment_id": f"dep_{uuid4().hex}",
+                "app_id": "app-test",
+                "instance_id": f"hri_{uuid4().hex}",
+                "generation": 7,
+                "provider_id": "clawdi-managed",
+                "runtimes": {"openclaw": {"enabled": True}},
+            },
+        )
+        assert upsert_response.status_code == 403, upsert_response.text
+        assert await db_session.get(HostedRuntimeState, upsert_env.id) is None
+
+        delete_response = await admin_client.delete(
+            f"/v1/admin/environments/{delete_env.id}/runtime-state",
+            headers=_AUTH,
+            params={"target_clerk_id": seed_user.clerk_id},
+        )
+        assert delete_response.status_code == 403, delete_response.text
+        assert await db_session.get(HostedRuntimeState, delete_env.id) is not None
+    finally:
+        await db_session.delete(other_user)
+        await db_session.commit()
 
 
 @pytest.mark.asyncio
@@ -424,7 +525,9 @@ async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generati
         machine_name="Runtime generation reset",
         agent_type="openclaw",
     )
-    initial = await _write_runtime_state(admin_client, str(env.id), generation=7)
+    initial = await _write_runtime_state(
+        admin_client, str(env.id), seed_user.clerk_id, generation=7
+    )
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -434,7 +537,9 @@ async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generati
     etag = response.headers["etag"]
     assert response.json()["manifest"]["generation"] == 7
 
-    await _write_runtime_state(admin_client, str(env.id), **{**initial, "generation": 6})
+    await _write_runtime_state(
+        admin_client, str(env.id), seed_user.clerk_id, **{**initial, "generation": 6}
+    )
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
@@ -472,6 +577,7 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
     initial = await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         mitmproxy=TEST_MITMPROXY_PIN,
         mitm_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
         mcp={"enabled": True},
@@ -480,6 +586,7 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         **{
             key: value
             for key, value in {**initial, "generation": 8}.items()
@@ -534,6 +641,7 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         mcp={"enabled": True, "profile": "clawdi-default"},
         tools={"catalog": "clawdi-default", "enabled": ["memory", "connectors"]},
     )
@@ -618,6 +726,7 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -752,6 +861,7 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -836,6 +946,7 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -933,6 +1044,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -1021,6 +1133,7 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         provider_id="deleted-default-provider",
         runtimes={
             "openclaw": {"enabled": True},
@@ -1069,6 +1182,7 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1148,6 +1262,7 @@ async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1189,6 +1304,7 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1221,6 +1337,7 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1255,6 +1372,7 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1419,6 +1537,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
         agent_type="openclaw",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
@@ -1469,7 +1588,7 @@ async def test_runtime_manifest_allows_unbound_cli_key_with_explicit_environment
         machine_name="Runtime Unbound",
         agent_type="openclaw",
     )
-    await _write_runtime_state(admin_client, str(env.id))
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -1503,7 +1622,7 @@ async def test_runtime_manifest_rejects_unbound_cli_key_for_other_user_environme
         machine_name="Runtime Cross User",
         agent_type="openclaw",
     )
-    await _write_runtime_state(admin_client, str(other_env.id))
+    await _write_runtime_state(admin_client, str(other_env.id), other_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -1537,8 +1656,8 @@ async def test_runtime_manifest_rejects_bound_cli_key_environment_id_mismatch(
         machine_name="Runtime Other",
         agent_type="codex",
     )
-    await _write_runtime_state(admin_client, str(env.id))
-    await _write_runtime_state(admin_client, str(other_env.id))
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
+    await _write_runtime_state(admin_client, str(other_env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bound")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -1603,7 +1722,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         )
     )
     await db_session.commit()
-    await _write_runtime_state(admin_client, str(env.id))
+    await _write_runtime_state(admin_client, str(env.id), seed_user.clerk_id)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=None, managed=True, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -1708,7 +1827,9 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         )
     )
     await db_session.commit()
-    await _write_runtime_state(admin_client, str(env.id), provider_id="clawdi-managed")
+    await _write_runtime_state(
+        admin_client, str(env.id), seed_user.clerk_id, provider_id="clawdi-managed"
+    )
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -1776,6 +1897,7 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         provider_id="custom-openai",
         runtimes={
             "openclaw": {
@@ -1840,6 +1962,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
     await _write_runtime_state(
         admin_client,
         str(env.id),
+        seed_user.clerk_id,
         provider_id="openai-codex",
         runtimes={
             "openclaw": {
@@ -1891,6 +2014,7 @@ async def test_admin_runtime_state_accepts_codex_hosted_runtime(
         agent_type="codex",
     )
     body = {
+        "target_clerk_id": seed_user.clerk_id,
         "deployment_id": f"dep_{uuid4().hex}",
         "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
