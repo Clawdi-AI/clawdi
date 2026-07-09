@@ -35,6 +35,7 @@ from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.mcp_bridge import router as mcp_bridge_router
+from app.routes.managed_ai import router as managed_ai_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
@@ -263,6 +264,7 @@ _VERSIONED_ROUTERS = (
     capabilities_router,
     vault_router,
     connectors_router,
+    managed_ai_router,
     mcp_bridge_router,
     search_router,
     share_redeem_router,

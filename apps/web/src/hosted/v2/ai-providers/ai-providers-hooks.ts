@@ -8,12 +8,21 @@ import { toastApiError, unwrap, useApi } from "@/lib/api";
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
 const KEY = ["ai-providers"] as const;
+const MANAGED_MODELS_KEY = ["managed-ai-models"] as const;
 
 export function useAiProviders() {
 	const api = useApi();
 	return useQuery({
 		queryKey: KEY,
 		queryFn: async () => unwrap(await api.GET("/v1/ai-providers")),
+	});
+}
+
+export function useManagedAiCatalog() {
+	const api = useApi();
+	return useQuery({
+		queryKey: MANAGED_MODELS_KEY,
+		queryFn: async () => unwrap(await api.GET("/v1/managed-ai/models")),
 	});
 }
 
