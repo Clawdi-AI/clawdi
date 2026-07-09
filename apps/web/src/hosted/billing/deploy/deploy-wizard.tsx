@@ -28,11 +28,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
 	buildHostedCheckoutFallbackRequest,
+	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
 	findNewDeploymentId,
-	hasEmbeddedCheckoutClientSecret,
-} from "@/hosted/billing/components/embedded-checkout.logic";
-import { StripeEmbeddedCheckoutDialog } from "@/hosted/billing/components/stripe-embedded-checkout-dialog";
+	hasCheckoutClientSecret,
+} from "@/hosted/billing/components/stripe-checkout.logic";
+import {
+	StripeCheckoutDialog,
+	type StripeCheckoutSummary,
+} from "@/hosted/billing/components/stripe-checkout-dialog";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
 	BillingOffer,
@@ -50,7 +54,7 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
@@ -106,10 +110,11 @@ import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
-type EmbeddedDeployCheckout = {
+type NativeDeployCheckout = {
 	clientSecret: string;
 	previousDeploymentIds: string[];
 	request: CheckoutRequest;
+	summary: StripeCheckoutSummary;
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
@@ -151,6 +156,27 @@ function AddTile({
 			className="h-full border-dashed bg-card"
 		/>
 	);
+}
+
+function performanceCheckoutSummary({
+	offer,
+	plan,
+	termMonths,
+}: {
+	offer: BillingOffer;
+	plan: Plan;
+	termMonths: number;
+}): StripeCheckoutSummary {
+	const effectiveMonthly = formatCentsCompact(offer.effective_monthly_price_cents);
+	return {
+		detail:
+			termMonths === 1
+				? "Per hosted Performance agent, billed monthly."
+				: `${effectiveMonthly}/mo effective per hosted Performance agent.`,
+		planName: plan.name,
+		priceLabel: formatCentsCompact(offer.price_cents),
+		termLabel: billingTermLabel(termMonths),
+	};
 }
 
 function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
@@ -293,7 +319,7 @@ export function DeployWizard() {
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
-	const [embeddedCheckout, setEmbeddedCheckout] = useState<EmbeddedDeployCheckout | null>(null);
+	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 
@@ -573,8 +599,8 @@ export function DeployWizard() {
 		throw new Error("No checkout URL was returned.");
 	}
 
-	async function handleEmbeddedCheckoutComplete(previousDeploymentIds: readonly string[]) {
-		setEmbeddedCheckout(null);
+	async function handleCheckoutComplete(previousDeploymentIds: readonly string[]) {
+		setCheckoutSession(null);
 		let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
 		try {
 			refreshedDeployments = await refreshCheckoutReturn();
@@ -614,7 +640,7 @@ export function DeployWizard() {
 				const body: CheckoutRequest = {
 					plan_slug: perfPlan.slug,
 					billing_term_months: perfOfferSelection.billingTermMonths,
-					ui_mode: "embedded",
+					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 					deploy_config: deployConfig,
 				};
 				checkoutAttemptRef.current = idempotencyAttemptFor(
@@ -627,11 +653,16 @@ export function DeployWizard() {
 					body,
 					idempotencyKey: checkoutAttemptRef.current.key,
 				});
-				if (hasEmbeddedCheckoutClientSecret(result)) {
-					setEmbeddedCheckout({
+				if (hasCheckoutClientSecret(result)) {
+					setCheckoutSession({
 						clientSecret: result.client_secret,
 						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
 						request: body,
+						summary: performanceCheckoutSummary({
+							offer: perfOfferSelection.offer,
+							plan: perfPlan,
+							termMonths: perfOfferSelection.billingTermMonths,
+						}),
 					});
 					return;
 				}
@@ -998,20 +1029,19 @@ export function DeployWizard() {
 				onOpenChange={setAddProviderOpen}
 				onCreated={selectCreatedProvider}
 			/>
-			<StripeEmbeddedCheckoutDialog
-				open={embeddedCheckout !== null}
+			<StripeCheckoutDialog
+				open={checkoutSession !== null}
 				onOpenChange={(next) => {
-					if (!next) setEmbeddedCheckout(null);
+					if (!next) setCheckoutSession(null);
 				}}
-				clientSecret={embeddedCheckout?.clientSecret ?? null}
+				clientSecret={checkoutSession?.clientSecret ?? null}
 				title="Complete Performance checkout"
-				description="Secure checkout stays on this page. Redirect-based payment methods may briefly open Stripe and then return."
-				onComplete={() =>
-					void handleEmbeddedCheckoutComplete(embeddedCheckout?.previousDeploymentIds ?? [])
-				}
+				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
+				summary={checkoutSession?.summary ?? null}
+				onComplete={() => void handleCheckoutComplete(checkoutSession?.previousDeploymentIds ?? [])}
 				onFallback={() =>
-					embeddedCheckout
-						? fallbackToHostedCheckout(embeddedCheckout.request)
+					checkoutSession
+						? fallbackToHostedCheckout(checkoutSession.request)
 						: Promise.reject(new Error("Missing checkout request."))
 				}
 			/>

@@ -1,10 +1,12 @@
 import type { CheckoutRequest, CheckoutResult, HostedDeployment } from "@/hosted/billing/contracts";
 
+export const CHECKOUT_ELEMENTS_UI_MODE = "custom";
+
 export function checkoutRedirectUrl(result: CheckoutResult): string | null {
 	return result.action_url || result.checkout_url || null;
 }
 
-export function hasEmbeddedCheckoutClientSecret(
+export function hasCheckoutClientSecret(
 	result: CheckoutResult,
 ): result is CheckoutResult & { client_secret: string } {
 	return typeof result.client_secret === "string" && result.client_secret.length > 0;
