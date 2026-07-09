@@ -400,6 +400,11 @@ describe("runtime manifest reconciliation invariants", () => {
 					providers: {
 						default: {
 							type: "custom_openai_compatible",
+							// managed_by:"clawdi" marks this as a Clawdi-managed provider
+							// (cloud-api emits it as `n:"clawdi"`), which routes the key
+							// through the MITM placeholder path — the agent env gets the
+							// placeholder while the real key stays out of its env.
+							managed_by: "clawdi",
 							baseUrl: "https://api.example.test/v1",
 							model: "gpt-test",
 							apiMode: "openai_chat",
