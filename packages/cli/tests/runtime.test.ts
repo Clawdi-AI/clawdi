@@ -1667,10 +1667,8 @@ exit 0
 				baseUrl: "http://127.0.0.1:11434/v1",
 			});
 
-			const hermesProviders = expectRecord(
-				readHermesConfigYaml(home).providers,
-				"Hermes providers config",
-			);
+			const hermesConfig = readHermesConfigYaml(home);
+			const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
 			expect(Object.keys(hermesProviders).sort()).toEqual(
 				["user-local", `clawdi-${providerCase.second}`].sort(),
 			);
@@ -2210,9 +2208,12 @@ exit 0
 		expect(hermesModel.context_length).toBeUndefined();
 		expect(hermesModel.max_tokens).toBeUndefined();
 		expect(hermesModel.supports_vision).toBeUndefined();
-		expect(
+		const hermesProvider = expectRecord(
 			expectRecord(hermesConfig.providers, "Hermes providers config")["clawdi-hermes"],
-		).toBeUndefined();
+			"Hermes provider config",
+		);
+		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
+		expect(hermesProvider.models).toBeUndefined();
 	});
 
 	it("falls back to Hermes config.yaml provider merges before 0.18.0 and changes revision when plugin support appears", () => {

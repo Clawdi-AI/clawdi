@@ -1,8 +1,4 @@
-import {
-	CLAWDI_MANAGED_PROVIDER_IDS,
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
-	isFirstPartyManagedAiProvider,
-} from "@clawdi/shared";
+import { CLAWDI_MANAGED_PROVIDER_IDS, CLAWDI_MANAGED_V2_PROVIDER_ID } from "@clawdi/shared";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
@@ -81,8 +77,7 @@ export function providerRefFromChoice(
 
 export function modelIdsForProvider(choice: string, providers: readonly AiProvider[]): string[] {
 	if (choice === MANAGED_AI_CHOICE) {
-		const managed = providers.find((provider) => isFirstPartyManagedAiProvider(provider));
-		return dedupeProviderIds((managed?.models ?? []).map((model) => model.id));
+		return [MANAGED_PRIMARY_MODEL_FALLBACK];
 	}
 	const provider = providers.find((item) => item.provider_id === choice);
 	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));

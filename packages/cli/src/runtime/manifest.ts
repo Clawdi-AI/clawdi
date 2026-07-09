@@ -1148,7 +1148,7 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 	};
 }
 
-function hostedAiProviderCatalog(
+export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
@@ -1252,6 +1252,15 @@ function hostedProviderModels(
 	input: Record<string, unknown>,
 	primaryModel: AgentPrimaryModel | null,
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
+	const providerApiMode = hostedProviderApiMode(input);
+	const legacyModel = stringValue(input.model);
+	if (hostedProviderManagedBy(input) === "clawdi") {
+		if (primaryModel) {
+			return [{ id: primaryModel.model, api_mode: providerApiMode }];
+		}
+		return legacyModel ? [{ id: legacyModel, api_mode: providerApiMode }] : [];
+	}
+
 	const rawModels = Array.isArray(input.models) ? input.models : [];
 	const models = rawModels
 		.map((model) => (recordValue(model) ? (model as Record<string, unknown>) : null))
@@ -1267,12 +1276,11 @@ function hostedProviderModels(
 			};
 		})
 		.filter((model): model is NonNullable<typeof model> => model !== null);
-	const legacyModel = stringValue(input.model);
 	if (legacyModel && !models.some((model) => model.id === legacyModel)) {
-		models.unshift({ id: legacyModel, api_mode: hostedProviderApiMode(input) });
+		models.unshift({ id: legacyModel, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
-		models.unshift({ id: primaryModel.model, api_mode: hostedProviderApiMode(input) });
+		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });
 	}
 	return models.filter(
 		(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
@@ -1948,7 +1956,7 @@ function buildHermesHostedCompatibilityProviders(
 						models,
 					}
 				: {
-						models: null,
+						api: profile.provider.base_url,
 					};
 	}
 	return providers;
