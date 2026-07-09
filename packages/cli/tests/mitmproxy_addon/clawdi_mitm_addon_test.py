@@ -40,13 +40,14 @@ class Flow:
         *,
         scheme="https",
         host="service.test",
+        pretty_host=None,
         path="/v1/messages",
         headers=None,
     ):
         self.request = SimpleNamespace(
             scheme=scheme,
             host=host,
-            pretty_host=host,
+            pretty_host=pretty_host or host,
             port=443 if scheme in {"https", "wss"} else 80,
             path=path,
             url=f"{scheme}://{host}{path}",
@@ -217,6 +218,81 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.host, "gateway.test")
         self.assertEqual(flow.request.path, "/v1/responses")
         self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
+
+    def test_provider_profile_restores_transparent_authority_before_forwarding(self):
+        mitm = self.load(
+            [
+                {
+                    "id": "provider",
+                    "enabled": True,
+                    "kind": "provider",
+                    "match": {"scheme": "https", "host": "gateway.test"},
+                    "rewrite": {
+                        "setHeaders": {
+                            "authorization": {
+                                "type": "secretRef",
+                                "secretRef": "secret://provider-key",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                    "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
+                    "priority": 10,
+                }
+            ],
+            {"secret://provider-key": "real-key"},
+        )
+
+        flow = Flow(
+            host="203.0.113.10",
+            pretty_host="gateway.test",
+            path="/v1/chat/completions",
+            headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
+        )
+        decision = mitm.apply_to_flow(flow)
+
+        self.assertEqual(decision.action, "provider")
+        self.assertEqual(flow.request.host, "gateway.test")
+        self.assertEqual(flow.request.headers["Host"], "gateway.test")
+        self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
+
+    def test_requestheaders_applies_provider_rewrite_before_streaming(self):
+        mitm = self.load(
+            [
+                {
+                    "id": "provider",
+                    "enabled": True,
+                    "kind": "provider",
+                    "match": {"scheme": "https", "host": "gateway.test"},
+                    "rewrite": {
+                        "setHeaders": {
+                            "authorization": {
+                                "type": "secretRef",
+                                "secretRef": "secret://provider-key",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                    "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
+                    "priority": 10,
+                }
+            ],
+            {"secret://provider-key": "real-key"},
+        )
+        flow = Flow(
+            host="203.0.113.10",
+            pretty_host="gateway.test",
+            path="/v1/chat/completions",
+            headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
+        )
+
+        mitm.requestheaders(flow)
+
+        self.assertTrue(flow.request.stream)
+        self.assertEqual(flow.request.host, "gateway.test")
+        self.assertEqual(flow.request.headers["Host"], "gateway.test")
+        self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
+        self.assertTrue(flow.metadata["clawdi_mitm_decision_applied"])
 
     def test_http_profile_rewrites_matching_placeholder_and_injects_secret(self):
         mitm = self.load(

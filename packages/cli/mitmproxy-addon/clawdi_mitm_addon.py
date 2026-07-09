@@ -45,6 +45,7 @@ except Exception:  # pragma: no cover - used by unit tests without mitmproxy.
 
 SCHEMA_VERSION = "clawdi.mitmProfiles.v1"
 ENV_FILE_KEY = "CLAWDI_MITM_ENV_FILE"
+DECISION_METADATA_KEY = "clawdi_mitm_decision_applied"
 
 
 class ProfileDecision:
@@ -76,7 +77,10 @@ class ClawdiMitmAddon:
     def load(self, loader: Any) -> None:  # pragma: no cover - mitmproxy integration glue.
         self.reload_from_environment(os.environ)
 
-    def requestheaders(self, flow: Any) -> None:  # pragma: no cover - behavior covered via request.
+    def requestheaders(self, flow: Any) -> None:
+        decision = self.apply_to_flow(flow)
+        mark_flow_decision_applied(flow)
+        self.log_decision(flow, decision)
         flow.request.stream = True
 
     def responseheaders(self, flow: Any) -> None:  # pragma: no cover - behavior covered via request.
@@ -88,7 +92,12 @@ class ClawdiMitmAddon:
             data.ignore_connection = True
 
     def request(self, flow: Any) -> None:
+        if flow_decision_applied(flow):
+            return
         decision = self.apply_to_flow(flow)
+        self.log_decision(flow, decision)
+
+    def log_decision(self, flow: Any, decision: ProfileDecision) -> None:
         if decision.profile_id:
             ctx.log.info(
                 f"clawdi mitm action={decision.action} profile={decision.profile_id} "
@@ -131,7 +140,7 @@ class ClawdiMitmAddon:
         if kind == "passthrough":
             return ProfileDecision("passthrough", str(profile.get("id")), profile=profile)
         if kind == "provider":
-            apply_rewrite_headers(flow, profile, self.secrets)
+            apply_provider_rewrite(flow, profile, self.secrets)
             return ProfileDecision("provider", str(profile.get("id")), profile=profile)
         if kind in {"http", "websocket"}:
             apply_http_rewrite(flow, profile, self.secrets)
@@ -213,6 +222,22 @@ def profile_host_set(profiles: list[dict[str, Any]]) -> set[str]:
             if host:
                 hosts.add(host)
     return hosts
+
+
+def mark_flow_decision_applied(flow: Any) -> None:
+    metadata = getattr(flow, "metadata", None)
+    if not isinstance(metadata, dict):
+        try:
+            flow.metadata = {}
+            metadata = flow.metadata
+        except Exception:
+            return
+    metadata[DECISION_METADATA_KEY] = True
+
+
+def flow_decision_applied(flow: Any) -> bool:
+    metadata = getattr(flow, "metadata", None)
+    return isinstance(metadata, dict) and metadata.get(DECISION_METADATA_KEY) is True
 
 
 def first_matching_profile(
@@ -363,6 +388,47 @@ def matcher_matches(value: str | None, matcher: Any, secrets: dict[str, str]) ->
         secret = secrets.get(str(matcher.get("secretRef", "")))
         return secret is not None and value == f"{matcher.get('prefix', '')}{secret}"
     return False
+
+
+def apply_provider_rewrite(flow: Any, profile: dict[str, Any], secrets: dict[str, str]) -> None:
+    preserve_provider_authority(flow, profile)
+    apply_rewrite_headers(flow, profile, secrets)
+
+
+def preserve_provider_authority(flow: Any, profile: dict[str, Any]) -> None:
+    match = profile.get("match")
+    if not isinstance(match, dict):
+        return
+    authority = str(match.get("host", "")).strip().lower().strip(".")
+    if not authority:
+        return
+    host, port = split_authority(authority)
+    if host:
+        flow.request.host = host
+    if port is not None:
+        flow.request.port = port
+    header_set(flow.request.headers, "host", authority)
+    if hasattr(flow.request, "authority"):
+        flow.request.authority = authority
+
+
+def split_authority(authority: str) -> tuple[str, int | None]:
+    if authority.startswith("[") and "]" in authority:
+        host = authority[1 : authority.index("]")]
+        rest = authority[authority.index("]") + 1 :]
+        if rest.startswith(":"):
+            try:
+                return host, int(rest[1:])
+            except ValueError:
+                return host, None
+        return host, None
+    if ":" in authority and authority.count(":") == 1:
+        host, raw_port = authority.rsplit(":", 1)
+        try:
+            return host, int(raw_port)
+        except ValueError:
+            return host, None
+    return authority, None
 
 
 def apply_rewrite_headers(flow: Any, profile: dict[str, Any], secrets: dict[str, str]) -> None:
