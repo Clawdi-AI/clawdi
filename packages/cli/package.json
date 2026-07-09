@@ -10,8 +10,8 @@
 	},
 	"files": [
 		"bin",
-		"clawdi-mitm-sidecar",
 		"dist",
+		"mitmproxy-addon",
 		"LICENSE",
 		"README.md"
 	],
@@ -25,7 +25,6 @@
 		"dev": "bun run src/index.ts",
 		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' && cp -r skills dist/skills",
 		"build:binary": "bun run scripts/build-binary.mjs",
-		"build:mitm-sidecar": "bun run scripts/build-mitm-sidecar-bundle.mjs",
 		"package:binary-release": "bun run scripts/package-binary-release.mjs",
 		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",
 		"check:publish-manifest": "node scripts/check-publish-manifest.mjs",
@@ -33,7 +32,7 @@
 		"test": "bun test --isolate --max-concurrency=1",
 		"test:e2e": "bun test --isolate --max-concurrency=1 tests/e2e",
 		"test:watch": "bun test --watch",
-		"prepublishOnly": "bun run build && CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR=clawdi-mitm-sidecar bun run build:mitm-sidecar"
+		"prepublishOnly": "bun run build"
 	},
 	"repository": {
 		"type": "git",

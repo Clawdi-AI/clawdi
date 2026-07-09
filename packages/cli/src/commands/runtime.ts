@@ -1,6 +1,16 @@
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	constants,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -10,6 +20,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
+import { ensureRuntimeAuthTokenFile, runtimeAuthTokenFileLabel } from "../runtime/auth-token";
 import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
@@ -27,9 +38,8 @@ import {
 	type RuntimeChannelsNotModified,
 	type RuntimeManifestLoad,
 	type RuntimeManifestNotModified,
-	runtimeSourceAuthEnv,
 } from "../runtime/manifest-source";
-import { startRuntimeMitmSidecar } from "../runtime/mitm-sidecar";
+import { SYSTEM_CA_BUNDLE } from "../runtime/mitm-env";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -45,6 +55,12 @@ import {
 	runtimeUserName,
 	runtimeUserSystemdEnvArgs,
 } from "../runtime/systemd-user";
+import {
+	applyTransparentMitmNftRulesFromEnv,
+	cleanupTransparentMitmNftRulesFromEnv,
+	loadTransparentMitmEnvConfig,
+	type TransparentMitmEnvConfig,
+} from "../runtime/transparent-mitm";
 import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -1173,24 +1189,11 @@ function hasRuntimeCredential(input: {
 	if (input.manifestPath) return true;
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
-	try {
-		if (readFileSync(paths.daemonAuthToken, "utf-8").trim()) return true;
-	} catch {
-		// Fall through to the configured auth environment variable.
-	}
-	try {
-		return Boolean(process.env[runtimeSourceAuthEnv(paths)]?.trim());
-	} catch {
-		return Boolean(process.env.CLAWDI_AUTH_TOKEN?.trim());
-	}
+	return ensureRuntimeAuthTokenFile(paths) !== null;
 }
 
 function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
-	try {
-		return runtimeSourceAuthEnv(paths);
-	} catch {
-		return "CLAWDI_AUTH_TOKEN";
-	}
+	return runtimeAuthTokenFileLabel(paths);
 }
 
 function writable(path: string): boolean {
@@ -1280,6 +1283,8 @@ interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 }
 
+const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
 		system: readManagedSystemdUnits(paths.systemdSystemRoot),
@@ -1356,17 +1361,13 @@ function applySystemdRuntimeUpdate(
 		return { applied: false, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
 	}
 
-	const removableSystemUnits = system.removed.filter(
-		(unit) => unit !== "clawdi-runtime-watch.service",
-	);
+	const removableSystemUnits = system.removed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
 	if (removableSystemUnits.length > 0) {
 		systemctl(["stop", ...removableSystemUnits], { allowNonZero: true });
 	}
 	systemctl(["daemon-reload"]);
 	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	const restartSystemUnits = system.changed.filter(
-		(unit) => unit !== "clawdi-runtime-watch.service",
-	);
+	const restartSystemUnits = system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
 	if (restartSystemUnits.length > 0) {
 		systemctl(["restart", ...restartSystemUnits]);
 	}
@@ -2145,68 +2146,241 @@ export async function runtimeSidecar(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
 		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
-	const profileBundlePath = process.env.CLAWDI_MITM_PROFILE_BUNDLE?.trim();
 	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
-	const shouldStartMitm = Boolean(profileBundlePath);
-	if (!shouldStartBridge && !shouldStartMitm) {
-		throw new Error(
-			`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV} or CLAWDI_MITM_PROFILE_BUNDLE.`,
-		);
+	if (!shouldStartBridge) {
+		throw new Error(`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV}.`);
 	}
 
 	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
-	let mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null = null;
 	try {
-		if (shouldStartBridge) {
-			bridge = await startRuntimeBridge();
-			console.error(
-				`runtime sidecar bridge module listening on ${bridge.surfaces
-					.map(
-						(surface) =>
-							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-					)
-					.join(", ")}`,
-			);
-		}
-		if (shouldStartMitm && profileBundlePath) {
-			mitm = await startRuntimeMitmSidecar({
-				runtime: "systemd",
-				env: process.env,
-				profileBundlePath,
-			});
-			console.error(`runtime sidecar MITM module listening on ${mitm.proxyUrl}`);
-		}
+		bridge = await startRuntimeBridge();
+		console.error(
+			`runtime sidecar bridge module listening on ${bridge.surfaces
+				.map(
+					(surface) =>
+						`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
+				)
+				.join(", ")}`,
+		);
+		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
-		await stopRuntimeSidecarModules(bridge, mitm);
+		await bridge?.close();
 		throw error;
 	}
 
 	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
-	const waiters: Array<
-		Promise<
-			| { kind: "shutdown" }
-			| { kind: "mitm-closed"; code: number | null; signal: NodeJS.Signals | null }
-		>
-	> = [shutdown];
-	if (mitm?.closed) {
-		waiters.push(mitm.closed.then((result) => ({ kind: "mitm-closed" as const, ...result })));
-	}
-	const result = await Promise.race(waiters);
-	if (result.kind === "shutdown") {
-		await stopRuntimeSidecarModules(bridge, mitm);
-		return;
-	}
-	await stopRuntimeSidecarModules(bridge, mitm);
-	throw new Error(
-		`runtime sidecar MITM module exited unexpectedly: code=${result.code} signal=${result.signal}`,
-	);
+	await shutdown;
+	await bridge.close();
 }
 
-async function stopRuntimeSidecarModules(
-	bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null,
-	mitm: Awaited<ReturnType<typeof startRuntimeMitmSidecar>> | null,
+export async function runtimeMitmRun(): Promise<void> {
+	if (detectRuntimeMode() !== "hosted") {
+		throw new Error("runtime mitm is only available in hosted runtime mode");
+	}
+	const config = loadTransparentMitmEnvConfig(process.env);
+	const mitmdump = startMitmdump(config);
+	let redirectApplied = false;
+	const cleanup = () => {
+		if (!redirectApplied) return;
+		try {
+			cleanupTransparentMitmNftRulesFromEnv(process.env);
+		} catch (error) {
+			console.error(
+				`transparent MITM nft cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		redirectApplied = false;
+	};
+	const stop = () => {
+		cleanup();
+		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
+	};
+	process.once("SIGTERM", stop);
+	process.once("SIGINT", stop);
+	try {
+		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () => mitmdump.exitCode);
+		await waitForFile(config.caCertPath, 10_000, () => mitmdump.exitCode);
+		publishMitmSystemCaBundle(config);
+		applyTransparentMitmNftRulesFromEnv(process.env);
+		redirectApplied = true;
+		notifySystemdReady("runtime transparent MITM ready");
+		const exit = await waitForChildExit(mitmdump);
+		if (exit.code !== 0 && exit.signal === null) {
+			throw new Error(`mitmdump exited with status ${exit.code}`);
+		}
+	} finally {
+		process.off("SIGTERM", stop);
+		process.off("SIGINT", stop);
+		cleanup();
+	}
+}
+
+function startMitmdump(config: TransparentMitmEnvConfig): ChildProcess {
+	if (!existsSync(config.mitmproxyBinaryPath)) {
+		throw new Error(`mitmdump binary is missing: ${config.mitmproxyBinaryPath}`);
+	}
+	if (!existsSync(config.mitmproxyAddonPath)) {
+		throw new Error(`mitmproxy addon is missing: ${config.mitmproxyAddonPath}`);
+	}
+	const mitmdumpArgs = [
+		"--mode",
+		"transparent",
+		"--listen-host",
+		"127.0.0.1",
+		"--listen-port",
+		String(config.transparentPort),
+		"--set",
+		`confdir=${config.caDir}`,
+		"--set",
+		"stream_large_bodies=1",
+		"--set",
+		"termlog_verbosity=info",
+		"-s",
+		config.mitmproxyAddonPath,
+	];
+	const childEnv: NodeJS.ProcessEnv = {
+		...process.env,
+		CLAWDI_MITM_ENV_FILE: config.envFile ?? process.env.CLAWDI_MITM_ENV_FILE ?? "",
+		HOME: config.caDir,
+	};
+	const command = config.mitmproxyBinaryPath;
+	const args = mitmdumpArgs;
+	const child =
+		runningAsRootCommand() && config.mitmUser !== "root"
+			? spawnAsUser(config.mitmUser, command, args, childEnv)
+			: spawn(command, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+	child.stdout?.pipe(process.stdout);
+	child.stderr?.pipe(process.stderr);
+	return child;
+}
+
+function spawnAsUser(
+	user: string,
+	command: string,
+	args: string[],
+	env: NodeJS.ProcessEnv,
+): ChildProcess {
+	if (commandExistsOnPath("gosu")) {
+		return spawn("gosu", [user, command, ...args], {
+			env: { ...env, USER: user, LOGNAME: user },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	}
+	if (commandExistsOnPath("runuser")) {
+		return spawn("runuser", ["-u", user, "--", command, ...args], {
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	}
+	throw new Error(`cannot drop mitmdump to ${user}; install gosu or runuser`);
+}
+
+function waitForChildExit(
+	child: ChildProcess,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+	return new Promise((resolve) => {
+		child.once("exit", (code, signal) => resolve({ code, signal }));
+	});
+}
+
+function waitForTcpPort(
+	host: string,
+	port: number,
+	timeoutMs: number,
+	exitCode: () => number | null,
 ): Promise<void> {
-	await Promise.allSettled([mitm?.stop(), bridge?.close()].filter(Boolean));
+	const startedAt = Date.now();
+	return new Promise((resolve, reject) => {
+		const attempt = () => {
+			const code = exitCode();
+			if (code !== null) {
+				reject(new Error(`mitmdump exited before listening on ${host}:${port}`));
+				return;
+			}
+			if (tcpPortIsListening(host, port)) {
+				resolve();
+				return;
+			}
+			if (Date.now() - startedAt >= timeoutMs) {
+				reject(new Error(`timed out waiting for mitmdump on ${host}:${port}`));
+				return;
+			}
+			setTimeout(attempt, 100);
+		};
+		attempt();
+	});
+}
+
+function tcpPortIsListening(host: string, port: number): boolean {
+	const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+	const allowedHosts =
+		host === "127.0.0.1" ? new Set(["0100007F"]) : new Set(["00000000", "0100007F"]);
+	try {
+		for (const raw of readFileSync("/proc/net/tcp", "utf-8").split(/\r?\n/).slice(1)) {
+			const fields = raw.trim().split(/\s+/);
+			const localAddress = fields[1] ?? "";
+			const state = fields[3] ?? "";
+			const [address, localPort] = localAddress.split(":");
+			if (state === "0A" && localPort === portHex && address && allowedHosts.has(address)) {
+				return true;
+			}
+		}
+	} catch {
+		return false;
+	}
+	return false;
+}
+
+function waitForFile(
+	path: string,
+	timeoutMs: number,
+	exitCode: () => number | null,
+): Promise<void> {
+	const startedAt = Date.now();
+	return new Promise((resolve, reject) => {
+		const attempt = () => {
+			const code = exitCode();
+			if (code !== null) {
+				reject(new Error(`mitmdump exited before writing ${path}`));
+				return;
+			}
+			if (existsSync(path)) {
+				resolve();
+				return;
+			}
+			if (Date.now() - startedAt >= timeoutMs) {
+				reject(new Error(`timed out waiting for ${path}`));
+				return;
+			}
+			setTimeout(attempt, 100);
+		};
+		attempt();
+	});
+}
+
+function publishMitmSystemCaBundle(config: TransparentMitmEnvConfig): void {
+	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
+		throw new Error("CLAWDI_MITM_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
+	}
+	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
+	const mitmCa = readFileSync(config.caCertPath, "utf-8");
+	mkdirSync(dirname(config.systemCaBundle), { recursive: true });
+	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${mitmCa.trimEnd()}\n`, {
+		mode: 0o644,
+	});
+	chmodSync(config.systemCaBundle, 0o644);
+}
+
+function runningAsRootCommand(): boolean {
+	return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function commandExistsOnPath(command: string): boolean {
+	const result = spawnSync("command", ["-v", command], {
+		shell: true,
+		stdio: "ignore",
+	});
+	return result.status === 0;
 }
 
 function waitForShutdownSignal(): Promise<void> {
@@ -2218,6 +2392,14 @@ function waitForShutdownSignal(): Promise<void> {
 		};
 		process.once("SIGTERM", done);
 		process.once("SIGINT", done);
+	});
+}
+
+function notifySystemdReady(status: string): void {
+	if (!process.env.NOTIFY_SOCKET) return;
+	spawnSync("systemd-notify", ["--ready", `--status=${status}`], {
+		stdio: "ignore",
+		env: process.env,
 	});
 }
 

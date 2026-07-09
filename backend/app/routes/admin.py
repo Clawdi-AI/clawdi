@@ -35,7 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_admin_api_key
+from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.channel import (
@@ -177,6 +177,7 @@ async def admin_mint_api_key(
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
+            managed=body.managed,
         )
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
@@ -194,10 +195,11 @@ async def admin_mint_api_key(
 
     api_key = minted.api_key
     logger.info(
-        "admin_api_key_minted target_clerk_id=%s key_id=%s environment_id=%s",
+        "admin_api_key_minted target_clerk_id=%s key_id=%s environment_id=%s managed=%s",
         body.target_clerk_id,
         api_key.id,
         api_key.environment_id,
+        api_key.managed,
     )
     return ApiKeyCreated(
         id=str(api_key.id),
@@ -233,6 +235,7 @@ async def admin_revoke_api_key(
 
     api_key.revoked_at = datetime.now(UTC)
     await db.commit()
+    invalidate_api_key_auth_cache(api_key.id)
     logger.info(
         "admin_api_key_revoked target_user_id=%s key_id=%s",
         api_key.user_id,
@@ -709,6 +712,8 @@ async def _admin_upsert_runtime_state(
     state.bridge = body.bridge
     state.live_sync = body.live_sync
     state.recovery = body.recovery
+    if state is not existing_state or body.mitmproxy is not None:
+        state.mitmproxy = body.mitmproxy
     if state is not existing_state or body.mitm_profiles is not None:
         state.mitm_profiles = body.mitm_profiles
     if state is not existing_state or body.mcp is not None:
@@ -915,6 +920,7 @@ def _runtime_state_changed_fields(
         "system",
         "control_plane",
         "clawdi_cli",
+        "mitmproxy",
         "runtimes",
         "bridge",
         "live_sync",
@@ -926,7 +932,7 @@ def _runtime_state_changed_fields(
     if state is None:
         return fields
     changed: list[str] = []
-    preserve_when_omitted = {"mitm_profiles", "mcp", "tools"}
+    preserve_when_omitted = {"mitmproxy", "mitm_profiles", "mcp", "tools"}
     for field in fields:
         body_value = getattr(body, field)
         if field in preserve_when_omitted and body_value is None:

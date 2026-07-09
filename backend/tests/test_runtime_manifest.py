@@ -24,6 +24,11 @@ from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
+TEST_MITMPROXY_PIN = {
+    "version": "12.2.3",
+    "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+    "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+}
 
 
 @pytest_asyncio.fixture
@@ -131,6 +136,30 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["etag"] == etag
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_includes_mitmproxy_pin(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-mitmproxy-{uuid4().hex[:8]}",
+        machine_name="Runtime mitmproxy",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id), mitmproxy=TEST_MITMPROXY_PIN)
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["mitmproxy"] == TEST_MITMPROXY_PIN
 
 
 @pytest.mark.asyncio
@@ -443,6 +472,7 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
     initial = await _write_runtime_state(
         admin_client,
         str(env.id),
+        mitmproxy=TEST_MITMPROXY_PIN,
         mitm_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
@@ -453,13 +483,14 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
         **{
             key: value
             for key, value in {**initial, "generation": 8}.items()
-            if key not in {"mitm_profiles", "mcp", "tools"}
+            if key not in {"mitmproxy", "mitm_profiles", "mcp", "tools"}
         },
     )
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
     assert state.generation == 8
+    assert state.mitmproxy == TEST_MITMPROXY_PIN
     assert state.mitm_profiles == {"profiles": [{"id": "profile-1", "enabled": True}]}
     assert state.mcp == {"enabled": True}
     assert state.tools == {"catalog": "clawdi-default"}
@@ -838,9 +869,7 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
         },
     }
     assert "apiKeySecretRef" not in provider
-    assert body["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "missing-key-provider"
-    ]
+    assert body["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["missing-key-provider"]
     assert body["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "missing-key-provider",
         "model": "claude-opus-4-6",
@@ -1016,16 +1045,12 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "clawdi-managed-v2"
-    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["clawdi-managed-v2"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "clawdi-managed-v2",
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed-v2.apiKey": "sk-managed-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed-v2.apiKey": "sk-managed-provider"}
 
 
 @pytest.mark.asyncio
@@ -1527,7 +1552,7 @@ async def test_runtime_manifest_rejects_bound_cli_key_environment_id_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_projects_provider_secret_values(
+async def test_runtime_manifest_projects_provider_secret_values_for_managed_account_key(
     admin_client,
     db_session,
     seed_user,
@@ -1580,9 +1605,12 @@ async def test_runtime_manifest_projects_provider_secret_values(
     await db_session.commit()
     await _write_runtime_state(admin_client, str(env.id))
 
-    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    api_key = ApiKey(user_id=seed_user.id, environment_id=None, managed=True, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/v1/runtime/manifest")
+        response = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -1597,16 +1625,12 @@ async def test_runtime_manifest_projects_provider_secret_values(
         "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "clawdi-managed-v2"
-    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["clawdi-managed-v2"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "clawdi-managed-v2",
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed-v2.apiKey": "sk-test-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed-v2.apiKey": "sk-test-provider"}
     etag = response.headers["etag"]
 
     ciphertext, nonce = encrypt("sk-rotated-provider")
@@ -1630,7 +1654,11 @@ async def test_runtime_manifest_projects_provider_secret_values(
     await db_session.commit()
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        rotated = await client.get("/v1/runtime/manifest", headers={"If-None-Match": etag})
+        rotated = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": etag},
+        )
     app.dependency_overrides.clear()
 
     assert rotated.status_code == 200, rotated.text
@@ -1703,9 +1731,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "provider_id": "clawdi-managed",
         "model": "openai-codex/gpt-5.5",
     }
-    assert payload["secretValues"] == {
-        "provider.clawdi-managed.apiKey": "sk-test-legacy-provider"
-    }
+    assert payload["secretValues"] == {"provider.clawdi-managed.apiKey": "sk-test-legacy-provider"}
 
 
 @pytest.mark.asyncio

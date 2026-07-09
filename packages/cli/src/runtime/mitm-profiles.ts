@@ -125,6 +125,16 @@ const headerSetterSchema = z
 		"Rewrite headers can be literal public values or secretRef-backed values resolved only by the sidecar.",
 	);
 
+const pathReplaceSchema = z
+	.object({
+		type: z.literal("secretRefPrefix"),
+		secretRef: secretRefSchema,
+		replacementSecretRef: secretRefSchema,
+		prefix: z.string().default(""),
+		suffix: z.string().default(""),
+	})
+	.strict();
+
 const mitmProfileMatchSchema = z
 	.object({
 		scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
@@ -155,6 +165,7 @@ const mitmProfileRewriteSchema = z
 			)
 			.optional(),
 		preservePath: z.boolean().default(true),
+		pathReplace: pathReplaceSchema.optional(),
 		setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
 	})
 	.strict();
@@ -181,7 +192,7 @@ export const mitmProfileSchema = z
 	.strict()
 	.superRefine((profile, ctx) => {
 		if (
-			(profile.kind === "http" || profile.kind === "websocket" || profile.kind === "provider") &&
+			(profile.kind === "http" || profile.kind === "websocket") &&
 			!profile.rewrite?.upstreamBaseUrl
 		) {
 			ctx.addIssue({

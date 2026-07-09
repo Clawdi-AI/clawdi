@@ -1,5 +1,5 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { directProviderPassthroughProfiles } from "./hosted-mitm-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeChannelAccount,
@@ -36,6 +36,7 @@ interface ManagedChannelLink {
 	agentId: string;
 	agentToken: string;
 	secretRef: string;
+	placeholderSecretRef: string;
 	credentials: RuntimeChannelCredential[];
 }
 
@@ -101,6 +102,7 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 				agentId: link.agent_id,
 				agentToken: link.agent_token,
 				secretRef: channelSecretRef(account.provider, accountKey),
+				placeholderSecretRef: channelPlaceholderSecretRef(account.provider, accountKey),
 				credentials: (account.runtime_credentials ?? []).filter(
 					(credential) => credential.agent_link_id === link.id,
 				),
@@ -119,8 +121,6 @@ function applyRuntimeChannelProjection(
 	links: ManagedChannelLink[],
 ): RuntimeManifest {
 	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
-	const directProviderPassthrough =
-		managedProfiles.length > 0 ? directProviderPassthroughProfiles(manifest.projection ?? {}) : [];
 	const runtimeHome = runtimeProjectionHome(manifest);
 	const channelCredentials = buildRuntimeChannelCredentialsProjection(
 		links,
@@ -134,10 +134,7 @@ function applyRuntimeChannelProjection(
 			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl, runtimeHome),
 			channelCredentials,
 		},
-		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, [
-			...managedProfiles,
-			...directProviderPassthrough,
-		]),
+		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, managedProfiles),
 	};
 	return applyHermesRuntimeChannelSettings(
 		applyOpenClawRuntimeChannelSettings(projected, links),
@@ -158,7 +155,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				botToken: openClawChannelTokenSecretRef(link),
+				botToken: openClawChannelPlaceholderTokenSecretRef(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -171,7 +168,7 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "discord", link.accountKey);
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				token: openClawChannelTokenSecretRef(link),
+				token: openClawChannelPlaceholderTokenSecretRef(link),
 				dmPolicy: "open",
 				groupPolicy: "open",
 				allowFrom: ["*"],
@@ -188,7 +185,7 @@ function buildOpenClawChannelsProjection(
 			channel.accounts[link.accountKey] = {
 				enabled: true,
 				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
-				token: openClawChannelTokenSecretRef(link),
+				token: openClawChannelPlaceholderTokenSecretRef(link),
 				...(credential ? { authDir: credential.authDir } : {}),
 			};
 		}
@@ -222,7 +219,7 @@ function applyOpenClawRuntimeChannelSettings(
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
 		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
-		secretEnv[openClawChannelTokenEnvName(link)] = link.secretRef;
+		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
 	}
 	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
 		return manifest;
@@ -264,11 +261,11 @@ function applyHermesRuntimeChannelSettings(
 	if (telegram) {
 		env.TELEGRAM_ALLOW_ALL_USERS = "true";
 		env.HERMES_TELEGRAM_DISABLE_FALLBACK_IPS = "true";
-		secretEnv.TELEGRAM_BOT_TOKEN = telegram.secretRef;
+		secretEnv.TELEGRAM_BOT_TOKEN = telegram.placeholderSecretRef;
 	}
 	if (discord) {
 		env.DISCORD_ALLOW_ALL_USERS = "true";
-		secretEnv.DISCORD_BOT_TOKEN = discord.secretRef;
+		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
 	}
 	if (whatsapp && whatsappCredential) {
 		env.WHATSAPP_ENABLED = "true";
@@ -303,7 +300,7 @@ function firstLinkForProvider(
 	return links.find((link) => link.account.provider === provider) ?? null;
 }
 
-function openClawChannelTokenSecretRef(link: ManagedChannelLink): OpenClawEnvSecretRef {
+function openClawChannelPlaceholderTokenSecretRef(link: ManagedChannelLink): OpenClawEnvSecretRef {
 	return {
 		source: "env",
 		provider: "default",
@@ -396,7 +393,7 @@ function buildManagedChannelMitmProfiles(
 					pathPrefix: "/bot",
 					path: {
 						type: "secretRefPrefix",
-						secretRef: link.secretRef,
+						secretRef: link.placeholderSecretRef,
 						prefix: "/bot",
 						suffix: "/",
 					},
@@ -406,6 +403,13 @@ function buildManagedChannelMitmProfiles(
 				rewrite: {
 					upstreamBaseUrl: `${baseUrl}/v1/channels/telegram`,
 					preservePath: true,
+					pathReplace: {
+						type: "secretRefPrefix",
+						secretRef: link.placeholderSecretRef,
+						replacementSecretRef: link.secretRef,
+						prefix: "/bot",
+						suffix: "/",
+					},
 					setHeaders: {},
 				},
 				logging: { redactHeaders: ["authorization"], redactUrlPatterns: ["/bot[^/]+"] },
@@ -427,7 +431,7 @@ function buildManagedChannelMitmProfiles(
 					headers: {
 						authorization: {
 							type: "secretRefEquals",
-							secretRef: link.secretRef,
+							secretRef: link.placeholderSecretRef,
 							prefix: "Bot ",
 						},
 					},
@@ -436,7 +440,13 @@ function buildManagedChannelMitmProfiles(
 				rewrite: {
 					upstreamBaseUrl: `${baseUrl}/v1/channels/discord`,
 					preservePath: true,
-					setHeaders: {},
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: link.secretRef,
+							prefix: "Bot ",
+						},
+					},
 				},
 				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 				priority: 101,
@@ -470,7 +480,7 @@ function buildManagedChannelMitmProfiles(
 					headers: {
 						authorization: {
 							type: "secretRefEquals",
-							secretRef: link.secretRef,
+							secretRef: link.placeholderSecretRef,
 							prefix: "Bearer ",
 						},
 					},
@@ -479,7 +489,13 @@ function buildManagedChannelMitmProfiles(
 				rewrite: {
 					upstreamBaseUrl: `${baseUrl}/v1/channels/whatsapp/graph`,
 					preservePath: true,
-					setHeaders: {},
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: link.secretRef,
+							prefix: "Bearer ",
+						},
+					},
 				},
 				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 				priority: 102,
@@ -509,7 +525,6 @@ function mergeMitmProfiles(
 function isChannelProjectionProfile(profile: MitmProfile): boolean {
 	return (
 		profile.owner === "clawdi-native-channels" ||
-		profile.owner === "provider-projection" ||
 		profile.id === "direct-provider-passthrough" ||
 		profile.id.startsWith("direct-provider-passthrough-")
 	);
@@ -523,6 +538,11 @@ function channelSecretValues(
 	const projectedCredentialSecrets = projectedWhatsAppCredentialSecretRefs(channelCredentials);
 	for (const link of links) {
 		addSecretValue(values, link.secretRef, link.agentToken);
+		addSecretValue(
+			values,
+			link.placeholderSecretRef,
+			channelPlaceholderToken(link.account.provider, link.accountKey),
+		);
 		for (const credential of whatsappBaileysCredentials(link)) {
 			const creds = whatsappCredentialCreds(credential);
 			if (creds === null) continue;
@@ -559,6 +579,19 @@ function addSecretValue(values: Record<string, string>, ref: string, value: stri
 
 function channelSecretRef(provider: ChannelProvider, accountKey: string): string {
 	return `secret://channels/${provider}/${accountKey}/agent-token`;
+}
+
+function channelPlaceholderSecretRef(provider: ChannelProvider, accountKey: string): string {
+	return `secret://channels/${provider}/${accountKey}/placeholder-token`;
+}
+
+function channelPlaceholderToken(provider: ChannelProvider, accountKey: string): string {
+	const suffix = createHash("sha256")
+		.update(`${provider}:${accountKey}`)
+		.digest("hex")
+		.slice(0, 32);
+	if (provider === "telegram") return `999999999:${suffix}`;
+	return `clawdi_${suffix}`;
 }
 
 function whatsappBaileysCredentialProjection(

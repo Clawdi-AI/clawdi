@@ -40,11 +40,6 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: packages/cli/native/mitm-sidecar/go.mod
-          cache-dependency-path: packages/cli/native/mitm-sidecar/go.mod
-
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -97,22 +92,14 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: bun run build
 
-      - name: Test native MITM sidecar
-        if: steps.check.outputs.skip != 'true'
-        working-directory: packages/cli/native/mitm-sidecar
-        run: go test ./...
-
       - name: Build standalone CLI binary
         if: steps.check.outputs.skip != 'true'
         run: |
           bun run build:binary
           ./dist-bin/clawdi --version
-          test -x dist-bin/clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar
           bun run package:binary-release
           test -f dist-release/clawdi-cli-linux-x64.tar.gz
           test -f dist-release/clawdi-cli-linux-x64.tar.gz.sha256
-          CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR=clawdi-mitm-sidecar bun run build:mitm-sidecar
-          test -x clawdi-mitm-sidecar/bin/clawdi-mitm-sidecar
 
       - name: Test
         if: steps.check.outputs.skip != 'true'

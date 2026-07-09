@@ -192,7 +192,7 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.status).toBe("error");
 			expect(parsed.stage).toBe("detect");
 			expect(parsed.errors).toContain(
-				"missing CLAWDI_AUTH_TOKEN and no last-good runtime manifest cache",
+				`missing ${join(runRoot, "secrets", "auth-token")} and no last-good runtime manifest cache`,
 			);
 			expect(parsed.datasource).toBe("RuntimeSource");
 			expect(parsed.hostPolicy.valid).toBe(true);
@@ -246,6 +246,8 @@ set -euo pipefail
 install -d "$HOME/.openclaw/bin" "$HOME/.openclaw/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.openclaw/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.openclaw/install-proof/npm-config-cafile"
 cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
 #!/usr/bin/env bash
 echo "openclaw fixture"
@@ -261,6 +263,14 @@ set -euo pipefail
 install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent" "$HOME/.hermes/install-proof"
 printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.hermes/install-proof/npm-config-prefix"
 printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.hermes/install-proof/npm-config-cache"
+printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.hermes/install-proof/node-extra-ca-certs"
+printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.hermes/install-proof/npm-config-cafile"
+printf '%s\\n' "\${HERMES_HOME:-}" > "$HOME/.hermes/install-proof/hermes-home"
+printf '%s\\n' "\${UV_PYTHON_INSTALL_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-install-dir"
+printf '%s\\n' "\${UV_PYTHON_BIN_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-bin-dir"
+printf '%s\\n' "\${UV_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-managed-python"
+printf '%s\\n' "\${UV_NO_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-no-managed-python"
+printf '%s\\n' "\${UV_PYTHON_DOWNLOADS:-}" > "$HOME/.hermes/install-proof/uv-python-downloads"
 cat > "$HOME/.local/bin/hermes" <<'SH'
 #!/usr/bin/env bash
 echo "hermes fixture"
@@ -269,6 +279,22 @@ chmod +x "$HOME/.local/bin/hermes"
 `,
 		);
 		chmodSync(hermesInstaller, 0o700);
+		const mitmproxy = {
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		};
+		const mitmdump = join(
+			serviceStateRoot,
+			"maintained",
+			"mitmproxy",
+			mitmproxy.version,
+			mitmproxy.sha256,
+			"mitmdump",
+		);
+		mkdirSync(dirname(mitmdump), { recursive: true });
+		writeFileSync(mitmdump, "#!/usr/bin/env sh\necho fake mitmdump\n");
+		chmodSync(mitmdump, 0o755);
 
 		const manifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -279,6 +305,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			issuedAt: "2026-06-03T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
 			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
+			mitmproxy,
 			runtimes: {
 				openclaw: {
 					enabled: true,
@@ -387,7 +414,9 @@ chmod +x "$HOME/.local/bin/hermes"
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 			);
 			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
-			expect(parsed.convergence.systemdSystemUnits).toEqual([]);
+			expect(parsed.convergence.systemdSystemUnits).toEqual([
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
+			]);
 
 			for (const outputPath of [
 				join(serviceStateRoot, "config", "clawdi.json"),
@@ -417,10 +446,12 @@ chmod +x "$HOME/.local/bin/hermes"
 					"hermes-gateway.service.d",
 					"10-clawdi-hosted.conf",
 				),
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
 				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
 				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
-				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
+				join(runRoot, "systemd", "env", "clawdi-runtime-mitm.service.env"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
+				join(runRoot, "mitm", "transparent-mitm.env"),
+				join(runRoot, "mitm", "clawdi_mitm_addon.py"),
 				join(serviceStateRoot, "config", "mitm", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
 				join(home, "clawdi"),
@@ -463,10 +494,40 @@ chmod +x "$HOME/.local/bin/hermes"
 				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cache"), "utf-8"),
 			).toBe("\n");
 			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-prefix"), "utf-8"),
 			).toBe("\n");
 			expect(
 				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cache"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "node-extra-ca-certs"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cafile"), "utf-8"),
+			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
+			expect(readFileSync(join(home, ".hermes", "install-proof", "hermes-home"), "utf-8")).toBe(
+				`${join(home, ".hermes")}\n`,
+			);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-install-dir"), "utf-8"),
+			).toBe(`${join(home, ".hermes", "uv", "python")}\n`);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-bin-dir"), "utf-8"),
+			).toBe(`${join(home, ".hermes", "uv", "bin")}\n`);
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-managed-python"), "utf-8"),
+			).toBe("1\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-no-managed-python"), "utf-8"),
+			).toBe("\n");
+			expect(
+				readFileSync(join(home, ".hermes", "install-proof", "uv-python-downloads"), "utf-8"),
 			).toBe("\n");
 
 			const managed = JSON.parse(
@@ -496,8 +557,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				),
 				"utf-8",
 			);
-			const sidecarUnit = readFileSync(
-				join(home, ".config", "systemd", "user", "clawdi-runtime-sidecar.service"),
+			const mitmUnit = readFileSync(
+				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
 				"utf-8",
 			);
 			const openclawEnv = readFileSync(
@@ -510,7 +571,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(openclawUnit).toContain(
 				`ExecStart="${join(home, ".openclaw", "bin", "openclaw")}" "gateway" "run"`,
 			);
-			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+			expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+			expect(existsSync(join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"))).toBe(
+				false,
+			);
 			expect(hermesUnit).not.toContain("clawdi run -- hermes");
 			expect(openclawUnit).not.toContain("clawdi run -- openclaw");
 			expect(openclawEnv).toContain('CLAWDI_RUNTIME_REV="');

@@ -95,7 +95,7 @@ function writeFakeGatewayCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "gateway install --force --json"|"gateway install")
+  "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
 				? "exit 41"
@@ -246,9 +246,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 		expect(normalized.manifest.bridge?.surfaces).toEqual([]);
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
-		expect(normalized.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toEqual([
+		expect(normalized.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
-		]);
+		);
 		expect(normalized.manifest.liveSync).toEqual(hostedResponse.manifest.liveSync);
 		expect("secretValues" in normalized.manifest).toBe(false);
 		expect(normalized.secretValues).toEqual({
@@ -382,7 +382,63 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
 	});
 
-	test("includes secret values in runtime and sidecar program revisions", () => {
+	test("keeps hosted managed provider key out of the agent env", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				runtime: "openclaw",
+				projection: {
+					providers: {
+						default: {
+							type: "custom_openai_compatible",
+							// managed_by:"clawdi" marks this as a Clawdi-managed provider
+							// (cloud-api emits it as `n:"clawdi"`), which routes the key
+							// through the MITM placeholder path — the agent env gets the
+							// placeholder while the real key stays out of its env.
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							model: "gpt-test",
+							apiMode: "openai_chat",
+							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "inline-managed-provider", {
+				"secret://providers/default/api-key": "sk-managed",
+			}),
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
+			env?: Record<string, string>;
+		};
+		expect(runConfig.env?.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
+		expect(runConfig.env?.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		const envFile = readFileSync(
+			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+			"utf8",
+		);
+		expect(envFile).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
+		expect(envFile).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(envFile).not.toContain("sk-managed");
+	});
+
+	test("keeps runtime secret revisions separate from bridge sidecar revisions", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(paths, {
 			openclaw: {
@@ -412,7 +468,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
-		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).not.toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
 		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).toBe(sidecarRevision);
 	});
 

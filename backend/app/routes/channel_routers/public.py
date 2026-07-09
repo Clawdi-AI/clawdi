@@ -356,10 +356,16 @@ async def _active_bot_agent_link_counts(
 @router.get("", response_model=list[ChannelAccountResponse | ChannelRuntimeAccountResponse])
 async def list_channels(
     request: Request,
+    requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
-    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+    runtime_environment_id = await _runtime_channels_environment_id(
+        db,
+        auth=auth,
+        requested_environment_id=requested_environment_id,
+    )
+    if runtime_environment_id is not None:
         result = await db.execute(
             select(ChannelAccount, ChannelBotAgentLink)
             .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
@@ -370,7 +376,7 @@ async def list_channels(
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.user_id == auth.user_id,
-                ChannelBotAgentLink.agent_id == auth.api_key.environment_id,
+                ChannelBotAgentLink.agent_id == runtime_environment_id,
             )
             .order_by(
                 ChannelAccount.provider,
@@ -411,6 +417,43 @@ async def list_channels(
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)
+
+
+async def _runtime_channels_environment_id(
+    db: AsyncSession,
+    *,
+    auth: AuthContext,
+    requested_environment_id: UUID | None,
+) -> UUID | None:
+    if not auth.is_cli or auth.api_key is None:
+        return None
+
+    bound_environment_id = auth.api_key.environment_id
+    if bound_environment_id is not None:
+        if (
+            requested_environment_id is not None
+            and requested_environment_id != bound_environment_id
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "api key bound to a different environment",
+            )
+        return bound_environment_id
+
+    if requested_environment_id is None:
+        return None
+
+    env = (
+        await db.execute(
+            select(AgentEnvironment.id).where(
+                AgentEnvironment.id == requested_environment_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
+    return requested_environment_id
 
 
 @router.get("/bot-pool")

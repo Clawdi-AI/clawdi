@@ -91,7 +91,9 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(
-        select(ApiKey).where(ApiKey.user_id == auth.user_id).order_by(ApiKey.created_at.desc())
+        select(ApiKey)
+        .where(ApiKey.user_id == auth.user_id, ApiKey.managed.is_(False))
+        .order_by(ApiKey.created_at.desc())
     )
     keys = result.scalars().all()
     return [
@@ -125,6 +127,8 @@ async def revoke_api_key(
     api_key = result.scalar_one_or_none()
     if not api_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
+    if api_key.managed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Managed API keys cannot be revoked here")
 
     api_key.revoked_at = datetime.now(UTC)
     await db.commit()

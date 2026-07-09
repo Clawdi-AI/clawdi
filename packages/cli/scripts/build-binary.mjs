@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,25 +34,7 @@ if (!result.success) {
 
 console.log(`built ${outfile} (${target})`);
 
-if (process.env.CLAWDI_SKIP_MITM_SIDECAR_BUNDLE !== "1") {
-	const bundleOutdir = resolve(dirname(outfile), "clawdi-mitm-sidecar");
-	const result = spawnSync(
-		"bun",
-		["run", resolve(cliRoot, "scripts", "build-mitm-sidecar-bundle.mjs")],
-		{
-			encoding: "utf8",
-			env: {
-				...process.env,
-				CLAWDI_MITM_SIDECAR_BUNDLE_OUTDIR: bundleOutdir,
-			},
-			stdio: "pipe",
-		},
-	);
-	if (result.status !== 0) {
-		throw new Error(`MITM sidecar bundle build failed\n${result.stdout}${result.stderr}`);
-	}
-	if (result.stdout.trim()) process.stdout.write(result.stdout);
-	if (result.stderr.trim()) process.stderr.write(result.stderr);
-} else {
-	console.log("skipped MITM sidecar bundle (CLAWDI_SKIP_MITM_SIDECAR_BUNDLE=1)");
-}
+cpSync(resolve(cliRoot, "mitmproxy-addon"), resolve(dirname(outfile), "mitmproxy-addon"), {
+	recursive: true,
+});
+console.log(`copied mitmproxy addon to ${resolve(dirname(outfile), "mitmproxy-addon")}`);

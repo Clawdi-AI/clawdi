@@ -6119,7 +6119,9 @@ export interface operations {
     };
     list_channels_v1_channels_get: {
         parameters: {
-            query?: never;
+            query?: {
+                environment_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6133,6 +6135,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": (components["schemas"]["ChannelAccountResponse"] | components["schemas"]["ChannelRuntimeAccountResponse"])[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

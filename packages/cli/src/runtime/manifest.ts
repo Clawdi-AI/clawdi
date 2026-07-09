@@ -26,7 +26,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
-import { stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import {
 	type AgentPrimaryModel,
@@ -40,8 +40,10 @@ import {
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { normalizeSecretRef } from "./hosted-mitm-profiles";
+import { ensureRuntimeAuthTokenFile } from "./auth-token";
+import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-mitm-profiles";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import { manifestSchema } from "./manifest-contract";
 import {
 	isEnvSecretRef,
 	normalizeSecretValues,
@@ -63,12 +65,17 @@ import {
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
 import type { RuntimeManifestLoad } from "./manifest-source";
-import { applyMitmSidecarRuntimeEnv } from "./mitm-env";
+import {
+	applyMitmTransparentRuntimeEnv,
+	MANAGED_MITM_PLACEHOLDER_VALUE,
+	SYSTEM_CA_BUNDLE,
+} from "./mitm-env";
 import {
 	buildMitmProfileBundle,
 	hasEnabledMitmProfiles,
 	writeMitmProfileBundle,
 } from "./mitm-profiles";
+import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import {
 	buildRuntimeRunConfig,
@@ -87,6 +94,7 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
+import { TRANSPARENT_MITM_TABLE, TRANSPARENT_MITM_TRANSPORT_VERSION } from "./transparent-mitm";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 export interface RuntimeConvergenceResult {
@@ -114,6 +122,9 @@ export interface RuntimeConvergenceResult {
 		systemdUserUnits: string[];
 		mitmProfileBundle: string | null;
 		mitmSecretFile: string | null;
+		mitmproxy: RuntimeMitmproxyEnsureResult | null;
+		mitmTransparentEnv: string | null;
+		mitmAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
 		instanceSemaphores: string[];
@@ -144,6 +155,18 @@ function writeJsonFile(path: string, payload: unknown): void {
 	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function readLastGoodRuntimeManifest(paths: RuntimePaths): RuntimeManifest | null {
+	if (!existsSync(paths.manifestLastGood)) return null;
+	try {
+		const parsed = manifestSchema.safeParse(
+			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
+		);
+		return parsed.success ? parsed.data : null;
+	} catch {
+		return null;
+	}
+}
+
 function writeLastGoodManifest(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
@@ -155,7 +178,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths);
+	writeLastGoodSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	return paths.manifestLastGood;
 }
 
@@ -170,8 +193,9 @@ export function cacheRuntimeLastGoodManifest(
 function writeLastGoodSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): void {
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
@@ -196,10 +220,11 @@ function makeManagedSecretRoot(path: string): void {
 function writeSecretValues(
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): string | null {
 	const path = paths.managedSecretFile;
 	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
-	const normalized = normalizeSecretValues(secretValues);
+	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(path, { force: true });
 		rmSync(legacyPath, { force: true });
@@ -213,6 +238,27 @@ function writeSecretValues(
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+function omitSecretRefs(
+	secretValues: Record<string, string> | undefined,
+	excludedRefs: readonly string[],
+): Record<string, string> {
+	const normalized = normalizeSecretValues(secretValues);
+	for (const ref of excludedRefs) {
+		for (const alias of secretRefAliases(ref)) {
+			delete normalized[alias];
+		}
+	}
+	return normalized;
+}
+
+function secretRefAliases(ref: string): string[] {
+	const aliases = new Set<string>([ref]);
+	const normalized = normalizeSecretRef(ref);
+	if (normalized) aliases.add(normalized);
+	if (ref.startsWith("secret://")) aliases.add(ref.slice("secret://".length));
+	return [...aliases];
 }
 
 interface ManagedWhatsAppAuthCredential {
@@ -476,7 +522,7 @@ function writeScopedSecretValues(
 	secretValues: Record<string, string> | undefined,
 	refs: readonly string[],
 	paths: RuntimePaths,
-	owner: "root" | "runtime-user",
+	owner: "root" | "runtime-user" | "mitm-user",
 ): string | null {
 	const scoped = scopedSecretValues(secretValues, refs);
 	if (Object.keys(scoped).length === 0) {
@@ -492,6 +538,9 @@ function writeScopedSecretValues(
 			makeRuntimeUserOwned(dirname(path));
 		}
 		makeRuntimeUserOwned(path);
+	} else if (owner === "mitm-user") {
+		makeRootOwned(dirname(path));
+		makeMitmUserOwned(path);
 	} else {
 		makeRootOwned(dirname(path));
 		makeRootOwned(path);
@@ -655,11 +704,18 @@ function stringValue(value: unknown): string | null {
 }
 
 function makeRuntimeUserOwned(path: string): void {
+	makeSystemUserOwned(path, process.env.CLAWDI_RUNTIME_USER?.trim() ?? "");
+}
+
+function makeMitmUserOwned(path: string): void {
+	makeSystemUserOwned(path, process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm");
+}
+
+function makeSystemUserOwned(path: string, user: string): void {
 	if (!runningAsRoot()) return;
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (!runtimeUser || runtimeUser === "root") return;
-	const result = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
-	const group = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (!user || user === "root") return;
+	const result = spawnSync("id", ["-u", user], { encoding: "utf8" });
+	const group = spawnSync("id", ["-g", user], { encoding: "utf8" });
 	if (result.status !== 0 || group.status !== 0) return;
 	const uid = Number.parseInt(result.stdout.trim(), 10);
 	const gid = Number.parseInt(group.stdout.trim(), 10);
@@ -681,10 +737,30 @@ function makeRootOwned(path: string): void {
 	}
 }
 
+function makeRootReadableDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeRootOwned(path);
+	try {
+		chmodSync(path, 0o755);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+}
+
 function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path);
 	makeRuntimeUserOwned(path);
+	try {
+		chmodSync(path, 0o700);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+}
+
+function makeMitmUserPrivateDir(path: string): void {
+	mkdirSync(path, { recursive: true });
+	makeMitmUserOwned(path);
 	try {
 		chmodSync(path, 0o700);
 	} catch {
@@ -756,6 +832,7 @@ function runningAsRoot(): boolean {
 }
 
 function runtimeInstallerExecution(
+	name: string,
 	install: RuntimeInstall,
 	installerPath: string,
 ): {
@@ -765,7 +842,7 @@ function runtimeInstallerExecution(
 	executionUser: string | null;
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const env = runtimeInstallerEnv(install);
+	const env = runtimeInstallerEnv(name, install);
 	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
@@ -813,12 +890,28 @@ function runtimeInstallerExecution(
 	);
 }
 
-function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
+function runtimeInstallerEnv(name: string, install: RuntimeInstall): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env, HOME: install.home };
 	delete env.NPM_CONFIG_PREFIX;
 	delete env.npm_config_prefix;
 	delete env.NPM_CONFIG_CACHE;
 	delete env.npm_config_cache;
+	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
+	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
+	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.CURL_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
+	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
+	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
+	if (name === "hermes") {
+		const hermesHome = join(install.home, ".hermes");
+		env.HERMES_HOME = hermesHome;
+		env.UV_PYTHON_INSTALL_DIR = join(hermesHome, "uv", "python");
+		env.UV_PYTHON_BIN_DIR = join(hermesHome, "uv", "bin");
+		env.UV_MANAGED_PYTHON = "1";
+		delete env.UV_NO_MANAGED_PYTHON;
+		delete env.UV_PYTHON_DOWNLOADS;
+	}
 	return env;
 }
 
@@ -932,7 +1025,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
-		const execution = runtimeInstallerExecution(install, materialized.path);
+		const execution = runtimeInstallerExecution(name, install, materialized.path);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
@@ -1236,6 +1329,8 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 	return type === "api_key" || type === "secret_ref";
 }
 
+const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
+
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
 	const raw =
 		typeof input.runtimeEnvName === "string"
@@ -1243,11 +1338,17 @@ function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, 
 			: typeof input.runtime_env_name === "string"
 				? input.runtime_env_name
 				: null;
-	if (raw && isEnvKey(raw)) return raw;
+	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
+	if (
+		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
+		isOpenAiCompatibleMode(hostedProviderApiMode(input))
+	) {
+		return "OPENAI_API_KEY";
+	}
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
-function hostedProviderSecretEnv(
+function hostedProviderPlaceholderEnv(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
 ): Record<string, string> {
@@ -1257,13 +1358,94 @@ function hostedProviderSecretEnv(
 	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
 		const provider = recordValue(raw);
 		if (!provider) continue;
+		if (!isClawdiManagedProviderProjection(provider)) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		if (!apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
 		if (!isEnvKey(runtimeEnvName)) continue;
-		env[runtimeEnvName] = normalizeSecretRef(apiKeySecretRef) ?? apiKeySecretRef;
+		env[runtimeEnvName] = MANAGED_MITM_PLACEHOLDER_VALUE;
 	}
 	return env;
+}
+
+function hostedProviderSecretEnv(
+	manifest: RuntimeManifest,
+	runtimeName?: string,
+): Record<string, string> {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return {};
+	const secretEnv: Record<string, string> = {};
+	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
+		const provider = recordValue(raw);
+		if (!provider) continue;
+		if (isClawdiManagedProviderProjection(provider)) continue;
+		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
+		if (!apiKeySecretRef) continue;
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
+		if (!isEnvKey(runtimeEnvName)) continue;
+		secretEnv[runtimeEnvName] = apiKeySecretRef;
+	}
+	return secretEnv;
+}
+
+function assertNoProviderEnvOverlap(
+	runtimeName: string,
+	placeholderEnv: Record<string, string>,
+	secretEnv: Record<string, string>,
+): void {
+	for (const envName of Object.keys(placeholderEnv)) {
+		if (secretEnv[envName] === undefined) continue;
+		throw new Error(
+			`runtime ${runtimeName} provider env ${envName} is both managed and BYOK-backed`,
+		);
+	}
+}
+
+function mergeRuntimeEnvWithProviderPlaceholders(
+	runtimeName: string,
+	settings: RuntimeManifest["runtimes"][string]["run"],
+	providerEnv: Record<string, string>,
+): RuntimeManifest["runtimes"][string]["run"] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	const userEnv = settings?.env ?? {};
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings?.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...(settings ?? {}),
+		prependPath: settings?.prependPath ?? [],
+		env: {
+			...userEnv,
+			...providerEnv,
+		},
+	};
+}
+
+function mergeRuntimeServiceEnvWithProviderPlaceholders(
+	runtimeName: string,
+	serviceName: string,
+	settings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
+	providerEnv: Record<string, string>,
+): NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string] {
+	if (Object.keys(providerEnv).length === 0) return settings;
+	for (const envName of Object.keys(providerEnv)) {
+		if (settings.secretEnv?.[envName] !== undefined) {
+			throw new Error(
+				`runtime ${runtimeName} service ${serviceName} provider placeholder ${envName} conflicts with secretEnv`,
+			);
+		}
+	}
+	return {
+		...settings,
+		env: {
+			...(settings.env ?? {}),
+			...providerEnv,
+		},
+	};
 }
 
 function runtimeSecretFilePath(paths: RuntimePaths, runtimeName: string): string {
@@ -1350,7 +1532,7 @@ function writeMitmSecretFile(
 		secretValues,
 		mitmSecretRefs(manifest),
 		paths,
-		"runtime-user",
+		"mitm-user",
 	);
 }
 
@@ -1358,6 +1540,42 @@ function mitmSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
 	collectSecretRefs(manifest.mitmProfiles, refs);
 	return [...refs].sort();
+}
+
+function mitmSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
+	const refs = new Set<string>();
+	const profiles = Array.isArray(manifest.mitmProfiles?.profiles)
+		? manifest.mitmProfiles.profiles
+		: [];
+	for (const profile of profiles) {
+		const profileRecord = recordValue(profile);
+		if (profileRecord?.owner === "provider-projection") {
+			collectSecretRefs(profile, refs);
+		}
+		if (profileRecord?.owner === "clawdi-native-channels") {
+			collectChannelRewriteSecretRefs(profileRecord, refs);
+		}
+	}
+	return [...refs].sort();
+}
+
+function collectChannelRewriteSecretRefs(
+	profile: Record<string, unknown>,
+	refs: Set<string>,
+): void {
+	const rewrite = recordValue(profile.rewrite);
+	if (!rewrite) return;
+	const pathReplace = recordValue(rewrite.pathReplace);
+	const replacementSecretRef = stringValue(pathReplace?.replacementSecretRef);
+	if (replacementSecretRef) refs.add(replacementSecretRef);
+	const setHeaders = recordValue(rewrite.setHeaders);
+	if (!setHeaders) return;
+	for (const setter of Object.values(setHeaders)) {
+		const setterRecord = recordValue(setter);
+		if (setterRecord?.type !== "secretRef") continue;
+		const secretRef = stringValue(setterRecord.secretRef);
+		if (secretRef) refs.add(secretRef);
+	}
 }
 
 function collectSecretRefs(value: unknown, refs: Set<string>): void {
@@ -1382,6 +1600,11 @@ interface HostedAiProviderProjectionResult {
 	path: string | null;
 	revision: string | null;
 }
+
+type HostedAiProviderProjectionInput = {
+	catalog: AiProviderCatalog;
+	primaryModel: AgentPrimaryModel;
+};
 
 interface HermesHostedProviderPluginProjection {
 	modelPatch: string;
@@ -1418,23 +1641,46 @@ function applyHostedAiProviderProjection(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
+	previousManifest: RuntimeManifest | null,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null };
 	}
 	const projectionInput = hostedAiProviderCatalog(manifest, name);
+	const previousProjectionInput = previousManifest
+		? hostedAiProviderCatalog(previousManifest, name)
+		: null;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
-		return applyHostedHermesAiProviderProjection(observation, projectionInput, home, workspaceRoot);
-	}
-	if (!projectionInput) return { path: null, revision: null };
-	if (name === "openclaw") {
-		applyOpenClawHostedProviderProjection(
-			observation.commandPath,
+		return applyHostedHermesAiProviderProjection(
+			observation,
 			projectionInput,
+			previousProjectionInput,
 			home,
 			workspaceRoot,
 		);
+	}
+	if (name === "openclaw") {
+		const deletedProviderIds = openClawStaleHostedProviderIds(
+			previousProjectionInput,
+			projectionInput,
+		);
+		if (projectionInput) {
+			applyOpenClawHostedProviderProjection(
+				observation.commandPath,
+				projectionInput,
+				deletedProviderIds,
+				home,
+				workspaceRoot,
+			);
+		} else if (deletedProviderIds.length > 0) {
+			applyOpenClawHostedProviderDeleteProjection(
+				observation.commandPath,
+				deletedProviderIds,
+				home,
+				workspaceRoot,
+			);
+		}
 		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
 		return { path: observation.commandPath, revision: null };
 	}
@@ -1443,19 +1689,28 @@ function applyHostedAiProviderProjection(
 
 function applyHostedHermesAiProviderProjection(
 	observation: RuntimeInstallObservation,
-	projectionInput: {
-		catalog: AiProviderCatalog;
-		primaryModel: AgentPrimaryModel;
-	} | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
 	home: string,
 	workspaceRoot: string,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (!projectionInput) {
 		removeHermesModelProviderPlugin(home);
+		const deletedProviderIds = existingHermesProviderIds(
+			configPath,
+			hermesStaleHostedProviderIds(previousProjectionInput, null),
+		);
+		if (deletedProviderIds.length > 0) {
+			mergeHermesConfig(configPath, hermesProviderDeletePatch(deletedProviderIds));
+			makeRuntimeUserOwned(configPath);
+		}
 		return {
 			path: null,
-			revision: revisionHash({ hermesProviderProjection: "none" }),
+			revision: revisionHash({
+				hermesProviderProjection: "none",
+				deletedProviderIds,
+			}),
 		};
 	}
 
@@ -1471,13 +1726,18 @@ function applyHostedHermesAiProviderProjection(
 		);
 		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-		mergeHermesConfig(configPath, file.content);
+		const deletedProviderIds = existingHermesProviderIds(
+			configPath,
+			hermesStaleHostedProviderIds(previousProjectionInput, projectionInput, "yaml-merge"),
+		);
+		const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
+		mergeHermesConfig(configPath, patchContent);
 		makeRuntimeUserOwned(configPath);
 		return {
 			path: configPath,
 			revision: revisionHash({
 				hermesProviderProjection: "yaml-merge",
-				patch: file.content,
+				patch: patchContent,
 			}),
 		};
 	}
@@ -1487,11 +1747,25 @@ function applyHostedHermesAiProviderProjection(
 		projectionInput.primaryModel,
 	);
 	const pluginDir = syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles);
-	mergeHermesConfig(configPath, pluginProjection.modelPatch);
+	const deletedProviderIds = hermesStaleHostedProviderIds(
+		previousProjectionInput,
+		projectionInput,
+		"plugin",
+	);
+	const existingDeletedProviderIds = existingHermesProviderIds(configPath, deletedProviderIds);
+	const modelPatch = mergeHermesProviderDeletes(
+		pluginProjection.modelPatch,
+		existingDeletedProviderIds,
+	);
+	mergeHermesConfig(configPath, modelPatch);
 	makeRuntimeUserOwned(configPath);
 	return {
 		path: pluginDir,
-		revision: pluginProjection.revision,
+		revision: revisionHash({
+			hermesProviderProjection: "plugin",
+			modelPatch,
+			pluginFiles: pluginProjection.pluginFiles,
+		}),
 	};
 }
 
@@ -1814,10 +2088,8 @@ function removeHermesModelProviderPlugin(home: string): void {
 
 function applyOpenClawHostedProviderProjection(
 	command: string,
-	projectionInput: {
-		catalog: AiProviderCatalog;
-		primaryModel: AgentPrimaryModel;
-	},
+	projectionInput: HostedAiProviderProjectionInput,
+	deletedProviderIds: readonly string[],
 	home: string,
 	workspaceRoot: string,
 ): void {
@@ -1828,7 +2100,28 @@ function applyOpenClawHostedProviderProjection(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	runRuntimeUserCommand(command, ["config", "patch", "--stdin"], file.content, home, workspaceRoot);
+	runRuntimeUserCommand(
+		command,
+		["config", "patch", "--stdin"],
+		mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		home,
+		workspaceRoot,
+	);
+}
+
+function applyOpenClawHostedProviderDeleteProjection(
+	command: string,
+	deletedProviderIds: readonly string[],
+	home: string,
+	workspaceRoot: string,
+): void {
+	runRuntimeUserCommand(
+		command,
+		["config", "patch", "--stdin"],
+		`${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
+		home,
+		workspaceRoot,
+	);
 }
 
 function applyOpenClawHostedProjectionAfterOfficialInstall(
@@ -1839,9 +2132,205 @@ function applyOpenClawHostedProjectionAfterOfficialInstall(
 ): void {
 	const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 	if (projectionInput) {
-		applyOpenClawHostedProviderProjection(command, projectionInput, home, workspaceRoot);
+		applyOpenClawHostedProviderProjection(command, projectionInput, [], home, workspaceRoot);
 	}
 	applyOpenClawGatewayHostedProjection(command, manifest, home, workspaceRoot);
+}
+
+function openClawStaleHostedProviderIds(
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+): string[] {
+	const previousProviderIds = previousProjectionInput
+		? safeOpenClawProjectedProviderIds(previousProjectionInput)
+		: new Set<string>();
+	const activeProviderIds = projectionInput
+		? openClawProjectedProviderIds(projectionInput)
+		: new Set<string>();
+	return staleProviderIds(previousProviderIds, activeProviderIds);
+}
+
+function openClawProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	const projection = buildAgentTargetProjection(
+		"openclaw",
+		projectionInput.catalog,
+		projectionInput.primaryModel,
+	);
+	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+	if (!file) return new Set();
+	return openClawProviderIdsFromPatch(file.content);
+}
+
+function safeOpenClawProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	try {
+		return openClawProjectedProviderIds(projectionInput);
+	} catch {
+		return new Set();
+	}
+}
+
+function openClawProviderIdsFromPatch(content: string): Set<string> {
+	const parsed = JSON.parse(content) as unknown;
+	const root = recordValue(parsed);
+	const models = root ? recordValue(root.models) : null;
+	const providers = models ? recordValue(models.providers) : null;
+	if (!providers) return new Set();
+	return new Set(
+		Object.entries(providers)
+			.filter(([, value]) => value !== null)
+			.map(([providerId]) => providerId),
+	);
+}
+
+function mergeOpenClawProviderDeletes(
+	patchContent: string,
+	deletedProviderIds: readonly string[],
+): string {
+	if (deletedProviderIds.length === 0) return patchContent;
+	const parsed = JSON.parse(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const existingModels = recordValue(patch.models);
+	const models: Record<string, unknown> = existingModels
+		? { ...existingModels }
+		: { mode: "merge" };
+	const existingProviders = recordValue(models.providers);
+	const providers = existingProviders ? { ...existingProviders } : {};
+	for (const providerId of deletedProviderIds) {
+		providers[providerId] = null;
+	}
+	models.mode = "merge";
+	models.providers = providers;
+	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
+}
+
+function openClawProviderDeletePatch(
+	deletedProviderIds: readonly string[],
+): Record<string, unknown> {
+	return {
+		models: {
+			mode: "merge",
+			providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
+		},
+	};
+}
+
+function hermesStaleHostedProviderIds(
+	previousProjectionInput: HostedAiProviderProjectionInput | null,
+	projectionInput: HostedAiProviderProjectionInput | null,
+	activeMode?: "plugin" | "yaml-merge",
+): string[] {
+	const previousProviderIds = previousProjectionInput
+		? safeHermesPotentialProjectedProviderIds(previousProjectionInput)
+		: new Set<string>();
+	const activeProviderIds =
+		projectionInput && activeMode
+			? hermesProjectedProviderIds(projectionInput, activeMode)
+			: new Set<string>();
+	return staleProviderIds(previousProviderIds, activeProviderIds);
+}
+
+function safeHermesPotentialProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+): Set<string> {
+	return new Set([
+		...safeHermesProjectedProviderIds(projectionInput, "yaml-merge"),
+		...safeHermesProjectedProviderIds(projectionInput, "plugin"),
+	]);
+}
+
+function safeHermesProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+	mode: "plugin" | "yaml-merge",
+): Set<string> {
+	try {
+		return hermesProjectedProviderIds(projectionInput, mode);
+	} catch {
+		return new Set();
+	}
+}
+
+function hermesProjectedProviderIds(
+	projectionInput: HostedAiProviderProjectionInput,
+	mode: "plugin" | "yaml-merge",
+): Set<string> {
+	const patchContent =
+		mode === "plugin"
+			? buildHermesHostedProviderPluginProjection(
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				).modelPatch
+			: (buildAgentTargetProjection(
+					"hermes",
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				).files.find((entry) => entry.path.endsWith(".hermes.yaml"))?.content ?? "");
+	return hermesProviderIdsFromPatch(patchContent);
+}
+
+function hermesProviderIdsFromPatch(content: string): Set<string> {
+	if (!content.trim()) return new Set();
+	const parsed = parseYaml(content) as unknown;
+	const root = recordValue(parsed);
+	const providers = root ? recordValue(root.providers) : null;
+	if (!providers) return new Set();
+	return new Set(
+		Object.entries(providers)
+			.filter(([, value]) => value !== null)
+			.map(([providerId]) => providerId),
+	);
+}
+
+function mergeHermesProviderDeletes(
+	patchContent: string,
+	deletedProviderIds: readonly string[],
+): string {
+	if (deletedProviderIds.length === 0) return patchContent;
+	const parsed = parseYaml(patchContent) as unknown;
+	const root = recordValue(parsed);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const existingProviders = recordValue(patch.providers);
+	const providers = existingProviders ? { ...existingProviders } : {};
+	for (const providerId of deletedProviderIds) {
+		providers[providerId] = null;
+	}
+	patch.providers = providers;
+	return `${stringifyYaml(patch).trimEnd()}\n`;
+}
+
+function existingHermesProviderIds(configPath: string, providerIds: readonly string[]): string[] {
+	if (providerIds.length === 0 || !existsSync(configPath)) return [];
+	try {
+		const parsed = parseYaml(readFileSync(configPath, "utf-8")) as unknown;
+		const root = recordValue(parsed);
+		const providers = root ? recordValue(root.providers) : null;
+		if (!providers) return [];
+		return providerIds.filter((providerId) => Object.hasOwn(providers, providerId));
+	} catch {
+		return [];
+	}
+}
+
+function hermesProviderDeletePatch(deletedProviderIds: readonly string[]): string {
+	return `${stringifyYaml({
+		providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
+	}).trimEnd()}\n`;
+}
+
+function staleProviderIds(
+	previousProviderIds: Set<string>,
+	activeProviderIds: Set<string>,
+): string[] {
+	return [...previousProviderIds]
+		.filter((providerId) => !activeProviderIds.has(providerId))
+		.sort((left, right) => left.localeCompare(right));
 }
 
 function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
@@ -2259,13 +2748,70 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function runtimeUserCommandEnv(home: string): NodeJS.ProcessEnv {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const uid =
+		runtimeUser && runtimeUser !== "root" && runningAsRoot()
+			? String(runtimeUserUid(runtimeUser))
+			: null;
+	const runtimeDir = uid ? `/run/user/${uid}` : null;
 	return {
 		...process.env,
 		HOME: home,
 		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
 			.filter(Boolean)
 			.join(":"),
+		...(runtimeDir
+			? {
+					XDG_RUNTIME_DIR: runtimeDir,
+					DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
+				}
+			: {}),
 	};
+}
+
+function runtimeUserGid(runtimeUser: string): number {
+	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const gid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(gid) && gid >= 0 && gid <= 4_294_967_295) return gid;
+	}
+	if (runtimeUser === "clawdi") return 10_001;
+	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
+}
+
+function userManagerControlSocketExists(runtimeDir: string): boolean {
+	return existsSync(join(runtimeDir, "bus")) || existsSync(join(runtimeDir, "systemd", "private"));
+}
+
+function waitForUserManagerControlSocket(runtimeDir: string): boolean {
+	const waitUntil = Date.now() + 120_000;
+	const waitBuffer = new SharedArrayBuffer(4);
+	const waitView = new Int32Array(waitBuffer);
+	while (Date.now() < waitUntil) {
+		if (userManagerControlSocketExists(runtimeDir)) return true;
+		Atomics.wait(waitView, 0, 0, 200);
+	}
+	return userManagerControlSocketExists(runtimeDir);
+}
+
+function ensureRuntimeUserManagerReady(runtimeUser: string): void {
+	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
+	const uid = runtimeUserUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	const runtimeDir = `/run/user/${uid}`;
+	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
+	execFileSync("install", ["-d", "-m", "0700", "-o", String(uid), "-g", String(gid), runtimeDir]);
+	if (userManagerControlSocketExists(runtimeDir)) return;
+	const unit = `user@${uid}.service`;
+	let result = spawnSync("systemctl", ["restart", unit], { stdio: "ignore" });
+	if (result.status !== 0) {
+		result = spawnSync("systemctl", ["start", unit], { stdio: "ignore" });
+	}
+	if (result.status !== 0 || !waitForUserManagerControlSocket(runtimeDir)) {
+		throw new Error(
+			`runtime user systemd manager did not publish a control socket under ${runtimeDir}`,
+		);
+	}
 }
 
 function spawnRuntimeUserCommand(
@@ -2277,6 +2823,7 @@ function spawnRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			return spawnSync("gosu", [runtimeUser, command, ...args], {
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
@@ -2308,6 +2855,7 @@ function runRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
+		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			execFileSync("gosu", [runtimeUser, command, ...args], {
 				input: stdin,
@@ -2335,6 +2883,95 @@ function runRuntimeUserCommand(
 function clearMitmProfileBundle(paths: RuntimePaths): null {
 	rmSync(paths.mitmProfileBundle, { force: true });
 	return null;
+}
+
+function writeMitmproxyStatus(
+	result: RuntimeMitmproxyEnsureResult | null,
+	paths: RuntimePaths,
+): RuntimeMitmproxyEnsureResult | null {
+	if (!result) {
+		rmSync(paths.mitmproxyStatus, { force: true });
+		return null;
+	}
+	writeJsonFile(paths.mitmproxyStatus, result);
+	makeRootOwned(dirname(paths.mitmproxyStatus));
+	makeRootOwned(paths.mitmproxyStatus);
+	return result;
+}
+
+function writeMitmproxyAddon(paths: RuntimePaths): { path: string; sha256: string } {
+	const source = resolvePackagedMitmproxyAddon();
+	const content = readFileSync(source, "utf-8");
+	writePrivateFileAtomic(paths.mitmAddon, content, { mode: 0o644, dirMode: 0o755 });
+	makeRootOwned(dirname(paths.mitmAddon));
+	makeRootOwned(paths.mitmAddon);
+	return { path: paths.mitmAddon, sha256: sha256String(content) };
+}
+
+function clearMitmproxyAddon(paths: RuntimePaths): null {
+	rmSync(paths.mitmAddon, { force: true });
+	return null;
+}
+
+function resolvePackagedMitmproxyAddon(): string {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(here, "../../mitmproxy-addon/clawdi_mitm_addon.py"),
+		resolve(here, "../mitmproxy-addon/clawdi_mitm_addon.py"),
+		resolve(here, "mitmproxy-addon/clawdi_mitm_addon.py"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	throw new Error("packaged mitmproxy addon is missing");
+}
+
+function writeTransparentMitmEnvFile(input: {
+	program: RuntimeMitmSystemdProgram | null;
+	paths: RuntimePaths;
+	runtimeUser: string;
+	runtimeUid: number;
+	mitmUser: string;
+	mitmUid: number;
+}): string | null {
+	if (!input.program) {
+		rmSync(input.paths.mitmTransparentEnv, { force: true });
+		return null;
+	}
+	const env: Record<string, string> = {
+		CLAWDI_RUNTIME_USER: input.runtimeUser,
+		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
+		CLAWDI_MITM_USER: input.mitmUser,
+		CLAWDI_MITM_UID: String(input.mitmUid),
+		CLAWDI_MITM_TRANSPARENT_PORT: String(input.program.transparentPort),
+		CLAWDI_MITM_NFT_TABLE: TRANSPARENT_MITM_TABLE,
+		CLAWDI_MITM_PROFILE_BUNDLE: input.program.profileBundlePath,
+		CLAWDI_MITM_SECRET_FILE: input.program.secretFilePath ?? "",
+		CLAWDI_MITM_CA_DIR: input.paths.mitmCaDir,
+		CLAWDI_MITM_CA_CERT: input.paths.mitmCaCert,
+		CLAWDI_MITM_SYSTEM_CA_BUNDLE: input.program.systemCaBundle,
+		CLAWDI_MITM_TRANSPORT_VERSION: TRANSPARENT_MITM_TRANSPORT_VERSION,
+		CLAWDI_MITMPROXY_VERSION: input.program.mitmproxy.version,
+		CLAWDI_MITMPROXY_URL: input.program.mitmproxy.url,
+		CLAWDI_MITMPROXY_SHA256: input.program.mitmproxy.sha256,
+		CLAWDI_MITMPROXY_BINARY_PATH: input.program.mitmproxy.binaryPath,
+		CLAWDI_MITMPROXY_ADDON_PATH: input.program.addonPath,
+		CLAWDI_MITMPROXY_ADDON_SHA256: input.program.addonSha256,
+	};
+	const lines = Object.entries(env)
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([key, value]) => `${key}=${systemdEnvironmentFileQuote(value)}`);
+	writePrivateFileAtomic(input.paths.mitmTransparentEnv, `${lines.join("\n")}\n`, {
+		mode: 0o644,
+		dirMode: 0o755,
+	});
+	makeRootOwned(dirname(input.paths.mitmTransparentEnv));
+	makeRootOwned(input.paths.mitmTransparentEnv);
+	return input.paths.mitmTransparentEnv;
+}
+
+function sha256String(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 function removeStaleRuntimeRunConfigs(writtenRunConfigIds: Set<string>, paths: RuntimePaths): void {
@@ -2460,17 +3097,8 @@ function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: Runt
 }
 
 function writeDaemonAuthToken(paths: RuntimePaths): string | null {
-	const path = paths.daemonAuthToken;
-	const legacyPath = join(paths.runRoot, "sync", "auth-token");
-	const token = process.env.CLAWDI_AUTH_TOKEN?.trim();
-	if (!token) {
-		if (existsSync(path)) return path;
-		rmSync(path, { force: true });
-		rmSync(legacyPath, { force: true });
-		return null;
-	}
-	rmSync(legacyPath, { force: true });
-	writePrivateFileAtomic(path, `${token}\n`, { mode: 0o600, dirMode: 0o700 });
+	const path = ensureRuntimeAuthTokenFile(paths);
+	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
@@ -2677,8 +3305,12 @@ interface RuntimeSystemdUserProgram {
 
 interface RuntimeMitmSystemdProgram {
 	profileBundlePath: string;
-	proxyUrl: string;
-	caFile: string;
+	envFilePath: string;
+	transparentPort: number;
+	addonPath: string;
+	addonSha256: string;
+	mitmproxy: Extract<RuntimeMitmproxyEnsureResult, { status: "ready" }>;
+	systemCaBundle: string;
 	secretFilePath: string | null;
 }
 
@@ -2687,13 +3319,21 @@ function runtimeMitmSystemdProgram(
 	paths: RuntimePaths,
 	profileBundlePath: string | null,
 	secretFilePath: string | null,
+	mitmproxy: RuntimeMitmproxyEnsureResult | null,
+	addon: { path: string; sha256: string } | null,
 ): RuntimeMitmSystemdProgram | null {
 	if (!profileBundlePath) return null;
+	if (mitmproxy?.status !== "ready") return null;
+	if (!addon) return null;
 	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
 	return {
 		profileBundlePath,
-		proxyUrl: `http://127.0.0.1:${port}`,
-		caFile: join(paths.runRoot, "mitm", "systemd", "ca.pem"),
+		envFilePath: paths.mitmTransparentEnv,
+		transparentPort: port,
+		addonPath: addon.path,
+		addonSha256: addon.sha256,
+		mitmproxy,
+		systemCaBundle: paths.mitmSystemCaFile,
 		secretFilePath,
 	};
 }
@@ -2723,10 +3363,7 @@ function buildRuntimeSystemdUserProgram(input: {
 		env[envName] = value;
 	}
 	if (input.mitm) {
-		applyMitmSidecarRuntimeEnv(env, {
-			proxyUrl: input.mitm.proxyUrl,
-			caFile: input.mitm.caFile,
-		});
+		applyMitmTransparentRuntimeEnv(env, { caFile: input.mitm.systemCaBundle });
 	}
 
 	const command =
@@ -2759,10 +3396,52 @@ export function runtimeSidecarProgramRevision(
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
-		mitmProfiles: manifest.mitmProfiles ?? null,
-		secretValues: secretValues ?? {},
-		runtimeSidecar: "hosted-runtime-sidecar-v1",
+		bridgeTokenPresent: Boolean(secretValues),
+		runtimeSidecar: "hosted-runtime-sidecar-bridge-v2",
 	});
+}
+
+function runtimeMitmProgramRevision(
+	manifest: RuntimeManifest,
+	mitmProgram: RuntimeMitmSystemdProgram,
+): string {
+	return revisionHash({
+		runtimeMitm: "hosted-runtime-mitm-mitmdump-v1",
+		instanceId: manifest.instanceId,
+		generation: manifest.generation,
+		transparentPort: mitmProgram.transparentPort,
+		profileBundlePath: mitmProgram.profileBundlePath,
+		secretFilePath: mitmProgram.secretFilePath,
+		mitmproxy: mitmProgram.mitmproxy,
+		addonSha256: mitmProgram.addonSha256,
+		transport: TRANSPARENT_MITM_TRANSPORT_VERSION,
+	});
+}
+
+function runtimeUserUid(runtimeUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_UID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
+	return systemUserUid(runtimeUser, runtimeUser === "clawdi" ? 10_001 : null);
+}
+
+function runtimeMitmUid(mitmUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_MITM_UID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
+	return systemUserUid(mitmUser, mitmUser === "clawdi-mitm" ? 10_002 : null);
+}
+
+function systemUserUid(user: string, fallback: number | null): number {
+	const resolved = spawnSync("id", ["-u", user], { encoding: "utf8" });
+	if (resolved.status === 0) {
+		const uid = Number.parseInt(resolved.stdout.trim(), 10);
+		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
+	}
+	if (fallback !== null) return fallback;
+	throw new Error(`could not resolve uid for ${user}`);
 }
 
 function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
@@ -2929,7 +3608,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		runtime: "hermes",
 		programName: "hermes-gateway",
 		command: "hermes",
-		installArgs: ["gateway", "install"],
+		installArgs: ["gateway", "install", "--force"],
 		uninstallArgs: ["gateway", "uninstall"],
 		service: "gateway",
 		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
@@ -3016,6 +3695,9 @@ function writeSystemdUnit(input: {
 	cwd: string;
 	env: Record<string, string>;
 	unitEnv?: Record<string, string>;
+	serviceType?: "simple" | "oneshot" | "notify";
+	restart?: boolean;
+	extraUnitLines?: string[];
 	extraServiceLines?: string[];
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
@@ -3032,19 +3714,19 @@ function writeSystemdUnit(input: {
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 		"[Unit]",
 		`Description=${input.description}`,
+		...(input.extraUnitLines ?? []),
 		"",
 		"[Service]",
 		`# ClawdiEnvironmentRevision=${envRevision}`,
-		"Type=simple",
+		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
 		...(input.extraServiceLines ?? []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		`ExecStart=${systemdExec(input.command, input.args)}`,
-		"Restart=always",
-		"RestartSec=2",
-		"KillMode=mixed",
-		"TimeoutStopSec=30",
+		...(input.restart === false
+			? []
+			: ["Restart=always", "RestartSec=2", "KillMode=mixed", "TimeoutStopSec=30"]),
 		"",
 		"[Install]",
 		`WantedBy=${input.wantedBy}`,
@@ -3264,7 +3946,13 @@ function isGeneratedSystemdFile(path: string): boolean {
 
 function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string[]): void {
 	if (!existsSync(paths.systemdSystemRoot)) return;
-	const managed = new Set(["clawdi-runtime-watch.service", "clawdi-daemon.service"]);
+	const managed = new Set([
+		"clawdi-runtime-watch.service",
+		"clawdi-daemon.service",
+		"clawdi-runtime-egress.service",
+		"clawdi-runtime-mitm.service",
+		"clawdi-runtime-sidecar.service",
+	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
 	for (const entry of readdirSync(paths.systemdSystemRoot)) {
 		if (!managed.has(entry) || writtenNames.has(entry)) continue;
@@ -3284,10 +3972,22 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 	}
 }
 
+function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): string {
+	const controlPlane = manifest.controlPlane;
+	const manifestUrl =
+		"manifestUrl" in controlPlane && typeof controlPlane.manifestUrl === "string"
+			? controlPlane.manifestUrl.trim()
+			: "";
+	if (manifestUrl) return manifestUrl;
+	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
+	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
+}
+
 function writeSystemdUnits(
 	runtimePrograms: RuntimeSystemdUserProgram[],
 	mitmProgram: RuntimeMitmSystemdProgram | null,
 	manifest: RuntimeManifest,
+	sourcePath: string,
 	paths: RuntimePaths,
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
@@ -3300,9 +4000,13 @@ function writeSystemdUnits(
 	const commonEnvironment = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(manifest, sourcePath),
+		CLAWDI_RUNTIME_SOURCE_PATH:
+			process.env.CLAWDI_RUNTIME_SOURCE_PATH?.trim() || paths.runtimeSource,
 		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
@@ -3316,6 +4020,7 @@ function writeSystemdUnits(
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const serviceInstallErrors: string[] = [];
+	const runtimeUid = shouldRunMitm ? runtimeUserUid(runtimeUser) : null;
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -3356,9 +4061,31 @@ function writeSystemdUnits(
 		);
 	}
 
-	if (shouldRunBridge || shouldRunMitm) {
-		userUnits.push(
-			writeSystemdUserUnit({
+	if (shouldRunMitm && mitmProgram) {
+		systemUnits.push(
+			writeSystemdSystemUnit({
+				paths,
+				name: "clawdi-runtime-mitm",
+				description: "Clawdi hosted runtime transparent MITM",
+				command: "clawdi",
+				args: ["runtime", "mitm", "run"],
+				cwd: workspaceRoot,
+				env: {
+					...commonEnvironment,
+					CLAWDI_AUTH_TOKEN: "",
+					CLAWDI_MITM_ENV_FILE: mitmProgram.envFilePath,
+					CLAWDI_RUNTIME_REV: runtimeMitmProgramRevision(manifest, mitmProgram),
+				},
+				serviceType: "notify",
+				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
+				extraServiceLines: ["NotifyAccess=main"],
+			}),
+		);
+	}
+
+	if (shouldRunBridge) {
+		systemUnits.push(
+			writeSystemdSystemUnit({
 				paths,
 				name: "clawdi-runtime-sidecar",
 				description: "Clawdi hosted runtime sidecar",
@@ -3370,14 +4097,10 @@ function writeSystemdUnits(
 					CLAWDI_AUTH_TOKEN: "",
 					[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
-					CLAWDI_MITM_PROFILE_BUNDLE:
-						shouldRunMitm && mitmProgram ? mitmProgram.profileBundlePath : "",
-					CLAWDI_MITM_PROXY_URL: shouldRunMitm && mitmProgram ? mitmProgram.proxyUrl : "",
-					CLAWDI_MITM_CA_FILE: shouldRunMitm && mitmProgram ? mitmProgram.caFile : "",
-					CLAWDI_MITM_SECRET_FILE:
-						shouldRunMitm && mitmProgram ? (mitmProgram.secretFilePath ?? "") : "",
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
 				},
+				serviceType: "notify",
+				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
 	}
@@ -3506,6 +4229,7 @@ export function convergeRuntimeManifest(
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
 	const writtenRuntimeSecretIds = new Set<string>();
+	const previousManifest = readLastGoodRuntimeManifest(paths);
 
 	mkdirSync(workspaceRoot, { recursive: true });
 	makeRuntimeUserOwned(paths.userHome);
@@ -3516,6 +4240,11 @@ export function convergeRuntimeManifest(
 	mkdirSync(semRoot, { recursive: true });
 	mkdirSync(paths.managedSecretRoot, { recursive: true });
 	makeManagedSecretRoot(paths.managedSecretRoot);
+	makeRootReadableDir(paths.mitmProfileRoot);
+	makeRootReadableDir(paths.mitmRoot);
+	makeMitmUserPrivateDir(paths.mitmCaDir);
+	makeRootReadableDir(dirname(paths.mitmSystemCaFile));
+	makeRuntimeUserPrivateDir(paths.mitmScratchRoot);
 
 	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {
@@ -3526,6 +4255,7 @@ export function convergeRuntimeManifest(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		controlPlane: manifest.controlPlane,
+		mitmproxy: manifest.mitmproxy ?? null,
 		auth: {
 			source: "runtime-instance-data",
 			token: "<redacted>",
@@ -3576,8 +4306,13 @@ export function convergeRuntimeManifest(
 	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
 		? writeMitmProfileBundle(mitmProfileBundle, paths)
 		: clearMitmProfileBundle(paths);
+	const mitmproxy = writeMitmproxyStatus(
+		mitmProfileBundlePath ? ensureRuntimeMitmproxy(manifest.mitmproxy, paths) : null,
+		paths,
+	);
+	const mitmAddon = mitmProfileBundlePath ? writeMitmproxyAddon(paths) : clearMitmproxyAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(secretValues, paths);
+	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
 	try {
 		materializeHostedChannelCredentials(manifest, secretValues);
 	} catch (error) {
@@ -3588,12 +4323,26 @@ export function convergeRuntimeManifest(
 		);
 	}
 	const mitmSecretFile = writeMitmSecretFile(manifest, secretValues, paths);
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const mitmUser = process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm";
 	const mitmSystemdProgram = runtimeMitmSystemdProgram(
 		manifest,
 		paths,
 		mitmProfileBundlePath,
 		mitmSecretFile,
+		mitmproxy,
+		mitmAddon,
 	);
+	const runtimeUid = mitmSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
+	const mitmUid = mitmSystemdProgram ? runtimeMitmUid(mitmUser) : 0;
+	const mitmTransparentEnv = writeTransparentMitmEnvFile({
+		program: mitmSystemdProgram,
+		paths,
+		runtimeUser,
+		runtimeUid,
+		mitmUser,
+		mitmUid,
+	});
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
@@ -3640,6 +4389,7 @@ export function convergeRuntimeManifest(
 				observation,
 				manifest,
 				workspaceRoot,
+				previousManifest,
 			);
 			providerProjectionRevisions[name] = providerProjection.revision;
 		} catch (error) {
@@ -3668,8 +4418,18 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const runtimeName = runtimeNameSchema.parse(name);
+		const providerPlaceholderEnv = runtime.enabled
+			? hostedProviderPlaceholderEnv(manifest, name)
+			: {};
+		const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+		assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
+		const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
+			name,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
 		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, hostedProviderSecretEnv(manifest, name))
+			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
 			: {};
 		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 			name,
@@ -3688,7 +4448,7 @@ export function convergeRuntimeManifest(
 			appRoot: observation.appRoot,
 			workspaceRoot,
 			mitmProfileBundlePath,
-			settings: runtime.run,
+			settings: runtimeRunSettings,
 			secretFilePath: runtimeProviderSecretFile,
 			secretEnv,
 		});
@@ -3708,8 +4468,14 @@ export function convergeRuntimeManifest(
 		}
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+				name,
+				service,
+				serviceSettings,
+				providerPlaceholderEnv,
+			);
 			const serviceSecretEnv = runtime.enabled
-				? mergeRuntimeServiceSecretEnv(name, service, serviceSettings, secretEnv)
+				? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
 				: {};
 			const serviceRunConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
@@ -3721,7 +4487,7 @@ export function convergeRuntimeManifest(
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 				workspaceRoot,
-				settings: serviceSettings,
+				settings: serviceRunSettings,
 				secretFilePath: null,
 				secretEnv: serviceSecretEnv,
 			});
@@ -3753,6 +4519,7 @@ export function convergeRuntimeManifest(
 		runtimeSystemdUserPrograms,
 		mitmSystemdProgram,
 		manifest,
+		load.sourcePath,
 		paths,
 		workspaceRoot,
 		daemonAuthTokenFile,
@@ -3798,6 +4565,9 @@ export function convergeRuntimeManifest(
 			systemdUserUnits: systemdUnits.userUnits,
 			mitmProfileBundle: mitmProfileBundlePath,
 			mitmSecretFile,
+			mitmproxy,
+			mitmTransparentEnv,
+			mitmAddon: mitmAddon?.path ?? null,
 			liveSyncEnvironments,
 			daemonAuthTokenFile,
 			instanceSemaphores,

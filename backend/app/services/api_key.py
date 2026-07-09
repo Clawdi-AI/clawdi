@@ -52,6 +52,7 @@ async def mint_api_key(
     label: str,
     scopes: list[str] | None = None,
     environment_id: UUID | None = None,
+    managed: bool = False,
 ) -> MintedKey:
     """Create a new ApiKey row.
 
@@ -94,6 +95,7 @@ async def mint_api_key(
         label=label,
         scopes=scopes,
         environment_id=environment_id,
+        managed=managed,
     )
     db.add(api_key)
     await db.commit()

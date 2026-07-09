@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import {
+	ensureRuntimeAuthTokenFile,
+	readRuntimeAuthToken,
+	runtimeAuthTokenFileLabel,
+} from "./auth-token";
 import { hostedManifestMitmProfiles } from "./hosted-mitm-profiles";
 import {
 	DEFAULT_CLAWDI_CLI_POLICY,
@@ -105,7 +110,7 @@ interface ExistingManifestState {
 	generation?: number;
 }
 
-const runtimeSourceAuthSchema = z
+const legacyRuntimeSourceAuthSchema = z
 	.object({
 		type: z.literal("bearer-env"),
 		env: z.string().min(1).default("CLAWDI_AUTH_TOKEN"),
@@ -117,10 +122,11 @@ const runtimeSourceSchema = z
 		schemaVersion: z.literal("clawdi.runtimeSource.v1"),
 		type: z.literal("http"),
 		url: z.string().url(),
-		auth: runtimeSourceAuthSchema.default({ type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" }),
+		auth: legacyRuntimeSourceAuthSchema.optional(),
 		timeoutMs: z.number().int().positive().optional(),
 	})
-	.strict();
+	.strict()
+	.transform(({ auth: _auth, ...source }) => source);
 
 type RuntimeSource = z.infer<typeof runtimeSourceSchema>;
 
@@ -268,15 +274,9 @@ function rawGeneration(value: unknown): number | null {
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
-function runtimeCredential(source: RuntimeSource, paths: RuntimePaths): string | null {
-	const token = process.env[source.auth.env]?.trim();
-	if (token) return token;
-	try {
-		const fileToken = readFileSync(paths.daemonAuthToken, "utf-8").trim();
-		return fileToken || null;
-	} catch {
-		return null;
-	}
+function runtimeCredential(paths: RuntimePaths): string | null {
+	ensureRuntimeAuthTokenFile(paths);
+	return readRuntimeAuthToken(paths);
 }
 
 function resolveRuntimeSource(paths: RuntimePaths): RuntimeSource {
@@ -286,10 +286,6 @@ function resolveRuntimeSource(paths: RuntimePaths): RuntimeSource {
 			schemaVersion: "clawdi.runtimeSource.v1",
 			type: "http",
 			url: explicit,
-			auth: {
-				type: "bearer-env",
-				env: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() || "CLAWDI_AUTH_TOKEN",
-			},
 		};
 	}
 	return readRuntimeSource(paths);
@@ -308,10 +304,6 @@ function readRuntimeSource(paths: RuntimePaths): RuntimeSource {
 	return parsed.data;
 }
 
-export function runtimeSourceAuthEnv(paths: RuntimePaths): string {
-	return resolveRuntimeSource(paths).auth.env;
-}
-
 async function fetchRuntimeManifestPayload(
 	paths: RuntimePaths,
 	opts: { ifNoneMatch?: string } = {},
@@ -328,9 +320,9 @@ async function fetchRuntimeManifestPayload(
 	  }
 > {
 	const source = resolveRuntimeSource(paths);
-	const token = runtimeCredential(source, paths);
+	const token = runtimeCredential(paths);
 	if (!token) {
-		throw new Error(`missing ${source.auth.env}`);
+		throw new Error(`missing ${runtimeAuthTokenFileLabel(paths)}`);
 	}
 	const url = source.url;
 	const timeoutMs =
@@ -372,6 +364,7 @@ async function fetchRuntimeManifestPayload(
 
 function runtimeChannelsUrl(source: RuntimeSource): string {
 	const url = new URL(source.url);
+	const environmentId = url.searchParams.get("environment_id");
 	const path = url.pathname.replace(/\/+$/, "");
 	// Manifest URLs persisted before the /v1 migration still use /api.
 	const manifestSuffix = ["/v1/runtime/manifest", "/api/runtime/manifest"].find((suffix) =>
@@ -384,6 +377,9 @@ function runtimeChannelsUrl(source: RuntimeSource): string {
 		url.pathname = new URL("v1/channels", url).pathname;
 	}
 	url.search = "";
+	if (environmentId) {
+		url.searchParams.set("environment_id", environmentId);
+	}
 	url.hash = "";
 	return url.toString();
 }
@@ -404,9 +400,9 @@ async function fetchRuntimeChannelsPayload(
 	  }
 > {
 	const source = resolveRuntimeSource(paths);
-	const token = runtimeCredential(source, paths);
+	const token = runtimeCredential(paths);
 	if (!token) {
-		throw new Error(`missing ${source.auth.env}`);
+		throw new Error(`missing ${runtimeAuthTokenFileLabel(paths)}`);
 	}
 	const url = runtimeChannelsUrl(source);
 	const timeoutMs =
@@ -563,6 +559,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
 				}
 			: { ...DEFAULT_CLAWDI_CLI_POLICY },
+		mitmproxy: hosted.mitmproxy,
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,

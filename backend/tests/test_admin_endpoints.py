@@ -156,6 +156,32 @@ async def test_admin_mint_accepts_explicit_narrow_scopes(admin_client, db_sessio
 
 
 @pytest.mark.asyncio
+async def test_admin_mint_accepts_managed_flag(admin_client, db_session, seed_user):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "platform-managed",
+            "managed": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    minted = (
+        await db_session.execute(
+            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "platform-managed")
+        )
+    ).scalar_one()
+    assert minted.managed is True
+    assert minted.environment_id is None
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, seed_user):
     """No allowlist ceiling: callers can mint keys carrying any API
     permission they want (vault:resolve, sessions:read, etc.). Trust
@@ -412,6 +438,34 @@ async def test_admin_revoke_happy_path(admin_client, db_session, seed_user):
 
     db_session.expire_all()
     row = (await db_session.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one()
+    assert row.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_revoke_can_revoke_managed_key(admin_client, db_session, seed_user):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
+    minted_resp = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "managed-to-revoke",
+            "managed": True,
+        },
+    )
+    key_id = minted_resp.json()["id"]
+
+    response = await admin_client.delete(
+        f"/v1/admin/auth/keys/{key_id}",
+        headers=_AUTH,
+    )
+    assert response.status_code == 200, response.text
+
+    row = (await db_session.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one()
+    assert row.managed is True
     assert row.revoked_at is not None
 
 
