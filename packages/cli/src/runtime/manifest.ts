@@ -1956,7 +1956,7 @@ function buildHermesHostedCompatibilityProviders(
 						models,
 					}
 				: {
-						models: null,
+						api: profile.provider.base_url,
 					};
 	}
 	return providers;
