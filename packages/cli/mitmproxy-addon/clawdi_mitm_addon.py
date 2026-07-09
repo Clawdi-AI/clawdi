@@ -199,6 +199,8 @@ def load_secrets(path: Path | None) -> dict[str, str]:
 def profile_host_set(profiles: list[dict[str, Any]]) -> set[str]:
     hosts: set[str] = set()
     for profile in profiles:
+        if profile.get("kind") == "passthrough":
+            continue
         match = profile.get("match")
         if isinstance(match, dict):
             host = normalize_host(str(match.get("host", "")))

@@ -112,6 +112,38 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.host, "unmatched.test")
         self.assertIsNone(flow.response)
 
+    def test_passthrough_only_profile_does_not_intercept_sni(self):
+        mitm = self.load(
+            [
+                {
+                    "id": "gateway-passthrough",
+                    "enabled": True,
+                    "kind": "passthrough",
+                    "match": {
+                        "scheme": "wss",
+                        "host": "gateway.discord.gg",
+                        "pathPrefix": "/",
+                    },
+                    "priority": 10,
+                },
+                {
+                    "id": "shared-host-managed",
+                    "enabled": True,
+                    "kind": "http",
+                    "match": {
+                        "scheme": "https",
+                        "host": "discord.com",
+                        "pathPrefix": "/api/",
+                    },
+                    "rewrite": {"upstreamBaseUrl": "https://relay.test/discord"},
+                    "priority": 20,
+                },
+            ]
+        )
+
+        self.assertFalse(mitm.should_intercept_sni("gateway.discord.gg"))
+        self.assertTrue(mitm.should_intercept_sni("discord.com"))
+
     def test_shared_host_unmatched_request_passes_original_upstream(self):
         mitm = self.load(
             [
