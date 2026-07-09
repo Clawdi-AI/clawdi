@@ -273,7 +273,7 @@ export function DeployWizard() {
 		null,
 	);
 
-	const [runtime, setRuntime] = useState<HostedRuntime>("openclaw");
+	const [runtime, setRuntime] = useState<HostedRuntime>("hermes");
 	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
 	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
@@ -658,15 +658,6 @@ export function DeployWizard() {
 				>
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={runtime === "openclaw"}
-							onClick={() => setRuntime("openclaw")}
-							icon={
-								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
-							}
-							title={runtimeDisplayName("openclaw")}
-							description={runtimeBlurb("openclaw")}
-						/>
-						<EntityChoiceCard
 							selected={runtime === "hermes"}
 							onClick={() => setRuntime("hermes")}
 							icon={
@@ -674,6 +665,15 @@ export function DeployWizard() {
 							}
 							title={runtimeDisplayName("hermes")}
 							description={runtimeBlurb("hermes")}
+						/>
+						<EntityChoiceCard
+							selected={runtime === "openclaw"}
+							onClick={() => setRuntime("openclaw")}
+							icon={
+								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
+							}
+							title={runtimeDisplayName("openclaw")}
+							description={runtimeBlurb("openclaw")}
 						/>
 					</div>
 				</SettingsSection>
