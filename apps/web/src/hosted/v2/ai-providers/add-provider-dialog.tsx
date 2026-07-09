@@ -58,6 +58,15 @@ import {
 	parseCodexCallback,
 } from "@/hosted/v2/ai-providers/codex-oauth";
 import {
+	PROVIDER_PRESET_CATEGORIES,
+	PROVIDER_PRESET_CATEGORY_LABEL,
+	PROVIDER_PRESETS,
+	type ProviderPreset,
+	presetCatalogToProviderModels,
+	providerPresetById,
+	providerTypeForPreset,
+} from "@/hosted/v2/ai-providers/provider-presets";
+import {
 	API_MODE_LABEL,
 	type ApiMode,
 	PROVIDER_TYPES,
@@ -130,6 +139,7 @@ export function AddProviderDialog({
 	const [runtimeEnv, setRuntimeEnv] = useState("");
 	const [authMethod, setAuthMethod] = useState<AuthMethod>("api_key");
 	const [apiKey, setApiKey] = useState("");
+	const [presetId, setPresetId] = useState<string | null>(null);
 
 	// OAuth sub-flow
 	const [oauth, setOauth] = useState<{
@@ -158,15 +168,19 @@ export function AddProviderDialog({
 	const createdFreshRef = useRef(false);
 
 	const meta = providerTypeMeta(type);
+	const selectedPreset = isEdit ? null : providerPresetById(presetId);
+	const presetLocked = selectedPreset !== null;
 	const existingProviderIds =
 		providers.data?.providers.map((provider) => provider.provider_id) ?? [];
-	const catalogManaged = shouldUseCatalogModels(type, authMethod);
+	const catalogManaged = shouldUseCatalogModels(type, authMethod, selectedPreset);
+	const presetCatalogModels = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
 	const identity = providerFormIdentity({
 		type,
 		authMethod,
 		labelInput: label,
 		existingProviderIds,
 		editing,
+		preset: selectedPreset,
 	});
 	const providerId = identity.providerId;
 	const providerLabel = identity.label ?? (providerId || meta.label);
@@ -176,9 +190,9 @@ export function AddProviderDialog({
 		...(meta.oauth ? [{ value: "oauth", label: "Sign in with ChatGPT (Codex)" }] : []),
 		...(meta.custom ? [{ value: "none", label: "No auth (local)" }] : []),
 	];
-	const showAuthMethodField = authMethodItems.length > 1;
-	const showNameField = meta.custom === true;
-	const showAdvancedFields = meta.custom === true;
+	const showAuthMethodField = authMethodItems.length > 1 && !presetLocked;
+	const showNameField = meta.custom === true && !presetLocked;
+	const showAdvancedFields = meta.custom === true && !presetLocked;
 	const showRuntimeEnvField = authMethod === "api_key" && showAdvancedFields;
 	const apiModeItems = meta.apiModes.map((mode) => ({
 		value: mode,
@@ -201,6 +215,7 @@ export function AddProviderDialog({
 		abandonedRef.current = false;
 		createdFreshRef.current = false;
 		popupRef.current = null;
+		setPresetId(null);
 		if (editing) {
 			const nextType = editing.type as ProviderTypeId;
 			const nextAuthMethod =
@@ -241,6 +256,7 @@ export function AddProviderDialog({
 		if (!m.oauth && nextAuthMethod === "oauth") nextAuthMethod = "api_key";
 		if (!m.custom && nextAuthMethod === "none") nextAuthMethod = "api_key";
 		const defaults = derivedProviderFields(next, nextAuthMethod);
+		setPresetId(null);
 		setType(next);
 		setBaseUrl(defaults.baseUrl);
 		setModelsText(defaults.modelsText);
@@ -249,6 +265,20 @@ export function AddProviderDialog({
 		setAuthMethod(nextAuthMethod);
 		setApiKey("");
 		if (next === "custom_openai_compatible") setLabel("");
+	}
+
+	function changePreset(next: ProviderPreset) {
+		const nextType = providerTypeForPreset(next);
+		const defaults = derivedProviderFields(nextType, "api_key", next);
+		setPresetId(next.id);
+		setType(nextType);
+		setLabel("");
+		setBaseUrl(defaults.baseUrl);
+		setModelsText(defaults.modelsText);
+		setApiMode(defaults.apiMode);
+		setRuntimeEnv(defaults.runtimeEnv);
+		setAuthMethod("api_key");
+		setApiKey("");
 	}
 
 	function changeAuthMethod(next: AuthMethod) {
@@ -352,7 +382,7 @@ export function AddProviderDialog({
 			type,
 			label: identity.label,
 			base_url: baseUrl.trim(),
-			models: modelsFromText(modelsText, editing?.models),
+			models: modelsFromText(modelsText, editing?.models, presetCatalogModels),
 			api_mode: apiMode,
 			auth,
 			managed_by: "user" as const,
@@ -699,6 +729,45 @@ export function AddProviderDialog({
 
 						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
 							<div className="flex flex-col gap-4">
+								{!isEdit ? (
+									<div className="flex flex-col gap-2">
+										<Label>Provider preset</Label>
+										<div className="flex flex-col gap-3">
+											{PROVIDER_PRESET_CATEGORIES.map((category) => {
+												const presets = PROVIDER_PRESETS.filter(
+													(preset) => preset.category === category,
+												);
+												return (
+													<div key={category} className="flex flex-col gap-1.5">
+														<p className="text-xs font-medium text-muted-foreground">
+															{PROVIDER_PRESET_CATEGORY_LABEL[category]}
+														</p>
+														<div className="grid gap-2 sm:grid-cols-2">
+															{presets.map((preset) => (
+																<EntityChoiceCard
+																	key={preset.id}
+																	selected={selectedPreset?.id === preset.id}
+																	onClick={() => changePreset(preset)}
+																	icon={
+																		<EntityIcon
+																			kind="provider"
+																			id={preset.id}
+																			label={preset.label}
+																			size="sm"
+																		/>
+																	}
+																	title={preset.label}
+																	description={`${API_MODE_LABEL[preset.api_mode]} · ${preset.catalog.length} models`}
+																/>
+															))}
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									</div>
+								) : null}
+
 								<div className="flex flex-col gap-1.5">
 									<Label>Provider</Label>
 									<div className="grid gap-2 sm:grid-cols-2">
@@ -707,7 +776,7 @@ export function AddProviderDialog({
 											return (
 												<EntityChoiceCard
 													key={t}
-													selected={type === t}
+													selected={!selectedPreset && type === t}
 													onClick={isEdit ? undefined : () => changeType(t)}
 													disabled={isEdit}
 													icon={
@@ -722,7 +791,16 @@ export function AddProviderDialog({
 								</div>
 
 								<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-									<ProviderTypeChip type={type} />
+									{selectedPreset ? (
+										<EntityIcon
+											kind="provider"
+											id={selectedPreset.id}
+											label={selectedPreset.label}
+											size="md"
+										/>
+									) : (
+										<ProviderTypeChip type={type} />
+									)}
 									<div className="min-w-0 flex-1">
 										<p className="text-sm font-medium text-foreground">{providerLabel}</p>
 										<p className="text-xs text-muted-foreground">
@@ -731,9 +809,11 @@ export function AddProviderDialog({
 										{catalogManaged ? (
 											<>
 												<p className="mt-1 text-xs text-muted-foreground">
-													{authMethod === "oauth"
-														? `ChatGPT/Codex mapping · ${catalogSummary || "No catalog models"}`
-														: `Runtime mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
+													{selectedPreset
+														? `Preset mapping · ${API_MODE_LABEL[apiMode]} · primary ${selectedPreset.suggested_primary_model}`
+														: authMethod === "oauth"
+															? `ChatGPT/Codex mapping · ${catalogSummary || "No catalog models"}`
+															: `Runtime mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
 												</p>
 												<p className="mt-1 break-all font-mono text-xs text-muted-foreground">
 													{baseUrl}
@@ -801,6 +881,17 @@ export function AddProviderDialog({
 											spellCheck={false}
 										/>
 										<p className="text-xs text-muted-foreground">{apiKeyHelpText}</p>
+										{selectedPreset ? (
+											<a
+												href={selectedPreset.api_key_url}
+												target="_blank"
+												rel="noreferrer"
+												className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
+											>
+												Get API key
+												<ExternalLink className="size-3" />
+											</a>
+										) : null}
 										{keyRequired && isEdit && !apiKey.trim() ? (
 											<p className="text-xs text-destructive">
 												Enter a key to switch this provider to managed API-key auth.
