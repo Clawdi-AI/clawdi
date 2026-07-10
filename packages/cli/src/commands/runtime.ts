@@ -2423,6 +2423,7 @@ interface RuntimeEgressModule {
 async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
 	const config = loadTransparentEgressEnvConfig(process.env);
 	const mitmdump = startMitmdump(config);
+	const mitmdumpExit = waitForChildExit(mitmdump);
 	let redirectApplied = false;
 	let closeRequested = false;
 	const cleanup = () => {
@@ -2442,8 +2443,10 @@ async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
 		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
 	};
 	try {
-		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () => mitmdump.exitCode);
-		await waitForFile(config.caCertPath, 10_000, () => mitmdump.exitCode);
+		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () =>
+			childHasExited(mitmdump),
+		);
+		await waitForFile(config.caCertPath, 10_000, () => childHasExited(mitmdump));
 		publishEgressSystemCaBundle(config);
 		applyTransparentEgressNftRulesFromEnv(process.env);
 		redirectApplied = true;
@@ -2451,7 +2454,7 @@ async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
 			port: config.transparentPort,
 			close,
 			wait: async () => {
-				const exit = await waitForChildExit(mitmdump);
+				const exit = await mitmdumpExit;
 				cleanup();
 				if (!closeRequested) {
 					const reason = exit.signal === null ? `status ${exit.code}` : `signal ${exit.signal}`;
@@ -2532,17 +2535,20 @@ function waitForChildExit(
 	});
 }
 
+function childHasExited(child: ChildProcess): boolean {
+	return child.exitCode !== null || child.signalCode !== null;
+}
+
 function waitForTcpPort(
 	host: string,
 	port: number,
 	timeoutMs: number,
-	exitCode: () => number | null,
+	hasExited: () => boolean,
 ): Promise<void> {
 	const startedAt = Date.now();
 	return new Promise((resolve, reject) => {
 		const attempt = () => {
-			const code = exitCode();
-			if (code !== null) {
+			if (hasExited()) {
 				reject(new Error(`egress engine exited before listening on ${host}:${port}`));
 				return;
 			}
@@ -2580,17 +2586,12 @@ function tcpPortIsListening(host: string, port: number): boolean {
 	return false;
 }
 
-function waitForFile(
-	path: string,
-	timeoutMs: number,
-	exitCode: () => number | null,
-): Promise<void> {
+function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean): Promise<void> {
 	const startedAt = Date.now();
 	return new Promise((resolve, reject) => {
 		const attempt = () => {
-			const code = exitCode();
-			if (code !== null) {
-				reject(new Error(`mitmdump exited before writing ${path}`));
+			if (hasExited()) {
+				reject(new Error(`egress engine exited before writing ${path}`));
 				return;
 			}
 			if (existsSync(path)) {
