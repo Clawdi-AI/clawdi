@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Unreleased
+
+### Changed
+
+- Removed the unused local channel-manifest commands and standalone
+  `capabilities` command while preserving the hosted runtime reconciler.
+- Deprecated `clawdi run --all-vault-env`; explicit `clawdi://` references are
+  the supported migration path.
+
 ## Clawdi CLI v0.12.10-beta.45
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.45

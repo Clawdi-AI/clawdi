@@ -60,7 +60,6 @@ describe("CLI smoke — src entry", () => {
 			"skill",
 			"memory",
 			"doctor",
-			"capabilities",
 			"update",
 			"mcp",
 			"read",
@@ -70,24 +69,7 @@ describe("CLI smoke — src entry", () => {
 		]) {
 			expect(stdout).toContain(cmd);
 		}
-	});
-
-	it("capabilities prints JSON without requiring auth", async () => {
-		const { tmpdir } = await import("node:os");
-		const { mkdirSync, rmSync } = await import("node:fs");
-		const fakeHome = join(tmpdir(), `clawdi-smoke-cap-${Date.now()}`);
-		mkdirSync(fakeHome, { recursive: true });
-
-		try {
-			const { stdout, code } = await runCli(["capabilities", "--json"], { HOME: fakeHome });
-			expect(code).toBe(0);
-			const parsed = JSON.parse(stdout);
-			expect(parsed.schemaVersion).toBe("clawdi.capabilities.v1");
-			expect(parsed.commands).toContain("runtime");
-			expect(parsed.updateMode).toBe("local-self-update");
-		} finally {
-			rmSync(fakeHome, { recursive: true, force: true });
-		}
+		expect(stdout).not.toMatch(/^\s+capabilities\b/m);
 	});
 
 	it("auth status reports no auth in an isolated HOME", async () => {
@@ -150,6 +132,27 @@ describe("CLI smoke — src entry", () => {
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
 		}
+	});
+
+	it("runtime help omits the removed local manifest commands and status file option", async () => {
+		const runtimeHelp = await runCli(["runtime", "--help"]);
+		expect(runtimeHelp.code).toBe(0);
+		expect(runtimeHelp.stdout).not.toMatch(/^\s+(plan|apply)\b/m);
+
+		const statusHelp = await runCli(["runtime", "status", "--help"]);
+		expect(statusHelp.code).toBe(0);
+		expect(statusHelp.stdout).not.toContain("--file");
+	});
+
+	it("ai-provider test retains --probe but rejects the removed --no-probe flag", async () => {
+		const help = await runCli(["ai-provider", "test", "--help"]);
+		expect(help.code).toBe(0);
+		expect(help.stdout).toContain("--probe");
+		expect(help.stdout).not.toContain("--no-probe");
+
+		const removed = await runCli(["ai-provider", "test", "example", "--no-probe"]);
+		expect(removed.code).not.toBe(0);
+		expect(removed.stderr).toContain("unknown option '--no-probe'");
 	});
 
 	it("runtime init enters repair and writes boot status without datasource", async () => {

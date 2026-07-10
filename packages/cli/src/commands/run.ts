@@ -74,6 +74,13 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
 		process.exit(1);
 	}
+	if (opts.allVaultEnv) {
+		console.log(
+			chalk.yellow(
+				"Warning: --all-vault-env is deprecated; use explicit clawdi:// references in an env file instead.",
+			),
+		);
+	}
 
 	const baseProcessEnv = { ...process.env };
 	const hostedServiceRun = hostedRuntimeServiceRunConfig(opts.runtimeService);

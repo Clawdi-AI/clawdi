@@ -22,11 +22,12 @@ control planes when that boundary matters.
 
 ## Domain Contracts
 - [ADR-0001 Agent Identity](https://github.com/Clawdi-AI/clawdi/blob/main/docs/adr/0001-agent-identity-is-the-stable-domain-object.md): Stable Agent identity model and one-name fallback.
+- [ADR-0002 Full Rust CLI](https://github.com/Clawdi-AI/clawdi/blob/main/docs/adr/0002-full-rust-cli-is-the-terminal-direction.md): Accepted incremental direction for replacing the TypeScript CLI.
+- [Full Rust CLI Rewrite Plan](https://github.com/Clawdi-AI/clawdi/blob/main/docs/plans/full-rust-cli-rewrite.md): Contract-first phases, ownership, verification, rollout, and completion gates.
 - [AI Providers](https://github.com/Clawdi-AI/clawdi/blob/main/docs/ai-providers.md): Portable model-provider layer, auth references, target apply behavior, and BYOK boundary.
 - [AI Provider Agent Contract Audit](https://github.com/Clawdi-AI/clawdi/blob/main/docs/ai-provider-agent-contract-audit.md): Verified target contracts for Codex, Hermes, and OpenClaw AI Provider projections.
 - [Managed Runtime](https://github.com/Clawdi-AI/clawdi/blob/main/docs/managed-runtime.md): Public CLI/dashboard runtime contract without deployment-specific internals.
 - [Native Channels Product Model](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/native-channels-product-model.md): Backend-owned channel accounts, bot-agent links, pair codes, bindings, and provider SDK emulation.
-- [Channel Runtime Manifest](https://github.com/Clawdi-AI/clawdi/blob/main/docs/designs/channel-runtime-manifest.md): `clawdi.runtime.yaml` channel projection contract and backend APIs used by the CLI.
 
 ## Optional
 - [Using Clawdi with Claude Code](https://github.com/Clawdi-AI/clawdi/blob/main/docs/using-clawdi-with-claude-code.md): End-to-end Claude Code usage guide for setup, vault, skills, memory, and session sync.
