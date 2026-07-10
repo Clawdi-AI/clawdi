@@ -49,8 +49,8 @@ interface ParsedHttpRequest {
 	rawHeaders: Array<[string, string]>;
 }
 
-interface AuthQueryToken {
-	status: "query-token";
+interface AuthRedeemedCode {
+	status: "redeemed-code";
 	redirectLocation: string;
 }
 
@@ -62,7 +62,7 @@ interface AuthUnauthorized {
 	status: "unauthorized";
 }
 
-type AuthResult = AuthQueryToken | AuthAuthorized | AuthUnauthorized;
+type AuthResult = AuthRedeemedCode | AuthAuthorized | AuthUnauthorized;
 
 interface RuntimeBridgeRedemptionState {
 	usedJtis: Map<string, number>;
@@ -379,7 +379,7 @@ function handleParsedRequest(
 		redemptionState,
 		surface.name,
 	);
-	if (auth.status === "query-token") {
+	if (auth.status === "redeemed-code") {
 		writeRedirectResponse(clientSocket, auth.redirectLocation, token);
 		return;
 	}
@@ -687,13 +687,7 @@ function authenticate(
 	) {
 		url.searchParams.delete(RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM);
 		const redirectLocation = relativeRedirectLocation(url);
-		return { status: "query-token", redirectLocation: redirectLocation || "/" };
-	}
-	const queryToken = url.searchParams.get("t");
-	if (constantTimeEquals(queryToken, token)) {
-		url.searchParams.delete("t");
-		const redirectLocation = relativeRedirectLocation(url);
-		return { status: "query-token", redirectLocation: redirectLocation || "/" };
+		return { status: "redeemed-code", redirectLocation: redirectLocation || "/" };
 	}
 	const cookie = parseCookies(headers.get("cookie")).get(RUNTIME_BRIDGE_COOKIE) ?? null;
 	if (constantTimeEquals(cookie, token)) return { status: "authorized" };
@@ -720,7 +714,6 @@ function requestUrl(requestTarget: string): URL | null {
 function proxyPath(requestTarget: string): string {
 	const url = requestUrl(requestTarget);
 	if (!url) return "/";
-	url.searchParams.delete("t");
 	url.searchParams.delete(RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM);
 	return `${url.pathname}${url.search}` || "/";
 }
