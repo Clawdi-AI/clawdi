@@ -404,7 +404,6 @@ aiProviderCmd
 	.option("--timeout <seconds>", "Provider probe timeout in seconds", "10")
 	.option("--live", "Also run a direct provider metadata probe")
 	.option("--probe", "Deprecated alias for --live")
-	.option("--no-probe", "Compatibility flag; live probes are disabled unless --live is passed")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderTestCommand } = await import("./commands/ai-provider.js");
@@ -743,52 +742,11 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("plan")
-	.description("Preview channel account, link, and runtime projection changes")
-	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts: { file?: string; json?: boolean }) => {
-		const { runtimePlanCommand } = await import("./commands/runtime.js");
-		await runtimePlanCommand(opts);
-	});
-
-runtimeCmd
-	.command("apply")
-	.description("Create or reuse channel runtime resources from a manifest")
-	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")
-	.option("--dry-run", "Preview changes without mutating backend or local files")
-	.option(
-		"--rotate-missing-tokens",
-		"Rotate existing link tokens only when local output lacks them",
-	)
-	.option("--rotate-all-tokens", "Rotate every declared link token")
-	.option("--yes", "Reserved for future destructive confirmations")
-	.option("--json", "Emit machine-readable JSON")
-	.action(
-		async (opts: {
-			file?: string;
-			dryRun?: boolean;
-			rotateMissingTokens?: boolean;
-			rotateAllTokens?: boolean;
-			yes?: boolean;
-			json?: boolean;
-		}) => {
-			const { runtimeApplyCommand } = await import("./commands/runtime.js");
-			await runtimeApplyCommand(opts);
-		},
-	);
-
-runtimeCmd
 	.command("status")
-	.description("Show hosted runtime boot status, or channel manifest status with --file")
-	.option("-f, --file <path>", "Channel runtime manifest path")
+	.description("Show hosted runtime boot status")
 	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts: { file?: string; json?: boolean }) => {
-		const { runtimeStatus, runtimeStatusCommand } = await import("./commands/runtime.js");
-		if (opts.file) {
-			await runtimeStatusCommand(opts);
-			return;
-		}
+	.action(async (opts: { json?: boolean }) => {
+		const { runtimeStatus } = await import("./commands/runtime.js");
 		await runtimeStatus(opts);
 	});
 
@@ -1204,15 +1162,6 @@ program
 		}
 		const { doctor } = await import("./commands/doctor.js");
 		await doctor(opts);
-	});
-
-program
-	.command("capabilities")
-	.description("Show CLI feature surface and hosted policy restrictions")
-	.option("--json", "Output as JSON")
-	.action(async (opts: { json?: boolean }) => {
-		const { capabilitiesCommand } = await import("./commands/capabilities.js");
-		await capabilitiesCommand(opts);
 	});
 
 program

@@ -37,7 +37,6 @@ export interface HostPolicyCommandDecision {
 
 const POLICY_RECOVERY_COMMANDS = [
 	"runtime",
-	"capabilities",
 	"auth status",
 	"config paths",
 	"status",

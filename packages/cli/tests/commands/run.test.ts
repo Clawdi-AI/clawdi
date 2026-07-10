@@ -834,8 +834,11 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.DEPLOY_TOKEN).toBe("vault-secret");
 
 		const out = lines.join("\n");
+		expect(out).toContain("--all-vault-env is deprecated");
+		expect(out).toContain("explicit clawdi:// references");
 		expect(out).toContain("Using Project engineering");
 		expect(out).toContain("Injected 1 vault secrets");
+		expect(out).not.toContain("DEPLOY_TOKEN");
 		expect(out).not.toContain("vault-secret");
 	});
 
@@ -1085,6 +1088,7 @@ describe("run command project folder selection", () => {
 					inheritEnv: false,
 					projectFolder: false,
 					dryRun: true,
+					allVaultEnv: true,
 				},
 				spawnImpl,
 			);
@@ -1098,6 +1102,7 @@ describe("run command project folder selection", () => {
 		expect(captured).toHaveLength(1);
 		expect(captured[0].body).toMatchObject({ preview: true });
 		expect(out).toContain("Dry run: command will not be launched.");
+		expect(out).toContain("--all-vault-env is deprecated");
 		expect(out).toContain("OPENAI_API_KEY");
 		expect(out).toContain("redacted");
 		expect(out).not.toContain("sk-test");

@@ -39,6 +39,7 @@ clawdi runtime watch [--self-heal-ms <ms>]
 clawdi runtime sidecar
 clawdi runtime status [--json]
 clawdi runtime doctor [--json]
+clawdi runtime verify [--json]
 clawdi run -- <command>
 ```
 
@@ -47,7 +48,6 @@ Supporting inspection commands:
 ```bash
 clawdi auth status [--json]
 clawdi config paths [--json]
-clawdi capabilities [--json]
 ```
 
 `clawdi setup` remains the local interactive onboarding path. Runtime commands

@@ -314,9 +314,10 @@ part of normal laptop onboarding.
 
 | Command | What it does |
 | --- | --- |
-| `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
-| `clawdi runtime init/watch/bridge/status/doctor` | Converge, watch, expose runtime bridge surfaces, inspect, and diagnose runtime state |
-| `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
+| `clawdi runtime init/watch/sidecar/status/doctor/verify` | Converge and watch desired state, run bridge/egress support modules, inspect, diagnose, and verify runtime state |
+
+The runtime bridge is a module inside `clawdi runtime sidecar`; there is no
+separate `clawdi runtime bridge` command.
 
 Runtime mode is detected from policy or runtime credentials. In managed mode,
 policy can deny local-user setup and mutation commands while keeping
