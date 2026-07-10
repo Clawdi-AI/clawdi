@@ -255,7 +255,7 @@ The CLI accepts two related shapes:
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
   shape. It can include `system`, `controlPlane`, `clawdiCli`, `runtimes`,
   `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and `recovery`.
-- `clawdi.runtimeDesiredState.v2` is the normalized internal convergence shape
+- `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
 Normalization maps hosted fields into the internal shape:

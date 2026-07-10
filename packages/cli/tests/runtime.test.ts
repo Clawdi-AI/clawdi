@@ -406,7 +406,7 @@ function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
 			"provider.hermes.apiKey": "sk-hermes-provider",
 		},
 		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_hermes_provider",
 			environmentId: "env_hermes_provider",
 			instanceId: "iid_hermes_provider",
@@ -509,7 +509,7 @@ function hostedProviderSwitchLoad(
 			]),
 		),
 		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_provider_switch",
 			environmentId: "env_provider_switch",
 			instanceId: "iid_provider_switch",
@@ -846,7 +846,7 @@ describe("runtime manifest datasource", () => {
 		writeFileSync(
 			join(state, "cache", "manifest.last-good.json"),
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_cached_secret",
 				environmentId: "env_cached_secret",
 				instanceId: "iid_cached_secret",
@@ -894,7 +894,7 @@ describe("runtime manifest datasource", () => {
 		writeFileSync(
 			join(state, "cache", "manifest.last-good.json"),
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_cached_secret_missing",
 				environmentId: "env_cached_secret_missing",
 				instanceId: "iid_cached_secret_missing",
@@ -922,47 +922,6 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors).toContain(
 			"cached manifest references secretValues (provider.default.apiKey); refusing offline boot because cached secret values are missing",
 		);
-	});
-
-	it("treats v1 last-good runtime manifests as stale before legacy field validation", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(join(state, "cache"), { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			join(state, "cache", "manifest.last-good.json"),
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_legacy_cache",
-				environmentId: "env_legacy_cache",
-				instanceId: "iid_legacy_cache",
-				generation: 3,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				mitmproxy: {
-					version: "12.2.3",
-					url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy.tar.gz",
-					sha256: "a".repeat(64),
-				},
-				mitmProfiles: { profiles: [] },
-				runtimes: { openclaw: { enabled: false } },
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
-			}),
-		);
-
-		const loaded = await loadRuntimeManifest(getRuntimePaths());
-
-		expect("errors" in loaded).toBe(true);
-		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
-		expect(loaded.mode).toBe("repair");
-		expect(loaded.stage).toBe("network");
-		expect(loaded.errors.join("\n")).toContain("schemaVersion");
-		expect(loaded.errors.join("\n")).not.toContain("mitmproxy");
-		expect(loaded.errors.join("\n")).not.toContain("mitmProfiles");
 	});
 
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
@@ -1062,7 +1021,7 @@ describe("runtime manifest datasource", () => {
 			expect(captured[0].headers.authorization).toBe("Bearer auth-token");
 			expect(loaded.source).toBe("remote-datasource");
 			expect(loaded.sourcePath).toBe("https://runtime.test/v1/manifest");
-			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v2");
+			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 			expect(loaded.manifest.workspaceRoot).toBe(join(home, "managed-workspace"));
 			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
@@ -1439,7 +1398,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"secret://provider.default.apiKey": "sk-runtime-provider",
 			},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_direct_provider",
 				environmentId: "env_direct_provider",
 				instanceId: "iid_direct_provider",
@@ -1564,7 +1523,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				sourcePath: "https://runtime-source.test/desired-state",
 				offline: false,
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_codex_provider",
 					environmentId: "env_codex_provider",
 					instanceId: "iid_codex_provider",
@@ -1691,7 +1650,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					sourcePath: "https://runtime-source.test/desired-state",
 					offline: false,
 					manifest: {
-						schemaVersion: "clawdi.runtimeDesiredState.v2",
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
 						deploymentId: "dep_codex_addon",
 						environmentId: "env_codex_addon",
 						instanceId: "iid_codex_addon",
@@ -1755,7 +1714,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				sourcePath: "https://runtime-source.test/desired-state",
 				offline: false,
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_codex_byok_provider",
 					environmentId: "env_codex_byok_provider",
 					instanceId: "iid_codex_byok_provider",
@@ -1825,7 +1784,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"provider.default.apiKey": "sk-runtime-provider",
 			},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_clawdi_managed_provider",
 				environmentId: "env_clawdi_managed_provider",
 				instanceId: "iid_clawdi_managed_provider",
@@ -2029,7 +1988,7 @@ exit 0
 				"secret://provider.default.apiKey": "sk-runtime-provider",
 			},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_openclaw_gateway_repatch",
 				environmentId: "env_openclaw_gateway_repatch",
 				instanceId: "iid_openclaw_gateway_repatch",
@@ -2141,7 +2100,7 @@ exit 0
 				"provider.hermes.apiKey": "sk-hermes-provider",
 			},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_runtime_scoped_provider",
 				environmentId: "env_runtime_scoped_provider",
 				instanceId: "iid_runtime_scoped_provider",
@@ -2581,7 +2540,7 @@ exit 0
 			offline: false,
 			secretValues: {},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_runtime_codex_oauth",
 				environmentId: "env_runtime_codex_oauth",
 				instanceId: "iid_runtime_codex_oauth",
@@ -2659,7 +2618,7 @@ exit 0
 				"provider.openclaw.apiKey": "sk-openclaw-provider",
 			},
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_runtime_provider_missing",
 				environmentId: "env_runtime_provider_missing",
 				instanceId: "iid_runtime_provider_missing",
@@ -2761,7 +2720,7 @@ exit 0
 					"secret://provider.openclaw.apiKey": `sk-${providerCase.id}`,
 				},
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: `dep_${providerCase.id}_provider`,
 					environmentId: `env_${providerCase.id}_provider`,
 					instanceId: `iid_${providerCase.id}_provider`,
@@ -2914,7 +2873,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_key_required_missing_ref",
 					environmentId: "env_key_required_missing_ref",
 					instanceId: "iid_key_required_missing_ref",
@@ -3366,7 +3325,7 @@ exit 64
 	it("projects an empty runtime channel list as an empty projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "openclaw",
 				deploymentId: "dep_empty_channels",
 				environmentId: "env_empty_channels",
@@ -3400,7 +3359,7 @@ exit 64
 	it("keeps deploy manifest secretValues provider-only when channel links are projected", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "openclaw",
 				deploymentId: "dep_channel_secret_boundary",
 				environmentId: "env_channel_secret_boundary",
@@ -3520,7 +3479,7 @@ exit 64
 		const credentialId = "credential-whatsapp-1";
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "openclaw",
 				deploymentId: "dep_whatsapp_creds_projection",
 				environmentId: "env_whatsapp_creds_projection",
@@ -3605,7 +3564,7 @@ exit 64
 	it("removes stale channel-driven egress profiles when runtime channels are disabled", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "openclaw",
 				deploymentId: "dep_stale_channels",
 				environmentId: "env_stale_channels",
@@ -3702,7 +3661,7 @@ exit 64
 	it("keeps managed channels separate from provider projection profiles", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_channel_provider",
 				environmentId: "env_channel_provider",
 				instanceId: "iid_channel_provider",
@@ -4648,7 +4607,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeFileSync(
 			paths.manifestLastGood,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep-provider-observed",
 				environmentId: "env-provider-observed",
 				instanceId: "iid-provider-observed",
@@ -4731,7 +4690,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeFileSync(
 			paths.manifestLastGood,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep-provider-missing-secret",
 				environmentId: "env-provider-missing-secret",
 				instanceId: "iid-provider-missing-secret",
@@ -5043,7 +5002,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					"provider.default.apiKey": "sk-before-upgrade",
 				},
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_cli_mitm",
 					environmentId: "env_cli_mitm",
 					instanceId: "iid_cli_mitm",
@@ -5181,7 +5140,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_REV="');
 			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
-			expect(sidecarUnit).not.toContain("clawdi-runtime-egress.service");
 			expect(transparentEgressEnv).toContain(
 				'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
 			);
@@ -5593,7 +5551,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(() =>
 				applyRuntimeCliDesiredState(
 					{
-						schemaVersion: "clawdi.runtimeDesiredState.v2",
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
 						deploymentId: "dep_cli_rollback",
 						environmentId: "env_cli_rollback",
 						instanceId: "iid_cli_rollback",
@@ -5901,7 +5859,7 @@ chmod +x "$prefix/bin/clawdi"
 		const oldTarget = readlinkSync(paths.cliManagedBin);
 		const oldStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_smoke_failure",
 			environmentId: "env_cli_smoke_failure",
 			instanceId: "iid_cli_smoke_failure",
@@ -5976,7 +5934,7 @@ chmod +x "$prefix/bin/clawdi"
 		const oldTarget = readlinkSync(paths.cliManagedBin);
 		const oldStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_selfcheck_failure",
 			environmentId: "env_cli_selfcheck_failure",
 			instanceId: "iid_cli_selfcheck_failure",
@@ -6016,7 +5974,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		const baseManifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_spec_validation",
 			environmentId: "env_cli_spec_validation",
 			instanceId: "iid_cli_spec_validation",
@@ -6101,7 +6059,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_status_rebuild",
 			environmentId: "env_cli_status_rebuild",
 			instanceId: "iid_cli_status_rebuild",
@@ -6178,7 +6136,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		const manifestFor = (packageSpec: string): RuntimeManifest => ({
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_prune",
 			environmentId: "env_cli_prune",
 			instanceId: "iid_cli_prune",
@@ -6444,7 +6402,7 @@ exit 64
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "hermes",
 				deploymentId: "dep_hermes_channels",
 				environmentId: "env_hermes_channels",
@@ -6589,7 +6547,7 @@ exit 64
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "hermes",
 				deploymentId: "dep_hermes_whatsapp",
 				environmentId: "env_hermes_whatsapp",
@@ -6766,7 +6724,7 @@ exit 64
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				runtime: "hermes",
 				deploymentId: "dep_hermes_channel_clear",
 				environmentId: "env_hermes_channel_clear",
@@ -6883,7 +6841,7 @@ exit 0
 		process.env.CLAWDI_RUN_DIR = run;
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_channel_delete",
 				environmentId: "env_channel_delete",
 				instanceId: "iid_channel_delete",
@@ -6973,7 +6931,7 @@ exit 64
 			const secretRef = credentialSecretRef(credentialId);
 			return {
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_whatsapp_auth_state",
 					environmentId: "env_whatsapp_auth_state",
 					instanceId: "iid_whatsapp_auth_state",
@@ -7031,7 +6989,7 @@ exit 64
 		};
 		const unlinkedManifest: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_whatsapp_auth_state",
 				environmentId: "env_whatsapp_auth_state",
 				instanceId: "iid_whatsapp_auth_state",
@@ -7154,7 +7112,7 @@ exit 64
 		const missingSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/credential-missing/creds-json`;
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_whatsapp_missing_secret",
 				environmentId: "env_whatsapp_missing_secret",
 				instanceId: "iid_whatsapp_missing_secret",
@@ -7257,7 +7215,7 @@ exit 64
 			generation: number,
 		): RuntimeManifestLoad => ({
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_channel_remove",
 				environmentId: "env_channel_remove",
 				instanceId: "iid_channel_remove",
@@ -7356,7 +7314,7 @@ exit 64
 
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_installed_plugin",
 				environmentId: "env_installed_plugin",
 				instanceId: "iid_installed_plugin",
@@ -7475,7 +7433,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_future_runtime",
 				environmentId: "env_future_runtime",
 				instanceId: "iid_future_runtime",
@@ -7660,7 +7618,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_mcp",
 				environmentId: "env_mcp",
 				instanceId: "iid_mcp",
@@ -7737,7 +7695,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_mcp",
 				environmentId: "env_mcp",
 				instanceId: "iid_mcp",
@@ -7797,7 +7755,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_runtime_no_bridge",
 					environmentId: "env_runtime_no_bridge",
 					instanceId: "iid_runtime_no_bridge",
@@ -7844,7 +7802,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_runtime_bridge",
 					environmentId: "env_runtime_bridge",
 					instanceId: "iid_runtime_bridge",
@@ -7921,7 +7879,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_provider_secret_boundary",
 					environmentId: "env_provider_secret_boundary",
 					instanceId: "iid_provider_secret_boundary",
@@ -8031,7 +7989,6 @@ exit 64
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ENGINE_BINARY_PATH="`);
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ADDON_PATH="${paths.egressAddon}"`);
 		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
-		expect(runtimeSidecarUnit).not.toContain("clawdi-runtime-egress.service");
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
@@ -8063,7 +8020,7 @@ exit 64
 		convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
 					deploymentId: "dep_provider_secret_missing",
 					environmentId: "env_provider_secret_missing",
 					instanceId: "iid_provider_secret_missing",
@@ -8116,10 +8073,10 @@ exit 64
 		convergeRuntimeManifest(
 			{
 				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v2",
-					deploymentId: "dep_transparent_mitm",
-					environmentId: "env_transparent_mitm",
-					instanceId: "iid_transparent_mitm",
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_transparent_egress",
+					environmentId: "env_transparent_egress",
+					instanceId: "iid_transparent_egress",
 					generation: 1,
 					issuedAt: "2026-06-26T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
@@ -8162,7 +8119,6 @@ exit 64
 		expect(sidecarUnit).toContain("Type=notify");
 		expect(sidecarUnit).toContain("Before=user@10001.service");
 		expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
-		expect(sidecarUnit).not.toContain("clawdi-runtime-egress.service");
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
 			'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
@@ -8224,7 +8180,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = failingInstaller;
 		const previousManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_last_good_floor",
 			environmentId: "env_last_good_floor",
 			instanceId: "iid_last_good_floor",
@@ -8276,7 +8232,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const baseManifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_revision",
 			environmentId: "env_revision",
 			instanceId: "iid_revision",
@@ -8341,7 +8297,7 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		const previousManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_generation_reset",
 			environmentId: "env_generation_reset",
 			instanceId: "iid_generation_reset",
@@ -8381,7 +8337,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_fixture_secretref",
 				environmentId: "env_fixture_secretref",
 				instanceId: "iid_fixture_secretref",
@@ -8597,7 +8553,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_no_egress",
 				environmentId: "env_no_egress",
 				instanceId: "iid_no_egress",
@@ -8638,7 +8594,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const previousManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_no_cache",
 			environmentId: "env_no_cache",
 			instanceId: "iid_no_cache",
@@ -8682,7 +8638,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_expired",
 				environmentId: "env_expired",
 				instanceId: "iid_expired",
@@ -8718,7 +8674,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_current_schema",
 				environmentId: "env_current_schema",
 				instanceId: "iid_current_schema",
@@ -8949,7 +8905,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_cli_payload",
 				environmentId: "env_cli_payload",
 				instanceId: "iid_cli_payload",
@@ -8994,7 +8950,7 @@ exit 64
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_test",
 				environmentId: "env_test",
 				instanceId: "iid_test",

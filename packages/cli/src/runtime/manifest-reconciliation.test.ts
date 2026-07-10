@@ -20,7 +20,6 @@ import {
 } from "./manifest";
 import {
 	hostedRuntimeManifestSchema,
-	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
@@ -72,7 +71,7 @@ function baseManifest(
 	overrides: Partial<RuntimeManifest> = {},
 ): RuntimeManifest {
 	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v2",
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		deploymentId: "hdep_reconcile",
 		environmentId: "env_reconcile",
 		instanceId: "hri_reconcile",
@@ -225,7 +224,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const normalized = normalizeManifestPayload(hostedResponse);
 		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
 		expect(normalized.manifest).toEqual(hostedManifestToRuntimeManifest(hostedManifest));
-		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v2");
+		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 		expect(normalized.manifest.runtime).toBe("openclaw");
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
@@ -327,55 +326,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(parsed).not.toHaveProperty("futureTopLevelField");
 		expect(parsed.runtimes.openclaw).not.toHaveProperty("futureRuntimeField");
 		expect(parsed.runtimes.openclaw.run).not.toHaveProperty("futureRunField");
-	});
-
-	test("rejects legacy egress field names in internal and hosted manifests", () => {
-		const internalManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
-			deploymentId: "hdep_legacy_egress",
-			environmentId: "env_legacy_egress",
-			instanceId: "hri_legacy_egress",
-			generation: 1,
-			issuedAt: "2026-07-01T00:00:00.000Z",
-			controlPlane: {
-				apiUrl: "https://cloud-api.example.test",
-			},
-			runtimes: {
-				openclaw: {
-					enabled: true,
-				},
-			},
-		};
-		const hostedManifest = {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			runtime: "openclaw",
-			deploymentId: "hdep_legacy_egress",
-			environmentId: "env_legacy_egress",
-			instanceId: "hri_legacy_egress",
-			generation: 1,
-			issuedAt: "2026-07-01T00:00:00.000Z",
-			controlPlane: {
-				cloudApiUrl: "https://cloud-api.example.test",
-			},
-			runtimes: {
-				openclaw: {
-					enabled: true,
-				},
-			},
-		};
-
-		expect(() => manifestSchema.parse({ ...internalManifest, mitmproxy: {} })).toThrow(
-			/Unrecognized key.*mitmproxy/,
-		);
-		expect(() => manifestSchema.parse({ ...internalManifest, mitmProfiles: {} })).toThrow(
-			/Unrecognized key.*mitmProfiles/,
-		);
-		expect(() => hostedRuntimeManifestSchema.parse({ ...hostedManifest, mitmproxy: {} })).toThrow(
-			/Unrecognized key.*mitmproxy/,
-		);
-		expect(() =>
-			hostedRuntimeManifestSchema.parse({ ...hostedManifest, mitmProfiles: {} }),
-		).toThrow(/Unrecognized key.*mitmProfiles/);
 	});
 
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {

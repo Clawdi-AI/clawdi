@@ -298,7 +298,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		chmodSync(mitmdump, 0o755);
 
 		const manifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_test",
 			environmentId: "env_test",
 			instanceId: "iid_test",
@@ -674,7 +674,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_secretref_reject",
 				environmentId: "env_secretref_reject",
 				instanceId: "iid_secretref_reject",
@@ -782,7 +782,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v2",
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
 				deploymentId: "dep_selection",
 				environmentId: "env_selection",
 				instanceId: "iid_selection",

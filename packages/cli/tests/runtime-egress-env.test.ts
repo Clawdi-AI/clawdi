@@ -1,39 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import {
-	applyEgressTransparentRuntimeEnv,
-	buildEgressEngineEnv,
-	stripEgressSidecarEnv,
-} from "../src/runtime/egress-env";
+import { applyEgressTransparentRuntimeEnv, buildEgressEngineEnv } from "../src/runtime/egress-env";
 
 describe("runtime egress env projection", () => {
-	it("strips stale proxy and sidecar env from inherited environments", () => {
-		const stripped = stripEgressSidecarEnv({
-			PATH: "/usr/bin",
-			CLAWDI_EGRESS_ENABLED: "1",
-			CLAWDI_EGRESS_PROFILE_BUNDLE: "/tmp/profiles.json",
-			CLAWDI_EGRESS_PROXY_URL: "http://127.0.0.1:8080",
-			CLAWDI_EGRESS_SYSTEM_CA_CERT: "/tmp/system-ca.crt",
-			CLAWDI_EGRESS_SIDECAR_BUNDLE: "/tmp/bundle",
-			CLAWDI_EGRESS_ADDON_PATH: "/tmp/addon.py",
-			CLAWDI_EGRESS_FUTURE_CONTROL: "future",
-			NODE_OPTIONS: "--trace-warnings",
-			HTTPS_PROXY: "http://proxy.invalid:8080",
-			CODEX_CA_CERTIFICATE: "/tmp/ca.pem",
-		});
-
-		expect(stripped.PATH).toBe("/usr/bin");
-		expect(stripped.CLAWDI_EGRESS_ENABLED).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_PROFILE_BUNDLE).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_PROXY_URL).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_SYSTEM_CA_CERT).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_SIDECAR_BUNDLE).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_ADDON_PATH).toBeUndefined();
-		expect(stripped.CLAWDI_EGRESS_FUTURE_CONTROL).toBeUndefined();
-		expect(stripped.NODE_OPTIONS).toBe("--trace-warnings");
-		expect(stripped.HTTPS_PROXY).toBeUndefined();
-		expect(stripped.CODEX_CA_CERTIFICATE).toBeUndefined();
-	});
-
 	it("applies hosted transparent CA env without proxy variables", () => {
 		const env: NodeJS.ProcessEnv = {
 			HTTPS_PROXY: "http://stale.invalid:8080",

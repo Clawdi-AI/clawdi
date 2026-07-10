@@ -37,12 +37,6 @@ export const egressSidecarEnvKeys = [
 	"no_proxy",
 ] as const;
 
-export function stripEgressSidecarEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...source };
-	deleteEgressSidecarEnv(env);
-	return env;
-}
-
 const EGRESS_ENGINE_INHERITED_ENV_KEYS = [
 	"PATH",
 	"LANG",
