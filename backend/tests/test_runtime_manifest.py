@@ -412,7 +412,7 @@ async def test_admin_delete_runtime_state_requires_admin_key(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generation(
+async def test_runtime_manifest_generation_reset_changes_etag_and_returns_generation(
     admin_client,
     db_session,
     seed_user,
@@ -449,11 +449,11 @@ async def test_runtime_manifest_generation_reset_keeps_etag_but_returns_generati
     app.dependency_overrides.clear()
 
     assert reset.status_code == 200, reset.text
-    assert reset.headers["etag"] == etag
+    assert reset.headers["etag"] != etag
     assert reset.json()["manifest"]["generation"] == 6
-    assert not_modified.status_code == 304
-    assert not_modified.headers["etag"] == etag
-    assert not_modified.content == b""
+    assert not_modified.status_code == 200, not_modified.text
+    assert not_modified.headers["etag"] == reset.headers["etag"]
+    assert not_modified.json()["manifest"]["generation"] == 6
 
 
 @pytest.mark.asyncio
