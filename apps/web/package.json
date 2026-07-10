@@ -19,7 +19,7 @@
 	"dependencies": {
 		"@base-ui/react": "^1.6.0",
 		"@clawdi/shared": "workspace:*",
-		"@clerk/tanstack-react-start": "^1.4.12",
+		"@clerk/tanstack-react-start": "^1.4.16",
 		"@clerk/themes": "^2.4.57",
 		"@dnd-kit/core": "^6.3.1",
 		"@dnd-kit/sortable": "^10.0.0",
@@ -44,7 +44,7 @@
 		"nitro": "^3.0.260610-beta",
 		"nuqs": "^2.9.0",
 		"openapi-fetch": "^0.17.0",
-		"posthog-js": "^1.396.6",
+		"posthog-js": "^1.399.1",
 		"react": "catalog:",
 		"react-dom": "catalog:",
 		"react-markdown": "^10.1.0",
@@ -61,7 +61,7 @@
 		"@tailwindcss/vite": "catalog:",
 		"@tanstack/router-cli": "^1.167.18",
 		"@types/bun": "^1.3.14",
-		"@types/node": "^26.1.0",
+		"@types/node": "^22.20.1",
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
 		"@vercel/nft": "^1.10.2",
@@ -69,7 +69,7 @@
 		"shadcn": "4.13.0",
 		"tailwindcss": "catalog:",
 		"typescript": "catalog:",
-		"vite": "^8.1.3"
+		"vite": "^8.1.4"
 	},
 	"ignoreScripts": [
 		"sharp",
