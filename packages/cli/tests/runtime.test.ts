@@ -5153,7 +5153,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		}
 	});
 
-	it("runtime CLI update resolves floating npm tags before treating an install as current", () => {
+	it("runtime CLI update resolves floating npm tags through the managed npm cache", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5167,6 +5167,21 @@ printf 'ActiveState=active\\nSubState=running\\n'
 set -euo pipefail
 printf '%s\\n' "$*" >> '${npmLog}'
 if [ "\${1:-}" = "view" ]; then
+	cache=""
+	while [ "$#" -gt 0 ]; do
+	  if [ "$1" = "--cache" ]; then
+	    cache="$2"
+	    shift 2
+	    continue
+	  fi
+	  shift
+	done
+	if [ -z "$cache" ]; then
+	  echo "missing --cache" >&2
+	  exit 65
+	fi
+	install -d "$cache"
+	touch "$cache/view-proof"
   echo '"0.12.10-beta.22"'
   exit 0
 fi
@@ -5231,8 +5246,15 @@ chmod +x "$prefix/bin/clawdi"
 			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 			expect(status.packageSpec).toBe("clawdi@beta");
 			expect(status.version).toBe("0.12.10-beta.22");
-			expect(readFileSync(npmLog, "utf-8")).toContain("view clawdi@beta version --json");
-			expect(readFileSync(npmLog, "utf-8")).toContain("install");
+			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
+			const npmViewCalls = npmCalls.filter((call) => call.startsWith("view "));
+			expect(npmViewCalls.length).toBeGreaterThan(0);
+			for (const call of npmViewCalls) {
+				expect(call).toContain(`--cache ${paths.cliNpmCache}`);
+			}
+			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
+			expect(existsSync(join(paths.cliNpmCache, "view-proof"))).toBe(true);
+			expect(existsSync(join(home, ".npm"))).toBe(false);
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
