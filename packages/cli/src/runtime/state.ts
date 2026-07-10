@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { HostPolicyReadResult } from "./host-policy";
+import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 
@@ -41,7 +42,7 @@ export interface RuntimeBootStatus {
 		systemdUserUnits: string[];
 		egressProfileBundle: string | null;
 		egressSecretFile: string | null;
-		egressEngine: unknown | null;
+		egressEngine: RuntimeMitmproxyEnsureResult | null;
 		egressTransparentEnv: string | null;
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
