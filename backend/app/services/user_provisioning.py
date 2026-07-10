@@ -1,6 +1,6 @@
 """Shared lazy-create flow for `users` + their Personal project.
 
-Two callers hit this code path:
+Clerk callers hit this code path:
 1. `_auth_via_clerk_jwt` (auth.py) — first login from cloud.clawdi.ai
    directly. Has email/name from the JWT, commits at the end.
 2. `_resolve_or_create_user` (admin.py) — first interaction is via
@@ -16,6 +16,9 @@ The race semantics and project invariant MUST stay identical across
 callers — downstream resolvers assume every user has a Personal
 project. Centralizing here means there's one place to maintain that
 contract.
+
+PartnerTenant provisioning uses a separate stable reference and never creates
+or accepts a synthetic Clerk id.
 """
 
 import logging
@@ -26,7 +29,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import PROJECT_KIND_PERSONAL, Project
-from app.models.user import User
+from app.models.user import (
+    PRINCIPAL_KIND_CLERK,
+    PRINCIPAL_KIND_PARTNER_TENANT,
+    User,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +80,14 @@ async def lazy_create_user_with_personal_project(
         HTTPException 500 — Personal project insert failed. Bizarre
         states only (partial unique index, mid-flush connection drop).
     """
-    new_user = User(clerk_id=clerk_id, email=email, name=name, avatar_url=avatar_url)
+    new_user = User(
+        clerk_id=clerk_id,
+        principal_kind=PRINCIPAL_KIND_CLERK,
+        partner_tenant_ref=None,
+        email=email,
+        name=name,
+        avatar_url=avatar_url,
+    )
     db.add(new_user)
 
     # User flush: the ONLY racy point. `users.clerk_id` is unique, so
@@ -94,12 +108,68 @@ async def lazy_create_user_with_personal_project(
             ) from None
         return target
 
-    # Personal project insert. Cannot race on `user_id` (just generated)
-    # so a partial-unique kind=personal index is the only realistic
-    # failure mode. Wrap in try/except so a SQLAlchemy traceback
-    # doesn't leak to the client as a raw 500.
+    await _create_personal_project(
+        db,
+        user=new_user,
+        identity_log=f"clerk_id={clerk_id}",
+    )
+    return new_user
+
+
+async def lazy_create_partner_user_with_personal_project(
+    db: AsyncSession,
+    *,
+    partner_tenant_ref: str,
+    race_loser_status: int,
+) -> User:
+    """Insert a PartnerTenant-owned User row + Personal project, race-safe."""
+    new_user = User(
+        clerk_id=None,
+        principal_kind=PRINCIPAL_KIND_PARTNER_TENANT,
+        partner_tenant_ref=partner_tenant_ref,
+        email=None,
+        name=None,
+        avatar_url=None,
+    )
+    db.add(new_user)
+
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        target = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == partner_tenant_ref,
+                )
+            )
+        ).scalar_one_or_none()
+        if target is None:
+            raise HTTPException(
+                race_loser_status,
+                "could not create or load partner tenant user",
+            ) from None
+        return target
+
+    await _create_personal_project(
+        db,
+        user=new_user,
+        identity_log=f"partner_tenant_ref={partner_tenant_ref}",
+    )
+    return new_user
+
+
+async def _create_personal_project(
+    db: AsyncSession,
+    *,
+    user: User,
+    identity_log: str,
+) -> None:
+    # Cannot race on `user_id` (just generated), so a partial-unique
+    # kind=personal index is the only realistic failure mode.
     personal = Project(
-        user_id=new_user.id,
+        user_id=user.id,
         name="Personal",
         slug="personal",
         kind=PROJECT_KIND_PERSONAL,
@@ -109,13 +179,12 @@ async def lazy_create_user_with_personal_project(
         await db.flush()
     except Exception:
         logger.exception(
-            "personal_project_create_failed clerk_id=%s user_id=%s",
-            clerk_id,
-            new_user.id,
+            "personal_project_create_failed %s user_id=%s",
+            identity_log,
+            user.id,
         )
         await db.rollback()
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "internal server error",
         ) from None
-    return new_user

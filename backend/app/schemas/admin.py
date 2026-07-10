@@ -5,11 +5,22 @@ and are used by SaaS batch tooling + ops-side scripts. Kept in a
 separate file so they don't pollute user-facing schemas.
 """
 
+from __future__ import annotations
+
+import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
@@ -28,10 +39,56 @@ from app.schemas.runtime import (
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
+AdminPrincipalKind = Literal["clerk", "partner_tenant"]
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
+_ADMIN_CLERK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_PARTNER_TENANT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
-class AdminEnvironmentCreate(BaseModel):
+def _validate_admin_clerk_id(value: str) -> str:
+    if value != value.strip() or not _ADMIN_CLERK_ID_RE.fullmatch(value):
+        raise ValueError("target_clerk_id must be a stable Clerk identifier")
+    return value
+
+
+def _validate_partner_tenant_ref(value: str) -> str:
+    if value != value.strip() or not _PARTNER_TENANT_REF_RE.fullmatch(value):
+        raise ValueError("partner_tenant_ref must be a stable PartnerTenant reference")
+    return value
+
+
+AdminClerkId = Annotated[
+    str,
+    Field(min_length=1, max_length=200),
+    AfterValidator(_validate_admin_clerk_id),
+]
+AdminPartnerTenantRef = Annotated[
+    str,
+    Field(min_length=1, max_length=255),
+    AfterValidator(_validate_partner_tenant_ref),
+]
+
+
+class AdminPrincipalSelector(BaseModel):
+    target_clerk_id: AdminClerkId | None = None
+    principal_kind: AdminPrincipalKind = "clerk"
+    partner_tenant_ref: AdminPartnerTenantRef | None = None
+
+    @model_validator(mode="after")
+    def _validate_principal_reference(self) -> AdminPrincipalSelector:
+        if self.principal_kind == "clerk":
+            if self.target_clerk_id is None or self.partner_tenant_ref is not None:
+                raise ValueError(
+                    "clerk principal requires target_clerk_id and forbids partner_tenant_ref"
+                )
+        elif self.target_clerk_id is not None or self.partner_tenant_ref is None:
+            raise ValueError(
+                "partner_tenant principal requires partner_tenant_ref and forbids target_clerk_id"
+            )
+        return self
+
+
+class AdminEnvironmentCreate(AdminPrincipalSelector):
     """Body for `POST /v1/admin/environments`. Mirrors the
     user-facing EnvironmentCreate but takes target_clerk_id
     instead of relying on auth context to resolve the user.
@@ -43,7 +100,6 @@ class AdminEnvironmentCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_clerk_id: str
     environment_id: UUID | None = None
     machine_id: str
     machine_name: str
@@ -52,7 +108,7 @@ class AdminEnvironmentCreate(BaseModel):
     os_name: str = "linux"
 
 
-class AdminAgentCreate(BaseModel):
+class AdminAgentCreate(AdminPrincipalSelector):
     """Body for `POST /v1/admin/agents`.
 
     Agent-first alias of `AdminEnvironmentCreate`; `agent_id` maps to the
@@ -61,7 +117,6 @@ class AdminAgentCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_clerk_id: str
     agent_id: UUID | None = None
     machine_id: str
     machine_name: str
@@ -70,12 +125,11 @@ class AdminAgentCreate(BaseModel):
     os_name: str = "linux"
 
 
-class AdminApiKeyCreate(BaseModel):
+class AdminApiKeyCreate(AdminPrincipalSelector):
     """Body for `POST /v1/admin/auth/keys` — mint an api_key on
-    behalf of a user identified by Clerk id. The route resolves
-    `target_clerk_id` to the internal `User.id` and then calls the
-    existing `mint_api_key` service, preserving the env-ownership
-    invariant the service enforces.
+    behalf of an explicit Clerk or PartnerTenant principal. The route resolves
+    the principal to the internal `User.id` and then calls the existing
+    `mint_api_key` service, preserving its env-ownership invariant.
 
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
@@ -87,7 +141,6 @@ class AdminApiKeyCreate(BaseModel):
     everything.
     """
 
-    target_clerk_id: str
     label: str
     environment_id: str | None = None
     scopes: list[str] | None = None
@@ -179,7 +232,7 @@ class AdminManagedAiProviderUpsert(BaseModel):
 
 class AdminManagedAiProviderResponse(BaseModel):
     owner_user_id: UUID
-    owner_clerk_id: str
+    owner_clerk_id: str | None
     provider_id: str
     api_mode: str
     runtime_env_name: str
@@ -253,7 +306,7 @@ class AdminChannelUpdate(BaseModel):
 class AdminChannelResponse(BaseModel):
     id: UUID
     owner_user_id: UUID
-    owner_clerk_id: str
+    owner_clerk_id: str | None
     provider: str
     name: str
     status: str

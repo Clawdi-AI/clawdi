@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
-from app.models.user import User
+from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 bearer_scheme = HTTPBearer()
@@ -58,7 +58,9 @@ class _CachedApiKeyAuth:
     environment_id: UUID | None
     managed: bool
     expires_at: datetime | None
-    user_clerk_id: str
+    user_clerk_id: str | None
+    user_principal_kind: str
+    user_partner_tenant_ref: str | None
     user_email: str | None
     user_name: str | None
     user_avatar_url: str | None
@@ -69,6 +71,8 @@ class _CachedApiKeyAuth:
         user = User(
             id=self.user_id,
             clerk_id=self.user_clerk_id,
+            principal_kind=self.user_principal_kind,
+            partner_tenant_ref=self.user_partner_tenant_ref,
             email=self.user_email,
             name=self.user_name,
             avatar_url=self.user_avatar_url,
@@ -138,6 +142,8 @@ def _cache_api_key_auth(
             managed=api_key.managed,
             expires_at=api_key.expires_at,
             user_clerk_id=user.clerk_id,
+            user_principal_kind=user.principal_kind,
+            user_partner_tenant_ref=user.partner_tenant_ref,
             user_email=user.email,
             user_name=user.name,
             user_avatar_url=user.avatar_url,
@@ -242,7 +248,12 @@ async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | No
         )
 
     clerk_id = settings.dev_auth_clerk_id
-    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+    result = await db.execute(
+        select(User).where(
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == clerk_id,
+        )
+    )
     user = result.scalar_one_or_none()
     if user is None:
         user = await lazy_create_user_with_personal_project(
@@ -335,7 +346,12 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     if not clerk_id:
         return None
 
-    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+    result = await db.execute(
+        select(User).where(
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == clerk_id,
+        )
+    )
     user = result.scalar_one_or_none()
 
     email = payload.get("email") or payload.get("email_address")
@@ -372,7 +388,12 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             # row (which now carries the winner's values) instead of
             # 500-ing the user out of their session.
             await db.rollback()
-            result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+            result = await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_CLERK,
+                    User.clerk_id == clerk_id,
+                )
+            )
             user = result.scalar_one()
 
     # Sub miss + snapshot-rebind opted in: try to attach to an existing
@@ -400,7 +421,13 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         # whoever signs in first would otherwise get to choose which
         # row they take over.
         result = await db.execute(
-            select(User).where(User.email == email).order_by(User.created_at).limit(2)
+            select(User)
+            .where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.email == email,
+            )
+            .order_by(User.created_at)
+            .limit(2)
         )
         candidates = list(result.scalars())
         if len(candidates) > 1:
@@ -434,7 +461,12 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 await db.refresh(user)
             except IntegrityError:
                 await db.rollback()
-                result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+                result = await db.execute(
+                    select(User).where(
+                        User.principal_kind == PRINCIPAL_KIND_CLERK,
+                        User.clerk_id == clerk_id,
+                    )
+                )
                 user = result.scalar_one_or_none()
                 if user is None:
                     # Both writers somehow lost the row — extremely

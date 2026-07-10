@@ -44,7 +44,11 @@ from app.models.channel import (
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
-from app.models.user import User
+from app.models.user import (
+    PRINCIPAL_KIND_CLERK,
+    PRINCIPAL_KIND_PARTNER_TENANT,
+    User,
+)
 from app.schemas.admin import (
     AdminAgentCreate,
     AdminApiKeyCreate,
@@ -57,6 +61,7 @@ from app.schemas.admin import (
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
+    AdminPrincipalSelector,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
@@ -92,7 +97,10 @@ from app.services.sync_events import (
     queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
-from app.services.user_provisioning import lazy_create_user_with_personal_project
+from app.services.user_provisioning import (
+    lazy_create_partner_user_with_personal_project,
+    lazy_create_user_with_personal_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +135,14 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     an operational anomaly worth a loud failure rather than a
     user-flow retry.
     """
-    target = (await db.execute(select(User).where(User.clerk_id == clerk_id))).scalar_one_or_none()
+    target = (
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.clerk_id == clerk_id,
+            )
+        )
+    ).scalar_one_or_none()
     if target is not None:
         return target
 
@@ -142,6 +157,32 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     return user
 
 
+async def _resolve_or_create_principal_user(
+    db: AsyncSession,
+    principal: AdminPrincipalSelector,
+) -> User:
+    if principal.principal_kind == PRINCIPAL_KIND_CLERK:
+        if principal.target_clerk_id is None:
+            raise RuntimeError("validated Clerk principal is missing target_clerk_id")
+        return await _resolve_or_create_user(db, principal.target_clerk_id)
+
+    if principal.principal_kind != PRINCIPAL_KIND_PARTNER_TENANT:
+        raise RuntimeError("validated admin principal has an unsupported kind")
+    if principal.partner_tenant_ref is None:
+        raise RuntimeError("validated PartnerTenant principal is missing partner_tenant_ref")
+    user = await lazy_create_partner_user_with_personal_project(
+        db,
+        partner_tenant_ref=principal.partner_tenant_ref,
+        race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+    logger.info(
+        "admin_lazy_create_partner_user partner_tenant_ref=%s user_id=%s",
+        principal.partner_tenant_ref,
+        user.id,
+    )
+    return user
+
+
 async def _assert_admin_target_owns_environment(
     db: AsyncSession,
     *,
@@ -152,7 +193,12 @@ async def _assert_admin_target_owns_environment(
         return env.user_id
 
     target = (
-        await db.execute(select(User).where(User.clerk_id == target_clerk_id))
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.clerk_id == target_clerk_id,
+            )
+        )
     ).scalar_one_or_none()
     if target is None or env.user_id != target.id:
         logger.warning(
@@ -174,18 +220,16 @@ async def admin_mint_api_key(
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyCreated:
-    """Mint an api_key on behalf of a user identified by Clerk id.
+    """Mint an api_key for an explicit Clerk or PartnerTenant principal.
 
     Used by upstream-SaaS batch tooling: each legacy deployment that
     didn't have live sync wired up needs a fresh api_key bound to a
     fresh env, but the migration script has no per-user Clerk JWT.
 
-    User row is lazy-created if absent — handles the common entry
-    path of a user whose first interaction with cloud-api is via
-    SaaS-side admin calls. See `_resolve_or_create_user` for the
-    safety model.
+    User row is lazy-created if absent. Clerk and PartnerTenant identities use
+    separate unique references and cannot be converted into one another.
     """
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    target = await _resolve_or_create_principal_user(db, body)
 
     env_uuid: UUID | None = None
     if body.environment_id:
@@ -218,16 +262,22 @@ async def admin_mint_api_key(
         # can grep cloud-api logs directly without correlating with
         # the SaaS side.
         logger.warning(
-            "admin_mint_rejected reason=cross_tenant_env target_clerk_id=%s env=%s",
+            "admin_mint_rejected reason=cross_tenant_env principal_kind=%s "
+            "target_clerk_id=%s partner_tenant_ref=%s env=%s",
+            body.principal_kind,
             body.target_clerk_id,
+            body.partner_tenant_ref,
             env_uuid,
         )
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e)) from e
 
     api_key = minted.api_key
     logger.info(
-        "admin_api_key_minted target_clerk_id=%s key_id=%s environment_id=%s managed=%s",
+        "admin_api_key_minted principal_kind=%s target_clerk_id=%s "
+        "partner_tenant_ref=%s key_id=%s environment_id=%s managed=%s",
+        body.principal_kind,
         body.target_clerk_id,
+        body.partner_tenant_ref,
         api_key.id,
         api_key.environment_id,
         api_key.managed,
@@ -247,6 +297,8 @@ async def admin_mint_api_key(
             "managed": api_key.managed,
             "has_environment_binding": api_key.environment_id is not None,
             "scope_count": None if api_key.scopes is None else len(api_key.scopes),
+            "principal_kind": target.principal_kind,
+            "partner_tenant_ref": target.partner_tenant_ref,
         },
     )
     await db.commit()
@@ -609,7 +661,7 @@ async def _admin_register_environment(
     body: AdminEnvironmentCreate,
     db: AsyncSession,
 ) -> EnvironmentCreatedResponse:
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    target = await _resolve_or_create_principal_user(db, body)
     try:
         registered = await register_agent_environment(
             db,
@@ -637,8 +689,11 @@ async def _admin_register_environment(
         ) from None
 
     logger.info(
-        "admin_environment_registered target_clerk_id=%s env_id=%s machine_id=%s explicit_id=%s",
+        "admin_environment_registered principal_kind=%s target_clerk_id=%s "
+        "partner_tenant_ref=%s env_id=%s machine_id=%s explicit_id=%s",
+        body.principal_kind,
         body.target_clerk_id,
+        body.partner_tenant_ref,
         env.id,
         body.machine_id,
         body.environment_id is not None,
@@ -655,6 +710,8 @@ async def admin_register_agent(
     return await _admin_register_environment(
         AdminEnvironmentCreate(
             target_clerk_id=body.target_clerk_id,
+            principal_kind=body.principal_kind,
+            partner_tenant_ref=body.partner_tenant_ref,
             environment_id=body.agent_id,
             machine_id=body.machine_id,
             machine_name=body.machine_name,

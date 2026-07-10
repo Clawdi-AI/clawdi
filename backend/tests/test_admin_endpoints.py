@@ -74,6 +74,52 @@ async def test_admin_mint_rejects_wrong_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_clerk_id",
+    ["", " user_123", "user 123", "partner:phala:team_123", "x" * 201],
+)
+async def test_admin_mint_rejects_invalid_target_clerk_id(admin_client, target_clerk_id):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={"target_clerk_id": target_clerk_id, "label": "invalid-target"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "principal",
+    [
+        {},
+        {"principal_kind": "partner_tenant"},
+        {
+            "principal_kind": "partner_tenant",
+            "partner_tenant_ref": "phala cloud team 123",
+        },
+        {
+            "principal_kind": "partner_tenant",
+            "partner_tenant_ref": "phala_cloud:team_123",
+            "target_clerk_id": "user_123",
+        },
+        {
+            "target_clerk_id": "user_123",
+            "partner_tenant_ref": "phala_cloud:team_123",
+        },
+    ],
+)
+async def test_admin_mint_rejects_ambiguous_principal(admin_client, principal):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={**principal, "label": "invalid-principal"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
     """If `settings.admin_api_key` is empty, endpoints return 503
     regardless of header. Default OSS posture: admin endpoints are
@@ -247,6 +293,87 @@ async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_se
 
 
 @pytest.mark.asyncio
+async def test_admin_partner_principal_provisions_user_key_and_agent(admin_client, db_session):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.core.auth import _auth_via_api_key
+    from app.models.audit import ControlPlaneAuditEvent
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+    from app.models.session import AgentEnvironment
+    from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
+
+    partner_tenant_ref = f"ptn_{uuid.uuid4().hex[:12]}"
+    principal = {
+        "principal_kind": PRINCIPAL_KIND_PARTNER_TENANT,
+        "partner_tenant_ref": partner_tenant_ref,
+    }
+
+    minted = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={**principal, "label": "partner-runtime"},
+    )
+    assert minted.status_code == 200, minted.text
+    raw_key = minted.json()["raw_key"]
+
+    user = (
+        await db_session.execute(select(User).where(User.partner_tenant_ref == partner_tenant_ref))
+    ).scalar_one()
+    assert user.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT
+    assert user.clerk_id is None
+    personal = (
+        await db_session.execute(
+            select(Project).where(
+                Project.user_id == user.id,
+                Project.kind == PROJECT_KIND_PERSONAL,
+            )
+        )
+    ).scalar_one()
+    assert personal.slug == "personal"
+
+    uncached = await _auth_via_api_key(raw_key, db_session)
+    cached = await _auth_via_api_key(raw_key, db_session)
+    assert uncached is not None
+    assert cached is not None
+    assert cached.user.clerk_id is None
+    assert cached.user.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT
+    assert cached.user.partner_tenant_ref == partner_tenant_ref
+
+    agent_id = uuid.uuid4()
+    registered = await admin_client.post(
+        "/v1/admin/agents",
+        headers=_AUTH,
+        json={
+            **principal,
+            "agent_id": str(agent_id),
+            "machine_id": f"partner-agent-{uuid.uuid4().hex[:8]}",
+            "machine_name": "Partner Agent",
+            "agent_type": "openclaw",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    environment = await db_session.get(AgentEnvironment, agent_id)
+    assert environment is not None
+    assert environment.user_id == user.id
+
+    audit = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "api_key.mint",
+                ControlPlaneAuditEvent.target_user_id == user.id,
+            )
+        )
+    ).scalar_one()
+    assert audit.details["principal_kind"] == PRINCIPAL_KIND_PARTNER_TENANT
+    assert audit.details["partner_tenant_ref"] == partner_tenant_ref
+
+    await db_session.delete(user)
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """First-time deploy path: a user who's never visited cloud-api
     directly (no row yet) clicks Deploy on the upstream SaaS
@@ -289,6 +416,8 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     user = (
         await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
     ).scalar_one()
+    assert user.principal_kind == "clerk"
+    assert user.partner_tenant_ref is None
     assert user.email is None
     assert user.name is None
 
