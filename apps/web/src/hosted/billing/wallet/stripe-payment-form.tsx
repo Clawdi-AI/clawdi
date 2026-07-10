@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import { buildWalletTopupReturnUrl } from "@/hosted/billing/wallet/top-up-return.logic";
 import { env } from "@/lib/env";
 
 /** Terminal outcomes only — `requires_action` (3DS) is resolved inside the form. */
@@ -34,7 +35,13 @@ function InnerForm({
 		// `redirect: "if_required"` keeps card payments inline; only methods that
 		// truly need a redirect (some wallets) navigate away.
 		try {
-			const result = await stripe.confirmPayment({ elements, redirect: "if_required" });
+			const result = await stripe.confirmPayment({
+				elements,
+				redirect: "if_required",
+				confirmParams: {
+					return_url: buildWalletTopupReturnUrl(window.location.href),
+				},
+			});
 			if (result.error) {
 				setError(result.error.message ?? "We couldn't process that card. Please try again.");
 				setSubmitting(false);
