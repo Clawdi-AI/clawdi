@@ -3,6 +3,7 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { deleteDeploymentToastDecision } from "@/hosted/agents/delete-deployment-toast.logic";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	RebindAgentAiProviderRequest,
@@ -189,9 +190,15 @@ export function useDeleteDeployment() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => client.deleteDeployment(id),
-		onSuccess: () => {
+		onSuccess: (result) => {
 			invalidateDeploymentSnapshots(qc);
 			scheduleDeploymentSettlingRefresh(qc);
+			const decision = deleteDeploymentToastDecision(result);
+			if (decision.tone === "warning") {
+				toast.warning(decision.title, { description: decision.description });
+				return;
+			}
+			toast.success(decision.title, { description: decision.description });
 		},
 		onError: toastBillingError("Couldn't delete agent"),
 	});

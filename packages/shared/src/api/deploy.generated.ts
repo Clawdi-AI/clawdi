@@ -615,6 +615,19 @@ export interface components {
             status: string;
             /** Cvm Deleted */
             cvm_deleted: boolean;
+            /**
+             * Subscription Cancel Failed
+             * @default false
+             */
+            subscription_cancel_failed: boolean;
+            subscription?: components["schemas"]["V2DeploymentDeleteSubscriptionInfo"] | null;
+        };
+        /** V2DeploymentDeleteSubscriptionInfo */
+        V2DeploymentDeleteSubscriptionInfo: {
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            /** Current Period End */
+            current_period_end?: string | null;
         };
         /** V2DeploymentLifecycleResponse */
         V2DeploymentLifecycleResponse: {
@@ -871,6 +884,8 @@ export interface components {
              * @default unknown
              */
             status: string;
+            /** Failure Reason */
+            failure_reason?: string | null;
             /** Endpoints */
             endpoints?: string[];
             /** Openclaw Control Ui Url */

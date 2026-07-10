@@ -15,6 +15,7 @@ export type ComputeInvoice = Schemas["V2ComputeInvoiceInfo"];
 export type ComputeInvoicesPage = Schemas["V2ComputeInvoicesResponse"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
+export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
 export type DeploymentDetailsInfo = Schemas["V2HostedDeploymentDetailsInfo"];
 export type HostedDeployment = Schemas["V2HostedDeploymentResponse"];
 export type HostedUser = Schemas["V1UserResponse"];

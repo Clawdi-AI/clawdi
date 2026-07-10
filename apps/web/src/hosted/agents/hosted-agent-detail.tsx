@@ -5,6 +5,7 @@ import type { components } from "@clawdi/shared/api";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
+	AlertCircle,
 	Cpu,
 	CreditCard,
 	ExternalLink,
@@ -36,6 +37,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -58,6 +60,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
 	useCreateTerminalSession,
@@ -112,6 +115,10 @@ import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import {
+	compactDeploymentFailureReason,
+	deploymentFailureReason,
+} from "@/hosted/deployment-failure";
 import {
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
@@ -618,8 +625,42 @@ function OverviewProvisioningPanel({ status }: { status: DeploymentStatus }) {
 	);
 }
 
+function DeploymentFailureReasonText({ reason }: { reason: string }) {
+	const preview = compactDeploymentFailureReason(reason);
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={<span className="mt-2 block max-w-full truncate font-mono text-xs" />}
+			>
+				{preview}
+			</TooltipTrigger>
+			<TooltipContent className="max-w-sm whitespace-normal break-words">{reason}</TooltipContent>
+		</Tooltip>
+	);
+}
+
 function OverviewFailedPanel({ deployment }: { deployment: HostedDeployment }) {
 	const status = parseDeploymentStatus(deployment.status);
+	const failureReason = deploymentFailureReason(deployment);
+	if (failureReason) {
+		return (
+			<Alert data-hosted="true" variant="destructive">
+				<AlertCircle className="size-4" />
+				<AlertTitle>Agent setup failed</AlertTitle>
+				<AlertDescription className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div className="min-w-0">
+						<p>
+							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
+						</p>
+						<DeploymentFailureReasonText reason={failureReason} />
+					</div>
+					<div className="shrink-0">
+						<RestartComputeAction deployment={deployment} />
+					</div>
+				</AlertDescription>
+			</Alert>
+		);
+	}
 	return (
 		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
