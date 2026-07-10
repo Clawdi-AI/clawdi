@@ -17,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	AiProviderApiMode,
@@ -3385,15 +3385,27 @@ function convergeLockOwnerPath(lockDir: string): string {
 	return join(lockDir, "owner.json");
 }
 
+function writeConvergeFileAtomic(path: string, content: string, mode: number): void {
+	const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+	let renamed = false;
+	try {
+		writeFileSync(tmp, content, { mode });
+		renameSync(tmp, path);
+		renamed = true;
+	} finally {
+		if (!renamed) rmSync(tmp, { force: true });
+	}
+}
+
 function writeConvergeLockOwner(lockDir: string): void {
-	writeFileSync(
+	writeConvergeFileAtomic(
 		convergeLockOwnerPath(lockDir),
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeConvergeLockOwner.v1",
 			pid: process.pid,
 			acquiredAt: new Date().toISOString(),
 		})}\n`,
-		{ mode: 0o600 },
+		0o600,
 	);
 }
 
