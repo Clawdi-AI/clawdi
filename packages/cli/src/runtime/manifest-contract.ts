@@ -346,11 +346,21 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 			}
 			const surfaces = manifest.bridge?.surfaces ?? [];
 			if (manifest.runtime === "openclaw" && surfaces.length > 0) {
-				ctx.addIssue({
-					code: "custom",
-					message: "openclaw is exposed natively and must not declare bridge surfaces",
-					path: ["bridge", "surfaces"],
-				});
+				const surface = surfaces.at(0);
+				if (
+					surfaces.length !== 1 ||
+					surface?.name !== "openclaw" ||
+					surface?.kind !== "control-ui" ||
+					surface?.listenPort !== 28789 ||
+					surface?.upstreamHost !== "127.0.0.1" ||
+					surface?.upstreamPort !== 18789
+				) {
+					ctx.addIssue({
+						code: "custom",
+						message: "openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
+						path: ["bridge", "surfaces"],
+					});
+				}
 			}
 			if (manifest.runtime === "hermes") {
 				if (surfaces.length !== 1) {

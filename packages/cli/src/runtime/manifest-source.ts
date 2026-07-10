@@ -742,7 +742,18 @@ function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePath
 		}
 		const surfaces = manifest.bridge?.surfaces ?? [];
 		if (runtime === "openclaw" && surfaces.length > 0) {
-			errors.push("openclaw runtime must not declare runtime bridge surfaces");
+			const surface = surfaces[0];
+			if (
+				surfaces.length !== 1 ||
+				!surface ||
+				surface.name !== "openclaw" ||
+				surface.kind !== "control-ui" ||
+				surface.listenPort !== 28789 ||
+				surface.upstreamHost !== "127.0.0.1" ||
+				surface.upstreamPort !== 18789
+			) {
+				errors.push("openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789");
+			}
 		}
 		if (runtime === "hermes") {
 			const surface = surfaces[0];

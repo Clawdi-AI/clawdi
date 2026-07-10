@@ -96,16 +96,23 @@ describe("deploymentRuntime", () => {
 		expect(
 			runtimeConsoleUrl({
 				...deployment(configInfo({ runtime: "openclaw" })),
-				openclaw_control_ui_url: "https://app-18789.example/control/#token=abc",
-				hermes_control_ui_url: "https://app-9119.example/?t=bridge",
+				native_url: "https://app-native.example/control/",
+				openclaw_control_ui_url: "https://app-18789.example/control/",
 			}),
-		).toBe("https://app-18789.example/control/#token=abc");
+		).toBe("https://app-native.example/control/");
+		expect(
+			runtimeConsoleUrl({
+				...deployment(configInfo({ runtime: "openclaw" })),
+				openclaw_control_ui_url: "https://app-18789.example/control/",
+				hermes_control_ui_url: "https://app-9119.example/dashboard",
+			}),
+		).toBe("https://app-18789.example/control/");
 		expect(
 			runtimeConsoleUrl({
 				...deployment(configInfo({ runtime: "hermes" })),
-				openclaw_control_ui_url: "https://app-18789.example/control/#token=abc",
-				hermes_control_ui_url: "https://app-9119.example/?t=bridge",
+				openclaw_control_ui_url: "https://app-18789.example/control/",
+				hermes_control_ui_url: "https://app-9119.example/dashboard",
 			}),
-		).toBe("https://app-9119.example/?t=bridge");
+		).toBe("https://app-9119.example/dashboard");
 	});
 });

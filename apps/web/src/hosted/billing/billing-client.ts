@@ -175,6 +175,12 @@ export function useBillingClient() {
 						params: { path: { deployment_id: id } },
 					}),
 				),
+			createRuntimeUiRedemption: async (id: string) =>
+				unwrapDeploy(
+					await api.POST("/v2/deployments/{deployment_id}/runtime-ui/redemption", {
+						params: { path: { deployment_id: id } },
+					}),
+				),
 			restartDeployment: async (id: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments/{deployment_id}/restart", {

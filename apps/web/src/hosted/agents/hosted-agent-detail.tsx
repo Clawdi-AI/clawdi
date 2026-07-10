@@ -63,6 +63,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
+	useCreateRuntimeUiRedemption,
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
@@ -73,6 +74,7 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { openRuntimeUiWithRedemption } from "@/hosted/agents/runtime-ui-redemption";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
@@ -403,22 +405,15 @@ export function HostedAgentDetail({
 				Install skills
 			</Button>
 		) : consoleUrl ? (
-			<Button
-				render={
-					<a
-						href={consoleUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-						aria-label={`Open ${runtimeBrowserUiLabel(runtime)}`}
-					/>
-				}
-				nativeButton={false}
+			<RuntimeUiOpenButton
+				deployment={deployment}
+				label={runtimeBrowserUiLabel(runtime)}
 				variant="outline"
 				size="sm"
 			>
 				Open {runtimeBrowserUiLabel(runtime)}
 				<ExternalLink className="size-3.5" />
-			</Button>
+			</RuntimeUiOpenButton>
 		) : null;
 
 	return (
@@ -761,6 +756,54 @@ function OverviewTab({
 
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
+function RuntimeUiOpenButton({
+	deployment,
+	label,
+	children,
+	className,
+	variant = "outline",
+	size = "sm",
+}: {
+	deployment: HostedDeployment;
+	label: string;
+	children: React.ReactNode;
+	className?: string;
+	variant?: React.ComponentProps<typeof Button>["variant"];
+	size?: React.ComponentProps<typeof Button>["size"];
+}) {
+	const redemption = useCreateRuntimeUiRedemption();
+	const openUi = useCallback(async () => {
+		try {
+			const result = await openRuntimeUiWithRedemption({
+				redeem: () => redemption.mutateAsync({ id: deployment.id }),
+				openPopup: (url, target, features) => window.open(url, target, features),
+			});
+			if (result === "blocked") {
+				toast.error("Couldn't open runtime UI", {
+					description: "Your browser blocked the new window.",
+				});
+			}
+		} catch {
+			// useCreateRuntimeUiRedemption owns the user-facing error toast.
+		}
+	}, [deployment.id, redemption.mutateAsync]);
+
+	return (
+		<Button
+			type="button"
+			variant={variant}
+			size={size}
+			className={className}
+			disabled={redemption.isPending}
+			aria-label={`Open ${label}`}
+			onClick={() => void openUi()}
+		>
+			{redemption.isPending ? <Spinner className="size-3.5" /> : null}
+			{children}
+		</Button>
+	);
+}
+
 /**
  * Live agent browser UI embedded inline. The deployment's selected runtime UI
  * URL points at owner-only exposure. When the runtime
@@ -774,6 +817,25 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
+	const redemption = useCreateRuntimeUiRedemption();
+	const [frameUrl, setFrameUrl] = useState<string | null>(null);
+
+	useEffect(() => {
+		setFrameUrl(null);
+		if (!isRunning || !url) return;
+		let cancelled = false;
+		redemption
+			.mutateAsync({ id: deployment.id })
+			.then((result) => {
+				if (!cancelled) setFrameUrl(result.url);
+			})
+			.catch(() => {
+				if (!cancelled) setFrameUrl(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [deployment.id, isRunning, redemption.mutateAsync, url]);
 
 	// Not running yet — the runtime UI and bridge only exist once the agent boots.
 	if (!isRunning) {
@@ -807,49 +869,46 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			icon={MonitorPlay}
 			title={browserUiLabel}
 			action={
-				<Button
-					render={
-						<a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open full screen" />
-					}
-					nativeButton={false}
+				<RuntimeUiOpenButton
+					deployment={deployment}
+					label={browserUiLabel}
 					variant="outline"
 					size="sm"
 					className="hidden sm:inline-flex"
 				>
 					Open full screen
 					<Maximize2 className="size-3.5" />
-				</Button>
+				</RuntimeUiOpenButton>
 			}
 		>
 			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
 			    full-screen link instead. */}
-			<iframe
-				key={`${runtime}:${url}`}
-				src={url}
-				title={browserUiLabel}
-				className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
-				allow="clipboard-read; clipboard-write"
-			/>
+			{frameUrl ? (
+				<iframe
+					key={`${runtime}:${frameUrl}`}
+					src={frameUrl}
+					title={browserUiLabel}
+					className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
+					allow="clipboard-read; clipboard-write"
+				/>
+			) : (
+				<div className="hidden min-h-0 flex-1 items-center justify-center bg-background sm:flex">
+					<Spinner className="size-4 text-muted-foreground" />
+				</div>
+			)}
 			<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
 				<p className="text-sm text-muted-foreground">
 					This runtime UI is best viewed full screen on a small screen.
 				</p>
-				<Button
-					render={
-						<a
-							href={url}
-							target="_blank"
-							rel="noopener noreferrer"
-							aria-label={`Open ${browserUiLabel}`}
-						/>
-					}
-					nativeButton={false}
+				<RuntimeUiOpenButton
+					deployment={deployment}
+					label={browserUiLabel}
 					variant="outline"
 					size="sm"
 				>
 					Open {browserUiLabel}
 					<Maximize2 className="size-3.5" />
-				</Button>
+				</RuntimeUiOpenButton>
 			</div>
 		</LiveToolFrame>
 	);
