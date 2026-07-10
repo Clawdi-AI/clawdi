@@ -101,6 +101,7 @@ import {
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
 import {
+	parsePositiveLinuxId,
 	TRANSPARENT_EGRESS_TABLE,
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
@@ -528,7 +529,7 @@ function writeScopedSecretValues(
 	secretValues: Record<string, string> | undefined,
 	refs: readonly string[],
 	paths: RuntimePaths,
-	owner: "root" | "runtime-user" | "egress-user",
+	owner: "root" | "runtime-user" | "egress-identity",
 ): string | null {
 	const scoped = scopedSecretValues(secretValues, refs);
 	if (Object.keys(scoped).length === 0) {
@@ -544,9 +545,9 @@ function writeScopedSecretValues(
 			makeRuntimeUserOwned(dirname(path));
 		}
 		makeRuntimeUserOwned(path);
-	} else if (owner === "egress-user") {
+	} else if (owner === "egress-identity") {
 		makeRootOwned(dirname(path));
-		makeEgressUserOwned(path);
+		makeEgressIdentityOwned(path);
 	} else {
 		makeRootOwned(dirname(path));
 		makeRootOwned(path);
@@ -713,8 +714,11 @@ function makeRuntimeUserOwned(path: string): void {
 	makeSystemUserOwned(path, process.env.CLAWDI_RUNTIME_USER?.trim() ?? "");
 }
 
-function makeEgressUserOwned(path: string): void {
-	makeSystemUserOwned(path, process.env.CLAWDI_EGRESS_USER?.trim() || "clawdi-egress");
+function makeEgressIdentityOwned(path: string): void {
+	if (!runningAsRoot()) return;
+	const uid = runtimeEgressUid();
+	const gid = runtimeEgressGid();
+	chownSync(path, uid, gid);
 }
 
 function makeSystemUserOwned(path: string, user: string): void {
@@ -764,9 +768,9 @@ function makeRuntimeUserPrivateDir(path: string): void {
 	}
 }
 
-function makeEgressUserPrivateDir(path: string): void {
+function makeEgressIdentityPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
-	makeEgressUserOwned(path);
+	makeEgressIdentityOwned(path);
 	try {
 		chmodSync(path, 0o700);
 	} catch {
@@ -1723,7 +1727,7 @@ function writeEgressSecretFile(
 		secretValues,
 		egressSecretRefs(manifest),
 		paths,
-		"egress-user",
+		"egress-identity",
 	);
 }
 
@@ -3419,8 +3423,8 @@ function writeTransparentEgressEnvFile(input: {
 	paths: RuntimePaths;
 	runtimeUser: string;
 	runtimeUid: number;
-	egressUser: string;
 	egressUid: number;
+	egressGid: number;
 }): string | null {
 	if (!input.program) {
 		rmSync(input.paths.egressTransparentEnv, { force: true });
@@ -3429,8 +3433,8 @@ function writeTransparentEgressEnvFile(input: {
 	const env: Record<string, string> = {
 		CLAWDI_RUNTIME_USER: input.runtimeUser,
 		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
-		CLAWDI_EGRESS_USER: input.egressUser,
 		CLAWDI_EGRESS_UID: String(input.egressUid),
+		CLAWDI_EGRESS_GID: String(input.egressGid),
 		CLAWDI_EGRESS_TRANSPARENT_PORT: String(input.program.transparentPort),
 		CLAWDI_EGRESS_NFT_TABLE: TRANSPARENT_EGRESS_TABLE,
 		CLAWDI_EGRESS_PROFILE_BUNDLE: input.program.profileBundlePath,
@@ -3815,6 +3819,12 @@ interface RuntimeEgressSystemdProgram {
 	secretFilePath: string | null;
 }
 
+interface RuntimeEgressIdentity {
+	runtimeUid: number;
+	egressUid: number;
+	egressGid: number;
+}
+
 function runtimeEgressSystemdProgram(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
@@ -3894,7 +3904,11 @@ export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
+	egressIdentity: RuntimeEgressIdentity | null = null,
 ): string {
+	if (egressProgram && !egressIdentity) {
+		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
+	}
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
@@ -3910,6 +3924,7 @@ export function runtimeSidecarProgramRevision(
 					engine: egressProgram.engine,
 					addonSha256: egressProgram.addonSha256,
 					transport: TRANSPARENT_EGRESS_TRANSPORT_VERSION,
+					identity: egressIdentity,
 				}
 			: null,
 	});
@@ -3923,12 +3938,18 @@ function runtimeUserUid(runtimeUser: string): number {
 	return systemUserUid(runtimeUser, runtimeUser === "clawdi" ? 10_001 : null);
 }
 
-function runtimeEgressUid(egressUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_EGRESS_UID?.trim() ?? "", 10);
-	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
-		return explicit;
-	}
-	return systemUserUid(egressUser, egressUser === "clawdi-egress" ? 10_002 : null);
+function runtimeEgressUid(): number {
+	return positiveLinuxIdEnv("CLAWDI_EGRESS_UID", 10_002);
+}
+
+function runtimeEgressGid(): number {
+	return positiveLinuxIdEnv("CLAWDI_EGRESS_GID", 10_002);
+}
+
+function positiveLinuxIdEnv(key: string, fallback: number): number {
+	const raw = process.env[key]?.trim();
+	if (!raw) return fallback;
+	return parsePositiveLinuxId(raw, key);
 }
 
 function systemUserUid(user: string, fallback: number | null): number {
@@ -4481,6 +4502,7 @@ function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): s
 function writeSystemdUnits(
 	runtimePrograms: RuntimeSystemdUserProgram[],
 	egressProgram: RuntimeEgressSystemdProgram | null,
+	egressIdentity: RuntimeEgressIdentity | null,
 	manifest: RuntimeManifest,
 	sourcePath: string,
 	paths: RuntimePaths,
@@ -4512,6 +4534,8 @@ function writeSystemdUnits(
 	const systemUnits: string[] = [];
 	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
+	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
+	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
 	const shouldRunSidecar = shouldRunBridge || shouldRunEgress;
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
@@ -4573,7 +4597,12 @@ function writeSystemdUnits(
 					CLAWDI_EGRESS_ENV_FILE: shouldRunEgress && egressProgram ? egressProgram.envFilePath : "",
 					[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
-					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues, egressProgram),
+					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
+						manifest,
+						secretValues,
+						activeEgressProgram,
+						activeEgressIdentity,
+					),
 				},
 				serviceType: "notify",
 				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
@@ -4723,7 +4752,7 @@ export function convergeRuntimeManifest(
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	makeRootReadableDir(paths.egressProfileRoot);
 	makeRootReadableDir(paths.egressRoot);
-	makeEgressUserPrivateDir(paths.egressCaDir);
+	makeEgressIdentityPrivateDir(paths.egressCaDir);
 	makeRootReadableDir(dirname(paths.egressSystemCaFile));
 	makeRuntimeUserPrivateDir(paths.egressScratchRoot);
 
@@ -4805,7 +4834,6 @@ export function convergeRuntimeManifest(
 	}
 	const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const egressUser = process.env.CLAWDI_EGRESS_USER?.trim() || "clawdi-egress";
 	const egressSystemdProgram = runtimeEgressSystemdProgram(
 		manifest,
 		paths,
@@ -4815,14 +4843,16 @@ export function convergeRuntimeManifest(
 		egressAddon,
 	);
 	const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
-	const egressUid = egressSystemdProgram ? runtimeEgressUid(egressUser) : 0;
+	const egressUid = egressSystemdProgram ? runtimeEgressUid() : 0;
+	const egressGid = egressSystemdProgram ? runtimeEgressGid() : 0;
+	const egressIdentity = egressSystemdProgram ? { runtimeUid, egressUid, egressGid } : null;
 	const egressTransparentEnv = writeTransparentEgressEnvFile({
 		program: egressSystemdProgram,
 		paths,
 		runtimeUser,
 		runtimeUid,
-		egressUser,
 		egressUid,
+		egressGid,
 	});
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
@@ -5022,6 +5052,7 @@ export function convergeRuntimeManifest(
 	const systemdUnits = writeSystemdUnits(
 		runtimeSystemdUserPrograms,
 		egressSystemdProgram,
+		egressIdentity,
 		manifest,
 		load.sourcePath,
 		paths,

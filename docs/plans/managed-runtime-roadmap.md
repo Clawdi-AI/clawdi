@@ -25,6 +25,10 @@ this repository.
   bridge, optional egress, status, and diagnostics.
 - Stable-image contract: runtime behavior is driven by manifest + CLI, not
   image-level per-agent wrappers.
+- The detailed ownership boundary is recorded in
+  [ADR-0002](../adr/0002-runtime-image-is-a-stable-capability-envelope.md):
+  the image supplies stable host capabilities and the CLI owns runtime-local
+  egress paths, permissions, and numeric privilege dropping.
 - Systemd service rendering that starts official runtime binaries directly with
   manifest-derived args, cwd, and env when upstream service installers do not
   cover the complete hosted contract.

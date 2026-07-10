@@ -2497,34 +2497,76 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 	});
 	const command = config.engineBinaryPath;
 	const args = mitmdumpArgs;
-	const child =
-		runningAsRootCommand() && config.egressUser !== "root"
-			? spawnAsUser(config.egressUser, command, args, childEnv)
-			: spawn(command, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+	const child = runningAsRootCommand()
+		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
+		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
 	child.stdout?.pipe(process.stdout);
 	child.stderr?.pipe(process.stderr);
 	return child;
 }
 
-function spawnAsUser(
-	user: string,
+export function buildEgressEngineSpawnCommand(
+	commandExists: (command: string) => boolean,
+	uid: number,
+	gid: number,
+	command: string,
+	args: string[],
+): { command: string; args: string[] } {
+	if (uid === 0 || gid === 0) throw new Error("egress engine identity must be non-root");
+	if (commandExists("setpriv")) {
+		return {
+			command: "setpriv",
+			args: [`--reuid=${uid}`, `--regid=${gid}`, "--clear-groups", "--", command, ...args],
+		};
+	}
+	if (commandExists("gosu")) {
+		return { command: "gosu", args: [`${uid}:${gid}`, command, ...args] };
+	}
+	throw new Error(`cannot drop egress engine to ${uid}:${gid}; install setpriv or gosu`);
+}
+
+export function assertCurrentEgressIdentity(
+	currentUid: number | undefined,
+	currentGid: number | undefined,
+	configuredUid: number,
+	configuredGid: number,
+): void {
+	if (currentUid === undefined || currentGid === undefined) {
+		throw new Error("cannot verify non-root egress engine UID/GID on this platform");
+	}
+	if (currentUid === 0 || currentGid === 0) {
+		throw new Error("egress engine identity must be non-root");
+	}
+	if (currentUid !== configuredUid || currentGid !== configuredGid) {
+		throw new Error(
+			`current egress engine identity ${currentUid}:${currentGid} does not match configured ${configuredUid}:${configuredGid}`,
+		);
+	}
+}
+
+function spawnWithCurrentEgressIdentity(
+	uid: number,
+	gid: number,
 	command: string,
 	args: string[],
 	env: NodeJS.ProcessEnv,
 ): ChildProcess {
-	if (commandExistsOnPath("gosu")) {
-		return spawn("gosu", [user, command, ...args], {
-			env: { ...env, USER: user, LOGNAME: user },
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-	}
-	if (commandExistsOnPath("runuser")) {
-		return spawn("runuser", ["-u", user, "--", command, ...args], {
-			env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-	}
-	throw new Error(`cannot drop egress engine to ${user}; install gosu or runuser`);
+	assertCurrentEgressIdentity(process.getuid?.(), process.getgid?.(), uid, gid);
+	return spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function spawnWithNumericIdentity(
+	uid: number,
+	gid: number,
+	command: string,
+	args: string[],
+	env: NodeJS.ProcessEnv,
+): ChildProcess {
+	const child = buildEgressEngineSpawnCommand(commandExistsOnPath, uid, gid, command, args);
+	return spawn(child.command, child.args, {
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 }
 
 function waitForChildExit(
