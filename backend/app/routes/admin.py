@@ -44,7 +44,7 @@ from app.models.channel import (
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
-from app.models.user import User
+from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.schemas.admin import (
     AdminAgentCreate,
     AdminApiKeyCreate,
@@ -127,7 +127,14 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     an operational anomaly worth a loud failure rather than a
     user-flow retry.
     """
-    target = (await db.execute(select(User).where(User.clerk_id == clerk_id))).scalar_one_or_none()
+    target = (
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.clerk_id == clerk_id,
+            )
+        )
+    ).scalar_one_or_none()
     if target is not None:
         return target
 
@@ -152,7 +159,12 @@ async def _assert_admin_target_owns_environment(
         return env.user_id
 
     target = (
-        await db.execute(select(User).where(User.clerk_id == target_clerk_id))
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.clerk_id == target_clerk_id,
+            )
+        )
     ).scalar_one_or_none()
     if target is None or env.user_id != target.id:
         logger.warning(

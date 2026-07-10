@@ -74,6 +74,63 @@ async def test_admin_mint_rejects_wrong_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_clerk_id",
+    ["", " user_123", "user 123", "partner:phala:team_123", "x" * 201],
+)
+async def test_admin_mint_rejects_invalid_target_clerk_id(admin_client, target_clerk_id):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={"target_clerk_id": target_clerk_id, "label": "invalid-target"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/v1/admin/auth/keys", {"label": "partner-runtime"}),
+        (
+            "/v1/admin/agents",
+            {
+                "agent_id": "de9e247b-1c60-4f8a-ad7b-537b16b247a8",
+                "machine_id": "partner-agent",
+                "machine_name": "Partner Agent",
+                "agent_type": "openclaw",
+            },
+        ),
+    ],
+)
+async def test_legacy_admin_rejects_partner_principal_fields(
+    admin_client,
+    seed_user,
+    path,
+    payload,
+):
+    response = await admin_client.post(
+        path,
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "principal_kind": "partner_tenant",
+            "partner_tenant_ref": "phala_cloud:team_123",
+            **payload,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    extra_fields = {
+        error["loc"][-1]
+        for error in response.json()["detail"]
+        if error["type"] == "extra_forbidden"
+    }
+    assert extra_fields == {"principal_kind", "partner_tenant_ref"}
+
+
+@pytest.mark.asyncio
 async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
     """If `settings.admin_api_key` is empty, endpoints return 503
     regardless of header. Default OSS posture: admin endpoints are
@@ -289,6 +346,8 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     user = (
         await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
     ).scalar_one()
+    assert user.principal_kind == "clerk"
+    assert user.partner_tenant_ref is None
     assert user.email is None
     assert user.name is None
 

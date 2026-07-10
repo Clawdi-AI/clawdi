@@ -5,11 +5,22 @@ and are used by SaaS batch tooling + ops-side scripts. Kept in a
 separate file so they don't pollute user-facing schemas.
 """
 
+from __future__ import annotations
+
+import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
@@ -29,6 +40,20 @@ AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
+_ADMIN_CLERK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validate_admin_clerk_id(value: str) -> str:
+    if value != value.strip() or not _ADMIN_CLERK_ID_RE.fullmatch(value):
+        raise ValueError("target_clerk_id must be a stable Clerk identifier")
+    return value
+
+
+AdminClerkId = Annotated[
+    str,
+    Field(min_length=1, max_length=200),
+    AfterValidator(_validate_admin_clerk_id),
+]
 
 
 class AdminEnvironmentCreate(BaseModel):
@@ -43,7 +68,7 @@ class AdminEnvironmentCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_clerk_id: str
+    target_clerk_id: AdminClerkId
     environment_id: UUID | None = None
     machine_id: str
     machine_name: str
@@ -61,7 +86,7 @@ class AdminAgentCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_clerk_id: str
+    target_clerk_id: AdminClerkId
     agent_id: UUID | None = None
     machine_id: str
     machine_name: str
@@ -74,8 +99,8 @@ class AdminApiKeyCreate(BaseModel):
     """Body for `POST /v1/admin/auth/keys` — mint an api_key on
     behalf of a user identified by Clerk id. The route resolves
     `target_clerk_id` to the internal `User.id` and then calls the
-    existing `mint_api_key` service, preserving the env-ownership
-    invariant the service enforces.
+    existing `mint_api_key` service, preserving its env-ownership
+    invariant.
 
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
@@ -87,7 +112,9 @@ class AdminApiKeyCreate(BaseModel):
     everything.
     """
 
-    target_clerk_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId
     label: str
     environment_id: str | None = None
     scopes: list[str] | None = None
@@ -143,7 +170,7 @@ class AdminRuntimeStateUpsert(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_runtime_bridge(self) -> "AdminRuntimeStateUpsert":
+    def _validate_runtime_bridge(self) -> AdminRuntimeStateUpsert:
         runtime = next(iter(self.runtimes))
         validate_hosted_runtime_bridge(runtime, self.bridge)
         return self
@@ -179,7 +206,7 @@ class AdminManagedAiProviderUpsert(BaseModel):
 
 class AdminManagedAiProviderResponse(BaseModel):
     owner_user_id: UUID
-    owner_clerk_id: str
+    owner_clerk_id: str | None
     provider_id: str
     api_mode: str
     runtime_env_name: str
@@ -253,7 +280,7 @@ class AdminChannelUpdate(BaseModel):
 class AdminChannelResponse(BaseModel):
     id: UUID
     owner_user_id: UUID
-    owner_clerk_id: str
+    owner_clerk_id: str | None
     provider: str
     name: str
     status: str

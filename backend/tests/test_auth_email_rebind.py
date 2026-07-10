@@ -166,6 +166,44 @@ async def test_rebind_with_no_email_match_creates_fresh_user(db_session, signing
     await db_session.commit()
 
 
+@pytest.mark.asyncio
+async def test_rebind_excludes_partner_tenant_user(db_session, signing_key, monkeypatch):
+    from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
+    from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
+
+    monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
+    email = f"partner_{uuid.uuid4().hex[:8]}@example.test"
+    partner_tenant_ref = f"phala_cloud:team_{uuid.uuid4().hex[:12]}"
+    partner_user = await lazy_create_partner_user_with_personal_project(
+        db_session,
+        partner_tenant_ref=partner_tenant_ref,
+        race_loser_status=500,
+    )
+    partner_user.email = email
+    await db_session.commit()
+    partner_user_id = partner_user.id
+
+    token = _sign(
+        signing_key,
+        sub=f"new_{uuid.uuid4().hex[:8]}",
+        email=email,
+    )
+    ctx = await _auth_via_clerk_jwt(token, db_session)
+
+    assert ctx is not None
+    assert ctx.user.id != partner_user_id
+    assert ctx.user.principal_kind == "clerk"
+    persisted_partner = await db_session.get(User, partner_user_id)
+    assert persisted_partner is not None
+    assert persisted_partner.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT
+    assert persisted_partner.clerk_id is None
+    assert persisted_partner.partner_tenant_ref == partner_tenant_ref
+
+    await db_session.delete(ctx.user)
+    await db_session.delete(persisted_partner)
+    await db_session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Rebind enabled — fail-closed paths
 # ---------------------------------------------------------------------------
