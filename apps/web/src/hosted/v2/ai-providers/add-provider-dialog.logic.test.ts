@@ -229,6 +229,7 @@ describe("modelsFromText", () => {
 			{
 				id: "deepseek-v4-flash",
 				label: "DeepSeek V4 Flash",
+				alias: "DeepSeek V4 Flash",
 				context_window: 1_000_000,
 			},
 			{ id: "unknown-model" },

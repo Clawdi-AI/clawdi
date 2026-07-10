@@ -476,6 +476,63 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
+	test("preserves hosted provider model alias and cost metadata", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["custom"],
+					primary_model: { provider_id: "custom", model: "example-model" },
+					services: {},
+				},
+			},
+			{
+				projection: {
+					providers: {
+						custom: {
+							type: "custom_openai_compatible",
+							baseUrl: "https://api.example.test/v1",
+							apiMode: "openai_chat",
+							models: [
+								{
+									id: "example-model",
+									alias: "Example Model",
+									context_window: 128_000,
+									cost: {
+										input: 0.3,
+										output: 1.2,
+										cache_read: 0.06,
+										cache_write: 0,
+									},
+								},
+							],
+							runtimeEnvName: "CUSTOM_API_KEY",
+							apiKeySecretRef: "secret://providers/custom/api-key",
+						},
+					},
+				},
+			},
+		);
+
+		const projection = hostedAiProviderCatalog(manifest, "openclaw");
+		expect(projection?.catalog.providers[0]?.models).toEqual([
+			{
+				id: "example-model",
+				alias: "Example Model",
+				context_window: 128_000,
+				cost: {
+					input: 0.3,
+					output: 1.2,
+					cache_read: 0.06,
+					cache_write: 0,
+				},
+			},
+		]);
+	});
+
 	test("applies a managed primary model override to the hosted provider seed projection", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(

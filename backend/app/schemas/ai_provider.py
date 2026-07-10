@@ -22,6 +22,15 @@ AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "n
 InputModality = Literal["text", "image", "video", "audio"]
 
 
+class AiProviderModelCost(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    cache_read: float | None = Field(default=None, ge=0)
+    cache_write: float | None = Field(default=None, ge=0)
+
+
 class AiProviderAuth(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
@@ -39,6 +48,7 @@ class AiProviderModel(BaseModel):
 
     id: str = Field(min_length=1, max_length=300)
     label: str | None = Field(default=None, max_length=300)
+    alias: str | None = Field(default=None, max_length=300)
     api_mode: ApiMode | None = None
     input_modalities: list[InputModality] | None = None
     supports_vision: bool | None = None
@@ -46,7 +56,7 @@ class AiProviderModel(BaseModel):
     supports_reasoning: bool | None = None
     context_window: int | None = Field(default=None, ge=0)
     max_tokens: int | None = Field(default=None, ge=0)
-    cost: dict[str, Any] | None = None
+    cost: AiProviderModelCost | None = None
     capabilities: dict[str, Any] | None = None
 
 

@@ -81,4 +81,41 @@ describe("AI provider projection", () => {
 		expect(codex.files[0]?.content).toContain('model_provider = "openai"');
 		expect(codex.files[0]?.content).not.toContain('[model_providers."openai-codex"]');
 	});
+
+	test("projects model alias and cost metadata to runtime-native fields", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "custom-main",
+					type: "custom_openai_compatible",
+					base_url: "https://api.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "env", ref: "env:CUSTOM_API_KEY" },
+					runtime_env_name: "CUSTOM_API_KEY",
+					models: [
+						{
+							id: "example-model",
+							alias: "Example Model",
+							context_window: 128_000,
+							cost: { input: 0.3, output: 1.2, cache_read: 0.06, cache_write: 0 },
+						},
+					],
+				},
+			],
+			defaults: { chat_provider_id: "custom-main" },
+		};
+
+		const openclaw = buildAgentTargetProjection("openclaw", catalog);
+		expect(openclaw.files[0]?.content).toContain('"name": "Example Model"');
+		expect(openclaw.files[0]?.content).toContain('"cost": {');
+		expect(openclaw.files[0]?.content).toContain('"cacheRead": 0.06');
+		expect(openclaw.files[0]?.content).toContain('"cacheWrite": 0');
+
+		const hermes = buildAgentTargetProjection("hermes", catalog);
+		expect(hermes.files[0]?.content).toContain("input_cost_per_million: 0.3");
+		expect(hermes.files[0]?.content).toContain("output_cost_per_million: 1.2");
+		expect(hermes.files[0]?.content).toContain("cache_read_cost_per_million: 0.06");
+		expect(hermes.files[0]?.content).toContain("cache_write_cost_per_million: 0");
+	});
 });

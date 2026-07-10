@@ -137,6 +137,7 @@ export function toProviderCatalogModels(
 	return models.map((model) => ({
 		id: model.id,
 		...(model.label ? { label: model.label } : {}),
+		...(model.alias ? { alias: model.alias } : {}),
 		...(model.api_mode ? { api_mode: model.api_mode } : {}),
 		...(model.input_modalities ? { input_modalities: [...model.input_modalities] } : {}),
 		...(model.supports_vision !== undefined ? { supports_vision: model.supports_vision } : {}),

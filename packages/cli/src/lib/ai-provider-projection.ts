@@ -321,7 +321,7 @@ function openClawModels(
 			const api = openClawApiLabel(model.api_mode ?? provider.api_mode);
 			return compactObject({
 				id: model.id,
-				name: model.label ?? model.id,
+				name: model.alias ?? model.label ?? model.id,
 				api,
 				input: openClawInputModalities(model),
 				reasoning: model.supports_reasoning,
@@ -329,6 +329,7 @@ function openClawModels(
 					model.supports_tools === undefined ? undefined : { supportsTools: model.supports_tools },
 				contextWindow: positiveNumber(model.context_window),
 				maxTokens: positiveNumber(model.max_tokens),
+				cost: openClawModelCost(model.cost),
 			});
 		})
 		.filter((model) => typeof model.id === "string" && model.id.length > 0)
@@ -395,6 +396,25 @@ function positiveNumber(input: number | undefined): number | undefined {
 	return typeof input === "number" && Number.isFinite(input) && input > 0 ? input : undefined;
 }
 
+function nonNegativeNumber(input: number | undefined): number | undefined {
+	return typeof input === "number" && Number.isFinite(input) && input >= 0 ? input : undefined;
+}
+
+function openClawModelCost(
+	cost: AiProviderModel["cost"] | undefined,
+): Record<string, number> | undefined {
+	if (!cost) return undefined;
+	const input = nonNegativeNumber(cost.input);
+	const output = nonNegativeNumber(cost.output);
+	if (input === undefined || output === undefined) return undefined;
+	return {
+		input,
+		output,
+		cacheRead: nonNegativeNumber(cost.cache_read) ?? 0,
+		cacheWrite: nonNegativeNumber(cost.cache_write) ?? 0,
+	};
+}
+
 function buildHermesProjection(
 	providers: ProjectionProvider[],
 	primaryProvider: ProjectionProvider,
@@ -449,38 +469,70 @@ function hermesModelLines(provider: ProjectionProvider): string[] {
 		if (model.supports_vision !== undefined) {
 			lines.push(`        supports_vision: ${model.supports_vision}`);
 		}
+		if (model.input_cost_per_million !== undefined) {
+			lines.push(`        input_cost_per_million: ${model.input_cost_per_million}`);
+		}
+		if (model.output_cost_per_million !== undefined) {
+			lines.push(`        output_cost_per_million: ${model.output_cost_per_million}`);
+		}
+		if (model.cache_read_cost_per_million !== undefined) {
+			lines.push(`        cache_read_cost_per_million: ${model.cache_read_cost_per_million}`);
+		}
+		if (model.cache_write_cost_per_million !== undefined) {
+			lines.push(`        cache_write_cost_per_million: ${model.cache_write_cost_per_million}`);
+		}
 	}
 	return lines;
 }
 
-function hermesModels(
-	provider: ProjectionProvider,
-): Array<{ id: string; context_length?: number; max_tokens?: number; supports_vision?: boolean }> {
+interface HermesProjectedModel {
+	id: string;
+	context_length?: number;
+	max_tokens?: number;
+	supports_vision?: boolean;
+	input_cost_per_million?: number;
+	output_cost_per_million?: number;
+	cache_read_cost_per_million?: number;
+	cache_write_cost_per_million?: number;
+}
+
+function hermesModels(provider: ProjectionProvider): HermesProjectedModel[] {
 	const seen = new Set<string>();
-	const entries: Array<{
-		id: string;
-		context_length?: number;
-		max_tokens?: number;
-		supports_vision?: boolean;
-	}> = [];
+	const entries: HermesProjectedModel[] = [];
 	for (const model of provider.models ?? []) {
 		if (!model.id || seen.has(model.id)) continue;
 		seen.add(model.id);
-		const entry: {
-			id: string;
-			context_length?: number;
-			max_tokens?: number;
-			supports_vision?: boolean;
-		} = { id: model.id };
+		const entry: HermesProjectedModel = { id: model.id };
 		const contextLength = positiveNumber(model.context_window);
 		if (contextLength !== undefined) entry.context_length = contextLength;
 		const maxTokens = positiveNumber(model.max_tokens);
 		if (maxTokens !== undefined) entry.max_tokens = maxTokens;
 		const supportsVision = hermesSupportsVision(model);
 		if (supportsVision !== undefined) entry.supports_vision = supportsVision;
+		const cost = hermesModelCost(model.cost);
+		if (cost) Object.assign(entry, cost);
 		if (Object.keys(entry).length > 1) entries.push(entry);
 	}
 	return entries;
+}
+
+function hermesModelCost(
+	cost: AiProviderModel["cost"] | undefined,
+): Omit<HermesProjectedModel, "id"> | undefined {
+	if (!cost) return undefined;
+	const input = nonNegativeNumber(cost.input);
+	const output = nonNegativeNumber(cost.output);
+	if (input === undefined || output === undefined) return undefined;
+	return {
+		input_cost_per_million: input,
+		output_cost_per_million: output,
+		...(nonNegativeNumber(cost.cache_read) !== undefined
+			? { cache_read_cost_per_million: nonNegativeNumber(cost.cache_read) }
+			: {}),
+		...(nonNegativeNumber(cost.cache_write) !== undefined
+			? { cache_write_cost_per_million: nonNegativeNumber(cost.cache_write) }
+			: {}),
+	};
 }
 
 function hermesSupportsVision(model: AiProviderModel): boolean | undefined {
