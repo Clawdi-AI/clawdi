@@ -11,6 +11,7 @@ import { useHostedUser } from "@/hosted/billing/hooks";
 /**
  * x402 self-funding block. Agents can top up their own wallet on-chain via the
  * x402 protocol; this surfaces the deposit address and a short explainer.
+ * WalletPage mounts this only when the wallet snapshot reports x402 enabled.
  */
 export function X402Card() {
 	const me = useHostedUser();

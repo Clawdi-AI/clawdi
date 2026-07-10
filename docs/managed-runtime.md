@@ -277,6 +277,12 @@ Normalization maps hosted fields into the internal shape:
 | `mitmProfiles` | Explicit local sidecar profiles |
 | `recovery` | Manifest cache and offline-boot behavior |
 
+Manifest `generation` is part of the remote manifest ETag. The CLI applies any
+non-304 manifest without monotonic generation gating, writes `generation` into
+managed state, sync state, MITM bundles, run configs, and projections, then
+caches the fetched manifest as last-good. A generation-only control-plane bump
+therefore must produce a new ETag so `runtime watch` converges immediately.
+
 Manifest validation is defensive. Enabled built-in runtimes must use the
 expected official installer metadata unless they provide an explicit run
 command. Unknown runtime names require `run.command`; otherwise the manifest is
