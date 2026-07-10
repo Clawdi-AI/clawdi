@@ -20,6 +20,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
 							if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
 								return false;
 							}
+							// Fetch-level failures (no HTTP response) get a longer budget
+							// (~7s of backoff) than server errors (~3s): backend deploys
+							// swap containers behind the proxy, and for a few seconds the
+							// proxy answers with its own CORS-less 502, which the browser
+							// can only see as a fetch failure.
+							if (!(error instanceof ApiError)) {
+								return failureCount < 3;
+							}
 							return failureCount < 2;
 						},
 					},

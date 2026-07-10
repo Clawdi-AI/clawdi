@@ -60,8 +60,16 @@ describe("error classification", () => {
 });
 
 describe("billingQueryRetry", () => {
-	test("retries transient errors at most twice", () => {
+	test("network errors get a third retry to ride over the deploy swap window", () => {
 		const e = new BillingNetworkError("offline");
+		expect(billingQueryRetry(0, e)).toBe(true);
+		expect(billingQueryRetry(1, e)).toBe(true);
+		expect(billingQueryRetry(2, e)).toBe(true);
+		expect(billingQueryRetry(3, e)).toBe(false);
+	});
+
+	test("server errors keep the shorter two-retry budget", () => {
+		const e = new BillingApiError(503, "unavailable");
 		expect(billingQueryRetry(0, e)).toBe(true);
 		expect(billingQueryRetry(1, e)).toBe(true);
 		expect(billingQueryRetry(2, e)).toBe(false);
