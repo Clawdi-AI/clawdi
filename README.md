@@ -331,6 +331,34 @@ App connections are configured in the [Clawdi Cloud dashboard](https://clawdi.ai
 
 ## Development
 
+The clean default verification path runs inside Docker and keeps the host repo
+read-only during test execution:
+
+```bash
+scripts/test.sh          # JS typecheck/tests, then backend pytest
+bun run test             # same clean Docker runner
+scripts/test.sh js       # JS typecheck + web/sidecar/CLI tests
+scripts/test.sh cli      # CLI typecheck + full CLI tests
+scripts/test.sh web      # web typecheck + tests + OSS build only
+scripts/test.sh backend  # Alembic + backend pytest against throwaway Postgres
+```
+
+The runner copies the read-only checkout into an isolated non-root container
+workspace, uses a fake `HOME`, disables CLI update checks, and keeps Bun/uv
+caches in container tmpfs paths. `/tmp` is an executable tmpfs so tests can run
+their own temporary stub binaries without touching the host. Dependency caches
+are intentionally per-run inside the container; only Docker image layers and
+build cache are reused by the Docker daemon. It does not force `CLAWDI_HOME`, so
+tests can still isolate Clawdi state through the same home/config paths as the
+product. Backend tests use a temporary `pgvector/pgvector:0.8.1-pg16` Postgres
+service and do not reuse the dev database.
+
+For a focused CLI pytest-style argument pass-through, append paths after the
+suite name, for example `scripts/test.sh cli tests/api-client.test.ts`. The
+full package-local test commands remain available through `bun run test:local`
+or package-level scripts as opt-in development loops when you need to
+investigate broader failures.
+
 Install workspace dependencies from the repo root:
 
 ```bash
@@ -364,8 +392,10 @@ bun run check
 bun run typecheck
 ```
 
-Run backend checks with the Ruff, compile, and throwaway-Postgres pytest flow
-in [`docs/backend-development.md#verification`](docs/backend-development.md#verification).
+Host-local commands are still useful for fast opt-in development loops after
+you have installed dependencies locally. Run backend checks with the Ruff,
+compile, and throwaway-Postgres pytest flow in
+[`docs/backend-development.md#verification`](docs/backend-development.md#verification).
 
 Run the CLI from source:
 

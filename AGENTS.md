@@ -124,11 +124,13 @@ Workspace checks:
 
 ```bash
 bun run typecheck
-bun run test
+bun run test  # Docker-backed clean runner
 bun run check
 ```
 
-Done: all three commands exit 0 and do not modify the worktree.
+Done: all three commands exit 0 and do not modify the worktree. `bun run test`
+copies the repo into an isolated container workspace with a fake `HOME`; use
+`bun run test:local` only for opt-in host-local development loops.
 
 Backend checks:
 

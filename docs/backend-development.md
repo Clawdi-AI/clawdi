@@ -22,6 +22,22 @@ The backend process runs on the host for reload speed.
 
 ## Verification
 
+The clean default backend test path is the Docker runner from the repository
+root:
+
+```bash
+scripts/test.sh backend
+```
+
+That command bind-mounts the host checkout read-only, copies it into an
+isolated container workspace, runs `uv sync` inside the container, starts a
+throwaway `pgvector/pgvector:pg16` Postgres service, applies Alembic migrations,
+and runs pytest. It also uses fake home/cache directories backed by container
+tmpfs and does not reuse the dev database.
+
+The host-local commands below are opt-in for fast backend iteration after you
+have installed dependencies locally.
+
 Run these before sending backend changes for review:
 
 ```bash
@@ -116,9 +132,12 @@ uv run python scripts/check_generated_api.py
 ```
 
 `scripts/check_generated_api.py` imports the FastAPI app, generates a temporary
-OpenAPI TypeScript client with `bunx openapi-typescript`, and diffs it against
-the committed file. Commit generated updates together with the backend schema
-change so both web and CLI callers see the same types.
+OpenAPI TypeScript client through the repo's pinned
+`scripts/openapi-typescript.sh` wrapper, and diffs it against the committed
+file. The wrapper keeps `openapi-typescript` on a compatible TypeScript 5 peer
+while the workspace can use the newer TypeScript compiler. Commit generated
+updates together with the backend schema change so both web and CLI callers see
+the same types.
 
 ## Local database inspection
 
