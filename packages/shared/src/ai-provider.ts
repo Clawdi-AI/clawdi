@@ -39,15 +39,16 @@ export interface AiProviderCapabilities {
 }
 
 export interface AiProviderModelCost {
-	input_per_million?: number;
-	output_per_million?: number;
-	cache_read_per_million?: number;
-	cache_write_per_million?: number;
+	input: number;
+	output: number;
+	cache_read?: number;
+	cache_write?: number;
 }
 
 export interface AiProviderModel {
 	id: string;
 	label?: string;
+	alias?: string;
 	api_mode?: AiProviderApiMode;
 	input_modalities?: Array<"text" | "image" | "video" | "audio">;
 	supports_vision?: boolean;
@@ -470,6 +471,25 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 				errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid ${field}.`);
 			}
 		}
+		if (model.alias !== undefined && typeof model.alias !== "string") {
+			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid alias.`);
+		}
+		if (model.cost !== undefined) {
+			if (!isRecord(model.cost)) {
+				errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid cost.`);
+			} else {
+				for (const field of ["input", "output"] as const) {
+					if (!isNonNegativeNumber(model.cost[field])) {
+						errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid cost.${field}.`);
+					}
+				}
+				for (const field of ["cache_read", "cache_write"] as const) {
+					if (model.cost[field] !== undefined && !isNonNegativeNumber(model.cost[field])) {
+						errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid cost.${field}.`);
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -479,6 +499,10 @@ function isLegacyOpenAiCodexModelRef(input: unknown): boolean {
 
 function isRecord(input: unknown): input is Record<string, unknown> {
 	return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+function isNonNegativeNumber(input: unknown): input is number {
+	return typeof input === "number" && Number.isFinite(input) && input >= 0;
 }
 
 function isHttpUrl(input: string): boolean {

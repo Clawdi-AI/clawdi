@@ -188,10 +188,20 @@ class AdminRuntimeStateResponse(BaseModel):
     generation: int
 
 
+class AdminManagedAiProviderModelCost(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    cache_read: float | None = Field(default=None, ge=0)
+    cache_write: float | None = Field(default=None, ge=0)
+
+
 class AdminManagedAiProviderModel(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
     id: str = Field(min_length=1, max_length=300)
+    alias: str | None = Field(default=None, max_length=300)
     api_mode: AdminAiProviderApiMode | None = None
     input_modalities: list[AdminAiProviderInputModality] | None = None
     supports_vision: bool | None = None
@@ -199,6 +209,7 @@ class AdminManagedAiProviderModel(BaseModel):
     supports_reasoning: bool | None = None
     context_window: int | None = Field(default=None, ge=0)
     max_tokens: int | None = Field(default=None, ge=0)
+    cost: AdminManagedAiProviderModelCost | None = None
 
 
 class AdminManagedAiProviderUpsert(BaseModel):

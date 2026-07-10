@@ -3,6 +3,7 @@ import type {
 	AiProvider as RuntimeAiProvider,
 	AiProviderAuth as RuntimeAiProviderAuth,
 	AiProviderModel as RuntimeAiProviderModel,
+	AiProviderModelCost as RuntimeAiProviderModelCost,
 } from "@clawdi/shared";
 import { validateAiProviderCatalog } from "@clawdi/shared";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -86,6 +87,7 @@ function toRuntimeModels(models: AiProvider["models"]): RuntimeAiProviderModel[]
 	return models.map((model) => {
 		const runtimeModel: RuntimeAiProviderModel = { id: model.id };
 		if (model.label) runtimeModel.label = model.label;
+		if (model.alias) runtimeModel.alias = model.alias;
 		if (model.api_mode) runtimeModel.api_mode = model.api_mode;
 		if (model.input_modalities) runtimeModel.input_modalities = model.input_modalities;
 		if (model.supports_reasoning !== null && model.supports_reasoning !== undefined) {
@@ -97,10 +99,28 @@ function toRuntimeModels(models: AiProvider["models"]): RuntimeAiProviderModel[]
 		if (model.max_tokens !== null && model.max_tokens !== undefined) {
 			runtimeModel.max_tokens = model.max_tokens;
 		}
-		if (model.cost) runtimeModel.cost = model.cost;
+		const cost = toRuntimeModelCost(model.cost);
+		if (cost) runtimeModel.cost = cost;
 		if (model.capabilities) runtimeModel.capabilities = model.capabilities;
 		return runtimeModel;
 	});
+}
+
+function toRuntimeModelCost(
+	cost: NonNullable<NonNullable<AiProvider["models"]>[number]["cost"]> | null | undefined,
+): RuntimeAiProviderModelCost | undefined {
+	if (!cost) return undefined;
+	const runtimeCost: RuntimeAiProviderModelCost = {
+		input: cost.input,
+		output: cost.output,
+	};
+	if (cost.cache_read !== null && cost.cache_read !== undefined) {
+		runtimeCost.cache_read = cost.cache_read;
+	}
+	if (cost.cache_write !== null && cost.cache_write !== undefined) {
+		runtimeCost.cache_write = cost.cache_write;
+	}
+	return runtimeCost;
 }
 
 function toRuntimeAuth(auth: AiProvider["auth"]): RuntimeAiProviderAuth {

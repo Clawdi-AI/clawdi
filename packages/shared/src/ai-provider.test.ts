@@ -45,6 +45,29 @@ describe("validateAiProviderCatalog", () => {
 		);
 	});
 
+	test("accepts model alias and cost metadata", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
+					models: [
+						{
+							id: "gpt-5.5",
+							alias: "GPT-5.5",
+							cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
+						},
+					],
+				},
+			],
+		});
+
+		expect(result.valid).toBe(true);
+	});
+
 	test("rejects malformed auth profile metadata", () => {
 		expect(isProviderAuthProfileId("default")).toBe(true);
 		expect(isProviderAuthProfileId("team/default")).toBe(false);

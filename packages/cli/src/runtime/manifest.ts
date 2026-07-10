@@ -17,12 +17,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	AiProviderApiMode,
 	AiProviderAuth,
 	AiProviderCatalog,
+	AiProviderModel,
 	AiProviderType,
 } from "@clawdi/shared";
 import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
@@ -2180,10 +2181,31 @@ function buildHermesHostedCompatibilityProviderModels(
 		if (contextLength !== undefined) metadata.context_length = contextLength;
 		const supportsVision = hermesHostedSupportsVision(model);
 		if (supportsVision !== undefined) metadata.supports_vision = supportsVision;
+		const cost = hermesHostedModelCost(model.cost);
+		if (cost) Object.assign(metadata, cost);
 		if (Object.keys(metadata).length === 0) continue;
 		models[modelId] = metadata;
 	}
 	return models;
+}
+
+function hermesHostedModelCost(
+	cost: AiProviderModel["cost"] | undefined,
+): Record<string, number> | undefined {
+	if (!cost) return undefined;
+	const input = nonNegativeNumber(cost.input);
+	const output = nonNegativeNumber(cost.output);
+	if (input === undefined || output === undefined) return undefined;
+	return {
+		input_cost_per_million: input,
+		output_cost_per_million: output,
+		...(nonNegativeNumber(cost.cache_read) !== undefined
+			? { cache_read_cost_per_million: nonNegativeNumber(cost.cache_read) }
+			: {}),
+		...(nonNegativeNumber(cost.cache_write) !== undefined
+			? { cache_write_cost_per_million: nonNegativeNumber(cost.cache_write) }
+			: {}),
+	};
 }
 
 function buildHermesHostedPluginModelPatch(
@@ -2250,6 +2272,10 @@ function hermesHostedSupportsVision(
 
 function positiveInteger(value: number | undefined): number | undefined {
 	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function nonNegativeNumber(value: number | undefined): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function pythonStringLiteral(value: string): string {
@@ -3359,15 +3385,27 @@ function convergeLockOwnerPath(lockDir: string): string {
 	return join(lockDir, "owner.json");
 }
 
+function writeConvergeFileAtomic(path: string, content: string, mode: number): void {
+	const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+	let renamed = false;
+	try {
+		writeFileSync(tmp, content, { mode });
+		renameSync(tmp, path);
+		renamed = true;
+	} finally {
+		if (!renamed) rmSync(tmp, { force: true });
+	}
+}
+
 function writeConvergeLockOwner(lockDir: string): void {
-	writeFileSync(
+	writeConvergeFileAtomic(
 		convergeLockOwnerPath(lockDir),
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeConvergeLockOwner.v1",
 			pid: process.pid,
 			acquiredAt: new Date().toISOString(),
 		})}\n`,
-		{ mode: 0o600 },
+		0o600,
 	);
 }
 

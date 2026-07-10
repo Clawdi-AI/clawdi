@@ -16,6 +16,7 @@ export interface ProviderPresetCatalogEntry {
 	id: string;
 	context_window?: number;
 	alias?: string;
+	cost?: ProviderCatalogModel["cost"];
 }
 
 export interface ProviderPresetRegionVariant {
@@ -308,6 +309,8 @@ export function presetCatalogToProviderModels(preset: ProviderPreset): ProviderC
 	return preset.catalog.map((model) => ({
 		id: model.id,
 		...(model.alias ? { label: model.alias } : {}),
+		...(model.alias ? { alias: model.alias } : {}),
 		...(model.context_window !== undefined ? { context_window: model.context_window } : {}),
+		...(model.cost ? { cost: { ...model.cost } } : {}),
 	}));
 }

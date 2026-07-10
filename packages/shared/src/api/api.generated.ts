@@ -2653,6 +2653,8 @@ export interface components {
             id: string;
             /** Label */
             label?: string | null;
+            /** Alias */
+            alias?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
             /** Input Modalities */
@@ -2667,14 +2669,22 @@ export interface components {
             context_window?: number | null;
             /** Max Tokens */
             max_tokens?: number | null;
-            /** Cost */
-            cost?: {
-                [key: string]: unknown;
-            } | null;
+            cost?: components["schemas"]["AiProviderModelCost"] | null;
             /** Capabilities */
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** AiProviderModelCost */
+        AiProviderModelCost: {
+            /** Input */
+            input: number;
+            /** Output */
+            output: number;
+            /** Cache Read */
+            cache_read?: number | null;
+            /** Cache Write */
+            cache_write?: number | null;
         };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
