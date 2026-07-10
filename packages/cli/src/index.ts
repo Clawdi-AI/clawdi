@@ -743,16 +743,6 @@ runtimeCmd
 	});
 
 runtimeCmd
-	.command("mitm")
-	.description("Run hosted runtime transparent MITM engine")
-	.command("run")
-	.description("Start mitmproxy and manage runtime nftables redirect lifecycle")
-	.action(async () => {
-		const { runtimeMitmRun } = await import("./commands/runtime.js");
-		await runtimeMitmRun();
-	});
-
-runtimeCmd
 	.command("plan")
 	.description("Preview channel account, link, and runtime projection changes")
 	.option("-f, --file <path>", "Runtime manifest path", "clawdi.runtime.yaml")

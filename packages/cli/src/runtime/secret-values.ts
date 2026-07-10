@@ -1,4 +1,4 @@
-import { normalizeSecretRef } from "./hosted-mitm-profiles";
+import { normalizeSecretRef } from "./hosted-egress-profiles";
 
 const ENV_SECRET_REF_PREFIX = "env://";
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;

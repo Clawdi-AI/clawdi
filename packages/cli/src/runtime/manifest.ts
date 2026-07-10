@@ -42,7 +42,7 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
-import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-mitm-profiles";
+import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
 	buildManagedModelsEndpoint,
 	extractManagedLiveModelIds,
@@ -70,17 +70,17 @@ import {
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	runtimeBridgeSurfaceSpecsForManifest,
 } from "./bridge";
-import type { RuntimeManifestLoad } from "./manifest-source";
 import {
-	applyMitmTransparentRuntimeEnv,
-	MANAGED_MITM_PLACEHOLDER_VALUE,
+	applyEgressTransparentRuntimeEnv,
+	MANAGED_EGRESS_PLACEHOLDER_VALUE,
 	SYSTEM_CA_BUNDLE,
-} from "./mitm-env";
+} from "./egress-env";
 import {
-	buildMitmProfileBundle,
-	hasEnabledMitmProfiles,
-	writeMitmProfileBundle,
-} from "./mitm-profiles";
+	buildEgressProfileBundle,
+	hasEnabledEgressProfiles,
+	writeEgressProfileBundle,
+} from "./egress-profiles";
+import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import {
@@ -100,7 +100,10 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
-import { TRANSPARENT_MITM_TABLE, TRANSPARENT_MITM_TRANSPORT_VERSION } from "./transparent-mitm";
+import {
+	TRANSPARENT_EGRESS_TABLE,
+	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
+} from "./transparent-egress";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 export interface RuntimeConvergenceResult {
@@ -126,11 +129,11 @@ export interface RuntimeConvergenceResult {
 		systemdSystemUnits: string[];
 		systemdUserUnitRoot: string;
 		systemdUserUnits: string[];
-		mitmProfileBundle: string | null;
-		mitmSecretFile: string | null;
-		mitmproxy: RuntimeMitmproxyEnsureResult | null;
-		mitmTransparentEnv: string | null;
-		mitmAddon: string | null;
+		egressProfileBundle: string | null;
+		egressSecretFile: string | null;
+		egressEngine: RuntimeMitmproxyEnsureResult | null;
+		egressTransparentEnv: string | null;
+		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
 		instanceSemaphores: string[];
@@ -184,7 +187,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
+	writeLastGoodSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
 	return paths.manifestLastGood;
 }
 
@@ -229,14 +232,11 @@ function writeSecretValues(
 	excludedRefs: readonly string[] = [],
 ): string | null {
 	const path = paths.managedSecretFile;
-	const legacyPath = join(paths.runRoot, "mitm", "secrets.json");
 	const normalized = omitSecretRefs(secretValues, excludedRefs);
 	if (Object.keys(normalized).length === 0) {
 		rmSync(path, { force: true });
-		rmSync(legacyPath, { force: true });
 		return null;
 	}
-	rmSync(legacyPath, { force: true });
 	writePrivateFileAtomic(path, `${JSON.stringify(normalized, null, 2)}\n`, {
 		mode: 0o600,
 		dirMode: 0o700,
@@ -528,7 +528,7 @@ function writeScopedSecretValues(
 	secretValues: Record<string, string> | undefined,
 	refs: readonly string[],
 	paths: RuntimePaths,
-	owner: "root" | "runtime-user" | "mitm-user",
+	owner: "root" | "runtime-user" | "egress-user",
 ): string | null {
 	const scoped = scopedSecretValues(secretValues, refs);
 	if (Object.keys(scoped).length === 0) {
@@ -544,9 +544,9 @@ function writeScopedSecretValues(
 			makeRuntimeUserOwned(dirname(path));
 		}
 		makeRuntimeUserOwned(path);
-	} else if (owner === "mitm-user") {
+	} else if (owner === "egress-user") {
 		makeRootOwned(dirname(path));
-		makeMitmUserOwned(path);
+		makeEgressUserOwned(path);
 	} else {
 		makeRootOwned(dirname(path));
 		makeRootOwned(path);
@@ -713,8 +713,8 @@ function makeRuntimeUserOwned(path: string): void {
 	makeSystemUserOwned(path, process.env.CLAWDI_RUNTIME_USER?.trim() ?? "");
 }
 
-function makeMitmUserOwned(path: string): void {
-	makeSystemUserOwned(path, process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm");
+function makeEgressUserOwned(path: string): void {
+	makeSystemUserOwned(path, process.env.CLAWDI_EGRESS_USER?.trim() || "clawdi-egress");
 }
 
 function makeSystemUserOwned(path: string, user: string): void {
@@ -764,9 +764,9 @@ function makeRuntimeUserPrivateDir(path: string): void {
 	}
 }
 
-function makeMitmUserPrivateDir(path: string): void {
+function makeEgressUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
-	makeMitmUserOwned(path);
+	makeEgressUserOwned(path);
 	try {
 		chmodSync(path, 0o700);
 	} catch {
@@ -1346,7 +1346,7 @@ function resolveManagedGatewayPrimaryModelOverrides(
 	enabledRuntimes: readonly string[],
 	home: string,
 	workspaceRoot: string,
-	mitmSystemCaFile: string | null,
+	egressSystemCaFile: string | null,
 	fetcher: ManagedGatewayModelListFetcher,
 ): Partial<Record<string, AgentPrimaryModel>> {
 	const overrides: Partial<Record<string, AgentPrimaryModel>> = {};
@@ -1360,7 +1360,7 @@ function resolveManagedGatewayPrimaryModelOverrides(
 			fetchResult = fetcher({
 				baseUrl: target.baseUrl,
 				home,
-				mitmSystemCaFile,
+				egressSystemCaFile,
 				providerId: target.providerId,
 				runtimeName,
 				workspaceRoot,
@@ -1419,7 +1419,7 @@ function fetchManagedGatewayModelList(
 	input: ManagedGatewayModelFetchInput,
 ): ManagedGatewayModelFetchResult {
 	const endpoint = buildManagedModelsEndpoint(input.baseUrl);
-	if (!input.mitmSystemCaFile || !existsSync(input.mitmSystemCaFile)) {
+	if (!input.egressSystemCaFile || !existsSync(input.egressSystemCaFile)) {
 		return {
 			status: "failed",
 			detail: "transparent managed gateway CA bundle is unavailable",
@@ -1437,7 +1437,7 @@ function fetchManagedGatewayModelList(
 		input.home,
 		input.workspaceRoot,
 		{
-			transparentMitmCaFile: input.mitmSystemCaFile,
+			egressSystemCaFile: input.egressSystemCaFile,
 		},
 	);
 	const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
@@ -1554,7 +1554,7 @@ function hostedProviderPlaceholderEnv(
 		if (!apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider);
 		if (!isEnvKey(runtimeEnvName)) continue;
-		env[runtimeEnvName] = MANAGED_MITM_PLACEHOLDER_VALUE;
+		env[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
 	}
 	return env;
 }
@@ -1709,34 +1709,34 @@ function mergeRuntimeServiceSecretEnv(
 	return merged;
 }
 
-function mitmSecretFilePath(paths: RuntimePaths): string {
-	return join(paths.managedSecretRoot, "mitm-secrets.json");
+function egressSecretFilePath(paths: RuntimePaths): string {
+	return join(paths.managedSecretRoot, "egress-secrets.json");
 }
 
-function writeMitmSecretFile(
+function writeEgressSecretFile(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
 ): string | null {
 	return writeScopedSecretValues(
-		mitmSecretFilePath(paths),
+		egressSecretFilePath(paths),
 		secretValues,
-		mitmSecretRefs(manifest),
+		egressSecretRefs(manifest),
 		paths,
-		"mitm-user",
+		"egress-user",
 	);
 }
 
-function mitmSecretRefs(manifest: RuntimeManifest): string[] {
+function egressSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
-	collectSecretRefs(manifest.mitmProfiles, refs);
+	collectSecretRefs(manifest.egressProfiles, refs);
 	return [...refs].sort();
 }
 
-function mitmSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
+function egressSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
-	const profiles = Array.isArray(manifest.mitmProfiles?.profiles)
-		? manifest.mitmProfiles.profiles
+	const profiles = Array.isArray(manifest.egressProfiles?.profiles)
+		? manifest.egressProfiles.profiles
 		: [];
 	for (const profile of profiles) {
 		const profileRecord = recordValue(profile);
@@ -1818,7 +1818,7 @@ type HostedAiProviderProjectionInput = {
 interface ManagedGatewayModelFetchInput {
 	baseUrl: string;
 	home: string;
-	mitmSystemCaFile: string | null;
+	egressSystemCaFile: string | null;
 	providerId: string;
 	runtimeName: string;
 	workspaceRoot: string;
@@ -3228,7 +3228,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function runtimeUserCommandEnv(
 	home: string,
-	options: { transparentMitmCaFile?: string } = {},
+	options: { egressSystemCaFile?: string } = {},
 ): NodeJS.ProcessEnv {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	const uid =
@@ -3249,8 +3249,8 @@ function runtimeUserCommandEnv(
 				}
 			: {}),
 	};
-	if (options.transparentMitmCaFile) {
-		applyMitmTransparentRuntimeEnv(env, { caFile: options.transparentMitmCaFile });
+	if (options.egressSystemCaFile) {
+		applyEgressTransparentRuntimeEnv(env, { caFile: options.egressSystemCaFile });
 	}
 	return env;
 }
@@ -3305,7 +3305,7 @@ function spawnRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
-	options: { transparentMitmCaFile?: string } = {},
+	options: { egressSystemCaFile?: string } = {},
 ): ReturnType<typeof spawnSync> {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -3338,7 +3338,7 @@ function runRuntimeUserCommand(
 	stdin: string,
 	home: string,
 	cwd: string,
-	options: { transparentMitmCaFile?: string } = {},
+	options: { egressSystemCaFile?: string } = {},
 ): void {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -3368,94 +3368,95 @@ function runRuntimeUserCommand(
 	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
 }
 
-function clearMitmProfileBundle(paths: RuntimePaths): null {
-	rmSync(paths.mitmProfileBundle, { force: true });
+function clearEgressProfileBundle(paths: RuntimePaths): null {
+	rmSync(paths.egressProfileBundle, { force: true });
 	return null;
 }
 
-function writeMitmproxyStatus(
+function writeEgressEngineStatus(
 	result: RuntimeMitmproxyEnsureResult | null,
 	paths: RuntimePaths,
 ): RuntimeMitmproxyEnsureResult | null {
 	if (!result) {
-		rmSync(paths.mitmproxyStatus, { force: true });
+		rmSync(paths.egressEngineStatus, { force: true });
 		return null;
 	}
-	writeJsonFile(paths.mitmproxyStatus, result);
-	makeRootOwned(dirname(paths.mitmproxyStatus));
-	makeRootOwned(paths.mitmproxyStatus);
+	writeJsonFile(paths.egressEngineStatus, result);
+	makeRootOwned(dirname(paths.egressEngineStatus));
+	makeRootOwned(paths.egressEngineStatus);
 	return result;
 }
 
-function writeMitmproxyAddon(paths: RuntimePaths): { path: string; sha256: string } {
-	const source = resolvePackagedMitmproxyAddon();
+function writeEgressAddon(paths: RuntimePaths): { path: string; sha256: string } {
+	const source = resolvePackagedEgressAddon();
 	const content = readFileSync(source, "utf-8");
-	writePrivateFileAtomic(paths.mitmAddon, content, { mode: 0o644, dirMode: 0o755 });
-	makeRootOwned(dirname(paths.mitmAddon));
-	makeRootOwned(paths.mitmAddon);
-	return { path: paths.mitmAddon, sha256: sha256String(content) };
+	writePrivateFileAtomic(paths.egressAddon, content, { mode: 0o644, dirMode: 0o755 });
+	makeRootOwned(dirname(paths.egressAddon));
+	makeRootOwned(paths.egressAddon);
+	return { path: paths.egressAddon, sha256: sha256String(content) };
 }
 
-function clearMitmproxyAddon(paths: RuntimePaths): null {
-	rmSync(paths.mitmAddon, { force: true });
+function clearEgressAddon(paths: RuntimePaths): null {
+	rmSync(paths.egressAddon, { force: true });
 	return null;
 }
 
-function resolvePackagedMitmproxyAddon(): string {
+function resolvePackagedEgressAddon(): string {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const candidates = [
-		resolve(here, "../../mitmproxy-addon/clawdi_mitm_addon.py"),
-		resolve(here, "../mitmproxy-addon/clawdi_mitm_addon.py"),
-		resolve(here, "mitmproxy-addon/clawdi_mitm_addon.py"),
+		resolve(here, "../../egress-addon/clawdi_egress_addon.py"),
+		resolve(here, "../egress-addon/clawdi_egress_addon.py"),
+		resolve(here, "egress-addon/clawdi_egress_addon.py"),
 	];
 	for (const candidate of candidates) {
 		if (existsSync(candidate)) return candidate;
 	}
-	throw new Error("packaged mitmproxy addon is missing");
+	throw new Error("packaged egress addon is missing");
 }
 
-function writeTransparentMitmEnvFile(input: {
-	program: RuntimeMitmSystemdProgram | null;
+function writeTransparentEgressEnvFile(input: {
+	program: RuntimeEgressSystemdProgram | null;
 	paths: RuntimePaths;
 	runtimeUser: string;
 	runtimeUid: number;
-	mitmUser: string;
-	mitmUid: number;
+	egressUser: string;
+	egressUid: number;
 }): string | null {
 	if (!input.program) {
-		rmSync(input.paths.mitmTransparentEnv, { force: true });
+		rmSync(input.paths.egressTransparentEnv, { force: true });
 		return null;
 	}
 	const env: Record<string, string> = {
 		CLAWDI_RUNTIME_USER: input.runtimeUser,
 		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
-		CLAWDI_MITM_USER: input.mitmUser,
-		CLAWDI_MITM_UID: String(input.mitmUid),
-		CLAWDI_MITM_TRANSPARENT_PORT: String(input.program.transparentPort),
-		CLAWDI_MITM_NFT_TABLE: TRANSPARENT_MITM_TABLE,
-		CLAWDI_MITM_PROFILE_BUNDLE: input.program.profileBundlePath,
-		CLAWDI_MITM_SECRET_FILE: input.program.secretFilePath ?? "",
-		CLAWDI_MITM_CA_DIR: input.paths.mitmCaDir,
-		CLAWDI_MITM_CA_CERT: input.paths.mitmCaCert,
-		CLAWDI_MITM_SYSTEM_CA_BUNDLE: input.program.systemCaBundle,
-		CLAWDI_MITM_TRANSPORT_VERSION: TRANSPARENT_MITM_TRANSPORT_VERSION,
-		CLAWDI_MITMPROXY_VERSION: input.program.mitmproxy.version,
-		CLAWDI_MITMPROXY_URL: input.program.mitmproxy.url,
-		CLAWDI_MITMPROXY_SHA256: input.program.mitmproxy.sha256,
-		CLAWDI_MITMPROXY_BINARY_PATH: input.program.mitmproxy.binaryPath,
-		CLAWDI_MITMPROXY_ADDON_PATH: input.program.addonPath,
-		CLAWDI_MITMPROXY_ADDON_SHA256: input.program.addonSha256,
+		CLAWDI_EGRESS_USER: input.egressUser,
+		CLAWDI_EGRESS_UID: String(input.egressUid),
+		CLAWDI_EGRESS_TRANSPARENT_PORT: String(input.program.transparentPort),
+		CLAWDI_EGRESS_NFT_TABLE: TRANSPARENT_EGRESS_TABLE,
+		CLAWDI_EGRESS_PROFILE_BUNDLE: input.program.profileBundlePath,
+		CLAWDI_EGRESS_SECRET_FILE: input.program.secretFilePath ?? "",
+		CLAWDI_EGRESS_CA_DIR: input.paths.egressCaDir,
+		CLAWDI_EGRESS_CA_CERT: input.paths.egressCaCert,
+		CLAWDI_EGRESS_SYSTEM_CA_BUNDLE: input.program.systemCaBundle,
+		CLAWDI_EGRESS_TRANSPORT_VERSION: TRANSPARENT_EGRESS_TRANSPORT_VERSION,
+		CLAWDI_EGRESS_ENGINE_TYPE: "mitmproxy",
+		CLAWDI_EGRESS_ENGINE_VERSION: input.program.engine.version,
+		CLAWDI_EGRESS_ENGINE_URL: input.program.engine.url,
+		CLAWDI_EGRESS_ENGINE_SHA256: input.program.engine.sha256,
+		CLAWDI_EGRESS_ENGINE_BINARY_PATH: input.program.engine.binaryPath,
+		CLAWDI_EGRESS_ADDON_PATH: input.program.addonPath,
+		CLAWDI_EGRESS_ADDON_SHA256: input.program.addonSha256,
 	};
 	const lines = Object.entries(env)
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([key, value]) => `${key}=${systemdEnvironmentFileQuote(value)}`);
-	writePrivateFileAtomic(input.paths.mitmTransparentEnv, `${lines.join("\n")}\n`, {
+	writePrivateFileAtomic(input.paths.egressTransparentEnv, `${lines.join("\n")}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
 	});
-	makeRootOwned(dirname(input.paths.mitmTransparentEnv));
-	makeRootOwned(input.paths.mitmTransparentEnv);
-	return input.paths.mitmTransparentEnv;
+	makeRootOwned(dirname(input.paths.egressTransparentEnv));
+	makeRootOwned(input.paths.egressTransparentEnv);
+	return input.paths.egressTransparentEnv;
 }
 
 function sha256String(value: string): string {
@@ -3764,7 +3765,7 @@ export function runtimeProgramRevision(
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
-		mitmProfiles: manifest.mitmProfiles ?? null,
+		egressProfiles: manifest.egressProfiles ?? null,
 		projection: manifest.projection ?? null,
 		providerProjectionRevision,
 		runtime: manifest.runtimes[runtime] ?? null,
@@ -3803,37 +3804,37 @@ interface RuntimeSystemdUserProgram {
 	env: Record<string, string>;
 }
 
-interface RuntimeMitmSystemdProgram {
+interface RuntimeEgressSystemdProgram {
 	profileBundlePath: string;
 	envFilePath: string;
 	transparentPort: number;
 	addonPath: string;
 	addonSha256: string;
-	mitmproxy: Extract<RuntimeMitmproxyEnsureResult, { status: "ready" }>;
+	engine: Extract<RuntimeMitmproxyEnsureResult, { status: "ready" }>;
 	systemCaBundle: string;
 	secretFilePath: string | null;
 }
 
-function runtimeMitmSystemdProgram(
+function runtimeEgressSystemdProgram(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	profileBundlePath: string | null,
 	secretFilePath: string | null,
-	mitmproxy: RuntimeMitmproxyEnsureResult | null,
+	engine: RuntimeMitmproxyEnsureResult | null,
 	addon: { path: string; sha256: string } | null,
-): RuntimeMitmSystemdProgram | null {
+): RuntimeEgressSystemdProgram | null {
 	if (!profileBundlePath) return null;
-	if (mitmproxy?.status !== "ready") return null;
+	if (engine?.status !== "ready") return null;
 	if (!addon) return null;
 	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
 	return {
 		profileBundlePath,
-		envFilePath: paths.mitmTransparentEnv,
+		envFilePath: paths.egressTransparentEnv,
 		transparentPort: port,
 		addonPath: addon.path,
 		addonSha256: addon.sha256,
-		mitmproxy,
-		systemCaBundle: paths.mitmSystemCaFile,
+		engine,
+		systemCaBundle: paths.egressSystemCaFile,
 		secretFilePath,
 	};
 }
@@ -3842,7 +3843,7 @@ function buildRuntimeSystemdUserProgram(input: {
 	config: RuntimeRunConfig;
 	paths: RuntimePaths;
 	secretValues: Record<string, string> | undefined;
-	mitm: RuntimeMitmSystemdProgram | null;
+	egress: RuntimeEgressSystemdProgram | null;
 }): RuntimeSystemdUserProgram | null {
 	if (!input.config.enabled) return null;
 
@@ -3862,8 +3863,8 @@ function buildRuntimeSystemdUserProgram(input: {
 		}
 		env[envName] = value;
 	}
-	if (input.mitm) {
-		applyMitmTransparentRuntimeEnv(env, { caFile: input.mitm.systemCaBundle });
+	if (input.egress) {
+		applyEgressTransparentRuntimeEnv(env, { caFile: input.egress.systemCaBundle });
 	}
 
 	const command =
@@ -3892,29 +3893,25 @@ function hashToUInt16(input: string): number {
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	egressProgram: RuntimeEgressSystemdProgram | null = null,
 ): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
 		bridgeTokenPresent: Boolean(secretValues),
-		runtimeSidecar: "hosted-runtime-sidecar-bridge-v2",
-	});
-}
-
-function runtimeMitmProgramRevision(
-	manifest: RuntimeManifest,
-	mitmProgram: RuntimeMitmSystemdProgram,
-): string {
-	return revisionHash({
-		runtimeMitm: "hosted-runtime-mitm-mitmdump-v1",
+		runtimeSidecar: "hosted-runtime-sidecar-v3",
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
-		transparentPort: mitmProgram.transparentPort,
-		profileBundlePath: mitmProgram.profileBundlePath,
-		secretFilePath: mitmProgram.secretFilePath,
-		mitmproxy: mitmProgram.mitmproxy,
-		addonSha256: mitmProgram.addonSha256,
-		transport: TRANSPARENT_MITM_TRANSPORT_VERSION,
+		egress: egressProgram
+			? {
+					transparentPort: egressProgram.transparentPort,
+					profileBundlePath: egressProgram.profileBundlePath,
+					secretFilePath: egressProgram.secretFilePath,
+					engine: egressProgram.engine,
+					addonSha256: egressProgram.addonSha256,
+					transport: TRANSPARENT_EGRESS_TRANSPORT_VERSION,
+				}
+			: null,
 	});
 }
 
@@ -3926,12 +3923,12 @@ function runtimeUserUid(runtimeUser: string): number {
 	return systemUserUid(runtimeUser, runtimeUser === "clawdi" ? 10_001 : null);
 }
 
-function runtimeMitmUid(mitmUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_MITM_UID?.trim() ?? "", 10);
+function runtimeEgressUid(egressUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_EGRESS_UID?.trim() ?? "", 10);
 	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
 		return explicit;
 	}
-	return systemUserUid(mitmUser, mitmUser === "clawdi-mitm" ? 10_002 : null);
+	return systemUserUid(egressUser, egressUser === "clawdi-egress" ? 10_002 : null);
 }
 
 function systemUserUid(user: string, fallback: number | null): number {
@@ -4449,8 +4446,6 @@ function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string
 	const managed = new Set([
 		"clawdi-runtime-watch.service",
 		"clawdi-daemon.service",
-		"clawdi-runtime-egress.service",
-		"clawdi-runtime-mitm.service",
 		"clawdi-runtime-sidecar.service",
 	]);
 	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
@@ -4485,7 +4480,7 @@ function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): s
 
 function writeSystemdUnits(
 	runtimePrograms: RuntimeSystemdUserProgram[],
-	mitmProgram: RuntimeMitmSystemdProgram | null,
+	egressProgram: RuntimeEgressSystemdProgram | null,
 	manifest: RuntimeManifest,
 	sourcePath: string,
 	paths: RuntimePaths,
@@ -4516,12 +4511,13 @@ function writeSystemdUnits(
 	};
 	const systemUnits: string[] = [];
 	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
-	const shouldRunMitm = mitmProgram !== null && runtimePrograms.length > 0;
+	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
+	const shouldRunSidecar = shouldRunBridge || shouldRunEgress;
 	const shouldRunDaemon =
 		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const serviceInstallErrors: string[] = [];
-	const runtimeUid = shouldRunMitm ? runtimeUserUid(runtimeUser) : null;
+	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -4562,29 +4558,7 @@ function writeSystemdUnits(
 		);
 	}
 
-	if (shouldRunMitm && mitmProgram) {
-		systemUnits.push(
-			writeSystemdSystemUnit({
-				paths,
-				name: "clawdi-runtime-mitm",
-				description: "Clawdi hosted runtime transparent MITM",
-				command: "clawdi",
-				args: ["runtime", "mitm", "run"],
-				cwd: workspaceRoot,
-				env: {
-					...commonEnvironment,
-					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_MITM_ENV_FILE: mitmProgram.envFilePath,
-					CLAWDI_RUNTIME_REV: runtimeMitmProgramRevision(manifest, mitmProgram),
-				},
-				serviceType: "notify",
-				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
-				extraServiceLines: ["NotifyAccess=main"],
-			}),
-		);
-	}
-
-	if (shouldRunBridge) {
+	if (shouldRunSidecar) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -4596,11 +4570,13 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
+					CLAWDI_EGRESS_ENV_FILE: shouldRunEgress && egressProgram ? egressProgram.envFilePath : "",
 					[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
 					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
-					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues),
+					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(manifest, secretValues, egressProgram),
 				},
 				serviceType: "notify",
+				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
 				extraServiceLines: ["NotifyAccess=main"],
 			}),
 		);
@@ -4745,11 +4721,11 @@ export function convergeRuntimeManifest(
 	mkdirSync(semRoot, { recursive: true });
 	mkdirSync(paths.managedSecretRoot, { recursive: true });
 	makeManagedSecretRoot(paths.managedSecretRoot);
-	makeRootReadableDir(paths.mitmProfileRoot);
-	makeRootReadableDir(paths.mitmRoot);
-	makeMitmUserPrivateDir(paths.mitmCaDir);
-	makeRootReadableDir(dirname(paths.mitmSystemCaFile));
-	makeRuntimeUserPrivateDir(paths.mitmScratchRoot);
+	makeRootReadableDir(paths.egressProfileRoot);
+	makeRootReadableDir(paths.egressRoot);
+	makeEgressUserPrivateDir(paths.egressCaDir);
+	makeRootReadableDir(dirname(paths.egressSystemCaFile));
+	makeRuntimeUserPrivateDir(paths.egressScratchRoot);
 
 	let manifestLastGood: string | null = null;
 	writeJsonFile(paths.managedConfig, {
@@ -4760,7 +4736,7 @@ export function convergeRuntimeManifest(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		controlPlane: manifest.controlPlane,
-		mitmproxy: manifest.mitmproxy ?? null,
+		egressEngine: manifest.egressEngine ?? null,
 		auth: {
 			source: "runtime-instance-data",
 			token: "<redacted>",
@@ -4802,22 +4778,22 @@ export function convergeRuntimeManifest(
 		token: "<redacted>",
 	});
 
-	const mitmProfileBundle = buildMitmProfileBundle({
+	const egressProfileBundle = buildEgressProfileBundle({
 		generatedAt,
 		generation: manifest.generation,
 		instanceId: manifest.instanceId,
-		profiles: manifest.mitmProfiles,
+		profiles: manifest.egressProfiles,
 	});
-	const mitmProfileBundlePath = hasEnabledMitmProfiles(mitmProfileBundle)
-		? writeMitmProfileBundle(mitmProfileBundle, paths)
-		: clearMitmProfileBundle(paths);
-	const mitmproxy = writeMitmproxyStatus(
-		mitmProfileBundlePath ? ensureRuntimeMitmproxy(manifest.mitmproxy, paths) : null,
+	const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
+		? writeEgressProfileBundle(egressProfileBundle, paths)
+		: clearEgressProfileBundle(paths);
+	const egressEngine = writeEgressEngineStatus(
+		egressProfileBundlePath ? ensureRuntimeMitmproxy(manifest.egressEngine, paths) : null,
 		paths,
 	);
-	const mitmAddon = mitmProfileBundlePath ? writeMitmproxyAddon(paths) : clearMitmproxyAddon(paths);
+	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(secretValues, paths, mitmSidecarOnlySecretRefs(manifest));
+	writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
 	try {
 		materializeHostedChannelCredentials(manifest, secretValues);
 	} catch (error) {
@@ -4827,26 +4803,26 @@ export function convergeRuntimeManifest(
 			}`,
 		);
 	}
-	const mitmSecretFile = writeMitmSecretFile(manifest, secretValues, paths);
+	const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const mitmUser = process.env.CLAWDI_MITM_USER?.trim() || "clawdi-mitm";
-	const mitmSystemdProgram = runtimeMitmSystemdProgram(
+	const egressUser = process.env.CLAWDI_EGRESS_USER?.trim() || "clawdi-egress";
+	const egressSystemdProgram = runtimeEgressSystemdProgram(
 		manifest,
 		paths,
-		mitmProfileBundlePath,
-		mitmSecretFile,
-		mitmproxy,
-		mitmAddon,
+		egressProfileBundlePath,
+		egressSecretFile,
+		egressEngine,
+		egressAddon,
 	);
-	const runtimeUid = mitmSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
-	const mitmUid = mitmSystemdProgram ? runtimeMitmUid(mitmUser) : 0;
-	const mitmTransparentEnv = writeTransparentMitmEnvFile({
-		program: mitmSystemdProgram,
+	const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
+	const egressUid = egressSystemdProgram ? runtimeEgressUid(egressUser) : 0;
+	const egressTransparentEnv = writeTransparentEgressEnvFile({
+		program: egressSystemdProgram,
 		paths,
 		runtimeUser,
 		runtimeUid,
-		mitmUser,
-		mitmUid,
+		egressUser,
+		egressUid,
 	});
 	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
@@ -4857,7 +4833,7 @@ export function convergeRuntimeManifest(
 		enabledRuntimes,
 		paths.userHome,
 		workspaceRoot,
-		mitmSystemdProgram?.systemCaBundle ?? null,
+		egressSystemdProgram?.systemCaBundle ?? null,
 		opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
 	);
 	try {
@@ -4975,7 +4951,7 @@ export function convergeRuntimeManifest(
 			commandPath: observation.commandPath,
 			appRoot: observation.appRoot,
 			workspaceRoot,
-			mitmProfileBundlePath,
+			egressProfileBundlePath,
 			settings: runtimeRunSettings,
 			secretFilePath: runtimeProviderSecretFile,
 			secretEnv,
@@ -4988,7 +4964,7 @@ export function convergeRuntimeManifest(
 				config: runConfig,
 				paths,
 				secretValues,
-				mitm: mitmSystemdProgram,
+				egress: egressSystemdProgram,
 			});
 			if (program) {
 				runtimeSystemdUserPrograms.push(program);
@@ -5026,7 +5002,7 @@ export function convergeRuntimeManifest(
 				config: serviceRunConfig,
 				paths,
 				secretValues,
-				mitm: mitmSystemdProgram,
+				egress: egressSystemdProgram,
 			});
 			if (program) {
 				runtimeSystemdUserPrograms.push(program);
@@ -5045,7 +5021,7 @@ export function convergeRuntimeManifest(
 	projections.push(mcpProjection);
 	const systemdUnits = writeSystemdUnits(
 		runtimeSystemdUserPrograms,
-		mitmSystemdProgram,
+		egressSystemdProgram,
 		manifest,
 		load.sourcePath,
 		paths,
@@ -5092,11 +5068,11 @@ export function convergeRuntimeManifest(
 			systemdSystemUnits: systemdUnits.systemUnits,
 			systemdUserUnitRoot: paths.systemdUserRoot,
 			systemdUserUnits: systemdUnits.userUnits,
-			mitmProfileBundle: mitmProfileBundlePath,
-			mitmSecretFile,
-			mitmproxy,
-			mitmTransparentEnv,
-			mitmAddon: mitmAddon?.path ?? null,
+			egressProfileBundle: egressProfileBundlePath,
+			egressSecretFile,
+			egressEngine,
+			egressTransparentEnv,
+			egressAddon: egressAddon?.path ?? null,
 			liveSyncEnvironments,
 			daemonAuthTokenFile,
 			instanceSemaphores,

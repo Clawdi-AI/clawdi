@@ -19,11 +19,8 @@ for (const field of dependencyFields) {
 }
 
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
-if (packageFiles.includes("clawdi-mitm-sidecar")) {
-	problems.push('package.json files must not include the removed "clawdi-mitm-sidecar" bundle');
-}
-if (!packageFiles.includes("mitmproxy-addon")) {
-	problems.push('package.json files must include "mitmproxy-addon"');
+if (!packageFiles.includes("egress-addon")) {
+	problems.push('package.json files must include "egress-addon"');
 }
 
 if (problems.length > 0) {

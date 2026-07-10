@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import type { EgressProfileInputBundle } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeChannelAccount,
@@ -7,10 +8,9 @@ import type {
 	RuntimeChannelsLoad,
 	RuntimeManifestLoad,
 } from "./manifest-source";
-import type { MitmProfileInputBundle } from "./mitm-profiles";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
-type MitmProfile = MitmProfileInputBundle["profiles"][number];
+type EgressProfile = EgressProfileInputBundle["profiles"][number];
 type ChannelProvider = RuntimeChannelAccount["provider"];
 
 const HERMES_MANAGED_CHANNEL_ENV = [
@@ -120,7 +120,7 @@ function applyRuntimeChannelProjection(
 	manifest: RuntimeManifest,
 	links: ManagedChannelLink[],
 ): RuntimeManifest {
-	const managedProfiles = buildManagedChannelMitmProfiles(links, manifest.controlPlane.apiUrl);
+	const managedProfiles = buildManagedChannelEgressProfiles(links, manifest.controlPlane.apiUrl);
 	const runtimeHome = runtimeProjectionHome(manifest);
 	const channelCredentials = buildRuntimeChannelCredentialsProjection(
 		links,
@@ -134,7 +134,7 @@ function applyRuntimeChannelProjection(
 			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl, runtimeHome),
 			channelCredentials,
 		},
-		mitmProfiles: mergeMitmProfiles(manifest.mitmProfiles, managedProfiles),
+		egressProfiles: mergeEgressProfiles(manifest.egressProfiles, managedProfiles),
 	};
 	return applyHermesRuntimeChannelSettings(
 		applyOpenClawRuntimeChannelSettings(projected, links),
@@ -374,12 +374,12 @@ function isAccountChannel(
 	);
 }
 
-function buildManagedChannelMitmProfiles(
+function buildManagedChannelEgressProfiles(
 	links: ManagedChannelLink[],
 	cloudApiUrl: string,
-): MitmProfile[] {
+): EgressProfile[] {
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
-	const profiles: MitmProfile[] = [];
+	const profiles: EgressProfile[] = [];
 	for (const link of links) {
 		const idSuffix = `${link.account.provider}-${link.accountKey}`;
 		if (link.account.provider === "telegram") {
@@ -506,10 +506,10 @@ function buildManagedChannelMitmProfiles(
 	return profiles;
 }
 
-function mergeMitmProfiles(
-	existing: MitmProfileInputBundle | undefined,
-	managed: MitmProfile[],
-): MitmProfileInputBundle {
+function mergeEgressProfiles(
+	existing: EgressProfileInputBundle | undefined,
+	managed: EgressProfile[],
+): EgressProfileInputBundle {
 	const profiles = [...(existing?.profiles ?? [])];
 	const managedIds = new Set(managed.map((profile) => profile.id));
 	return {
@@ -522,7 +522,7 @@ function mergeMitmProfiles(
 	};
 }
 
-function isChannelProjectionProfile(profile: MitmProfile): boolean {
+function isChannelProjectionProfile(profile: EgressProfile): boolean {
 	return (
 		profile.owner === "clawdi-native-channels" ||
 		profile.id === "direct-provider-passthrough" ||

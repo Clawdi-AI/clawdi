@@ -20,6 +20,7 @@ import {
 } from "./manifest";
 import {
 	hostedRuntimeManifestSchema,
+	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
@@ -71,7 +72,7 @@ function baseManifest(
 	overrides: Partial<RuntimeManifest> = {},
 ): RuntimeManifest {
 	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		schemaVersion: "clawdi.runtimeDesiredState.v2",
 		deploymentId: "hdep_reconcile",
 		environmentId: "env_reconcile",
 		instanceId: "hri_reconcile",
@@ -185,7 +186,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					enabled: true,
 					agents: [{ agentType: "openclaw", environmentId: "env_normalize" }],
 				},
-				mitmProfiles: {
+				egressProfiles: {
 					profiles: [
 						{
 							id: "api-proxy",
@@ -224,7 +225,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const normalized = normalizeManifestPayload(hostedResponse);
 		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
 		expect(normalized.manifest).toEqual(hostedManifestToRuntimeManifest(hostedManifest));
-		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
+		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v2");
 		expect(normalized.manifest.runtime).toBe("openclaw");
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
@@ -248,7 +249,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 		expect(normalized.manifest.bridge?.surfaces).toEqual([]);
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
-		expect(normalized.manifest.mitmProfiles?.profiles.map((profile) => profile.id)).toContain(
+		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
 		);
 		expect(normalized.manifest.liveSync).toEqual(hostedResponse.manifest.liveSync);
@@ -326,6 +327,55 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(parsed).not.toHaveProperty("futureTopLevelField");
 		expect(parsed.runtimes.openclaw).not.toHaveProperty("futureRuntimeField");
 		expect(parsed.runtimes.openclaw.run).not.toHaveProperty("futureRunField");
+	});
+
+	test("rejects legacy egress field names in internal and hosted manifests", () => {
+		const internalManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
+			deploymentId: "hdep_legacy_egress",
+			environmentId: "env_legacy_egress",
+			instanceId: "hri_legacy_egress",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			controlPlane: {
+				apiUrl: "https://cloud-api.example.test",
+			},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+				},
+			},
+		};
+		const hostedManifest = {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "openclaw",
+			deploymentId: "hdep_legacy_egress",
+			environmentId: "env_legacy_egress",
+			instanceId: "hri_legacy_egress",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			controlPlane: {
+				cloudApiUrl: "https://cloud-api.example.test",
+			},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+				},
+			},
+		};
+
+		expect(() => manifestSchema.parse({ ...internalManifest, mitmproxy: {} })).toThrow(
+			/Unrecognized key.*mitmproxy/,
+		);
+		expect(() => manifestSchema.parse({ ...internalManifest, mitmProfiles: {} })).toThrow(
+			/Unrecognized key.*mitmProfiles/,
+		);
+		expect(() => hostedRuntimeManifestSchema.parse({ ...hostedManifest, mitmproxy: {} })).toThrow(
+			/Unrecognized key.*mitmproxy/,
+		);
+		expect(() =>
+			hostedRuntimeManifestSchema.parse({ ...hostedManifest, mitmProfiles: {} }),
+		).toThrow(/Unrecognized key.*mitmProfiles/);
 	});
 
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
@@ -450,7 +500,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							type: "custom_openai_compatible",
 							// managed_by:"clawdi" marks this as a Clawdi-managed provider
 							// (cloud-api emits it as `n:"clawdi"`), which routes the key
-							// through the MITM placeholder path — the agent env gets the
+							// through the egress placeholder path — the agent env gets the
 							// placeholder while the real key stays out of its env.
 							managed_by: "clawdi",
 							baseUrl: "https://api.example.test/v1",
@@ -476,13 +526,13 @@ describe("runtime manifest reconciliation invariants", () => {
 			env?: Record<string, string>;
 		};
 		expect(runConfig.env?.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
-		expect(runConfig.env?.OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(runConfig.env?.OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
 		const envFile = readFileSync(
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
 		expect(envFile).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
-		expect(envFile).toContain('OPENAI_API_KEY="clawdi-mitm-placeholder"');
+		expect(envFile).toContain('OPENAI_API_KEY="clawdi-egress-placeholder"');
 		expect(envFile).not.toContain("sk-managed");
 	});
 
@@ -646,7 +696,9 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
 		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).not.toBe(
+			sidecarRevision,
+		);
 	});
 
 	test("advances last-good manifest only after a clean converge", () => {

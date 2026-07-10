@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { normalizeSecretRef } from "./hosted-mitm-profiles";
+import { normalizeSecretRef } from "./hosted-egress-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { readRuntimeBootStatus } from "./state";
 import {
@@ -176,10 +176,10 @@ function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
 	const providers = recordValue(projection?.providers);
 	if (!providers || Object.keys(providers).length === 0) return null;
 
-	const secrets =
-		readJsonRecord(paths.managedSecretFile) ??
-		readJsonRecord(join(paths.runRoot, "mitm", "secrets.json")) ??
-		{};
+	const secrets = {
+		...(readJsonRecord(paths.managedSecretFile) ?? {}),
+		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
+	};
 	const observed: JsonRecord = {};
 	for (const providerId of Object.keys(providers).sort()) {
 		const provider = recordValue(providers[providerId]);

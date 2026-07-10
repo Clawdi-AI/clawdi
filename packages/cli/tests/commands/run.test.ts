@@ -107,9 +107,9 @@ describe("run command project folder selection", () => {
 					HOME: "/home/clawdi",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/mitm-secrets.json",
+					CLAWDI_EGRESS_SECRET_FILE: "/run/clawdi/secrets/egress-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
-					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-mitm-placeholder",
+					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-egress-placeholder",
 				},
 				configPath: "/var/lib/clawdi/config/run/openclaw.json",
 			},
@@ -122,9 +122,9 @@ describe("run command project folder selection", () => {
 		expect(child.env.LOGNAME).toBe("clawdi");
 		expect(child.env.HOME).toBe("/home/clawdi");
 		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
-		expect(child.env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
+		expect(child.env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-egress-placeholder");
 		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
-		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(child.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 	});
 
 	it("preserves runtime env when falling back to runuser", () => {
@@ -140,9 +140,9 @@ describe("run command project folder selection", () => {
 					PATH: "/home/clawdi/.local/bin:/usr/bin",
 					CLAWDI_RUNTIME_USER: "clawdi",
 					CLAWDI_AUTH_TOKEN: "runtime-auth-token",
-					CLAWDI_MITM_SECRET_FILE: "/run/clawdi/secrets/mitm-secrets.json",
+					CLAWDI_EGRESS_SECRET_FILE: "/run/clawdi/secrets/egress-secrets.json",
 					HTTPS_PROXY: "http://127.0.0.1:19090",
-					SSL_CERT_FILE: "/run/clawdi/mitm-scratch/sidecars/test/ca.pem",
+					SSL_CERT_FILE: "/run/clawdi/egress-scratch/sidecars/test/ca.pem",
 				},
 				configPath: "/var/lib/clawdi/config/run/hermes.json",
 			},
@@ -162,9 +162,9 @@ describe("run command project folder selection", () => {
 		expect(child.env.LOGNAME).toBe("clawdi");
 		expect(child.env.PATH).toBe("/home/clawdi/.local/bin:/usr/bin");
 		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
-		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/mitm-scratch/sidecars/test/ca.pem");
+		expect(child.env.SSL_CERT_FILE).toBe("/run/clawdi/egress-scratch/sidecars/test/ca.pem");
 		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
-		expect(child.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(child.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 	});
 
 	it("fails closed when root-hosted runtime cannot drop privileges", () => {
@@ -355,7 +355,7 @@ describe("run command project folder selection", () => {
 				command: "openclaw",
 				defaultArgs: ["gateway", "run"],
 				env: {
-					CLAWDI_MANAGED_OPENAI_API_KEY: "clawdi-mitm-placeholder",
+					CLAWDI_MANAGED_OPENAI_API_KEY: "clawdi-egress-placeholder",
 				},
 				secretEnv: {},
 				secretFilePath: null,
@@ -363,7 +363,7 @@ describe("run command project folder selection", () => {
 				cwd: projectRoot,
 				commandPath: openclawPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
-				mitmProfileBundlePath: null,
+				egressProfileBundlePath: null,
 			}),
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
@@ -377,9 +377,9 @@ describe("run command project folder selection", () => {
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].args).toEqual(["gateway", "run"]);
-		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-mitm-placeholder");
+		expect(calls[0].env.CLAWDI_MANAGED_OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 	});
 
 	it("does not prepend managed runtime default args to hosted runtime subcommands", async () => {
@@ -408,7 +408,7 @@ describe("run command project folder selection", () => {
 				cwd: projectRoot,
 				commandPath: openclawPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".openclaw"),
-				mitmProfileBundlePath: null,
+				egressProfileBundlePath: null,
 			}),
 		);
 		writeFileSync(openclawPath, "#!/usr/bin/env sh\n");
@@ -513,17 +513,17 @@ describe("run command project folder selection", () => {
 		expect(process.exitCode).toBe(143);
 	});
 
-	it("applies transparent MITM CA env for hosted runtime commands with profile bundles", async () => {
+	it("applies transparent egress CA env for hosted runtime commands with profile bundles", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
-		writeFileSync(mitmProfileBundle, "{}\n");
+		writeFileSync(egressProfileBundle, "{}\n");
 		writeFileSync(
 			join(runConfigRoot, "hermes.json"),
 			JSON.stringify({
@@ -540,7 +540,7 @@ describe("run command project folder selection", () => {
 				cwd: projectRoot,
 				commandPath: hermesPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
-				mitmProfileBundlePath: mitmProfileBundle,
+				egressProfileBundlePath: egressProfileBundle,
 			}),
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
@@ -553,10 +553,10 @@ describe("run command project folder selection", () => {
 		await run(["hermes", "serve"], {}, spawnImpl);
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0].env.CLAWDI_MITM_ENABLED).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_ENABLED).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_PROFILE_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_PROXY_URL).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
 		expect(calls[0].env.HTTP_PROXY).toBeUndefined();
 		expect(calls[0].env.https_proxy).toBeUndefined();
@@ -572,24 +572,24 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.GIT_SSL_CAINFO).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.DENO_CERT).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
-		expect(calls[0].env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-mitm-placeholder");
-		expect(calls[0].env.CLAWDI_MITM_SIDECAR_PATH).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_SIDECAR_BUNDLE).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_ALLOW_REMOTE_PROXY).toBeUndefined();
+		expect(calls[0].env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-egress-placeholder");
+		expect(calls[0].env.CLAWDI_EGRESS_SIDECAR_PATH).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_SIDECAR_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_ALLOW_REMOTE_PROXY).toBeUndefined();
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
 	});
 
-	it("does not start a per-run hosted MITM sidecar for transparent runtime commands", async () => {
+	it("does not start a per-run hosted egress sidecar for transparent runtime commands", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
-		writeFileSync(mitmProfileBundle, "{}\n");
+		writeFileSync(egressProfileBundle, "{}\n");
 		writeFileSync(
 			join(runConfigRoot, "hermes.json"),
 			JSON.stringify({
@@ -606,7 +606,7 @@ describe("run command project folder selection", () => {
 				cwd: projectRoot,
 				commandPath: hermesPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
-				mitmProfileBundlePath: mitmProfileBundle,
+				egressProfileBundlePath: egressProfileBundle,
 			}),
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
@@ -626,14 +626,14 @@ describe("run command project folder selection", () => {
 		const runRoot = join(tmpRoot, "run", "clawdi");
 		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
 		const runConfigRoot = join(serviceStateRoot, "config", "run");
-		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
 		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
 		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
 		writeFileSync(
-			mitmProfileBundle,
+			egressProfileBundle,
 			JSON.stringify({
-				schemaVersion: "clawdi.mitmProfiles.v1",
+				schemaVersion: "clawdi.egressProfiles.v1",
 				generatedAt: "2026-06-04T00:00:00Z",
 				generation: 1,
 				instanceId: "iid_test",
@@ -656,7 +656,7 @@ describe("run command project folder selection", () => {
 				cwd: projectRoot,
 				commandPath: hermesPath,
 				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
-				mitmProfileBundlePath: mitmProfileBundle,
+				egressProfileBundlePath: egressProfileBundle,
 			}),
 		);
 		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
@@ -664,38 +664,38 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
 		process.env.CLAWDI_RUN_DIR = runRoot;
-		process.env.CLAWDI_MITM_PROXY_PORT = "0";
+		process.env.CLAWDI_EGRESS_PROXY_PORT = "0";
 		delete process.env.CLAWDI_AUTH_TOKEN;
 
 		try {
 			await run(["hermes", "serve"], {}, spawnImpl);
 		} finally {
-			delete process.env.CLAWDI_MITM_PROXY_PORT;
+			delete process.env.CLAWDI_EGRESS_PROXY_PORT;
 		}
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0].env.CLAWDI_MITM_PROXY_URL).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_PROXY_URL).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
 		expect(calls[0].env.HTTP_PROXY).toBeUndefined();
 		expect(calls[0].env.https_proxy).toBeUndefined();
 		expect(calls[0].env.http_proxy).toBeUndefined();
 		expect(calls[0].env.OPENCLAW_PROXY_URL).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_CA_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_CA_FILE).toBeUndefined();
 		expect(calls[0].env.SSL_CERT_FILE).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
 	});
 
-	it("runs generic hosted commands with the managed MITM profile bundle without login", async () => {
+	it("runs generic hosted commands with the managed egress profile bundle without login", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
-		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
+		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
 		writeFileSync(
-			mitmProfileBundle,
+			egressProfileBundle,
 			JSON.stringify({
-				schemaVersion: "clawdi.mitmProfiles.v1",
+				schemaVersion: "clawdi.egressProfiles.v1",
 				generatedAt: "2026-06-05T00:00:00Z",
 				generation: 1,
 				instanceId: "iid_test",
@@ -714,15 +714,15 @@ describe("run command project folder selection", () => {
 		expect(calls[0].command).toBe("codex");
 		expect(calls[0].args).toEqual(["exec", "hello"]);
 		expect(calls[0].cwd).toBe(projectChild);
-		expect(calls[0].env.CLAWDI_MITM_PROFILE_BUNDLE).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_PROFILE_BUNDLE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 		expect(calls[0].env.HTTPS_PROXY).toBeUndefined();
 		expect(calls[0].env.https_proxy).toBeUndefined();
 		expect(calls[0].env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/certs/ca-certificates.crt");
 		expect(calls[0].env.CODEX_CA_CERTIFICATE).toBe("/etc/ssl/certs/ca-certificates.crt");
 	});
 
-	it("runs generic hosted commands without login when no MITM profile bundle exists", async () => {
+	it("runs generic hosted commands without login when no egress profile bundle exists", async () => {
 		unlinkSync(join(fakeClawdiHome, "auth.json"));
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
@@ -744,14 +744,14 @@ describe("run command project folder selection", () => {
 	it("does not inject cloud-managed AI provider keys into hosted runtime commands", async () => {
 		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
 		const runRoot = join(tmpRoot, "run", "clawdi");
-		const mitmProfileBundle = join(serviceStateRoot, "config", "mitm", "profiles.json");
+		const egressProfileBundle = join(serviceStateRoot, "config", "egress", "profiles.json");
 		const catalogDir = join(fakeClawdiHome, "ai-providers");
-		mkdirSync(join(serviceStateRoot, "config", "mitm"), { recursive: true });
+		mkdirSync(join(serviceStateRoot, "config", "egress"), { recursive: true });
 		mkdirSync(catalogDir, { recursive: true });
 		writeFileSync(
-			mitmProfileBundle,
+			egressProfileBundle,
 			JSON.stringify({
-				schemaVersion: "clawdi.mitmProfiles.v1",
+				schemaVersion: "clawdi.egressProfiles.v1",
 				generatedAt: "2026-06-05T00:00:00Z",
 				generation: 1,
 				instanceId: "iid_test",
@@ -799,7 +799,7 @@ describe("run command project folder selection", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
 		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();
-		expect(calls[0].env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 	});
 
 	it("uses the linked Project folder when resolving vault env", async () => {

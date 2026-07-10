@@ -28,17 +28,17 @@ export interface RuntimePaths {
 	cliBootstrapStatus: string;
 	cliUpgradeState: string;
 	providerHealthStatus: string;
-	mitmproxyStatus: string;
+	egressEngineStatus: string;
 	maintainedRoot: string;
-	mitmproxyMaintainedRoot: string;
+	egressEngineMaintainedRoot: string;
 	cacheRoot: string;
 	manifestLastGood: string;
 	manifestEtag: string;
 	channelsEtag: string;
 	managedSecretCacheFile: string;
 	runConfigRoot: string;
-	mitmProfileRoot: string;
-	mitmProfileBundle: string;
+	egressProfileRoot: string;
+	egressProfileBundle: string;
 	systemdSystemRoot: string;
 	systemdUserRoot: string;
 	systemdEnvRoot: string;
@@ -54,13 +54,13 @@ export interface RuntimePaths {
 	managedSecretRoot: string;
 	managedSecretFile: string;
 	runtimeSecretFileRoot: string;
-	mitmRoot: string;
-	mitmScratchRoot: string;
-	mitmTransparentEnv: string;
-	mitmAddon: string;
-	mitmCaDir: string;
-	mitmCaCert: string;
-	mitmSystemCaFile: string;
+	egressRoot: string;
+	egressScratchRoot: string;
+	egressTransparentEnv: string;
+	egressAddon: string;
+	egressCaDir: string;
+	egressCaCert: string;
+	egressSystemCaFile: string;
 	daemonAuthToken: string;
 	instanceData: string;
 	sensitiveInstanceData: string;
@@ -141,17 +141,17 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliBootstrapStatus: join(serviceStateRoot, "status", "cli-bootstrap.json"),
 		cliUpgradeState: join(serviceStateRoot, "status", "cli-upgrade-state.json"),
 		providerHealthStatus: join(serviceStateRoot, "status", "provider-health.json"),
-		mitmproxyStatus: join(serviceStateRoot, "status", "mitmproxy.json"),
+		egressEngineStatus: join(serviceStateRoot, "status", "egress-engine.json"),
 		maintainedRoot: join(serviceStateRoot, "maintained"),
-		mitmproxyMaintainedRoot: join(serviceStateRoot, "maintained", "mitmproxy"),
+		egressEngineMaintainedRoot: join(serviceStateRoot, "maintained", "egress-engine", "mitmproxy"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		manifestEtag: join(cacheRoot, "manifest.etag"),
 		channelsEtag: join(cacheRoot, "channels.etag"),
 		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
-		mitmProfileRoot: join(serviceStateRoot, "config", "mitm"),
-		mitmProfileBundle: join(serviceStateRoot, "config", "mitm", "profiles.json"),
+		egressProfileRoot: join(serviceStateRoot, "config", "egress"),
+		egressProfileBundle: join(serviceStateRoot, "config", "egress", "profiles.json"),
 		systemdSystemRoot:
 			envPath("CLAWDI_SYSTEMD_SYSTEM_ROOT") ?? defaultSystemdSystemRoot(mode, runRoot),
 		systemdUserRoot: join(userHome, ".config", "systemd", "user"),
@@ -168,13 +168,13 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		managedSecretRoot: join(runRoot, "secrets"),
 		managedSecretFile: join(runRoot, "secrets", "runtime-secrets.json"),
 		runtimeSecretFileRoot: join(runRoot, "secrets", "runtimes"),
-		mitmRoot: join(runRoot, "mitm"),
-		mitmScratchRoot: join(runRoot, "mitm-scratch"),
-		mitmTransparentEnv: join(runRoot, "mitm", "transparent-mitm.env"),
-		mitmAddon: join(runRoot, "mitm", "clawdi_mitm_addon.py"),
-		mitmCaDir: join(runRoot, "mitm", "ca"),
-		mitmCaCert: join(runRoot, "mitm", "ca", "mitmproxy-ca-cert.pem"),
-		mitmSystemCaFile: join(runRoot, "mitm", "systemd", "ca.pem"),
+		egressRoot: join(runRoot, "egress"),
+		egressScratchRoot: join(runRoot, "egress-scratch"),
+		egressTransparentEnv: join(runRoot, "egress", "transparent-egress.env"),
+		egressAddon: join(runRoot, "egress", "clawdi_egress_addon.py"),
+		egressCaDir: join(runRoot, "egress", "ca"),
+		egressCaCert: join(runRoot, "egress", "ca", "mitmproxy-ca-cert.pem"),
+		egressSystemCaFile: join(runRoot, "egress", "systemd", "ca.pem"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),
 		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),

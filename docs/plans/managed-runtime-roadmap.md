@@ -22,7 +22,7 @@ this repository.
 - Direct systemd launch for managed daemon runtime processes using
   runtime-owned service names.
 - Clawdi support program boundaries for manifest watch, live sync, optional
-  bridge, optional MITM, status, and diagnostics.
+  bridge, optional egress, status, and diagnostics.
 - Stable-image contract: runtime behavior is driven by manifest + CLI, not
   image-level per-agent wrappers.
 - Systemd service rendering that starts official runtime binaries directly with

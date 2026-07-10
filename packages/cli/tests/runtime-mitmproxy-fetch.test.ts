@@ -31,11 +31,12 @@ afterEach(() => {
 	tmpRoot = "";
 });
 
-describe("runtime mitmproxy maintained fetch", () => {
+describe("runtime egress engine maintained fetch", () => {
 	it("verifies and caches a pinned mitmdump archive", () => {
 		const { archive, sha256 } = makeMitmproxyArchive();
 		const paths = runtimePaths();
 		const pin = {
+			type: "mitmproxy" as const,
 			version: "12.2.3-test",
 			url: pathToFileURL(archive).toString(),
 			sha256,
@@ -50,7 +51,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 		expect(first.status).toBe("ready");
 		if (first.status !== "ready") throw new Error(first.error);
 		expect(first.binaryPath).toBe(
-			join(paths.mitmproxyMaintainedRoot, pin.version, pin.sha256, "mitmdump"),
+			join(paths.egressEngineMaintainedRoot, pin.version, pin.sha256, "mitmdump"),
 		);
 		expect(existsSync(first.binaryPath)).toBe(true);
 		expect(readFileSync(first.binaryPath, "utf-8")).toContain("fake mitmdump");
@@ -65,6 +66,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 
 		const result = ensureRuntimeMitmproxy(
 			{
+				type: "mitmproxy" as const,
 				version: "12.2.3-test",
 				url: pathToFileURL(archive).toString(),
 				sha256: "0".repeat(64),
@@ -76,7 +78,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 		expect(result.status).toBe("degraded");
 		if (result.status !== "degraded") throw new Error("expected degraded");
 		expect(result.error).toContain("checksum mismatch");
-		expect(existsSync(join(paths.mitmproxyMaintainedRoot, "12.2.3-test"))).toBe(false);
+		expect(existsSync(join(paths.egressEngineMaintainedRoot, "12.2.3-test"))).toBe(false);
 	});
 
 	it("requires official mitmproxy download URLs outside tests", () => {
@@ -84,6 +86,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 
 		const result = ensureRuntimeMitmproxy(
 			{
+				type: "mitmproxy" as const,
 				version: "12.2.3",
 				url: "https://github.com/mitmproxy/mitmproxy/releases/download/v12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
 				sha256: "a".repeat(64),
@@ -99,6 +102,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 	it("rejects downloads that do not match the pinned version archive", () => {
 		const result = ensureRuntimeMitmproxy(
 			{
+				type: "mitmproxy" as const,
 				version: "12.2.3",
 				url: "https://downloads.mitmproxy.org/12.2.2/mitmproxy-12.2.2-linux-x86_64.tar.gz",
 				sha256: "a".repeat(64),
@@ -125,7 +129,7 @@ describe("runtime mitmproxy maintained fetch", () => {
 });
 
 function runtimePaths() {
-	tmpRoot ||= mkdtempSync(join(tmpdir(), "clawdi-mitmproxy-fetch-"));
+	tmpRoot ||= mkdtempSync(join(tmpdir(), "clawdi-egressproxy-fetch-"));
 	process.env.HOME = join(tmpRoot, "home");
 	process.env.CLAWDI_HOME = join(tmpRoot, "home", ".clawdi");
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(tmpRoot, "state");
@@ -134,7 +138,7 @@ function runtimePaths() {
 }
 
 function makeMitmproxyArchive(): { archive: string; sha256: string } {
-	tmpRoot ||= mkdtempSync(join(tmpdir(), "clawdi-mitmproxy-fetch-"));
+	tmpRoot ||= mkdtempSync(join(tmpdir(), "clawdi-egressproxy-fetch-"));
 	const source = join(tmpRoot, "archive-source", "mitmproxy-12.2.3");
 	mkdirSync(source, { recursive: true });
 	const binary = join(source, "mitmdump");

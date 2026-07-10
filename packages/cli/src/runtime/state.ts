@@ -39,8 +39,11 @@ export interface RuntimeBootStatus {
 		systemdSystemUnits: string[];
 		systemdUserUnitRoot: string;
 		systemdUserUnits: string[];
-		mitmProfileBundle: string | null;
-		mitmSecretFile: string | null;
+		egressProfileBundle: string | null;
+		egressSecretFile: string | null;
+		egressEngine: unknown | null;
+		egressTransparentEnv: string | null;
+		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
 		instanceSemaphores: string[];
@@ -67,8 +70,8 @@ export interface RuntimeBootStatus {
 		manifestLastGood: string;
 		managedSecretCacheFile: string;
 		runConfigRoot: string;
-		mitmProfileRoot: string;
-		mitmProfileBundle: string;
+		egressProfileRoot: string;
+		egressProfileBundle: string;
 		systemdSystemRoot: string;
 		systemdUserRoot: string;
 		systemdEnvRoot: string;
@@ -112,8 +115,8 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		manifestLastGood: paths.manifestLastGood,
 		managedSecretCacheFile: paths.managedSecretCacheFile,
 		runConfigRoot: paths.runConfigRoot,
-		mitmProfileRoot: paths.mitmProfileRoot,
-		mitmProfileBundle: paths.mitmProfileBundle,
+		egressProfileRoot: paths.egressProfileRoot,
+		egressProfileBundle: paths.egressProfileBundle,
 		systemdSystemRoot: paths.systemdSystemRoot,
 		systemdUserRoot: paths.systemdUserRoot,
 		systemdEnvRoot: paths.systemdEnvRoot,
@@ -182,7 +185,7 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		paths.installInventory,
 		paths.projectionRoot,
 		paths.runConfigRoot,
-		paths.mitmProfileRoot,
+		paths.egressProfileRoot,
 		paths.systemdSystemRoot,
 		paths.systemdUserRoot,
 		paths.systemdEnvRoot,

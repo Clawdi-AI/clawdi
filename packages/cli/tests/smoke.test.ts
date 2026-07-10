@@ -280,6 +280,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		);
 		chmodSync(hermesInstaller, 0o700);
 		const mitmproxy = {
+			type: "mitmproxy" as const,
 			version: "12.2.3",
 			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
 			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
@@ -297,7 +298,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		chmodSync(mitmdump, 0o755);
 
 		const manifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "dep_test",
 			environmentId: "env_test",
 			instanceId: "iid_test",
@@ -305,7 +306,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			issuedAt: "2026-06-03T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
 			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
-			mitmproxy,
+			egressEngine: mitmproxy,
 			runtimes: {
 				openclaw: {
 					enabled: true,
@@ -336,7 +337,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					},
 				},
 			},
-			mitmProfiles: {
+			egressProfiles: {
 				profiles: [
 					{
 						id: "codex-openai-responses",
@@ -348,7 +349,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							headers: {
 								authorization: {
 									type: "equals",
-									value: "clawdi-mitm-placeholder",
+									value: "clawdi-egress-placeholder",
 									prefix: "Bearer ",
 								},
 							},
@@ -410,12 +411,12 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(parsed.enabledRuntimes).toEqual(["hermes", "openclaw"]);
 			expect(parsed.manifestSource.type).toBe("fixture-file");
 			expect(parsed.paths.workspaceRoot).toBe(join(home, "clawdi"));
-			expect(parsed.convergence.mitmProfileBundle).toBe(
-				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+			expect(parsed.convergence.egressProfileBundle).toBe(
+				join(serviceStateRoot, "config", "egress", "profiles.json"),
 			);
 			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
 			expect(parsed.convergence.systemdSystemUnits).toEqual([
-				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 			]);
 
 			for (const outputPath of [
@@ -448,11 +449,11 @@ chmod +x "$HOME/.local/bin/hermes"
 				),
 				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
 				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
-				join(runRoot, "systemd", "env", "clawdi-runtime-mitm.service.env"),
-				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
-				join(runRoot, "mitm", "transparent-mitm.env"),
-				join(runRoot, "mitm", "clawdi_mitm_addon.py"),
-				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
+				join(runRoot, "egress", "transparent-egress.env"),
+				join(runRoot, "egress", "clawdi_egress_addon.py"),
+				join(serviceStateRoot, "config", "egress", "profiles.json"),
 				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
 				join(home, "clawdi"),
 				join(home, ".openclaw", "bin", "openclaw"),
@@ -557,8 +558,8 @@ chmod +x "$HOME/.local/bin/hermes"
 				),
 				"utf-8",
 			);
-			const mitmUnit = readFileSync(
-				join(runRoot, "systemd", "system", "clawdi-runtime-mitm.service"),
+			const sidecarUnit = readFileSync(
+				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
 				"utf-8",
 			);
 			const openclawEnv = readFileSync(
@@ -571,9 +572,9 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(openclawUnit).toContain(
 				`ExecStart="${join(home, ".openclaw", "bin", "openclaw")}" "gateway" "run"`,
 			);
-			expect(mitmUnit).toContain('ExecStart="clawdi" "runtime" "mitm" "run"');
+			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
 			expect(existsSync(join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"))).toBe(
-				false,
+				true,
 			);
 			expect(hermesUnit).not.toContain("clawdi run -- hermes");
 			expect(openclawUnit).not.toContain("clawdi run -- openclaw");
@@ -606,7 +607,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				"loopback",
 				"--force",
 			]);
-			expect(openclawRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
+			expect(openclawRunConfig.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
 			const hermesRunConfig = JSON.parse(
 				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
 			);
@@ -614,17 +615,17 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(hermesRunConfig.commandPath).toBe(join(home, ".local", "bin", "hermes"));
 			expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
 			expect(hermesRunConfig.env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
-			expect(hermesRunConfig.env.CLAWDI_MITM_SECRET_FILE).toBeUndefined();
-			expect(hermesRunConfig.mitmProfileBundlePath).toBe(
-				join(serviceStateRoot, "config", "mitm", "profiles.json"),
+			expect(hermesRunConfig.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
+			expect(hermesRunConfig.egressProfileBundlePath).toBe(
+				join(serviceStateRoot, "config", "egress", "profiles.json"),
 			);
-			const mitmProfiles = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "mitm", "profiles.json"), "utf-8"),
+			const egressProfiles = JSON.parse(
+				readFileSync(join(serviceStateRoot, "config", "egress", "profiles.json"), "utf-8"),
 			);
-			expect(mitmProfiles.schemaVersion).toBe("clawdi.mitmProfiles.v1");
-			expect(mitmProfiles.profiles[0].id).toBe("codex-openai-responses");
-			expect(JSON.stringify(mitmProfiles)).toContain("smoke-provider-key");
-			expect(JSON.stringify(mitmProfiles)).not.toContain("auth-test-token");
+			expect(egressProfiles.schemaVersion).toBe("clawdi.egressProfiles.v1");
+			expect(egressProfiles.profiles[0].id).toBe("codex-openai-responses");
+			expect(JSON.stringify(egressProfiles)).toContain("smoke-provider-key");
+			expect(JSON.stringify(egressProfiles)).not.toContain("auth-test-token");
 
 			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
 			expect(offline.code).toBe(0);
@@ -673,7 +674,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				schemaVersion: "clawdi.runtimeDesiredState.v2",
 				deploymentId: "dep_secretref_reject",
 				environmentId: "env_secretref_reject",
 				instanceId: "iid_secretref_reject",
@@ -684,7 +685,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					openclaw: { enabled: false },
 					hermes: { enabled: false },
 				},
-				mitmProfiles: {
+				egressProfiles: {
 					profiles: [
 						{
 							id: "codex-openai-responses",
@@ -696,7 +697,7 @@ chmod +x "$HOME/.local/bin/hermes"
 								headers: {
 									authorization: {
 										type: "equals",
-										value: "clawdi-mitm-placeholder",
+										value: "clawdi-egress-placeholder",
 										prefix: "Bearer ",
 									},
 								},
@@ -781,7 +782,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				schemaVersion: "clawdi.runtimeDesiredState.v2",
 				deploymentId: "dep_selection",
 				environmentId: "env_selection",
 				instanceId: "iid_selection",

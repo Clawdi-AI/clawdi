@@ -26,7 +26,7 @@ import {
 	VAULT_PROJECT_ACCESS_ERROR,
 	VAULT_PROJECT_ACCESS_HINT,
 } from "../lib/vault-errors";
-import { applyMitmTransparentRuntimeEnv } from "../runtime/mitm-env";
+import { applyEgressTransparentRuntimeEnv } from "../runtime/egress-env";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeRunInvocation,
@@ -295,12 +295,14 @@ function hostedGenericRunInvocation(
 	const [command, ...commandArgs] = args;
 	if (!command) return null;
 	const paths = getRuntimePaths({ mode: "hosted" });
-	const mitmProfileBundle = existsSync(paths.mitmProfileBundle) ? paths.mitmProfileBundle : null;
+	const egressProfileBundle = existsSync(paths.egressProfileBundle)
+		? paths.egressProfileBundle
+		: null;
 	const env = {
 		...baseEnv,
 		PATH: withoutPathEntry(baseEnv.PATH ?? "", runtimeManagedBinDir(paths)),
 	};
-	if (mitmProfileBundle) applyMitmTransparentRuntimeEnv(env);
+	if (egressProfileBundle) applyEgressTransparentRuntimeEnv(env);
 	return {
 		runtime: "generic",
 		service: null,
@@ -308,7 +310,7 @@ function hostedGenericRunInvocation(
 		args: commandArgs,
 		cwd: process.cwd(),
 		env,
-		configPath: mitmProfileBundle ?? paths.managedConfig,
+		configPath: egressProfileBundle ?? paths.managedConfig,
 	};
 }
 
@@ -397,7 +399,7 @@ function runtimeChildEnv(
 ): NodeJS.ProcessEnv {
 	const childEnv = { ...env };
 	delete childEnv.CLAWDI_AUTH_TOKEN;
-	delete childEnv.CLAWDI_MITM_SECRET_FILE;
+	delete childEnv.CLAWDI_EGRESS_SECRET_FILE;
 	if (runtimeUser && runtimeUser !== "root") {
 		childEnv.USER = runtimeUser;
 		childEnv.LOGNAME = runtimeUser;

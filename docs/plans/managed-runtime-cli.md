@@ -150,8 +150,8 @@ The support modules are not interchangeable:
 - `runtime watch` reconciles manifests and can use Clawdi API auth.
 - `daemon run` serves live sync only when live-sync agents are declared.
 - `runtime sidecar` hosts runtime-local support modules: the bridge module
-  proxies inbound browser Control UI surfaces, and the MITM module proxies
-  outbound runtime traffic only when MITM profiles are enabled.
+  proxies inbound browser Control UI surfaces, and the egress module proxies
+  outbound runtime traffic only when egress profiles are enabled.
 
 Their tokens, network direction, and failure domains must stay visible in
 manifest state, status, and logs. The sidecar must not become a hidden wrapper
@@ -223,7 +223,7 @@ Runtime changes should include focused tests for:
 - direct systemd runtime command rendering;
 - interactive `clawdi run -- <command>` environment construction;
 - absence of newly generated runtime wrappers or launchers;
-- systemd unit rendering for watch, sidecar bridge/MITM modules, daemon,
+- systemd unit rendering for watch, sidecar bridge/egress modules, daemon,
   runtimes, and runtime-owned services;
 - terminal URL token transport and light/dark xterm theme behavior when web UI
   code changes.

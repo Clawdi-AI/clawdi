@@ -31,6 +31,7 @@ import {
 	type RuntimeCliUpdateResult,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
+import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
 	cacheRuntimeLastGoodManifest,
@@ -47,7 +48,6 @@ import {
 	type RuntimeManifestLoad,
 	type RuntimeManifestNotModified,
 } from "../runtime/manifest-source";
-import { SYSTEM_CA_BUNDLE } from "../runtime/mitm-env";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -64,11 +64,11 @@ import {
 	runtimeUserSystemdEnvArgs,
 } from "../runtime/systemd-user";
 import {
-	applyTransparentMitmNftRulesFromEnv,
-	cleanupTransparentMitmNftRulesFromEnv,
-	loadTransparentMitmEnvConfig,
-	type TransparentMitmEnvConfig,
-} from "../runtime/transparent-mitm";
+	applyTransparentEgressNftRulesFromEnv,
+	cleanupTransparentEgressNftRulesFromEnv,
+	loadTransparentEgressEnvConfig,
+	type TransparentEgressEnvConfig,
+} from "../runtime/transparent-egress";
 import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -2373,80 +2373,104 @@ export async function runtimeSidecar(): Promise<void> {
 		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
 	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
-	if (!shouldStartBridge) {
-		throw new Error(`runtime sidecar requires ${RUNTIME_BRIDGE_SURFACES_ENV}.`);
+	const shouldStartEgress = Boolean(process.env.CLAWDI_EGRESS_ENV_FILE?.trim());
+	if (!shouldStartBridge && !shouldStartEgress) {
+		throw new Error("runtime sidecar requires at least one configured module.");
 	}
 
 	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
+	let egress: RuntimeEgressModule | null = null;
 	try {
-		bridge = await startRuntimeBridge();
-		console.error(
-			`runtime sidecar bridge module listening on ${bridge.surfaces
-				.map(
-					(surface) =>
-						`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-				)
-				.join(", ")}`,
-		);
+		if (shouldStartEgress) {
+			egress = await startRuntimeEgress();
+			console.error(`runtime sidecar egress module listening on 127.0.0.1:${egress.port}`);
+		}
+		if (shouldStartBridge) {
+			bridge = await startRuntimeBridge();
+			console.error(
+				`runtime sidecar bridge module listening on ${bridge.surfaces
+					.map(
+						(surface) =>
+							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
+					)
+					.join(", ")}`,
+			);
+		}
 		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
+		egress?.close();
 		await bridge?.close();
 		throw error;
 	}
 
 	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
-	await shutdown;
-	await bridge.close();
+	const egressExit = egress?.wait().then(() => ({ kind: "egress-exit" as const }));
+	try {
+		await (egressExit ? Promise.race([shutdown, egressExit]) : shutdown);
+	} finally {
+		egress?.close();
+		await bridge?.close();
+		await egressExit?.catch(() => undefined);
+	}
 }
 
-export async function runtimeMitmRun(): Promise<void> {
-	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime mitm is only available in hosted runtime mode");
-	}
-	const config = loadTransparentMitmEnvConfig(process.env);
+interface RuntimeEgressModule {
+	port: number;
+	close: () => void;
+	wait: () => Promise<void>;
+}
+
+async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
+	const config = loadTransparentEgressEnvConfig(process.env);
 	const mitmdump = startMitmdump(config);
 	let redirectApplied = false;
+	let closeRequested = false;
 	const cleanup = () => {
 		if (!redirectApplied) return;
 		try {
-			cleanupTransparentMitmNftRulesFromEnv(process.env);
+			cleanupTransparentEgressNftRulesFromEnv(process.env);
 		} catch (error) {
 			console.error(
-				`transparent MITM nft cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+				`transparent egress nft cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
 		redirectApplied = false;
 	};
-	const stop = () => {
+	const close = () => {
+		closeRequested = true;
 		cleanup();
 		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
 	};
-	process.once("SIGTERM", stop);
-	process.once("SIGINT", stop);
 	try {
 		await waitForTcpPort("127.0.0.1", config.transparentPort, 15_000, () => mitmdump.exitCode);
 		await waitForFile(config.caCertPath, 10_000, () => mitmdump.exitCode);
-		publishMitmSystemCaBundle(config);
-		applyTransparentMitmNftRulesFromEnv(process.env);
+		publishEgressSystemCaBundle(config);
+		applyTransparentEgressNftRulesFromEnv(process.env);
 		redirectApplied = true;
-		notifySystemdReady("runtime transparent MITM ready");
-		const exit = await waitForChildExit(mitmdump);
-		if (exit.code !== 0 && exit.signal === null) {
-			throw new Error(`mitmdump exited with status ${exit.code}`);
-		}
-	} finally {
-		process.off("SIGTERM", stop);
-		process.off("SIGINT", stop);
-		cleanup();
+		return {
+			port: config.transparentPort,
+			close,
+			wait: async () => {
+				const exit = await waitForChildExit(mitmdump);
+				cleanup();
+				if (!closeRequested) {
+					const reason = exit.signal === null ? `status ${exit.code}` : `signal ${exit.signal}`;
+					throw new Error(`egress engine exited unexpectedly with ${reason}`);
+				}
+			},
+		};
+	} catch (error) {
+		close();
+		throw error;
 	}
 }
 
-function startMitmdump(config: TransparentMitmEnvConfig): ChildProcess {
-	if (!existsSync(config.mitmproxyBinaryPath)) {
-		throw new Error(`mitmdump binary is missing: ${config.mitmproxyBinaryPath}`);
+function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
+	if (!existsSync(config.engineBinaryPath)) {
+		throw new Error(`egress engine binary is missing: ${config.engineBinaryPath}`);
 	}
-	if (!existsSync(config.mitmproxyAddonPath)) {
-		throw new Error(`mitmproxy addon is missing: ${config.mitmproxyAddonPath}`);
+	if (!existsSync(config.addonPath)) {
+		throw new Error(`egress addon is missing: ${config.addonPath}`);
 	}
 	const mitmdumpArgs = [
 		"--mode",
@@ -2462,18 +2486,17 @@ function startMitmdump(config: TransparentMitmEnvConfig): ChildProcess {
 		"--set",
 		"termlog_verbosity=info",
 		"-s",
-		config.mitmproxyAddonPath,
+		config.addonPath,
 	];
-	const childEnv: NodeJS.ProcessEnv = {
-		...process.env,
-		CLAWDI_MITM_ENV_FILE: config.envFile ?? process.env.CLAWDI_MITM_ENV_FILE ?? "",
-		HOME: config.caDir,
-	};
-	const command = config.mitmproxyBinaryPath;
+	const childEnv = buildEgressEngineEnv(process.env, {
+		envFile: config.envFile,
+		home: config.caDir,
+	});
+	const command = config.engineBinaryPath;
 	const args = mitmdumpArgs;
 	const child =
-		runningAsRootCommand() && config.mitmUser !== "root"
-			? spawnAsUser(config.mitmUser, command, args, childEnv)
+		runningAsRootCommand() && config.egressUser !== "root"
+			? spawnAsUser(config.egressUser, command, args, childEnv)
 			: spawn(command, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
 	child.stdout?.pipe(process.stdout);
 	child.stderr?.pipe(process.stderr);
@@ -2498,7 +2521,7 @@ function spawnAsUser(
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 	}
-	throw new Error(`cannot drop mitmdump to ${user}; install gosu or runuser`);
+	throw new Error(`cannot drop egress engine to ${user}; install gosu or runuser`);
 }
 
 function waitForChildExit(
@@ -2520,7 +2543,7 @@ function waitForTcpPort(
 		const attempt = () => {
 			const code = exitCode();
 			if (code !== null) {
-				reject(new Error(`mitmdump exited before listening on ${host}:${port}`));
+				reject(new Error(`egress engine exited before listening on ${host}:${port}`));
 				return;
 			}
 			if (tcpPortIsListening(host, port)) {
@@ -2528,7 +2551,7 @@ function waitForTcpPort(
 				return;
 			}
 			if (Date.now() - startedAt >= timeoutMs) {
-				reject(new Error(`timed out waiting for mitmdump on ${host}:${port}`));
+				reject(new Error(`timed out waiting for egress engine on ${host}:${port}`));
 				return;
 			}
 			setTimeout(attempt, 100);
@@ -2584,14 +2607,14 @@ function waitForFile(
 	});
 }
 
-function publishMitmSystemCaBundle(config: TransparentMitmEnvConfig): void {
+function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
 	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
-		throw new Error("CLAWDI_MITM_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
+		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
 	}
 	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
-	const mitmCa = readFileSync(config.caCertPath, "utf-8");
+	const egressCa = readFileSync(config.caCertPath, "utf-8");
 	mkdirSync(dirname(config.systemCaBundle), { recursive: true });
-	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${mitmCa.trimEnd()}\n`, {
+	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
 		mode: 0o644,
 	});
 	chmodSync(config.systemCaBundle, 0o644);

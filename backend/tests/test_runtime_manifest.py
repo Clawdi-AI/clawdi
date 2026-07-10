@@ -24,7 +24,8 @@ from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
-TEST_MITMPROXY_PIN = {
+TEST_EGRESS_ENGINE_PIN = {
+    "type": "mitmproxy",
     "version": "12.2.3",
     "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
     "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
@@ -139,7 +140,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_includes_mitmproxy_pin(
+async def test_runtime_manifest_includes_egress_engine_pin(
     admin_client,
     db_session,
     seed_user,
@@ -147,11 +148,11 @@ async def test_runtime_manifest_includes_mitmproxy_pin(
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
-        machine_id=f"runtime-mitmproxy-{uuid4().hex[:8]}",
-        machine_name="Runtime mitmproxy",
+        machine_id=f"runtime-egress-engine-{uuid4().hex[:8]}",
+        machine_name="Runtime egress engine",
         agent_type="openclaw",
     )
-    await _write_runtime_state(admin_client, str(env.id), mitmproxy=TEST_MITMPROXY_PIN)
+    await _write_runtime_state(admin_client, str(env.id), egress_engine=TEST_EGRESS_ENGINE_PIN)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -159,7 +160,7 @@ async def test_runtime_manifest_includes_mitmproxy_pin(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["mitmproxy"] == TEST_MITMPROXY_PIN
+    assert response.json()["manifest"]["egressEngine"] == TEST_EGRESS_ENGINE_PIN
 
 
 @pytest.mark.asyncio
@@ -472,8 +473,8 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
     initial = await _write_runtime_state(
         admin_client,
         str(env.id),
-        mitmproxy=TEST_MITMPROXY_PIN,
-        mitm_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
+        egress_engine=TEST_EGRESS_ENGINE_PIN,
+        egress_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
     )
@@ -483,15 +484,15 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
         **{
             key: value
             for key, value in {**initial, "generation": 8}.items()
-            if key not in {"mitmproxy", "mitm_profiles", "mcp", "tools"}
+            if key not in {"egress_engine", "egress_profiles", "mcp", "tools"}
         },
     )
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
     assert state.generation == 8
-    assert state.mitmproxy == TEST_MITMPROXY_PIN
-    assert state.mitm_profiles == {"profiles": [{"id": "profile-1", "enabled": True}]}
+    assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
+    assert state.egress_profiles == {"profiles": [{"id": "profile-1", "enabled": True}]}
     assert state.mcp == {"enabled": True}
     assert state.tools == {"catalog": "clawdi-default"}
 
@@ -1305,7 +1306,7 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
             clawdi_cli=None,
             live_sync=None,
             recovery=None,
-            mitm_profiles=None,
+            egress_profiles=None,
             mcp=None,
             tools=None,
             observed=None,
@@ -1370,7 +1371,7 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                 clawdi_cli=None,
                 live_sync=None,
                 recovery=None,
-                mitm_profiles=None,
+                egress_profiles=None,
                 mcp=None,
                 tools=None,
                 observed=None,

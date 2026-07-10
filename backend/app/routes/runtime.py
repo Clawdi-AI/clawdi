@@ -120,10 +120,10 @@ async def get_runtime_manifest(
         manifest["bridge"] = state.bridge
     if state.app_id:
         manifest["appId"] = state.app_id
-    if state.mitmproxy:
-        manifest["mitmproxy"] = state.mitmproxy
-    if state.mitm_profiles:
-        manifest["mitmProfiles"] = state.mitm_profiles
+    if state.egress_engine:
+        manifest["egressEngine"] = state.egress_engine
+    if state.egress_profiles:
+        manifest["egressProfiles"] = state.egress_profiles
     if state.mcp:
         manifest["mcp"] = state.mcp
     if state.tools:

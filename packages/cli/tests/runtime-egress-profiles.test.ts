@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { egressProfileSchema } from "../src/runtime/egress-profiles";
 import {
-	hostedManifestMitmProfiles,
-	runtimeInstallerMitmProfiles,
-} from "../src/runtime/hosted-mitm-profiles";
-import { mitmProfileSchema } from "../src/runtime/mitm-profiles";
+	hostedManifestEgressProfiles,
+	runtimeInstallerEgressProfiles,
+} from "../src/runtime/hosted-egress-profiles";
 
-const providerProfiles = (profiles: ReturnType<typeof hostedManifestMitmProfiles>["profiles"]) =>
+const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfiles>["profiles"]) =>
 	profiles.filter((profile) => profile.owner === "provider-projection");
 
-describe("runtime MITM profile schema", () => {
+describe("runtime egress profile schema", () => {
 	it("accepts HTTP and websocket upstream base URLs", () => {
 		const base = {
 			id: "discord-rest",
@@ -18,9 +18,9 @@ describe("runtime MITM profile schema", () => {
 			rewrite: { upstreamBaseUrl: "https://router.test/discord" },
 		};
 
-		expect(mitmProfileSchema.safeParse(base).success).toBe(true);
+		expect(egressProfileSchema.safeParse(base).success).toBe(true);
 		expect(
-			mitmProfileSchema.safeParse({
+			egressProfileSchema.safeParse({
 				...base,
 				id: "discord-gateway",
 				kind: "websocket",
@@ -32,7 +32,7 @@ describe("runtime MITM profile schema", () => {
 
 	it("accepts secretRef-backed rewrite headers", () => {
 		expect(
-			mitmProfileSchema.safeParse({
+			egressProfileSchema.safeParse({
 				id: "codex-chatgpt-backend-responses",
 				enabled: true,
 				kind: "provider",
@@ -59,7 +59,7 @@ describe("runtime MITM profile schema", () => {
 	it("requires upstream base URLs for HTTP and websocket rewrite profiles", () => {
 		for (const kind of ["http", "websocket"] as const) {
 			expect(
-				mitmProfileSchema.safeParse({
+				egressProfileSchema.safeParse({
 					id: `missing-upstream-${kind}`,
 					enabled: true,
 					kind,
@@ -88,7 +88,7 @@ describe("runtime MITM profile schema", () => {
 			"https://.router.test/discord",
 		]) {
 			expect(
-				mitmProfileSchema.safeParse({
+				egressProfileSchema.safeParse({
 					...base,
 					rewrite: { upstreamBaseUrl },
 				}).success,
@@ -98,7 +98,7 @@ describe("runtime MITM profile schema", () => {
 
 	it("accepts passthrough profiles without rewrite rules", () => {
 		expect(
-			mitmProfileSchema.safeParse({
+			egressProfileSchema.safeParse({
 				id: "direct-egress",
 				enabled: true,
 				kind: "passthrough",
@@ -106,7 +106,7 @@ describe("runtime MITM profile schema", () => {
 			}).success,
 		).toBe(true);
 		expect(
-			mitmProfileSchema.safeParse({
+			egressProfileSchema.safeParse({
 				id: "direct-egress",
 				enabled: true,
 				kind: "passthrough",
@@ -118,7 +118,7 @@ describe("runtime MITM profile schema", () => {
 
 	it("rejects path prefixes that the native sidecar would reject", () => {
 		expect(
-			mitmProfileSchema.safeParse({
+			egressProfileSchema.safeParse({
 				id: "bad-prefix",
 				enabled: true,
 				kind: "http",
@@ -129,7 +129,7 @@ describe("runtime MITM profile schema", () => {
 	});
 
 	it("derives managed provider rewrite profiles from hosted provider projection", () => {
-		const bundle = hostedManifestMitmProfiles({
+		const bundle = hostedManifestEgressProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
 				default: {
@@ -171,7 +171,7 @@ describe("runtime MITM profile schema", () => {
 	});
 
 	it("adds explicit runtime installer passthrough allowlist profiles", () => {
-		const profiles = runtimeInstallerMitmProfiles();
+		const profiles = runtimeInstallerEgressProfiles();
 		expect(profiles).toContainEqual(
 			expect.objectContaining({
 				id: "runtime-installer-openclaw-install",
@@ -255,7 +255,7 @@ describe("runtime MITM profile schema", () => {
 	});
 
 	it("builds managed provider profiles for runtime-scoped providers", () => {
-		const bundle = hostedManifestMitmProfiles({
+		const bundle = hostedManifestEgressProfiles({
 			providers: {
 				openclaw: {
 					baseUrl: "https://openclaw-provider.example.test/v1",
@@ -282,8 +282,8 @@ describe("runtime MITM profile schema", () => {
 		]);
 	});
 
-	it("does not derive provider MITM profiles without a managed provider secret ref", () => {
-		const bundle = hostedManifestMitmProfiles({
+	it("does not derive provider egress profiles without a managed provider secret ref", () => {
+		const bundle = hostedManifestEgressProfiles({
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			providers: {
 				default: {
@@ -298,8 +298,8 @@ describe("runtime MITM profile schema", () => {
 		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
 	});
 
-	it("does not derive provider MITM profiles for BYOK providers", () => {
-		const bundle = hostedManifestMitmProfiles({
+	it("does not derive provider egress profiles for BYOK providers", () => {
+		const bundle = hostedManifestEgressProfiles({
 			providers: {
 				default: {
 					baseUrl: "https://byok-provider.example.test/v1",
@@ -314,8 +314,8 @@ describe("runtime MITM profile schema", () => {
 		expect(bundle.profiles.every((profile) => profile.owner === "runtime-installer")).toBe(true);
 	});
 
-	it("does not derive provider MITM profiles for unsupported provider API modes", () => {
-		const bundle = hostedManifestMitmProfiles({
+	it("does not derive provider egress profiles for unsupported provider API modes", () => {
+		const bundle = hostedManifestEgressProfiles({
 			providers: {
 				default: {
 					baseUrl: "https://anthropic.example.test/v1",
