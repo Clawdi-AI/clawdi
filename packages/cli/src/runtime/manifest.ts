@@ -1788,6 +1788,24 @@ interface HostedAiProviderProjectionResult {
 	revision: string | null;
 }
 
+const CODEX_MANAGED_PROVIDER_ID = "clawdi-managed";
+const CODEX_MANAGED_PROVIDER_STATE_FILE = "clawdi-managed-provider.json";
+const CODEX_MANAGED_ENV_KEY = "OPENAI_API_KEY";
+const CODEX_LEGACY_MANAGED_ENV_KEY = "CLAWDI_MANAGED_OPENAI_API_KEY";
+const CODEX_NPM_PACKAGE_SPEC = "@openai/codex@latest";
+const CODEX_MANAGED_PROVIDER_ENV_KEYS = new Set([
+	CODEX_MANAGED_ENV_KEY,
+	CODEX_LEGACY_MANAGED_ENV_KEY,
+]);
+
+interface HostedCodexManagedProvider {
+	providerId: string;
+	baseUrl: string;
+	model: string | null;
+	apiMode: string | null;
+	apiKeySecretRef: string | null;
+}
+
 type HostedAiProviderProjectionInput = {
 	catalog: AiProviderCatalog;
 	primaryModel: AgentPrimaryModel;
@@ -1900,6 +1918,218 @@ function applyHostedAiProviderProjection(
 		return { path: observation.commandPath, revision: null };
 	}
 	return { path: null, revision: null };
+}
+
+function applyHostedCodexManagedProviderProjection(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	home: string,
+): HostedAiProviderProjectionResult {
+	const provider = hostedCodexManagedProvider(manifest);
+	if (!provider) return { path: null, revision: null };
+
+	const codexHome = hostedCodexHome(home);
+	makeRuntimeUserPrivateDir(codexHome);
+	const configPath = join(codexHome, "config.toml");
+	const statePath = join(codexHome, CODEX_MANAGED_PROVIDER_STATE_FILE);
+	const codexCli = ensureHostedCodexCli(paths);
+	const configContent = hostedCodexManagedConfigToml(provider);
+	const statePayload = hostedCodexManagedProviderState(provider);
+	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
+	writePrivateFileAtomic(statePath, `${JSON.stringify(statePayload, null, 2)}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
+	makeRuntimeUserOwned(configPath);
+	makeRuntimeUserOwned(statePath);
+	makeRuntimeUserPrivateDir(codexHome);
+
+	return {
+		path: configPath,
+		revision: revisionHash({
+			codexManagedProviderProjection: "config.toml",
+			configContent,
+			codexCli,
+			statePayload,
+		}),
+	};
+}
+
+function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManagedProvider | null {
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return null;
+	const entries: Array<{
+		priority: number;
+		providerId: string;
+		provider: HostedCodexManagedProvider;
+	}> = [];
+	for (const [providerId, raw] of Object.entries(providers)) {
+		const provider = recordValue(raw);
+		if (!provider) continue;
+		if (provider.managed_by === "user") continue;
+		const runtimeEnvName =
+			stringValue(provider.runtimeEnvName) ?? stringValue(provider.runtime_env_name);
+		if (!runtimeEnvName || !CODEX_MANAGED_PROVIDER_ENV_KEYS.has(runtimeEnvName)) continue;
+		const baseUrl = stringValue(provider.baseUrl) ?? stringValue(provider.base_url);
+		if (!baseUrl?.trim()) continue;
+		entries.push({
+			priority: hostedCodexManagedProviderPriority(providerId),
+			providerId,
+			provider: {
+				providerId,
+				baseUrl: baseUrl.trim(),
+				model: stringValue(provider.model),
+				apiMode: stringValue(provider.apiMode) ?? stringValue(provider.api_mode),
+				apiKeySecretRef:
+					stringValue(provider.apiKeySecretRef) ?? stringValue(provider.api_key_secret_ref),
+			},
+		});
+	}
+	if (entries.length === 0) return null;
+	entries.sort(
+		(left, right) =>
+			left.priority - right.priority || left.providerId.localeCompare(right.providerId),
+	);
+	return entries[0]?.provider ?? null;
+}
+
+function hostedCodexManagedProviderPriority(providerId: string): number {
+	if (providerId === "openclaw") return 0;
+	if (providerId === "hermes") return 1;
+	return 2;
+}
+
+function hostedCodexHome(home: string): string {
+	const configured = process.env.CODEX_HOME?.trim();
+	if (!configured) return join(home, ".codex");
+	if (configured === "~") return home;
+	if (configured.startsWith("~/")) return join(home, configured.slice(2));
+	return configured;
+}
+
+function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): string {
+	const lines = ["# Managed by Clawdi hosted runtime. Do not put API keys in this file."];
+	const model = provider.model?.trim();
+	if (model) lines.push(`model = ${quoteTomlString(model)}`);
+	lines.push(
+		`model_provider = ${quoteTomlString(CODEX_MANAGED_PROVIDER_ID)}`,
+		"",
+		`[model_providers.${CODEX_MANAGED_PROVIDER_ID}]`,
+		'name = "Clawdi Managed OpenAI"',
+		`base_url = ${quoteTomlString(provider.baseUrl)}`,
+		'wire_api = "responses"',
+		`env_key = ${quoteTomlString(CODEX_MANAGED_ENV_KEY)}`,
+		"",
+	);
+	return lines.join("\n");
+}
+
+function hostedCodexManagedProviderState(
+	provider: HostedCodexManagedProvider,
+): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.hostedCodexManagedProvider.v1",
+		managedBy: "clawdi hosted runtime",
+		provider: {
+			baseUrl: provider.baseUrl,
+			model: provider.model,
+			apiMode: provider.apiMode,
+			runtimeEnvName: CODEX_MANAGED_ENV_KEY,
+			apiKeySecretRef: provider.apiKeySecretRef,
+		},
+	};
+}
+
+function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | null {
+	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
+	const packageSpec = hostedCodexPackageSpec();
+	const npmPrefix = join(paths.serviceStateRoot, "codex", "npm");
+	const npmCache = join(paths.serviceStateRoot, "codex", "npm-cache");
+	const realBin = join(npmPrefix, "bin", "codex");
+	const commandPath = join(runtimeManagedBinDir(paths), "codex");
+	if (!executableExists(realBin)) {
+		installHostedCodexCli(packageSpec, npmPrefix, npmCache);
+	}
+	if (!executableExists(realBin)) {
+		throw new Error(`Codex npm install did not create ${realBin}`);
+	}
+	writeHostedCodexCommandShim(commandPath, realBin);
+	return {
+		commandPath,
+		npmCache,
+		npmPrefix,
+		packageSpec,
+		realBin,
+	};
+}
+
+function hostedCodexPackageSpec(): string {
+	const packageSpec = process.env.CLAWDI_CODEX_PACKAGE_SPEC?.trim() || CODEX_NPM_PACKAGE_SPEC;
+	if (packageSpec === "@openai/codex" || packageSpec.startsWith("@openai/codex@")) {
+		return packageSpec;
+	}
+	throw new Error("CLAWDI_CODEX_PACKAGE_SPEC must be @openai/codex or @openai/codex@...");
+}
+
+function installHostedCodexCli(packageSpec: string, npmPrefix: string, npmCache: string): void {
+	if (!commandExists("npm")) {
+		throw new Error("Codex runtime add-on install requires npm on PATH");
+	}
+	mkdirSync(npmPrefix, { recursive: true });
+	mkdirSync(npmCache, { recursive: true });
+	const result = spawnSync(
+		"npm",
+		[
+			"install",
+			"-g",
+			"--prefix",
+			npmPrefix,
+			"--cache",
+			npmCache,
+			"--ignore-scripts",
+			"--fetch-retries",
+			"2",
+			"--fetch-retry-mintimeout",
+			"1000",
+			"--fetch-retry-maxtimeout",
+			"10000",
+			"--fetch-timeout",
+			"60000",
+			"--omit=dev",
+			"--no-audit",
+			"--no-fund",
+			"--no-update-notifier",
+			packageSpec,
+		],
+		{
+			encoding: "utf8",
+			env: {
+				...process.env,
+				NO_UPDATE_NOTIFIER: "1",
+				NPM_CONFIG_UPDATE_NOTIFIER: "false",
+			},
+			timeout: Number.parseInt(process.env.CLAWDI_CODEX_INSTALL_TIMEOUT ?? "600000", 10),
+		},
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`Codex runtime add-on install failed: ${tail(result.stderr) ?? tail(result.stdout) ?? "npm failed"}`,
+		);
+	}
+}
+
+function writeHostedCodexCommandShim(commandPath: string, realBin: string): void {
+	const binDir = dirname(commandPath);
+	makeRootReadableDir(binDir);
+	writePrivateFileAtomic(commandPath, `#!/usr/bin/env sh\nexec ${shellQuote(realBin)} "$@"\n`, {
+		mode: 0o755,
+		dirMode: 0o755,
+	});
+	makeRootOwned(commandPath);
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function applyHostedHermesAiProviderProjection(
@@ -2290,6 +2520,10 @@ function pythonTupleLiteral(values: readonly string[]): string {
 }
 
 function quoteYaml(value: string): string {
+	return JSON.stringify(value);
+}
+
+function quoteTomlString(value: string): string {
 	return JSON.stringify(value);
 }
 
@@ -4624,6 +4858,20 @@ export function convergeRuntimeManifest(
 		mitmSystemdProgram?.systemCaBundle ?? null,
 		opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
 	);
+	try {
+		const codexProjection = applyHostedCodexManagedProviderProjection(
+			manifest,
+			paths,
+			projectionSystemHome(manifest) ?? paths.userHome,
+		);
+		providerProjectionRevisions.codex = codexProjection.revision;
+	} catch (error) {
+		installErrors.push(
+			`runtime codex provider projection failed: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+	}
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),

@@ -69,6 +69,10 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 	"CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES",
 	"CLAWDI_RUNTIME_PID1_ENVIRON_PATH",
+	"CODEX_HOME",
+	"CLAWDI_CODEX_INSTALL_DISABLED",
+	"CLAWDI_CODEX_INSTALL_TIMEOUT",
+	"CLAWDI_CODEX_PACKAGE_SPEC",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
 	"CLAWDI_API_URL",
@@ -100,6 +104,7 @@ beforeEach(() => {
 	}
 	root = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(root, { recursive: true });
+	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 });
 
 afterEach(() => {
@@ -1489,6 +1494,256 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(runConfig.secretEnv).toEqual({ OPENAI_API_KEY: "provider.default.apiKey" });
 		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
+	});
+
+	it("writes Codex managed provider config from hosted runtime converge", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const codexHome = join(home, ".codex");
+		mkdirSync(codexHome, { recursive: true });
+		writeFileSync(join(codexHome, "config.toml"), "stale image config\n");
+		writeFileSync(join(codexHome, "clawdi-managed-provider.json"), '{"stale":true}\n');
+		chmodSync(codexHome, 0o755);
+		chmodSync(join(codexHome, "config.toml"), 0o644);
+		chmodSync(join(codexHome, "clawdi-managed-provider.json"), 0o644);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const convergence = convergeRuntimeManifest(
+			{
+				source: "remote-datasource",
+				sourcePath: "https://runtime-source.test/desired-state",
+				offline: false,
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_codex_provider",
+					environmentId: "env_codex_provider",
+					instanceId: "iid_codex_provider",
+					generation: 1,
+					issuedAt: "2026-07-10T00:00:00Z",
+					workspaceRoot: join(home, "clawdi"),
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: false },
+						hermes: { enabled: false },
+					},
+					projection: {
+						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						system: { home },
+						providers: {
+							hermes: {
+								kind: "openai-compatible",
+								baseUrl: "https://hermes-provider.example.test/v1",
+								model: "kimi/kimi-for-coding",
+								apiMode: "openai_chat",
+								managed_by: "clawdi",
+								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								apiKeySecretRef: "provider.hermes.apiKey",
+							},
+							openclaw: {
+								kind: "openai-compatible",
+								baseUrl: "https://openclaw-provider.example.test/v1",
+								model: "gpt-5.5",
+								apiMode: "openai_responses",
+								managed_by: "clawdi",
+								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								apiKeySecretRef: "provider.openclaw.apiKey",
+							},
+						},
+					},
+					mitmProfiles: { profiles: [] },
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				},
+			},
+			getRuntimePaths(),
+		);
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(statSync(codexHome).mode & 0o777).toBe(0o700);
+		const configPath = join(codexHome, "config.toml");
+		expect(statSync(configPath).mode & 0o777).toBe(0o600);
+		expect(readFileSync(configPath, "utf-8")).toBe(
+			[
+				"# Managed by Clawdi hosted runtime. Do not put API keys in this file.",
+				'model = "gpt-5.5"',
+				'model_provider = "clawdi-managed"',
+				"",
+				"[model_providers.clawdi-managed]",
+				'name = "Clawdi Managed OpenAI"',
+				'base_url = "https://openclaw-provider.example.test/v1"',
+				'wire_api = "responses"',
+				'env_key = "OPENAI_API_KEY"',
+				"",
+			].join("\n"),
+		);
+		const statePath = join(codexHome, "clawdi-managed-provider.json");
+		expect(statSync(statePath).mode & 0o777).toBe(0o600);
+		expect(JSON.parse(readFileSync(statePath, "utf-8"))).toEqual({
+			schemaVersion: "clawdi.hostedCodexManagedProvider.v1",
+			managedBy: "clawdi hosted runtime",
+			provider: {
+				baseUrl: "https://openclaw-provider.example.test/v1",
+				model: "gpt-5.5",
+				apiMode: "openai_responses",
+				runtimeEnvName: "OPENAI_API_KEY",
+				apiKeySecretRef: "provider.openclaw.apiKey",
+			},
+		});
+	});
+
+	it("installs the Codex runtime add-on through npm when managed config is projected", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const binDir = join(root, "fake-bin");
+		const npmArgsPath = join(root, "npm-args.txt");
+		const previousPath = process.env.PATH;
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(
+			join(binDir, "npm"),
+			[
+				"#!/usr/bin/env bash",
+				"set -euo pipefail",
+				`printf '%s\\n' "$@" > '${npmArgsPath}'`,
+				"prefix=''",
+				'while [ "$#" -gt 0 ]; do',
+				'  case "$1" in',
+				"    --prefix)",
+				'      prefix="$2"',
+				"      shift 2",
+				"      ;;",
+				"    *)",
+				"      shift",
+				"      ;;",
+				"  esac",
+				"done",
+				'mkdir -p "$prefix/bin"',
+				"cat > \"$prefix/bin/codex\" <<'SH'",
+				"#!/usr/bin/env sh",
+				"echo fake codex",
+				"SH",
+				'chmod 755 "$prefix/bin/codex"',
+				"",
+			].join("\n"),
+		);
+		chmodSync(join(binDir, "npm"), 0o755);
+		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
+		process.env.CLAWDI_CODEX_PACKAGE_SPEC = "@openai/codex@latest";
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.PATH = [binDir, previousPath].filter(Boolean).join(":");
+
+		try {
+			const convergence = convergeRuntimeManifest(
+				{
+					source: "remote-datasource",
+					sourcePath: "https://runtime-source.test/desired-state",
+					offline: false,
+					manifest: {
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: "dep_codex_addon",
+						environmentId: "env_codex_addon",
+						instanceId: "iid_codex_addon",
+						generation: 1,
+						issuedAt: "2026-07-10T00:00:00Z",
+						workspaceRoot: join(home, "clawdi"),
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						runtimes: {
+							openclaw: { enabled: false },
+						},
+						projection: {
+							system: { home },
+							providers: {
+								default: {
+									kind: "openai-compatible",
+									baseUrl: "https://managed-provider.example.test/v1",
+									model: "gpt-5.5",
+									apiMode: "openai_responses",
+									managed_by: "clawdi",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.default.apiKey",
+								},
+							},
+						},
+						mitmProfiles: { profiles: [] },
+						recovery: { cacheManifest: true, allowOfflineBoot: true },
+					},
+				},
+				getRuntimePaths(),
+			);
+
+			expect(convergence.installErrors).toEqual([]);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+			process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+		}
+
+		const npmArgs = readFileSync(npmArgsPath, "utf-8");
+		expect(npmArgs).toContain("@openai/codex@latest");
+		expect(npmArgs).toContain(`${join(state, "codex", "npm")}\n`);
+		const realBin = join(state, "codex", "npm", "bin", "codex");
+		const commandShim = join(state, "bin", "codex");
+		expect(statSync(realBin).mode & 0o777).toBe(0o755);
+		expect(statSync(commandShim).mode & 0o777).toBe(0o755);
+		expect(readFileSync(commandShim, "utf-8")).toBe(`#!/usr/bin/env sh\nexec '${realBin}' "$@"\n`);
+	});
+
+	it("does not write Codex managed provider config for user-owned providers", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const convergence = convergeRuntimeManifest(
+			{
+				source: "remote-datasource",
+				sourcePath: "https://runtime-source.test/desired-state",
+				offline: false,
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_codex_byok_provider",
+					environmentId: "env_codex_byok_provider",
+					instanceId: "iid_codex_byok_provider",
+					generation: 1,
+					issuedAt: "2026-07-10T00:00:00Z",
+					workspaceRoot: join(home, "clawdi"),
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: { enabled: false },
+					},
+					projection: {
+						system: { home },
+						providers: {
+							default: {
+								kind: "openai-compatible",
+								baseUrl: "https://byok-provider.example.test/v1",
+								model: "gpt-5.5",
+								apiMode: "openai_responses",
+								managed_by: "user",
+								runtimeEnvName: "OPENAI_API_KEY",
+								apiKeySecretRef: "provider.byok.apiKey",
+							},
+						},
+					},
+					mitmProfiles: { profiles: [] },
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				},
+			},
+			getRuntimePaths(),
+		);
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(existsSync(join(home, ".codex", "config.toml"))).toBe(false);
+		expect(existsSync(join(home, ".codex", "clawdi-managed-provider.json"))).toBe(false);
 	});
 
 	it("preserves Clawdi-managed provider ownership when projecting hosted providers", () => {
