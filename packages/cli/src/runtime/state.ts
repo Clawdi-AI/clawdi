@@ -75,6 +75,7 @@ export interface RuntimeBootStatus {
 		cliManagedBin: string;
 		cliNpmPrefix: string;
 		cliBootstrapStatus: string;
+		cliUpgradeState: string;
 		bootStatus: string;
 		runtimeWatchStatus: string;
 		cloudStatus: string;
@@ -119,6 +120,7 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cliManagedBin: paths.cliManagedBin,
 		cliNpmPrefix: paths.cliNpmPrefix,
 		cliBootstrapStatus: paths.cliBootstrapStatus,
+		cliUpgradeState: paths.cliUpgradeState,
 		bootStatus: paths.bootStatus,
 		runtimeWatchStatus: paths.runtimeWatchStatus,
 		cloudStatus: paths.cloudStatus,

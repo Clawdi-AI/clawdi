@@ -545,6 +545,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		environmentId: hosted.environmentId || hosted.appId || hosted.deploymentId,
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
+		minimumCliVersion: hosted.minimumCliVersion,
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
 		workspaceRoot,

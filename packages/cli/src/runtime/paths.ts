@@ -26,6 +26,7 @@ export interface RuntimePaths {
 	cliNpmPrefix: string;
 	cliNpmCache: string;
 	cliBootstrapStatus: string;
+	cliUpgradeState: string;
 	providerHealthStatus: string;
 	mitmproxyStatus: string;
 	maintainedRoot: string;
@@ -138,6 +139,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliNpmPrefix: npmRoot,
 		cliNpmCache: join(serviceStateRoot, "npm-cache"),
 		cliBootstrapStatus: join(serviceStateRoot, "status", "cli-bootstrap.json"),
+		cliUpgradeState: join(serviceStateRoot, "status", "cli-upgrade-state.json"),
 		providerHealthStatus: join(serviceStateRoot, "status", "provider-health.json"),
 		mitmproxyStatus: join(serviceStateRoot, "status", "mitmproxy.json"),
 		maintainedRoot: join(serviceStateRoot, "maintained"),
