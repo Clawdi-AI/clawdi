@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { MitmproxyArtifactPin } from "./manifest-contract";
+import type { EgressEnginePin } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
 export interface RuntimeMitmproxyReady {
@@ -41,7 +41,7 @@ interface EnsureRuntimeMitmproxyOptions {
 }
 
 export function ensureRuntimeMitmproxy(
-	pin: MitmproxyArtifactPin | null | undefined,
+	pin: EgressEnginePin | null | undefined,
 	paths: RuntimePaths,
 	options: EnsureRuntimeMitmproxyOptions = {},
 ): RuntimeMitmproxyEnsureResult {
@@ -51,13 +51,13 @@ export function ensureRuntimeMitmproxy(
 	const normalizedSha = pin.sha256.toLowerCase();
 	try {
 		validateMitmproxyPin(pin, options);
-		const cacheDir = join(paths.mitmproxyMaintainedRoot, pin.version, normalizedSha);
+		const cacheDir = join(paths.egressEngineMaintainedRoot, pin.version, normalizedSha);
 		const binaryPath = join(cacheDir, "mitmdump");
 		if (isExecutableFile(binaryPath)) {
 			return ready(pin, cacheDir, binaryPath);
 		}
 
-		const tempRoot = mkdtempSync(join(tmpdir(), "clawdi-mitmproxy-"));
+		const tempRoot = mkdtempSync(join(tmpdir(), "clawdi-egress-engine-"));
 		try {
 			const archivePath = join(tempRoot, basename(new URL(pin.url).pathname) || "mitmproxy.tar.gz");
 			fetchArtifact(pin.url, archivePath, options);
@@ -76,8 +76,8 @@ export function ensureRuntimeMitmproxy(
 			copyFileSync(extractedMitmdump, binaryPath);
 			chmodSync(binaryPath, 0o755);
 			rootOwnedBestEffort(paths.maintainedRoot);
-			rootOwnedBestEffort(paths.mitmproxyMaintainedRoot);
-			rootOwnedBestEffort(join(paths.mitmproxyMaintainedRoot, pin.version));
+			rootOwnedBestEffort(paths.egressEngineMaintainedRoot);
+			rootOwnedBestEffort(join(paths.egressEngineMaintainedRoot, pin.version));
 			rootOwnedBestEffort(cacheDir);
 			rootOwnedBestEffort(binaryPath);
 			return ready(pin, cacheDir, binaryPath);
@@ -89,10 +89,10 @@ export function ensureRuntimeMitmproxy(
 	}
 }
 
-function validateMitmproxyPin(
-	pin: MitmproxyArtifactPin,
-	options: EnsureRuntimeMitmproxyOptions,
-): void {
+function validateMitmproxyPin(pin: EgressEnginePin, options: EnsureRuntimeMitmproxyOptions): void {
+	if (pin.type !== "mitmproxy") {
+		throw new Error("egress engine must use mitmproxy");
+	}
 	if (!/^[A-Za-z0-9._-]+$/.test(pin.version)) {
 		throw new Error("mitmproxy version contains unsafe characters");
 	}
@@ -190,11 +190,7 @@ function rootOwnedBestEffort(path: string): void {
 	}
 }
 
-function ready(
-	pin: MitmproxyArtifactPin,
-	cacheDir: string,
-	binaryPath: string,
-): RuntimeMitmproxyReady {
+function ready(pin: EgressEnginePin, cacheDir: string, binaryPath: string): RuntimeMitmproxyReady {
 	return {
 		status: "ready",
 		version: pin.version,
@@ -206,7 +202,7 @@ function ready(
 }
 
 function degraded(
-	pin: Pick<MitmproxyArtifactPin, "version" | "url" | "sha256"> | null,
+	pin: Pick<EgressEnginePin, "version" | "url" | "sha256"> | null,
 	error: string,
 ): RuntimeMitmproxyDegraded {
 	return {

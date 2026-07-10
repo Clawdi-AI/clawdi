@@ -16,7 +16,7 @@ rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
 
 run("test", ["-x", resolve(distBin, "clawdi")]);
-run("test", ["-f", resolve(distBin, "mitmproxy-addon", "clawdi_mitm_addon.py")]);
+run("test", ["-f", resolve(distBin, "egress-addon", "clawdi_egress_addon.py")]);
 run("tar", [
 	"-C",
 	distBin,
@@ -26,7 +26,7 @@ run("tar", [
 	"-czf",
 	assetPath,
 	"clawdi",
-	"mitmproxy-addon",
+	"egress-addon",
 ]);
 
 const checksum = run("sha256sum", [assetPath]).trim().split(/\s+/)[0];

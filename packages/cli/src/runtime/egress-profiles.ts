@@ -117,7 +117,7 @@ const pathReplaceSchema = z.object({
 	suffix: z.string().default(""),
 });
 
-const mitmProfileMatchSchema = z.object({
+const egressProfileMatchSchema = z.object({
 	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
 	host: z.string().min(1),
 	pathPrefix: z
@@ -130,7 +130,7 @@ const mitmProfileMatchSchema = z.object({
 	query: z.record(queryNameSchema, headerMatcherSchema).default({}),
 });
 
-const mitmProfileRewriteSchema = z.object({
+const egressProfileRewriteSchema = z.object({
 	upstreamBaseUrl: z
 		.string()
 		.url()
@@ -145,19 +145,19 @@ const mitmProfileRewriteSchema = z.object({
 	setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
 });
 
-const mitmProfileLoggingSchema = z.object({
+const egressProfileLoggingSchema = z.object({
 	redactHeaders: z.array(headerNameSchema).default([]),
 	redactUrlPatterns: z.array(z.string().min(1)).default([]),
 });
 
-export const mitmProfileSchema = z
+export const egressProfileSchema = z
 	.object({
 		id: profileIdSchema,
 		enabled: z.boolean().default(true),
 		kind: z.enum(["http", "websocket", "provider", "passthrough", "deny"]),
-		match: mitmProfileMatchSchema,
-		rewrite: mitmProfileRewriteSchema.optional(),
-		logging: mitmProfileLoggingSchema.default({ redactHeaders: [], redactUrlPatterns: [] }),
+		match: egressProfileMatchSchema,
+		rewrite: egressProfileRewriteSchema.optional(),
+		logging: egressProfileLoggingSchema.default({ redactHeaders: [], redactUrlPatterns: [] }),
 		priority: z.number().int().default(100),
 		owner: z.string().min(1).optional(),
 		description: z.string().min(1).optional(),
@@ -189,29 +189,29 @@ export const mitmProfileSchema = z
 		}
 	});
 
-export const mitmProfileInputBundleSchema = z.object({
-	profiles: z.array(mitmProfileSchema).default([]),
+export const egressProfileInputBundleSchema = z.object({
+	profiles: z.array(egressProfileSchema).default([]),
 });
 
-export const mitmProfileBundleSchema = z.object({
-	schemaVersion: z.literal("clawdi.mitmProfiles.v1"),
+export const egressProfileBundleSchema = z.object({
+	schemaVersion: z.literal("clawdi.egressProfiles.v1"),
 	generatedAt: z.string().min(1),
 	generation: z.number().int().nonnegative(),
 	instanceId: z.string().min(1),
-	profiles: z.array(mitmProfileSchema),
+	profiles: z.array(egressProfileSchema),
 });
 
-export type MitmProfileInputBundle = z.infer<typeof mitmProfileInputBundleSchema>;
-export type MitmProfileBundle = z.infer<typeof mitmProfileBundleSchema>;
+export type EgressProfileInputBundle = z.infer<typeof egressProfileInputBundleSchema>;
+export type EgressProfileBundle = z.infer<typeof egressProfileBundleSchema>;
 
-export function buildMitmProfileBundle(input: {
+export function buildEgressProfileBundle(input: {
 	generatedAt: string;
 	generation: number;
 	instanceId: string;
-	profiles?: MitmProfileInputBundle;
-}): MitmProfileBundle {
+	profiles?: EgressProfileInputBundle;
+}): EgressProfileBundle {
 	return {
-		schemaVersion: "clawdi.mitmProfiles.v1",
+		schemaVersion: "clawdi.egressProfiles.v1",
 		generatedAt: input.generatedAt,
 		generation: input.generation,
 		instanceId: input.instanceId,
@@ -219,14 +219,14 @@ export function buildMitmProfileBundle(input: {
 	};
 }
 
-export function hasEnabledMitmProfiles(bundle: MitmProfileBundle): boolean {
+export function hasEnabledEgressProfiles(bundle: EgressProfileBundle): boolean {
 	return bundle.profiles.some((profile) => profile.enabled);
 }
 
-export function writeMitmProfileBundle(bundle: MitmProfileBundle, paths: RuntimePaths): string {
-	writePrivateFileAtomic(paths.mitmProfileBundle, `${JSON.stringify(bundle, null, 2)}\n`, {
+export function writeEgressProfileBundle(bundle: EgressProfileBundle, paths: RuntimePaths): string {
+	writePrivateFileAtomic(paths.egressProfileBundle, `${JSON.stringify(bundle, null, 2)}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
 	});
-	return paths.mitmProfileBundle;
+	return paths.egressProfileBundle;
 }

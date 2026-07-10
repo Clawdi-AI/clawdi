@@ -712,10 +712,10 @@ async def _admin_upsert_runtime_state(
     state.bridge = body.bridge
     state.live_sync = body.live_sync
     state.recovery = body.recovery
-    if state is not existing_state or body.mitmproxy is not None:
-        state.mitmproxy = body.mitmproxy
-    if state is not existing_state or body.mitm_profiles is not None:
-        state.mitm_profiles = body.mitm_profiles
+    if state is not existing_state or body.egress_engine is not None:
+        state.egress_engine = body.egress_engine
+    if state is not existing_state or body.egress_profiles is not None:
+        state.egress_profiles = body.egress_profiles
     if state is not existing_state or body.mcp is not None:
         state.mcp = body.mcp
     if state is not existing_state or body.tools is not None:
@@ -920,19 +920,19 @@ def _runtime_state_changed_fields(
         "system",
         "control_plane",
         "clawdi_cli",
-        "mitmproxy",
+        "egress_engine",
         "runtimes",
         "bridge",
         "live_sync",
         "recovery",
-        "mitm_profiles",
+        "egress_profiles",
         "mcp",
         "tools",
     ]
     if state is None:
         return fields
     changed: list[str] = []
-    preserve_when_omitted = {"mitmproxy", "mitm_profiles", "mcp", "tools"}
+    preserve_when_omitted = {"egress_engine", "egress_profiles", "mcp", "tools"}
     for field in fields:
         body_value = getattr(body, field)
         if field in preserve_when_omitted and body_value is None:

@@ -34,7 +34,7 @@ if (!result.success) {
 
 console.log(`built ${outfile} (${target})`);
 
-cpSync(resolve(cliRoot, "mitmproxy-addon"), resolve(dirname(outfile), "mitmproxy-addon"), {
+cpSync(resolve(cliRoot, "egress-addon"), resolve(dirname(outfile), "egress-addon"), {
 	recursive: true,
 });
-console.log(`copied mitmproxy addon to ${resolve(dirname(outfile), "mitmproxy-addon")}`);
+console.log(`copied egress addon to ${resolve(dirname(outfile), "egress-addon")}`);

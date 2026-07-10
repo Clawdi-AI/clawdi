@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { applyMitmTransparentRuntimeEnv } from "./mitm-env";
+import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 import { runtimeSecretValue } from "./secret-values";
@@ -53,7 +53,7 @@ const runtimeRunConfigSchema = z
 		cwd: z.string().min(1).optional(),
 		commandPath: z.string().min(1).nullable(),
 		appRoot: z.string().min(1).nullable(),
-		mitmProfileBundlePath: z.string().min(1).nullable().default(null),
+		egressProfileBundlePath: z.string().min(1).nullable().default(null),
 	})
 	.strict();
 
@@ -116,7 +116,7 @@ export function buildRuntimeRunConfig(input: {
 	commandPath: string | null;
 	appRoot: string | null;
 	workspaceRoot: string;
-	mitmProfileBundlePath?: string | null;
+	egressProfileBundlePath?: string | null;
 	settings?: RuntimeRunSettings;
 	secretFilePath?: string | null;
 	secretEnv?: Record<string, string>;
@@ -142,7 +142,7 @@ export function buildRuntimeRunConfig(input: {
 		cwd: input.settings?.cwd ?? input.workspaceRoot,
 		commandPath: input.commandPath,
 		appRoot: input.appRoot,
-		mitmProfileBundlePath: input.mitmProfileBundlePath ?? null,
+		egressProfileBundlePath: input.egressProfileBundlePath ?? null,
 	};
 }
 
@@ -225,13 +225,13 @@ export function buildRuntimeRunInvocation(
 		...baseEnv,
 		...read.config.env,
 		...runtimeSecretEnv(read.config.secretFilePath, read.config.secretEnv),
-		...(read.config.secretFilePath && read.config.mitmProfileBundlePath
-			? { CLAWDI_MITM_SECRET_FILE: read.config.secretFilePath }
+		...(read.config.secretFilePath && read.config.egressProfileBundlePath
+			? { CLAWDI_EGRESS_SECRET_FILE: read.config.secretFilePath }
 			: {}),
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
-	if (read.config.mitmProfileBundlePath) {
-		applyMitmTransparentRuntimeEnv(env);
+	if (read.config.egressProfileBundlePath) {
+		applyEgressTransparentRuntimeEnv(env);
 	}
 	const command =
 		read.config.commandPath && existsSync(read.config.commandPath)

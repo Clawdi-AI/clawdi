@@ -591,7 +591,7 @@ credential-and-capability layer, not only a secret-string store.
 4. Do not make env injection the final secure-agent model. Env injection is a
    developer convenience, not a sandbox.
 5. Do not remove existing Project and Agent conflict behavior.
-6. Do not build an HTTPS proxy/MITM system in Phase 1. Keep the architecture
+6. Do not build an HTTPS proxy/egress system in Phase 1. Keep the architecture
    ready for it, but defer implementation until hosted-agent runtime isolation
    is better understood.
 7. Do not build broad enterprise secrets-manager features before the agent
@@ -1458,7 +1458,7 @@ Defer from Phase 1:
 3. OpenBao/KMS production adapter.
 4. Hosted-agent proxy enforcement.
 5. Dynamic secrets engines and full enterprise gateway deployment.
-6. HTTPS proxy/MITM mode and CA injection.
+6. HTTPS proxy/egress mode and CA injection.
 7. Localhost sidecar service.
 8. Broad credential-profile support beyond the P0 allowlist and any explicit
    macOS Keychain/tool-command bridge approved for those P0 tools.
@@ -1661,7 +1661,7 @@ Rejected alternatives:
 - **Keep all-env injection as the main UX:** convenient, but too broad and not
   least-privilege.
 - **Build proxy mode before reference UX:** technically attractive, but it
-  introduces CA, MITM, egress-control, compatibility, and logging risks before
+  introduces CA, egress, egress-control, compatibility, and logging risks before
   users have the basic password-manager workflow.
 
 ## Product Decision

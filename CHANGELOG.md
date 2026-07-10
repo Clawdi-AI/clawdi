@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.44
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.44
+
+Package: `clawdi@0.12.10-beta.44`
+
+### Changed
+
+- Renamed the hosted runtime MITM command and manifest surface to the runtime
+  sidecar and egress contract.
+
 ## Clawdi CLI v0.12.10-beta.26
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.26
@@ -46,7 +57,7 @@ Package: `clawdi@0.12.10-beta.0`
   app/backend/web release line are not changed by default.
 - Cleaned up the runtime manifest contract so the CLI accepts one controller
   response shape and one local desired-state shape, with stricter validation for
-  runtime paths, secrets, MITM profiles, and manifest expiry.
+  runtime paths, secrets, egress profiles, and manifest expiry.
 
 ## Clawdi CLI v0.12.9
 

@@ -94,7 +94,7 @@ describe("runtime manifest services", () => {
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "hdep_test",
 			environmentId: "env_test",
 			instanceId: "hri_test",
@@ -183,7 +183,7 @@ describe("runtime manifest services", () => {
 			runtime?: string;
 			service?: string;
 			defaultArgs?: string[];
-			mitmProfileBundlePath?: string | null;
+			egressProfileBundlePath?: string | null;
 		};
 		expect(serviceConfig.runtime).toBe("hermes");
 		expect(serviceConfig.service).toBe("dashboard");
@@ -195,7 +195,7 @@ describe("runtime manifest services", () => {
 			"9119",
 			"--no-open",
 		]);
-		expect(serviceConfig.mitmProfileBundlePath).toBeNull();
+		expect(serviceConfig.egressProfileBundlePath).toBeNull();
 
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes"))).toBe(false);
 		expect(existsSync(join(paths.serviceStateRoot, "bin", ".clawdi-runtime-command-shim"))).toBe(
@@ -208,7 +208,7 @@ describe("runtime manifest services", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			runtime: "hermes",
 			deploymentId: "hdep_hermes_single",
 			environmentId: "env_hermes_single",
@@ -309,7 +309,7 @@ describe("runtime manifest services", () => {
 			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
 		});
 		const enabledManifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "hdep_uninstall",
 			environmentId: "env_uninstall",
 			instanceId: "hri_uninstall",
@@ -402,7 +402,7 @@ describe("runtime manifest services", () => {
 			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
 		});
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "hdep_no_systemd",
 			environmentId: "env_no_systemd",
 			instanceId: "hri_no_systemd",
@@ -462,7 +462,7 @@ describe("runtime manifest services", () => {
 		);
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "hdep_install_failure",
 			environmentId: "env_install_failure",
 			instanceId: "hri_install_failure",
@@ -544,7 +544,7 @@ describe("runtime manifest services", () => {
 			failUninstall: true,
 		});
 		const enabledManifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.runtimeDesiredState.v2",
 			deploymentId: "hdep_uninstall_failure",
 			environmentId: "env_uninstall_failure",
 			instanceId: "hri_uninstall_failure",

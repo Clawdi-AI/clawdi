@@ -44,7 +44,7 @@ flowchart LR
     subgraph Projection["Open-source projection layer"]
         CLI --> Provider[Provider projection]
         CLI --> Channel[Channel projection]
-        CLI --> Sidecar[Optional MITM profile projection]
+        CLI --> Sidecar[Optional egress profile projection]
         CLI --> RunConfig[Runtime run config]
         CLI --> SystemdPlan[Systemd service plan]
     end
@@ -97,12 +97,12 @@ Channel projection should:
 
 The `clawdi runtime sidecar` command is the runtime-local Clawdi support process.
 It hosts the inbound bridge module when `bridge.surfaces` are declared and the
-outbound MITM module when a manifest profile requires it.
+outbound egress module when a manifest profile requires it.
 
 The CLI may own:
 
 - profile validation;
-- local bridge and MITM module lifecycle;
+- local bridge and egress module lifecycle;
 - proxy and trust environment projection;
 - request matching for explicit profiles;
 - secret reference lookup from short-lived runtime state.
@@ -115,8 +115,8 @@ The CLI must not own:
 - target runtime update channels;
 - user BYOK provider traffic interception by default.
 
-The MITM module is not the bridge module and not the Clawdi daemon. They share
-the sidecar process, but module boundaries stay explicit: MITM owns outbound
+The egress module is not the bridge module and not the Clawdi daemon. They share
+the sidecar process, but module boundaries stay explicit: egress owns outbound
 proxy and CA behavior, bridge owns inbound browser surface auth, and the daemon
 owns live-sync/API authority. Manifest state, status, token scope, and logs must
 keep those responsibilities separate.

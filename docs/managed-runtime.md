@@ -79,7 +79,7 @@ flowchart TB
         SystemUnits[systemd/system/clawdi-*.service or /run/systemd/system]
         UnitEnv[systemd/env/*.service.env]
         Secrets[secrets and auth-token files]
-        MitmCA[mitm/systemd/ca.pem + sidecar-private key]
+        EgressCA[egress/systemd/ca.pem + sidecar-private key]
     end
 
     subgraph Support["Clawdi support programs"]
@@ -87,7 +87,7 @@ flowchart TB
         Daemon[clawdi daemon run]
         Sidecar[optional clawdi runtime sidecar]
         Bridge[bridge module]
-        Mitm[MITM module]
+        Egress[egress module]
     end
 
     subgraph Runtime["Official runtime programs"]
@@ -100,16 +100,16 @@ flowchart TB
     Systemd --> Daemon
     UserSystemd[systemd --user] --> Sidecar
     Sidecar --> Bridge
-    Sidecar --> Mitm
+    Sidecar --> Egress
     UserSystemd --> HermesGateway
     UserSystemd --> HermesDashboard
     UserSystemd --> OpenClaw
 
     Bridge -->|optional Control UI proxy| HermesDashboard
     Bridge -->|optional Control UI proxy| OpenClaw
-    Mitm -. proxy URL + CA trust .-> HermesGateway
-    Mitm -. proxy URL + CA trust .-> HermesDashboard
-    Mitm -. proxy URL + CA trust .-> OpenClaw
+    Egress -. proxy URL + CA trust .-> HermesGateway
+    Egress -. proxy URL + CA trust .-> HermesDashboard
+    Egress -. proxy URL + CA trust .-> OpenClaw
 ```
 
 The process manager is systemd. The important contract is that each
@@ -211,16 +211,16 @@ and those modules keep explicit authority boundaries:
 | Module | Starts when | Direction | Sensitive input | Network exposure | Must not own |
 | --- | --- | --- | --- | --- | --- |
 | manifest/watch | an auth token file exists | control-plane polling | Clawdi auth token from file | outbound API only | official runtime PID 1 |
-| live-sync daemon | `liveSync.agents` is non-empty | live sync and local daemon APIs | Clawdi auth token from file | local daemon surface | MITM rewrite policy |
-| sidecar bridge module | `bridge.surfaces` is non-empty and platform chooses Clawdi auth/proxy | browser reverse proxy | bridge token only | declared listen ports | outbound MITM policy |
-| sidecar MITM module | enabled MITM profiles exist | runtime outbound proxy | profile bundle, CA cert/key under `$CLAWDI_RUN_DIR`, optional secret file | loopback/private proxy | live-sync/API authority |
+| live-sync daemon | `liveSync.agents` is non-empty | live sync and local daemon APIs | Clawdi auth token from file | local daemon surface | egress rewrite policy |
+| sidecar bridge module | `bridge.surfaces` is non-empty and platform chooses Clawdi auth/proxy | browser reverse proxy | bridge token only | declared listen ports | outbound egress policy |
+| sidecar egress module | enabled egress profiles exist | runtime outbound proxy | profile bundle, CA cert/key under `$CLAWDI_RUN_DIR`, optional secret file | loopback/private proxy | live-sync/API authority |
 | official runtime program | runtime is enabled | normal runtime behavior | runtime-specific env/config only | official runtime ports | Clawdi auth secrets |
 
 The sidecar is still not a hidden wrapper around Hermes/OpenClaw. It only hosts
 Clawdi-owned support modules; official runtime programs remain direct process
 manager entries.
 
-The MITM module keeps its root CA certificate and private key under the
+The egress module keeps its root CA certificate and private key under the
 ephemeral run directory so a sidecar restart does not change the trust root for
 already-running runtimes. Runtime programs receive only the CA certificate path
 as trust env; the private key path is not projected into runtime env.
@@ -254,8 +254,8 @@ The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
   shape. It can include `system`, `controlPlane`, `clawdiCli`, `runtimes`,
-  `providers`, `liveSync`, `mitmProfiles`, `mcp`, `tools`, and `recovery`.
-- `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
+  `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and `recovery`.
+- `clawdi.runtimeDesiredState.v2` is the normalized internal convergence shape
   consumed by `runtime init`.
 
 Normalization maps hosted fields into the internal shape:
@@ -274,12 +274,12 @@ Normalization maps hosted fields into the internal shape:
 | `providers` | Runtime-scoped AI provider projections and secret refs |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
 | `liveSync` | Optional daemon sync configuration |
-| `mitmProfiles` | Explicit local sidecar profiles |
+| `egressProfiles` | Explicit local sidecar profiles |
 | `recovery` | Manifest cache and offline-boot behavior |
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, writes `generation` into
-managed state, sync state, MITM bundles, run configs, and projections, then
+managed state, sync state, egress bundles, run configs, and projections, then
 caches the fetched manifest as last-good. A generation-only control-plane bump
 therefore must produce a new ETag so `runtime watch` converges immediately.
 
@@ -310,8 +310,8 @@ manifest state using ETags, applies changes, records status, and falls back to
 last-good cached manifests only when recovery policy allows it. `runtime
 sidecar` is the single Clawdi support process for optional runtime-local modules:
 the bridge module exposes manifest-declared browser surfaces behind hosted access
-controls, and the MITM module proxies outbound runtime traffic when explicit
-MITM profiles are enabled.
+controls, and the egress module proxies outbound runtime traffic when explicit
+egress profiles are enabled.
 
 The current hosted bridge surfaces are browser-facing runtime UIs. Each surface
 declares its listen address, upstream target, protocol behavior, auth model, and
@@ -400,13 +400,13 @@ EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured"
 ```
 
-When bridge surfaces or MITM profiles are enabled, systemd runs the Clawdi
+When bridge surfaces or egress profiles are enabled, systemd runs the Clawdi
 support processes: the bridge surface process and, for egress interception, a
 runtime-fetched `mitmdump` (mitmproxy) transparent gateway owned by a dedicated
-`clawdi-mitm` user. Engagement is a minimal nft redirect of the runtime UID's
+`clawdi-egress` user. Engagement is a minimal nft redirect of the runtime UID's
 outbound :80/:443 to the local mitmproxy port (default-allow: non-profiled hosts
 pass through end-to-end against the real upstream CA); no forward-proxy env is
-injected. Bridge token/surface config and MITM profile/CA/secret config stay
+injected. Bridge token/surface config and egress profile/CA/secret config stay
 inside those support processes. Runtime programs therefore receive only CA-trust
 env such as `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`;
 support control env and secret-file paths stay out of the official runtime

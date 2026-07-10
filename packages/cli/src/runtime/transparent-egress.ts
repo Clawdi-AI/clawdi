@@ -1,24 +1,24 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-export const TRANSPARENT_MITM_TRANSPORT_VERSION = "clawdi-transparent-mitm-v1";
-export const TRANSPARENT_MITM_TABLE = "clawdi_transparent_mitm";
+export const TRANSPARENT_EGRESS_TRANSPORT_VERSION = "clawdi-transparent-egress-v1";
+export const TRANSPARENT_EGRESS_TABLE = "clawdi_transparent_egress";
 
-export interface TransparentMitmNftRulesInput {
+export interface TransparentEgressNftRulesInput {
 	table?: string;
 	transportVersion?: string;
 	runtimeUid: number;
-	mitmUid: number;
+	egressUid: number;
 	transparentPort: number;
 	replaceExistingTable?: boolean;
 }
 
-export interface TransparentMitmEnvConfig {
+export interface TransparentEgressEnvConfig {
 	envFile?: string;
 	runtimeUser: string;
-	mitmUser: string;
+	egressUser: string;
 	runtimeUid: number;
-	mitmUid: number;
+	egressUid: number;
 	transparentPort: number;
 	nftTable: string;
 	profileBundlePath: string;
@@ -26,53 +26,53 @@ export interface TransparentMitmEnvConfig {
 	caDir: string;
 	caCertPath: string;
 	systemCaBundle: string;
-	mitmproxyVersion: string;
-	mitmproxyUrl: string;
-	mitmproxySha256: string;
-	mitmproxyBinaryPath: string;
-	mitmproxyAddonPath: string;
-	mitmproxyAddonSha256: string;
+	engineVersion: string;
+	engineUrl: string;
+	engineSha256: string;
+	engineBinaryPath: string;
+	addonPath: string;
+	addonSha256: string;
 }
 
-export interface TransparentMitmApplyResult {
+export interface TransparentEgressApplyResult {
 	table: string;
 	runtimeUid: number;
-	mitmUid: number;
+	egressUid: number;
 	transparentPort: number;
 }
 
-export function buildTransparentMitmNftRules(input: TransparentMitmNftRulesInput): string {
+export function buildTransparentEgressNftRules(input: TransparentEgressNftRulesInput): string {
 	validateUid(input.runtimeUid, "runtimeUid");
-	validateUid(input.mitmUid, "mitmUid");
+	validateUid(input.egressUid, "egressUid");
 	validatePort(input.transparentPort);
-	const table = input.table ?? TRANSPARENT_MITM_TABLE;
-	const transportVersion = input.transportVersion ?? TRANSPARENT_MITM_TRANSPORT_VERSION;
+	const table = input.table ?? TRANSPARENT_EGRESS_TABLE;
+	const transportVersion = input.transportVersion ?? TRANSPARENT_EGRESS_TRANSPORT_VERSION;
 	validateNftIdentifier(table, "table");
 	const lines = [
 		`# ${transportVersion}`,
 		...(input.replaceExistingTable ? [`delete table inet ${table}`] : []),
 		`add table inet ${table}`,
 		`add chain inet ${table} output_nat { type nat hook output priority -100; policy accept; }`,
-		`add rule inet ${table} output_nat meta skuid ${input.mitmUid} accept`,
+		`add rule inet ${table} output_nat meta skuid ${input.egressUid} accept`,
 		`add rule inet ${table} output_nat meta skuid ${input.runtimeUid} tcp dport { 80, 443 } redirect to :${input.transparentPort}`,
 		"",
 	];
 	return lines.join("\n");
 }
 
-export function buildTransparentMitmNftCleanupRules(table = TRANSPARENT_MITM_TABLE): string {
+export function buildTransparentEgressNftCleanupRules(table = TRANSPARENT_EGRESS_TABLE): string {
 	validateNftIdentifier(table, "table");
-	return [`# ${TRANSPARENT_MITM_TRANSPORT_VERSION}`, `delete table inet ${table}`, ""].join("\n");
+	return [`# ${TRANSPARENT_EGRESS_TRANSPORT_VERSION}`, `delete table inet ${table}`, ""].join("\n");
 }
 
-export function applyTransparentMitmNftRulesFromEnv(
+export function applyTransparentEgressNftRulesFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
-): TransparentMitmApplyResult {
-	const config = loadTransparentMitmEnvConfig(env);
-	const rules = buildTransparentMitmNftRules({
+): TransparentEgressApplyResult {
+	const config = loadTransparentEgressEnvConfig(env);
+	const rules = buildTransparentEgressNftRules({
 		table: config.nftTable,
 		runtimeUid: config.runtimeUid,
-		mitmUid: config.mitmUid,
+		egressUid: config.egressUid,
 		transparentPort: config.transparentPort,
 		replaceExistingTable: nftTableExists(config.nftTable),
 	});
@@ -80,56 +80,58 @@ export function applyTransparentMitmNftRulesFromEnv(
 	return {
 		table: config.nftTable,
 		runtimeUid: config.runtimeUid,
-		mitmUid: config.mitmUid,
+		egressUid: config.egressUid,
 		transparentPort: config.transparentPort,
 	};
 }
 
-export function cleanupTransparentMitmNftRulesFromEnv(env: NodeJS.ProcessEnv = process.env): void {
-	const config = loadTransparentMitmEnvConfig(env);
-	cleanupTransparentMitmNftRules(config.nftTable);
-}
-
-export function cleanupTransparentMitmNftRules(table = TRANSPARENT_MITM_TABLE): void {
-	if (!nftTableExists(table)) return;
-	applyNftRules(buildTransparentMitmNftCleanupRules(table), "cleanup");
-}
-
-export function loadTransparentMitmEnvConfig(
+export function cleanupTransparentEgressNftRulesFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
-): TransparentMitmEnvConfig {
-	const envFile = firstNonempty(env.CLAWDI_MITM_ENV_FILE);
+): void {
+	const config = loadTransparentEgressEnvConfig(env);
+	cleanupTransparentEgressNftRules(config.nftTable);
+}
+
+export function cleanupTransparentEgressNftRules(table = TRANSPARENT_EGRESS_TABLE): void {
+	if (!nftTableExists(table)) return;
+	applyNftRules(buildTransparentEgressNftCleanupRules(table), "cleanup");
+}
+
+export function loadTransparentEgressEnvConfig(
+	env: NodeJS.ProcessEnv = process.env,
+): TransparentEgressEnvConfig {
+	const envFile = firstNonempty(env.CLAWDI_EGRESS_ENV_FILE);
 	const fileConfig = envFile ? parseEnvFile(envFile) : {};
 	const config: Record<string, string | undefined> = { ...fileConfig };
 	for (const [key, value] of Object.entries(env)) {
 		if (key.startsWith("CLAWDI_")) config[key] = value;
 	}
 	const runtimeUser = requiredConfig(config, "CLAWDI_RUNTIME_USER");
-	const mitmUser = requiredConfig(config, "CLAWDI_MITM_USER");
+	const egressUser = requiredConfig(config, "CLAWDI_EGRESS_USER");
 	const runtimeUid = numericConfig(config, "CLAWDI_RUNTIME_UID");
-	const mitmUid = numericConfig(config, "CLAWDI_MITM_UID");
-	const transparentPort = numericConfig(config, "CLAWDI_MITM_TRANSPARENT_PORT");
-	const nftTable = requiredConfig(config, "CLAWDI_MITM_NFT_TABLE");
-	validateNftIdentifier(nftTable, "CLAWDI_MITM_NFT_TABLE");
+	const egressUid = numericConfig(config, "CLAWDI_EGRESS_UID");
+	const transparentPort = numericConfig(config, "CLAWDI_EGRESS_TRANSPARENT_PORT");
+	const nftTable = requiredConfig(config, "CLAWDI_EGRESS_NFT_TABLE");
+	validateNftIdentifier(nftTable, "CLAWDI_EGRESS_NFT_TABLE");
 	return {
 		envFile,
 		runtimeUser,
-		mitmUser,
+		egressUser,
 		runtimeUid,
-		mitmUid,
+		egressUid,
 		transparentPort,
 		nftTable,
-		profileBundlePath: requiredConfig(config, "CLAWDI_MITM_PROFILE_BUNDLE"),
-		secretFilePath: config.CLAWDI_MITM_SECRET_FILE?.trim() ?? "",
-		caDir: requiredConfig(config, "CLAWDI_MITM_CA_DIR"),
-		caCertPath: requiredConfig(config, "CLAWDI_MITM_CA_CERT"),
-		systemCaBundle: requiredConfig(config, "CLAWDI_MITM_SYSTEM_CA_BUNDLE"),
-		mitmproxyVersion: requiredConfig(config, "CLAWDI_MITMPROXY_VERSION"),
-		mitmproxyUrl: requiredConfig(config, "CLAWDI_MITMPROXY_URL"),
-		mitmproxySha256: requiredConfig(config, "CLAWDI_MITMPROXY_SHA256").toLowerCase(),
-		mitmproxyBinaryPath: requiredConfig(config, "CLAWDI_MITMPROXY_BINARY_PATH"),
-		mitmproxyAddonPath: requiredConfig(config, "CLAWDI_MITMPROXY_ADDON_PATH"),
-		mitmproxyAddonSha256: requiredConfig(config, "CLAWDI_MITMPROXY_ADDON_SHA256").toLowerCase(),
+		profileBundlePath: requiredConfig(config, "CLAWDI_EGRESS_PROFILE_BUNDLE"),
+		secretFilePath: config.CLAWDI_EGRESS_SECRET_FILE?.trim() ?? "",
+		caDir: requiredConfig(config, "CLAWDI_EGRESS_CA_DIR"),
+		caCertPath: requiredConfig(config, "CLAWDI_EGRESS_CA_CERT"),
+		systemCaBundle: requiredConfig(config, "CLAWDI_EGRESS_SYSTEM_CA_BUNDLE"),
+		engineVersion: requiredConfig(config, "CLAWDI_EGRESS_ENGINE_VERSION"),
+		engineUrl: requiredConfig(config, "CLAWDI_EGRESS_ENGINE_URL"),
+		engineSha256: requiredConfig(config, "CLAWDI_EGRESS_ENGINE_SHA256").toLowerCase(),
+		engineBinaryPath: requiredConfig(config, "CLAWDI_EGRESS_ENGINE_BINARY_PATH"),
+		addonPath: requiredConfig(config, "CLAWDI_EGRESS_ADDON_PATH"),
+		addonSha256: requiredConfig(config, "CLAWDI_EGRESS_ADDON_SHA256").toLowerCase(),
 	};
 }
 
@@ -169,7 +171,7 @@ function nftTableExists(table: string): boolean {
 
 function requiredConfig(config: Record<string, string | undefined>, key: string): string {
 	const value = config[key]?.trim();
-	if (!value) throw new Error(`${key} is required for transparent MITM`);
+	if (!value) throw new Error(`${key} is required for transparent egress`);
 	return value;
 }
 

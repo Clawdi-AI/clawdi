@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { isValidSemver } from "../lib/semver";
-import { mitmProfileInputBundleSchema } from "./mitm-profiles";
+import { egressProfileInputBundleSchema } from "./egress-profiles";
 import {
 	runtimeNameSchema,
 	runtimeRunSettingsSchema,
 	runtimeServiceNameSchema,
 } from "./run-config";
 
-export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
+export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v2";
 
 export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	openclaw: "https://openclaw.ai/install-cli.sh",
@@ -55,13 +55,14 @@ const cliPayloadPolicySchema = z.object({
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
-export const mitmproxyArtifactSchema = z.object({
+export const egressEngineSchema = z.object({
+	type: z.literal("mitmproxy"),
 	version: z.string().min(1),
 	url: z.string().url(),
 	sha256: sha256Schema,
 });
 
-export type MitmproxyArtifactPin = z.infer<typeof mitmproxyArtifactSchema>;
+export type EgressEnginePin = z.infer<typeof egressEngineSchema>;
 
 export const DEFAULT_CLAWDI_CLI_POLICY = {
 	source: "npm:clawdi",
@@ -123,11 +124,11 @@ const runtimeDesiredStateShape = {
 		apiUrl: z.string().url(),
 	}),
 	clawdiCli: cliPayloadPolicySchema.optional(),
-	mitmproxy: mitmproxyArtifactSchema.optional(),
+	egressEngine: egressEngineSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
 	bridge: runtimeBridgeSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
-	mitmProfiles: mitmProfileInputBundleSchema.optional(),
+	egressProfiles: egressProfileInputBundleSchema.optional(),
 	liveSync: liveSyncSchema.optional(),
 	recovery: z
 		.object({
@@ -145,16 +146,33 @@ function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: s
 	});
 }
 
-export const manifestSchema = z
-	.object({
-		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
-		...runtimeDesiredStateShape,
-		secrets: z.unknown().optional(),
-	})
-	.superRefine((manifest, ctx) => {
-		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
-	})
-	.transform(({ secrets: _secrets, ...manifest }) => manifest);
+const currentDesiredStateLegacyFieldGateSchema = z.unknown().superRefine((value, ctx) => {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+	const manifest = value as Record<string, unknown>;
+	if (manifest.schemaVersion !== RUNTIME_DESIRED_STATE_SCHEMA_VERSION) return;
+	if ("mitmproxy" in manifest) addForbiddenFieldIssue(ctx, "mitmproxy");
+	if ("mitmProfiles" in manifest) addForbiddenFieldIssue(ctx, "mitmProfiles");
+});
+
+const hostedRuntimeLegacyFieldGateSchema = z.unknown().superRefine((value, ctx) => {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+	const manifest = value as Record<string, unknown>;
+	if ("mitmproxy" in manifest) addForbiddenFieldIssue(ctx, "mitmproxy");
+	if ("mitmProfiles" in manifest) addForbiddenFieldIssue(ctx, "mitmProfiles");
+});
+
+export const manifestSchema = currentDesiredStateLegacyFieldGateSchema.pipe(
+	z
+		.object({
+			schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
+			...runtimeDesiredStateShape,
+			secrets: z.unknown().optional(),
+		})
+		.superRefine((manifest, ctx) => {
+			if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
+		})
+		.transform(({ secrets: _secrets, ...manifest }) => manifest),
+);
 
 const hostedControlPlaneSchema = z
 	.object({
@@ -284,110 +302,113 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 		if (runtimeKeys.length !== 1) return value;
 		return { ...manifest, runtime: runtimeKeys[0] };
 	},
-	z
-		.object({
-			schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-			runtime: hostedRuntimeChoiceSchema,
-			deploymentId: z.string().min(1),
-			environmentId: z.string().min(1).optional(),
-			appId: z.string().min(1).optional(),
-			instanceId: z.string().min(1),
-			generation: z.number().int().nonnegative(),
-			minimumCliVersion: semverSchema.optional(),
-			issuedAt: z.string().min(1),
-			expiresAt: z.string().min(1).optional(),
-			system: z
-				.object({
-					user: z.string().min(1).optional(),
-					home: z.string().min(1).optional(),
-					workspace: z.string().min(1).optional(),
-					persistentPaths: z.array(z.string().min(1)).optional(),
-				})
-				.optional(),
-			controlPlane: hostedControlPlaneSchema,
-			clawdiCli: cliPayloadPolicySchema.optional(),
-			mitmproxy: mitmproxyArtifactSchema.optional(),
-			runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
-			bridge: runtimeBridgeSchema.optional(),
-			providers: z.record(z.string().min(1), hostedProviderSchema).optional(),
-			liveSync: liveSyncSchema.optional(),
-			mitmProfiles: z.unknown().optional(),
-			mcp: z.unknown().optional(),
-			tools: z.unknown().optional(),
-			recovery: z
-				.object({
-					cacheManifest: z.boolean().optional(),
-					allowOfflineBoot: z.boolean().optional(),
-				})
-				.optional(),
-		})
-		.superRefine((manifest, ctx) => {
-			const runtimeKeys = Object.keys(manifest.runtimes);
-			const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
-			if (!manifest.runtimes[manifest.runtime]) {
-				ctx.addIssue({
-					code: "custom",
-					message: `runtimes.${manifest.runtime} must be present for selected runtime`,
-					path: ["runtimes", manifest.runtime],
-				});
-			}
-			for (const key of unexpectedRuntimeKeys) {
-				ctx.addIssue({
-					code: "custom",
-					message: "hosted runtime manifests must declare exactly one selected runtime",
-					path: ["runtimes", key],
-				});
-			}
-			if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
-				ctx.addIssue({
-					code: "custom",
-					message: "selected runtime must be enabled",
-					path: ["runtimes", manifest.runtime, "enabled"],
-				});
-			}
-			const surfaces = manifest.bridge?.surfaces ?? [];
-			if (manifest.runtime === "openclaw" && surfaces.length > 0) {
-				const surface = surfaces.at(0);
-				if (
-					surfaces.length !== 1 ||
-					surface?.name !== "openclaw" ||
-					surface?.kind !== "control-ui" ||
-					surface?.listenPort !== 28789 ||
-					surface?.upstreamHost !== "127.0.0.1" ||
-					surface?.upstreamPort !== 18789
-				) {
+	hostedRuntimeLegacyFieldGateSchema.pipe(
+		z
+			.object({
+				schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+				runtime: hostedRuntimeChoiceSchema,
+				deploymentId: z.string().min(1),
+				environmentId: z.string().min(1).optional(),
+				appId: z.string().min(1).optional(),
+				instanceId: z.string().min(1),
+				generation: z.number().int().nonnegative(),
+				minimumCliVersion: semverSchema.optional(),
+				issuedAt: z.string().min(1),
+				expiresAt: z.string().min(1).optional(),
+				system: z
+					.object({
+						user: z.string().min(1).optional(),
+						home: z.string().min(1).optional(),
+						workspace: z.string().min(1).optional(),
+						persistentPaths: z.array(z.string().min(1)).optional(),
+					})
+					.optional(),
+				controlPlane: hostedControlPlaneSchema,
+				clawdiCli: cliPayloadPolicySchema.optional(),
+				egressEngine: egressEngineSchema.optional(),
+				runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
+				bridge: runtimeBridgeSchema.optional(),
+				providers: z.record(z.string().min(1), hostedProviderSchema).optional(),
+				liveSync: liveSyncSchema.optional(),
+				egressProfiles: z.unknown().optional(),
+				mcp: z.unknown().optional(),
+				tools: z.unknown().optional(),
+				recovery: z
+					.object({
+						cacheManifest: z.boolean().optional(),
+						allowOfflineBoot: z.boolean().optional(),
+					})
+					.optional(),
+			})
+			.superRefine((manifest, ctx) => {
+				const runtimeKeys = Object.keys(manifest.runtimes);
+				const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
+				if (!manifest.runtimes[manifest.runtime]) {
 					ctx.addIssue({
 						code: "custom",
-						message: "openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
-						path: ["bridge", "surfaces"],
+						message: `runtimes.${manifest.runtime} must be present for selected runtime`,
+						path: ["runtimes", manifest.runtime],
 					});
 				}
-			}
-			if (manifest.runtime === "hermes") {
-				if (surfaces.length !== 1) {
+				for (const key of unexpectedRuntimeKeys) {
 					ctx.addIssue({
 						code: "custom",
-						message: "hermes must declare exactly one bridge surface",
-						path: ["bridge", "surfaces"],
+						message: "hosted runtime manifests must declare exactly one selected runtime",
+						path: ["runtimes", key],
 					});
-					return;
 				}
-				const surface = surfaces.at(0);
-				if (
-					surface?.name !== "hermes" ||
-					surface?.kind !== "control-ui" ||
-					surface?.listenPort !== 28793 ||
-					surface?.upstreamHost !== "127.0.0.1" ||
-					surface?.upstreamPort !== 9119
-				) {
+				if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
 					ctx.addIssue({
 						code: "custom",
-						message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
-						path: ["bridge", "surfaces", 0],
+						message: "selected runtime must be enabled",
+						path: ["runtimes", manifest.runtime, "enabled"],
 					});
 				}
-			}
-		}),
+				const surfaces = manifest.bridge?.surfaces ?? [];
+				if (manifest.runtime === "openclaw" && surfaces.length > 0) {
+					const surface = surfaces.at(0);
+					if (
+						surfaces.length !== 1 ||
+						surface?.name !== "openclaw" ||
+						surface?.kind !== "control-ui" ||
+						surface?.listenPort !== 28789 ||
+						surface?.upstreamHost !== "127.0.0.1" ||
+						surface?.upstreamPort !== 18789
+					) {
+						ctx.addIssue({
+							code: "custom",
+							message:
+								"openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
+							path: ["bridge", "surfaces"],
+						});
+					}
+				}
+				if (manifest.runtime === "hermes") {
+					if (surfaces.length !== 1) {
+						ctx.addIssue({
+							code: "custom",
+							message: "hermes must declare exactly one bridge surface",
+							path: ["bridge", "surfaces"],
+						});
+						return;
+					}
+					const surface = surfaces.at(0);
+					if (
+						surface?.name !== "hermes" ||
+						surface?.kind !== "control-ui" ||
+						surface?.listenPort !== 28793 ||
+						surface?.upstreamHost !== "127.0.0.1" ||
+						surface?.upstreamPort !== 9119
+					) {
+						ctx.addIssue({
+							code: "custom",
+							message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
+							path: ["bridge", "surfaces", 0],
+						});
+					}
+				}
+			}),
+	),
 );
 
 export const hostedRuntimeManifestResponseSchema = z.object({

@@ -12,13 +12,13 @@ from types import SimpleNamespace
 
 ADDON_PATH = (
     Path(__file__).resolve().parents[2]
-    / "mitmproxy-addon"
-    / "clawdi_mitm_addon.py"
+    / "egress-addon"
+    / "clawdi_egress_addon.py"
 )
-SPEC = importlib.util.spec_from_file_location("clawdi_mitm_addon", ADDON_PATH)
+SPEC = importlib.util.spec_from_file_location("clawdi_egress_addon", ADDON_PATH)
 assert SPEC and SPEC.loader
 addon = importlib.util.module_from_spec(SPEC)
-sys.modules["clawdi_mitm_addon"] = addon
+sys.modules["clawdi_egress_addon"] = addon
 SPEC.loader.exec_module(addon)
 
 
@@ -65,7 +65,7 @@ def write_json(root: Path, name: str, value: object) -> Path:
 
 def bundle(profiles):
     return {
-        "schemaVersion": "clawdi.mitmProfiles.v1",
+        "schemaVersion": "clawdi.egressProfiles.v1",
         "generatedAt": "2026-07-08T00:00:00Z",
         "generation": 1,
         "instanceId": "iid_test",
@@ -85,21 +85,21 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         root = Path(self.tmp.name)
         bundle_path = write_json(root, "profiles.json", bundle(profiles))
         secret_path = write_json(root, "secrets.json", secrets or {})
-        mitm = addon.ClawdiMitmAddon()
-        mitm.reload_from_environment(
+        egress = addon.ClawdiEgressAddon()
+        egress.reload_from_environment(
             {
-                "CLAWDI_MITM_PROFILE_BUNDLE": str(bundle_path),
-                "CLAWDI_MITM_SECRET_FILE": str(secret_path),
+                "CLAWDI_EGRESS_PROFILE_BUNDLE": str(bundle_path),
+                "CLAWDI_EGRESS_SECRET_FILE": str(secret_path),
             }
         )
-        return mitm
+        return egress
 
     def tearDown(self):
         if hasattr(self, "tmp"):
             self.tmp.cleanup()
 
     def test_unprofiled_sni_and_request_default_allow(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "profiled-host",
@@ -111,17 +111,17 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 }
             ]
         )
-        self.assertFalse(mitm.should_intercept_sni("unmatched.test"))
+        self.assertFalse(egress.should_intercept_sni("unmatched.test"))
 
         flow = Flow(host="unmatched.test", path="/anything")
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "allow")
         self.assertEqual(flow.request.host, "unmatched.test")
         self.assertIsNone(flow.response)
 
     def test_passthrough_only_profile_does_not_intercept_sni(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "gateway-passthrough",
@@ -149,11 +149,11 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             ]
         )
 
-        self.assertFalse(mitm.should_intercept_sni("gateway.discord.gg"))
-        self.assertTrue(mitm.should_intercept_sni("discord.com"))
+        self.assertFalse(egress.should_intercept_sni("gateway.discord.gg"))
+        self.assertTrue(egress.should_intercept_sni("discord.com"))
 
     def test_shared_host_unmatched_request_passes_original_upstream(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "placeholder-only",
@@ -177,14 +177,14 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             path="/managed/messages",
             headers={"Authorization": "Bearer user-real-token"},
         )
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "allow")
         self.assertEqual(flow.request.host, "shared.test")
         self.assertEqual(flow.request.path, "/managed/messages")
 
     def test_provider_profile_overwrites_authorization_without_host_rewrite(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "provider",
@@ -212,7 +212,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             path="/v1/responses",
             headers={"Authorization": "Bearer dummy"},
         )
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "provider")
         self.assertEqual(flow.request.host, "gateway.test")
@@ -220,7 +220,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
 
     def test_provider_profile_restores_transparent_authority_before_forwarding(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "provider",
@@ -249,7 +249,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             path="/v1/chat/completions",
             headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
         )
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "provider")
         self.assertEqual(flow.request.host, "gateway.test")
@@ -257,7 +257,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
 
     def test_requestheaders_applies_provider_rewrite_before_streaming(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "provider",
@@ -286,16 +286,16 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
         )
 
-        mitm.requestheaders(flow)
+        egress.requestheaders(flow)
 
         self.assertTrue(flow.request.stream)
         self.assertEqual(flow.request.host, "gateway.test")
         self.assertEqual(flow.request.headers["Host"], "gateway.test")
         self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
-        self.assertTrue(flow.metadata["clawdi_mitm_decision_applied"])
+        self.assertTrue(flow.metadata["clawdi_egress_decision_applied"])
 
     def test_http_profile_rewrites_matching_placeholder_and_injects_secret(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "managed-http",
@@ -343,7 +343,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         )
 
         flow = Flow(host="provider.test", path="/botplaceholder-token/send?x=1")
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "http")
         self.assertIsNotNone(decision.profile)
@@ -359,7 +359,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertNotIn("real-agent-token", redacted)
 
     def test_websocket_profile_rewrites_upgrade_request(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "managed-websocket",
@@ -378,7 +378,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             path="/ws/chat",
             headers={"Upgrade": "websocket"},
         )
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "websocket")
         self.assertEqual(flow.request.scheme, "https")
@@ -386,7 +386,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.path, "/session/ws/chat")
 
     def test_deny_profile_sets_safe_response(self):
-        mitm = self.load(
+        egress = self.load(
             [
                 {
                     "id": "deny",
@@ -399,7 +399,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         )
 
         flow = Flow(host="blocked.test")
-        decision = mitm.apply_to_flow(flow)
+        decision = egress.apply_to_flow(flow)
 
         self.assertEqual(decision.action, "deny")
         self.assertEqual(flow.response["status_code"], 403)

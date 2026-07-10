@@ -129,7 +129,7 @@ rewritten mechanically. Examples in this repository include:
 - OpenAI-compatible base URLs ending in `/api/v1`.
 - Composio API URLs.
 - Captured provider fixtures under `backend/tests/fixtures/`.
-- Runtime MITM profile tests that intentionally match external `/api/` paths.
+- Runtime egress profile tests that intentionally match external `/api/` paths.
 
 Only rewrite a `/api` string after verifying the owning protocol and call site.
 

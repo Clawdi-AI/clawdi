@@ -1,9 +1,9 @@
-import { type MitmProfileInputBundle, mitmProfileInputBundleSchema } from "./mitm-profiles";
+import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
 
-type HostedMitmProfile = MitmProfileInputBundle["profiles"][number];
+type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 
 interface HostedRuntimeManifestProjection {
-	mitmProfiles?: unknown;
+	egressProfiles?: unknown;
 	controlPlane?: {
 		cloudApiUrl?: string | null;
 		manifestUrl?: string | null;
@@ -19,26 +19,26 @@ interface HostedProviderProjection {
 	status?: string | null;
 }
 
-export function hostedManifestMitmProfiles(
+export function hostedManifestEgressProfiles(
 	hosted: HostedRuntimeManifestProjection,
-): MitmProfileInputBundle {
+): EgressProfileInputBundle {
 	const explicit =
-		hosted.mitmProfiles !== undefined
-			? mitmProfileInputBundleSchema.parse(hosted.mitmProfiles)
+		hosted.egressProfiles !== undefined
+			? egressProfileInputBundleSchema.parse(hosted.egressProfiles)
 			: { profiles: [] };
 	return mergeGeneratedProfiles(explicit, [
-		...runtimeInstallerMitmProfiles(),
-		...managedProviderMitmProfiles(hosted),
+		...runtimeInstallerEgressProfiles(),
+		...managedProviderEgressProfiles(hosted),
 	]);
 }
 
-export function runtimeInstallerMitmProfiles(): HostedMitmProfile[] {
+export function runtimeInstallerEgressProfiles(): HostedEgressProfile[] {
 	const profile = (
 		id: string,
 		host: string,
 		pathPrefix: string,
 		description: string,
-	): HostedMitmProfile => ({
+	): HostedEgressProfile => ({
 		id,
 		enabled: true,
 		kind: "passthrough",
@@ -121,17 +121,17 @@ export function runtimeInstallerMitmProfiles(): HostedMitmProfile[] {
 	];
 }
 
-function providerUsesManagedMitmProfile(apiMode: string | null): boolean {
+function providerUsesManagedEgressProfile(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
-export function managedProviderMitmProfiles(
+export function managedProviderEgressProfiles(
 	hosted: HostedRuntimeManifestProjection,
-): HostedMitmProfile[] {
-	const profiles: HostedMitmProfile[] = [];
+): HostedEgressProfile[] {
+	const profiles: HostedEgressProfile[] = [];
 	const seenMatches = new Set<string>();
 	for (const [providerId, provider] of providerProjectionEntries(hosted.providers)) {
-		const profile = managedProviderMitmProfileForProvider(providerId, provider);
+		const profile = managedProviderEgressProfileForProvider(providerId, provider);
 		if (!profile) continue;
 		const matchKey = `${profile.match.scheme}:${profile.match.host}`;
 		if (seenMatches.has(matchKey)) continue;
@@ -141,10 +141,10 @@ export function managedProviderMitmProfiles(
 	return profiles;
 }
 
-function managedProviderMitmProfileForProvider(
+function managedProviderEgressProfileForProvider(
 	providerId: string,
 	provider: HostedProviderProjection,
-): HostedMitmProfile | null {
+): HostedEgressProfile | null {
 	const providerBaseUrl = cleanBaseUrl(provider?.baseUrl);
 	const providerApiMode = cleanString(provider?.apiMode);
 	const secretRef = normalizeSecretRef(provider?.apiKeySecretRef);
@@ -152,7 +152,7 @@ function managedProviderMitmProfileForProvider(
 		!isClawdiManagedProviderProjection(provider) ||
 		!providerBaseUrl ||
 		!secretRef ||
-		!providerUsesManagedMitmProfile(providerApiMode)
+		!providerUsesManagedEgressProfile(providerApiMode)
 	) {
 		return null;
 	}
@@ -233,9 +233,9 @@ function cleanBaseUrl(value: string | null | undefined): string | null {
 }
 
 function mergeGeneratedProfiles(
-	explicit: MitmProfileInputBundle,
-	generated: HostedMitmProfile[],
-): MitmProfileInputBundle {
+	explicit: EgressProfileInputBundle,
+	generated: HostedEgressProfile[],
+): EgressProfileInputBundle {
 	const generatedIds = new Set(generated.map((profile) => profile.id));
 	return {
 		profiles: [

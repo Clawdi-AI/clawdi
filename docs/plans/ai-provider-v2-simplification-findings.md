@@ -29,8 +29,8 @@ not the legacy dashboard form shape.
   (`packages/cli/src/lib/ai-provider-projection.ts:523-570`).
 - The managed transparent-gateway path is gated by `managed_by === "clawdi"`
   plus `baseUrl`, `apiMode`, and a secret ref; user BYOK providers do not go
-  through that MITM profile path
-  (`packages/cli/src/runtime/hosted-mitm-profiles.ts:124-197`).
+  through that egress profile path
+  (`packages/cli/src/runtime/hosted-egress-profiles.ts:124-197`).
 
 ## Upstream contract checks
 
@@ -74,7 +74,7 @@ not the legacy dashboard form shape.
     catalog and emits provider model metadata
 - System-owned but runtime-significant:
   - `managed_by`, because the hosted managed gateway path keys off it
-    (`packages/cli/src/runtime/hosted-mitm-profiles.ts:144-197`)
+    (`packages/cli/src/runtime/hosted-egress-profiles.ts:144-197`)
 - Fully derivable from a provider-type catalog for known providers:
   - default `base_url`
   - default `api_mode`

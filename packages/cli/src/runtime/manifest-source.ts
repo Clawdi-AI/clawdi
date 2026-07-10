@@ -6,7 +6,7 @@ import {
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
 } from "./auth-token";
-import { hostedManifestMitmProfiles } from "./hosted-mitm-profiles";
+import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	DEFAULT_CLAWDI_CLI_POLICY,
 	type HostedRuntimeManifest,
@@ -555,7 +555,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
 				}
 			: { ...DEFAULT_CLAWDI_CLI_POLICY },
-		mitmproxy: hosted.mitmproxy,
+		egressEngine: hosted.egressEngine,
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,
@@ -589,7 +589,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 		},
 		liveSync: hosted.liveSync,
-		mitmProfiles: hostedManifestMitmProfiles(hosted),
+		egressProfiles: hostedManifestEgressProfiles(hosted),
 		recovery: {
 			cacheManifest: hosted.recovery?.cacheManifest ?? true,
 			allowOfflineBoot: hosted.recovery?.allowOfflineBoot ?? true,

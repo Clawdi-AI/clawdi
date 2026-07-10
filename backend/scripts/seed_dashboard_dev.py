@@ -252,7 +252,7 @@ async def _create_hosted_runtime_graph(
                 runtimes={runtime: {"enabled": True, "status": "running"}},
                 live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
                 recovery={"mode": "dev"},
-                mitm_profiles={},
+                egress_profiles={},
                 mcp={"enabled": True},
                 tools={"channels": True, "aiProviders": True},
                 observed={"status": "running", "runtime": runtime},
