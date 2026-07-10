@@ -1491,9 +1491,13 @@ function hostedProviderAuth(
 		if (type === "agent_profile" && tool === "codex" && profile) {
 			return { type: "agent_profile", tool: "codex", profile };
 		}
-		if ((type === "api_key" || type === "secret_ref") && !hasApiKeySecretRef) {
+		if (type === "api_key" || type === "secret_ref") {
+			if (hasApiKeySecretRef) {
+				return { type: "api_key", source: "managed" };
+			}
 			return null;
 		}
+		if (type && type !== "none") return null;
 	}
 	if (hasApiKeySecretRef) {
 		return { type: "api_key", source: "managed" };

@@ -152,38 +152,33 @@ const runtimeChannelAgentLinkSchema = z
 		status: z.string().min(1),
 		agent_token: z.string().min(1).nullable().optional(),
 	})
-	.passthrough()
 	.transform((link) => ({
 		...link,
 		agent_token: link.agent_token ?? null,
 	}));
 
-const runtimeChannelCredentialSchema = z
-	.object({
-		id: z.string().min(1),
-		account_id: z.string().min(1),
-		agent_link_id: z.string().min(1),
-		agent_id: z.string().min(1),
-		provider: z.string().min(1),
-		kind: z.string().min(1),
-		created_at: z.string().min(1).optional(),
-		jid: z.string().min(1).nullable().optional(),
-		identity_pub_key_hex: z.string().min(1).nullable().optional(),
-		material: z.unknown().optional(),
-	})
-	.passthrough();
+const runtimeChannelCredentialSchema = z.object({
+	id: z.string().min(1),
+	account_id: z.string().min(1),
+	agent_link_id: z.string().min(1),
+	agent_id: z.string().min(1),
+	provider: z.string().min(1),
+	kind: z.string().min(1),
+	created_at: z.string().min(1).optional(),
+	jid: z.string().min(1).nullable().optional(),
+	identity_pub_key_hex: z.string().min(1).nullable().optional(),
+	material: z.unknown().optional(),
+});
 
-const runtimeChannelAccountSchema = z
-	.object({
-		id: z.string().min(1),
-		provider: runtimeChannelProviderSchema,
-		name: z.string().min(1),
-		status: z.string().min(1),
-		visibility: z.enum(["private", "public"]).default("private"),
-		runtime_links: z.array(runtimeChannelAgentLinkSchema).default([]),
-		runtime_credentials: z.array(runtimeChannelCredentialSchema).default([]),
-	})
-	.passthrough();
+const runtimeChannelAccountSchema = z.object({
+	id: z.string().min(1),
+	provider: runtimeChannelProviderSchema,
+	name: z.string().min(1),
+	status: z.string().min(1),
+	visibility: z.enum(["private", "public"]).default("private"),
+	runtime_links: z.array(runtimeChannelAgentLinkSchema).default([]),
+	runtime_credentials: z.array(runtimeChannelCredentialSchema).default([]),
+});
 
 const runtimeChannelsSchema = z.array(z.unknown()).transform((accounts, ctx) => {
 	const allowedAccounts: RuntimeChannelAccount[] = [];

@@ -282,6 +282,52 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(hostedManifestToRuntimeManifest(hostedManifest).runtime).toBe("openclaw");
 	});
 
+	test("strips unknown hosted manifest fields while preserving the known contract", () => {
+		const cleanManifest = {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "openclaw",
+			deploymentId: "hdep_forward_compat",
+			environmentId: "env_forward_compat",
+			instanceId: "hri_forward_compat",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			controlPlane: {
+				cloudApiUrl: "https://cloud-api.example.test",
+			},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: {
+						command: "openclaw",
+						args: ["gateway", "run"],
+						env: {},
+						prependPath: [],
+					},
+				},
+			},
+		};
+
+		const parsed = hostedRuntimeManifestSchema.parse({
+			...cleanManifest,
+			futureTopLevelField: { deployApiCanShipFirst: true },
+			runtimes: {
+				openclaw: {
+					...cleanManifest.runtimes.openclaw,
+					futureRuntimeField: "ignored",
+					run: {
+						...cleanManifest.runtimes.openclaw.run,
+						futureRunField: "ignored",
+					},
+				},
+			},
+		});
+
+		expect(parsed).toEqual(hostedRuntimeManifestSchema.parse(cleanManifest));
+		expect(parsed).not.toHaveProperty("futureTopLevelField");
+		expect(parsed.runtimes.openclaw).not.toHaveProperty("futureRuntimeField");
+		expect(parsed.runtimes.openclaw.run).not.toHaveProperty("futureRunField");
+	});
+
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
