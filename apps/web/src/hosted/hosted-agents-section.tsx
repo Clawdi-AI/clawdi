@@ -13,9 +13,10 @@ import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
-import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
-import { normalizeAgentEnvId } from "@/lib/agent-ownership";
+import {
+	connectedAgentTilesForHostedView,
+	useHostedAgentTiles,
+} from "@/hosted/use-hosted-agent-tiles";
 
 type Env = components["schemas"]["AgentResponse"];
 
@@ -75,26 +76,15 @@ export function HostedAgentsSection({
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
-	const legacyConnectedTiles = legacyConnectedTilesForAccess({
-		showLegacyAgents,
-		showCloudDeployments,
-		hosted,
+	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
+	const connectedTiles = connectedAgentTilesForHostedView({
+		selfManagedTiles,
+		claimedEnvIds: hosted.claimedEnvIds,
 		legacyEnvIds,
 		cloudEnvs,
+		showLegacyAgents,
 	});
-	// Drop self-managed tiles whose env is already represented by a
-	// hosted tile. Without this, a hosted deployment's cloud-api env (created
-	// by the admin endpoint) would render twice — once with the
-	// "Clawdi" pill and external manage URL, once as a generic
-	// self-managed tile.
-	// `claimedEnvIds` is lower-cased at insertion in `useHostedAgentTiles`
-	// (see comment there); compare on the lower-cased tile id so an
-	// uppercase / mixed-case env_id on either side still matches.
-	const dedupedSelfManaged = ownershipLoading
-		? []
-		: selfManagedTiles.filter((t) => !isOwnedEnvId(t.id, hosted.claimedEnvIds, legacyEnvIds));
-	const agentTiles: AgentTile[] = [...hosted.tiles, ...legacyConnectedTiles, ...dedupedSelfManaged];
+	const agentTiles: AgentTile[] = [...hosted.tiles, ...connectedTiles];
 	// Empty state must consider BOTH sources of agents. Hidden behind
 	// `!hosted.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
@@ -104,8 +94,8 @@ export function HostedAgentsSection({
 		!selfManagedError &&
 		selfManagedCount === 0 &&
 		hosted.tiles.length === 0 &&
-		legacyConnectedTiles.length === 0 &&
-		!hosted.isLoading &&
+		connectedTiles.length === 0 &&
+		!hostedDeploymentsLoading &&
 		!legacyOwnershipLoading &&
 		!hosted.error;
 	return (
@@ -119,7 +109,7 @@ export function HostedAgentsSection({
 					error={selfManagedError}
 					onRetry={onRetrySelfManaged}
 					hostedStatus={{
-						isLoading: ownershipLoading,
+						isLoading: hostedDeploymentsLoading || legacyOwnershipLoading,
 						error: hosted.error,
 						onRetry: () => {
 							void hosted.refetch();
@@ -130,40 +120,6 @@ export function HostedAgentsSection({
 			)}
 		</div>
 	);
-}
-
-function legacyConnectedTilesForAccess({
-	showLegacyAgents,
-	showCloudDeployments,
-	hosted,
-	legacyEnvIds,
-	cloudEnvs,
-}: {
-	showLegacyAgents: boolean;
-	showCloudDeployments: boolean;
-	hosted: ReturnType<typeof useHostedAgentTiles>;
-	legacyEnvIds: ReadonlySet<string> | null;
-	cloudEnvs: Env[];
-}): AgentTile[] {
-	if (!showLegacyAgents) return [];
-	// Visible taxonomy in hosted builds:
-	// - Cloud deploy API records render as Clawdi Cloud agent tiles.
-	// - v1 hosted environments render like connected agents in this dashboard.
-	//
-	// When Cloud deployments are enabled, wait for the deployment query before
-	// projecting legacy environments so a Cloud-claimed env is not briefly duplicated.
-	if (showCloudDeployments && hosted.isLoading) return [];
-	if (!legacyEnvIds) return [];
-	return legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, hosted.claimedEnvIds);
-}
-
-function isOwnedEnvId(
-	id: string,
-	claimedEnvIds: ReadonlySet<string>,
-	legacyEnvIds: ReadonlySet<string> | null,
-): boolean {
-	const envId = normalizeAgentEnvId(id);
-	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds?.has(envId)));
 }
 
 /**
@@ -197,20 +153,21 @@ export function HostedSecondaryCTA({
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
-	const legacyConnectedTiles = legacyConnectedTilesForAccess({
-		showLegacyAgents,
-		showCloudDeployments,
-		hosted,
+	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
+	const legacyConnectedTiles = connectedAgentTilesForHostedView({
+		selfManagedTiles: [],
+		claimedEnvIds: hosted.claimedEnvIds,
 		legacyEnvIds,
 		cloudEnvs,
+		showLegacyAgents,
 	});
-	// Loading: don't flash an empty slot then pop in. Wait for both
-	// sources to settle before deciding whether to show the CTA.
-	if (envsLoading || ownershipLoading) return null;
 	const hasAnyAgent =
 		selfManagedCount > 0 || hosted.tiles.length > 0 || legacyConnectedTiles.length > 0;
-	return hasAnyAgent ? <OnboardingCard variant="additional-agent" /> : null;
+	if (hasAnyAgent) return <OnboardingCard variant="additional-agent" />;
+	// Loading: don't flash an empty slot then pop in. Wait for pending
+	// sources only when none has already proven there is an agent.
+	if (envsLoading || hostedDeploymentsLoading || legacyOwnershipLoading) return null;
+	return null;
 }
 
 /**
@@ -242,19 +199,15 @@ export function HostedAgentsByCompute({
 	});
 	const legacyEnvIds = useLegacyEnvIds();
 	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const ownershipLoading = (showCloudDeployments && hosted.isLoading) || legacyOwnershipLoading;
-	const legacyConnectedTiles = legacyConnectedTilesForAccess({
-		showLegacyAgents,
-		showCloudDeployments,
-		hosted,
+	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
+	const hostedTiles = hosted.tiles;
+	const connectedTiles = connectedAgentTilesForHostedView({
+		selfManagedTiles,
+		claimedEnvIds: hosted.claimedEnvIds,
 		legacyEnvIds,
 		cloudEnvs,
+		showLegacyAgents,
 	});
-	const dedupedSelfManaged = ownershipLoading
-		? []
-		: selfManagedTiles.filter((t) => !isOwnedEnvId(t.id, hosted.claimedEnvIds, legacyEnvIds));
-	const hostedTiles = hosted.tiles;
-	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
 
 	const isEmptyState =
 		!envsLoading &&
@@ -262,7 +215,7 @@ export function HostedAgentsByCompute({
 		selfManagedCount === 0 &&
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0 &&
-		!hosted.isLoading &&
+		!hostedDeploymentsLoading &&
 		!legacyOwnershipLoading &&
 		!hosted.error;
 	if (isEmptyState) {
@@ -274,7 +227,7 @@ export function HostedAgentsByCompute({
 	}
 
 	if (
-		(envsLoading || ownershipLoading) &&
+		(envsLoading || hostedDeploymentsLoading || legacyOwnershipLoading) &&
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0
 	) {

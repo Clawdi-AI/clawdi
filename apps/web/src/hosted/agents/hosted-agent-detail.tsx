@@ -108,6 +108,8 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import {
+	isComputeSubscriptionCancelable,
+	isComputeSubscriptionTermChangeable,
 	planOffers,
 	resolvePerformancePlan,
 	selectOfferForTerm,
@@ -2085,11 +2087,13 @@ function ComputeSettingsSections({
 		currentSubscription?.cancel_at ?? currentSubscription?.current_period_end ?? null;
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
+	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const canChangeBillingTerm =
 		isPerformance &&
 		!!perfPlan &&
 		!!perfOfferSelection &&
 		!!currentSubscription &&
+		isComputeSubscriptionTermChangeable(currentSubscription) &&
 		!subscriptionCancelPending &&
 		selectedBillingTerm !== currentBillingTerm;
 	const canUpgrade = !isPerformance && deployment.upgrade_available;
@@ -2217,6 +2221,7 @@ function ComputeSettingsSections({
 	}
 
 	async function cancelPerformanceSubscription() {
+		if (!subscriptionCancelable || subscriptionCancelPending) return;
 		try {
 			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription cancellation scheduled", {
@@ -2230,6 +2235,7 @@ function ComputeSettingsSections({
 	}
 
 	async function resumePerformanceSubscription() {
+		if (!subscriptionCancelable || !subscriptionCancelPending) return;
 		try {
 			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription resumed");
@@ -2369,7 +2375,7 @@ function ComputeSettingsSections({
 										type="button"
 										variant="outline"
 										size="sm"
-										disabled={resumeSubscription.isPending}
+										disabled={resumeSubscription.isPending || !subscriptionCancelable}
 										onClick={() =>
 											void runAction(resumePerformanceSubscription).catch(() => undefined)
 										}
@@ -2398,7 +2404,7 @@ function ComputeSettingsSections({
 											type="button"
 											variant="outline"
 											size="sm"
-											disabled={cancelSubscription.isPending}
+											disabled={cancelSubscription.isPending || !subscriptionCancelable}
 										>
 											{cancelSubscription.isPending ? (
 												<Spinner className="size-3.5" />
