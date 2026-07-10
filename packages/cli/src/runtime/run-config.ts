@@ -24,16 +24,14 @@ export type SupportedRuntimeName = z.infer<typeof supportedRuntimeSchema>;
 
 const envKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 
-export const runtimeRunSettingsSchema = z
-	.object({
-		command: z.string().min(1).optional(),
-		args: z.array(z.string()).optional(),
-		env: z.record(envKeySchema, z.string()).default({}),
-		secretEnv: z.record(envKeySchema, z.string().min(1)).optional(),
-		cwd: z.string().min(1).optional(),
-		prependPath: z.array(z.string().min(1)).default([]),
-	})
-	.strict();
+export const runtimeRunSettingsSchema = z.object({
+	command: z.string().min(1).optional(),
+	args: z.array(z.string()).optional(),
+	env: z.record(envKeySchema, z.string()).default({}),
+	secretEnv: z.record(envKeySchema, z.string().min(1)).optional(),
+	cwd: z.string().min(1).optional(),
+	prependPath: z.array(z.string().min(1)).default([]),
+});
 
 export type RuntimeRunSettings = z.infer<typeof runtimeRunSettingsSchema>;
 

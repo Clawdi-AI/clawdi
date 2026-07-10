@@ -53,25 +53,19 @@ function isSafeUpstreamBaseUrl(value: string): boolean {
 
 const headerMatcherSchema = z
 	.discriminatedUnion("type", [
-		z
-			.object({
-				type: z.literal("exists"),
-			})
-			.strict(),
-		z
-			.object({
-				type: z.literal("equals"),
-				value: z.string(),
-				prefix: z.string().optional(),
-			})
-			.strict(),
-		z
-			.object({
-				type: z.literal("secretRefEquals"),
-				secretRef: secretRefSchema,
-				prefix: z.string().optional(),
-			})
-			.strict(),
+		z.object({
+			type: z.literal("exists"),
+		}),
+		z.object({
+			type: z.literal("equals"),
+			value: z.string(),
+			prefix: z.string().optional(),
+		}),
+		z.object({
+			type: z.literal("secretRefEquals"),
+			secretRef: secretRefSchema,
+			prefix: z.string().optional(),
+		}),
 	])
 	.describe(
 		"Header matchers must never inline secret values unless type=equals is intentionally public.",
@@ -79,103 +73,82 @@ const headerMatcherSchema = z
 
 const pathMatcherSchema = z
 	.discriminatedUnion("type", [
-		z
-			.object({
-				type: z.literal("equals"),
-				value: z.string().min(1),
-			})
-			.strict(),
-		z
-			.object({
-				type: z.literal("prefix"),
-				value: z.string().min(1),
-			})
-			.strict(),
-		z
-			.object({
-				type: z.literal("secretRefEquals"),
-				secretRef: secretRefSchema,
-				prefix: z.string().default(""),
-				suffix: z.string().default(""),
-			})
-			.strict(),
-		z
-			.object({
-				type: z.literal("secretRefPrefix"),
-				secretRef: secretRefSchema,
-				prefix: z.string().default(""),
-				suffix: z.string().default(""),
-			})
-			.strict(),
+		z.object({
+			type: z.literal("equals"),
+			value: z.string().min(1),
+		}),
+		z.object({
+			type: z.literal("prefix"),
+			value: z.string().min(1),
+		}),
+		z.object({
+			type: z.literal("secretRefEquals"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+			suffix: z.string().default(""),
+		}),
+		z.object({
+			type: z.literal("secretRefPrefix"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+			suffix: z.string().default(""),
+		}),
 	])
 	.describe("Path matchers allow URL-embedded tokens such as Telegram Bot API tokens.");
 
 const headerSetterSchema = z
 	.union([
 		z.string(),
-		z
-			.object({
-				type: z.literal("secretRef"),
-				secretRef: secretRefSchema,
-				prefix: z.string().default(""),
-			})
-			.strict(),
+		z.object({
+			type: z.literal("secretRef"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+		}),
 	])
 	.describe(
 		"Rewrite headers can be literal public values or secretRef-backed values resolved only by the sidecar.",
 	);
 
-const pathReplaceSchema = z
-	.object({
-		type: z.literal("secretRefPrefix"),
-		secretRef: secretRefSchema,
-		replacementSecretRef: secretRefSchema,
-		prefix: z.string().default(""),
-		suffix: z.string().default(""),
-	})
-	.strict();
+const pathReplaceSchema = z.object({
+	type: z.literal("secretRefPrefix"),
+	secretRef: secretRefSchema,
+	replacementSecretRef: secretRefSchema,
+	prefix: z.string().default(""),
+	suffix: z.string().default(""),
+});
 
-const mitmProfileMatchSchema = z
-	.object({
-		scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
-		host: z.string().min(1),
-		pathPrefix: z
-			.string()
-			.min(1)
-			.refine((value) => value.startsWith("/"), "pathPrefix must start with /")
-			.optional(),
-		path: pathMatcherSchema.optional(),
-		headers: z.record(headerNameSchema, headerMatcherSchema).default({}),
-		query: z.record(queryNameSchema, headerMatcherSchema).default({}),
-	})
-	.strict();
+const mitmProfileMatchSchema = z.object({
+	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
+	host: z.string().min(1),
+	pathPrefix: z
+		.string()
+		.min(1)
+		.refine((value) => value.startsWith("/"), "pathPrefix must start with /")
+		.optional(),
+	path: pathMatcherSchema.optional(),
+	headers: z.record(headerNameSchema, headerMatcherSchema).default({}),
+	query: z.record(queryNameSchema, headerMatcherSchema).default({}),
+});
 
-const mitmProfileRewriteSchema = z
-	.object({
-		upstreamBaseUrl: z
-			.string()
-			.url()
-			.refine(
-				(value) => ["http:", "https:", "ws:", "wss:"].includes(new URL(value).protocol),
-				"upstreamBaseUrl must use http, https, ws, or wss",
-			)
-			.refine(
-				isSafeUpstreamBaseUrl,
-				"upstreamBaseUrl must not include credentials or an unsafe host",
-			)
-			.optional(),
-		preservePath: z.boolean().default(true),
-		pathReplace: pathReplaceSchema.optional(),
-		setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
-	})
-	.strict();
+const mitmProfileRewriteSchema = z.object({
+	upstreamBaseUrl: z
+		.string()
+		.url()
+		.refine(
+			(value) => ["http:", "https:", "ws:", "wss:"].includes(new URL(value).protocol),
+			"upstreamBaseUrl must use http, https, ws, or wss",
+		)
+		.refine(isSafeUpstreamBaseUrl, "upstreamBaseUrl must not include credentials or an unsafe host")
+		.optional(),
+	preservePath: z.boolean().default(true),
+	pathReplace: pathReplaceSchema.optional(),
+	setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
+});
 
-const mitmProfileLoggingSchema = z
-	.object({
-		redactHeaders: z.array(headerNameSchema).default([]),
-		redactUrlPatterns: z.array(z.string().min(1)).default([]),
-	})
-	.strict();
+const mitmProfileLoggingSchema = z.object({
+	redactHeaders: z.array(headerNameSchema).default([]),
+	redactUrlPatterns: z.array(z.string().min(1)).default([]),
+});
 
 export const mitmProfileSchema = z
 	.object({
@@ -189,7 +162,6 @@ export const mitmProfileSchema = z
 		owner: z.string().min(1).optional(),
 		description: z.string().min(1).optional(),
 	})
-	.strict()
 	.superRefine((profile, ctx) => {
 		if (
 			(profile.kind === "http" || profile.kind === "websocket") &&
@@ -217,21 +189,17 @@ export const mitmProfileSchema = z
 		}
 	});
 
-export const mitmProfileInputBundleSchema = z
-	.object({
-		profiles: z.array(mitmProfileSchema).default([]),
-	})
-	.strict();
+export const mitmProfileInputBundleSchema = z.object({
+	profiles: z.array(mitmProfileSchema).default([]),
+});
 
-export const mitmProfileBundleSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.mitmProfiles.v1"),
-		generatedAt: z.string().min(1),
-		generation: z.number().int().nonnegative(),
-		instanceId: z.string().min(1),
-		profiles: z.array(mitmProfileSchema),
-	})
-	.strict();
+export const mitmProfileBundleSchema = z.object({
+	schemaVersion: z.literal("clawdi.mitmProfiles.v1"),
+	generatedAt: z.string().min(1),
+	generation: z.number().int().nonnegative(),
+	instanceId: z.string().min(1),
+	profiles: z.array(mitmProfileSchema),
+});
 
 export type MitmProfileInputBundle = z.infer<typeof mitmProfileInputBundleSchema>;
 export type MitmProfileBundle = z.infer<typeof mitmProfileBundleSchema>;

@@ -22,52 +22,44 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
 const semverSchema = z.string().min(1).refine(isValidSemver, "must be a semver string");
 
-const installSchema = z
-	.object({
-		authority: z.literal("official"),
-		method: z.literal("official-installer"),
-		url: z.string().url(),
-		home: z.string().min(1),
-		args: z.array(z.string()).default([]),
-	})
-	.strict();
+const installSchema = z.object({
+	authority: z.literal("official"),
+	method: z.literal("official-installer"),
+	url: z.string().url(),
+	home: z.string().min(1),
+	args: z.array(z.string()).default([]),
+});
 
-const runtimeSchema = z
-	.object({
-		enabled: z.boolean(),
-		updateChannel: z.string().min(1).optional(),
-		install: installSchema.optional(),
-		run: runtimeRunSettingsSchema.optional(),
-		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
-		provider_ids: z.array(z.string().min(1)).optional(),
-		primary_model: z
-			.object({
-				provider_id: z.string().min(1),
-				model: z.string().min(1),
-			})
-			.strict()
-			.optional(),
-	})
-	.strict();
+const runtimeSchema = z.object({
+	enabled: z.boolean(),
+	updateChannel: z.string().min(1).optional(),
+	install: installSchema.optional(),
+	run: runtimeRunSettingsSchema.optional(),
+	services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
+	provider_ids: z.array(z.string().min(1)).optional(),
+	primary_model: z
+		.object({
+			provider_id: z.string().min(1),
+			model: z.string().min(1),
+		})
+		.optional(),
+});
 
-const cliPayloadPolicySchema = z
-	.object({
-		version: z.string().min(1).optional(),
-		channel: z.string().min(1).optional(),
-		source: z.string().min(1).optional(),
-		packageSpec: z.string().min(1).optional(),
-	})
-	.passthrough();
+const cliPayloadPolicySchema = z.object({
+	version: z.string().min(1).optional(),
+	channel: z.string().min(1).optional(),
+	source: z.string().min(1).optional(),
+	packageSpec: z.string().min(1).optional(),
+	registry: z.string().min(1).optional(),
+});
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
-export const mitmproxyArtifactSchema = z
-	.object({
-		version: z.string().min(1),
-		url: z.string().url(),
-		sha256: sha256Schema,
-	})
-	.strict();
+export const mitmproxyArtifactSchema = z.object({
+	version: z.string().min(1),
+	url: z.string().url(),
+	sha256: sha256Schema,
+});
 
 export type MitmproxyArtifactPin = z.infer<typeof mitmproxyArtifactSchema>;
 
@@ -76,19 +68,15 @@ export const DEFAULT_CLAWDI_CLI_POLICY = {
 	packageSpec: "clawdi@latest",
 } satisfies z.infer<typeof cliPayloadPolicySchema>;
 
-const liveSyncAgentSchema = z
-	.object({
-		agentType: runtimeNameSchema,
-		environmentId: z.string().min(1),
-	})
-	.strict();
+const liveSyncAgentSchema = z.object({
+	agentType: runtimeNameSchema,
+	environmentId: z.string().min(1),
+});
 
-const liveSyncSchema = z
-	.object({
-		enabled: z.boolean().optional(),
-		agents: z.array(liveSyncAgentSchema).default([]),
-	})
-	.strict();
+const liveSyncSchema = z.object({
+	enabled: z.boolean().optional(),
+	agents: z.array(liveSyncAgentSchema).default([]),
+});
 
 const tcpPortSchema = z.number().int().min(1).max(65535);
 const runtimeBridgeSurfaceNameSchema = z
@@ -97,35 +85,29 @@ const runtimeBridgeSurfaceNameSchema = z
 	.max(64)
 	.regex(/^[a-z0-9][a-z0-9._-]*$/, "must be a lowercase surface id");
 
-export const runtimeBridgeSurfaceSchema = z
-	.object({
-		name: runtimeBridgeSurfaceNameSchema,
-		kind: z.enum(["control-ui"]),
-		listenHost: z.string().min(1).optional(),
-		listenPort: tcpPortSchema,
-		upstreamHost: z.string().min(1).default("127.0.0.1"),
-		upstreamPort: tcpPortSchema,
-	})
-	.strict();
+export const runtimeBridgeSurfaceSchema = z.object({
+	name: runtimeBridgeSurfaceNameSchema,
+	kind: z.enum(["control-ui"]),
+	listenHost: z.string().min(1).optional(),
+	listenPort: tcpPortSchema,
+	upstreamHost: z.string().min(1).default("127.0.0.1"),
+	upstreamPort: tcpPortSchema,
+});
 
-const runtimeBridgeSchema = z
-	.object({
-		surfaces: z.array(runtimeBridgeSurfaceSchema).default([]),
-	})
-	.strict();
+const runtimeBridgeSchema = z.object({
+	surfaces: z.array(runtimeBridgeSurfaceSchema).default([]),
+});
 
-const runtimeProjectionSchema = z
-	.object({
-		sourceSchemaVersion: z.string().min(1).optional(),
-		system: z.unknown().nullable().optional(),
-		providers: z.record(z.string().min(1), z.unknown()).optional(),
-		channels: z.record(z.string().min(1), z.unknown()).optional(),
-		channelCredentials: z.array(z.unknown()).optional(),
-		aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
-		mcp: z.unknown().optional(),
-		tools: z.unknown().optional(),
-	})
-	.strict();
+const runtimeProjectionSchema = z.object({
+	sourceSchemaVersion: z.string().min(1).optional(),
+	system: z.unknown().nullable().optional(),
+	providers: z.record(z.string().min(1), z.unknown()).optional(),
+	channels: z.record(z.string().min(1), z.unknown()).optional(),
+	channelCredentials: z.array(z.unknown()).optional(),
+	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
+	mcp: z.unknown().optional(),
+	tools: z.unknown().optional(),
+});
 
 const runtimeDesiredStateShape = {
 	deploymentId: z.string().min(1),
@@ -137,11 +119,9 @@ const runtimeDesiredStateShape = {
 	expiresAt: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
 	runtime: hostedRuntimeChoiceSchema.optional(),
-	controlPlane: z
-		.object({
-			apiUrl: z.string().url(),
-		})
-		.strict(),
+	controlPlane: z.object({
+		apiUrl: z.string().url(),
+	}),
 	clawdiCli: cliPayloadPolicySchema.optional(),
 	mitmproxy: mitmproxyArtifactSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
@@ -154,82 +134,142 @@ const runtimeDesiredStateShape = {
 			cacheManifest: z.boolean().optional(),
 			allowOfflineBoot: z.boolean().optional(),
 		})
-		.strict()
 		.default({}),
 };
+
+function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: string): void {
+	ctx.addIssue({
+		code: "custom",
+		message: message ?? `Unrecognized key: "${field}"`,
+		path: [field],
+	});
+}
 
 export const manifestSchema = z
 	.object({
 		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
 		...runtimeDesiredStateShape,
+		secrets: z.unknown().optional(),
 	})
-	.strict();
-
-const hostedRuntimeInstallSchema = z
-	.object({
-		source: z.literal("official"),
-		channel: z.string().min(1).optional(),
-		args: z.array(z.string()).optional(),
+	.superRefine((manifest, ctx) => {
+		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
 	})
-	.passthrough();
+	.transform(({ secrets: _secrets, ...manifest }) => manifest);
 
-const hostedRuntimeEntrySchema = z
+const hostedControlPlaneSchema = z
 	.object({
-		enabled: z.boolean(),
-		install: hostedRuntimeInstallSchema.optional(),
-		run: runtimeRunSettingsSchema.optional(),
-		services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
-		provider_ids: z.array(z.string().min(1)).optional(),
-		providerIds: z.array(z.string().min(1)).optional(),
-		primary_model: z
-			.union([
-				z.string().min(1),
-				z
-					.object({
-						provider_id: z.string().min(1).optional(),
-						providerId: z.string().min(1).optional(),
-						model: z.string().min(1),
-					})
-					.passthrough(),
-			])
-			.optional(),
-		primaryModel: z
-			.object({
+		manifestUrl: z.string().url().optional(),
+		cloudApiUrl: z.string().url().optional(),
+		apiUrl: z.unknown().optional(),
+	})
+	.superRefine((controlPlane, ctx) => {
+		if ("apiUrl" in controlPlane) {
+			addForbiddenFieldIssue(ctx, "apiUrl", "hosted runtime controlPlane must use cloudApiUrl");
+		}
+	})
+	.transform(({ apiUrl: _apiUrl, ...controlPlane }) => controlPlane);
+
+const hostedRuntimeInstallSchema = z.object({
+	source: z.literal("official"),
+	channel: z.string().min(1).optional(),
+	args: z.array(z.string()).optional(),
+});
+
+const hostedRuntimeEntrySchema = z.object({
+	enabled: z.boolean(),
+	install: hostedRuntimeInstallSchema.optional(),
+	run: runtimeRunSettingsSchema.optional(),
+	services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
+	provider_ids: z.array(z.string().min(1)).optional(),
+	providerIds: z.array(z.string().min(1)).optional(),
+	primary_model: z
+		.union([
+			z.string().min(1),
+			z.object({
 				provider_id: z.string().min(1).optional(),
 				providerId: z.string().min(1).optional(),
 				model: z.string().min(1),
-			})
-			.passthrough()
-			.optional(),
-		paths: z
-			.object({
-				home: z.string().min(1).optional(),
-				workspace: z.string().min(1).optional(),
-			})
-			.passthrough()
-			.optional(),
-	})
-	.passthrough();
+			}),
+		])
+		.optional(),
+	primaryModel: z
+		.object({
+			provider_id: z.string().min(1).optional(),
+			providerId: z.string().min(1).optional(),
+			model: z.string().min(1),
+		})
+		.optional(),
+	paths: z
+		.object({
+			home: z.string().min(1).optional(),
+			workspace: z.string().min(1).optional(),
+		})
+		.optional(),
+});
 
-const hostedProviderAuthSchema = z.discriminatedUnion("type", [
-	z
+const hostedProviderCapabilitiesSchema = z.object({
+	chat: z.boolean().optional(),
+	responses: z.boolean().optional(),
+	tools: z.boolean().optional(),
+	vision: z.boolean().optional(),
+	embeddings: z.boolean().optional(),
+	image_generation: z.boolean().optional(),
+});
+
+const hostedProviderModelCostSchema = z.object({
+	input: z.number().nonnegative(),
+	output: z.number().nonnegative(),
+	cache_read: z.number().nonnegative().optional(),
+	cache_write: z.number().nonnegative().optional(),
+});
+
+const hostedProviderModelSchema = z.object({
+	id: z.string().min(1),
+	label: z.string().min(1).optional(),
+	alias: z.string().min(1).optional(),
+	api_mode: z.string().min(1).optional(),
+	input_modalities: z.array(z.string().min(1)).optional(),
+	supports_vision: z.boolean().optional(),
+	supports_tools: z.boolean().optional(),
+	supports_reasoning: z.boolean().optional(),
+	context_window: z.number().int().positive().optional(),
+	max_tokens: z.number().int().positive().optional(),
+	cost: hostedProviderModelCostSchema.optional(),
+	capabilities: hostedProviderCapabilitiesSchema.optional(),
+});
+
+const hostedProviderAuthSchema = z.object({
+	type: z.string().min(1),
+	tool: z.string().min(1).optional(),
+	profile: z.string().min(1).optional(),
+	source: z.string().min(1).optional(),
+	ref: z.string().min(1).optional(),
+});
+
+const hostedProviderSchema = z.object({
+	kind: z.string().min(1).optional(),
+	type: z.string().min(1).optional(),
+	baseUrl: z.string().url().optional(),
+	base_url: z.string().url().optional(),
+	model: z.string().min(1).optional(),
+	models: z.array(hostedProviderModelSchema).optional(),
+	apiMode: z.string().min(1).optional(),
+	api_mode: z.string().min(1).optional(),
+	managed_by: z.string().min(1).optional(),
+	runtimeEnvName: z.string().min(1).optional(),
+	runtime_env_name: z.string().min(1).optional(),
+	apiKeySecretRef: z.string().min(1).nullable().optional(),
+	api_key_secret_ref: z.string().min(1).nullable().optional(),
+	apiKeyRequired: z.boolean().optional(),
+	status: z.string().min(1).optional(),
+	error: z
 		.object({
-			type: z.literal("agent_profile"),
-			tool: z.literal("codex"),
-			profile: z.string().min(1),
+			code: z.string().min(1),
+			message: z.string().min(1).optional(),
 		})
-		.strict(),
-	z
-		.object({
-			type: z.literal("api_key"),
-		})
-		.passthrough(),
-	z
-		.object({
-			type: z.literal("secret_ref"),
-		})
-		.passthrough(),
-]);
+		.optional(),
+	auth: hostedProviderAuthSchema.optional(),
+});
 
 export const hostedRuntimeManifestSchema = z.preprocess(
 	(value) => {
@@ -263,50 +303,13 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 					workspace: z.string().min(1).optional(),
 					persistentPaths: z.array(z.string().min(1)).optional(),
 				})
-				.passthrough()
 				.optional(),
-			controlPlane: z
-				.object({
-					manifestUrl: z.string().url().optional(),
-					cloudApiUrl: z.string().url().optional(),
-				})
-				.passthrough()
-				.refine((value) => !("apiUrl" in value), {
-					message: "hosted runtime controlPlane must use cloudApiUrl",
-					path: ["apiUrl"],
-				}),
+			controlPlane: hostedControlPlaneSchema,
 			clawdiCli: cliPayloadPolicySchema.optional(),
 			mitmproxy: mitmproxyArtifactSchema.optional(),
 			runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 			bridge: runtimeBridgeSchema.optional(),
-			providers: z
-				.record(
-					z.string().min(1),
-					z
-						.object({
-							kind: z.string().min(1).optional(),
-							type: z.string().min(1).optional(),
-							baseUrl: z.string().url().optional(),
-							model: z.string().min(1).optional(),
-							models: z.array(z.unknown()).optional(),
-							apiMode: z.string().min(1).optional(),
-							managed_by: z.enum(["user", "clawdi"]).optional(),
-							runtimeEnvName: z.string().min(1).optional(),
-							apiKeySecretRef: z.string().min(1).nullable().optional(),
-							apiKeyRequired: z.boolean().optional(),
-							status: z.enum(["ok", "error", "disabled"]).optional(),
-							error: z
-								.object({
-									code: z.string().min(1),
-									message: z.string().min(1).optional(),
-								})
-								.passthrough()
-								.optional(),
-							auth: hostedProviderAuthSchema.optional(),
-						})
-						.passthrough(),
-				)
-				.optional(),
+			providers: z.record(z.string().min(1), hostedProviderSchema).optional(),
 			liveSync: liveSyncSchema.optional(),
 			mitmProfiles: z.unknown().optional(),
 			mcp: z.unknown().optional(),
@@ -316,10 +319,8 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 					cacheManifest: z.boolean().optional(),
 					allowOfflineBoot: z.boolean().optional(),
 				})
-				.passthrough()
 				.optional(),
 		})
-		.strict()
 		.superRefine((manifest, ctx) => {
 			const runtimeKeys = Object.keys(manifest.runtimes);
 			const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
@@ -389,12 +390,10 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 		}),
 );
 
-export const hostedRuntimeManifestResponseSchema = z
-	.object({
-		manifest: hostedRuntimeManifestSchema,
-		secretValues: z.record(z.string().min(1), z.string()).default({}),
-	})
-	.strict();
+export const hostedRuntimeManifestResponseSchema = z.object({
+	manifest: hostedRuntimeManifestSchema,
+	secretValues: z.record(z.string().min(1), z.string()).default({}),
+});
 
 export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
