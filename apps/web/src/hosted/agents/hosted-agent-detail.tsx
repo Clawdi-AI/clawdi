@@ -70,6 +70,7 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
 	CheckoutRequest,
@@ -434,6 +435,7 @@ export function HostedAgentDetail({
 						actions={headerActions}
 					/>
 				)}
+				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{activeTab === "overview" ? (
 						<OverviewTab

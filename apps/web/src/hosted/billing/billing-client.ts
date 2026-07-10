@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
+	ComputeFixPaymentRequest,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
@@ -116,6 +117,14 @@ export function useBillingClient() {
 				),
 			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
+			fixPayment: async (body: ComputeFixPaymentRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/fix-payment", { body })),
+			getInvoices: async (limit = 12) =>
+				unwrapDeploy(
+					await api.GET("/v2/subscription/invoices", {
+						params: { query: { limit } },
+					}),
+				),
 			portal: async (body: PortalRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 			resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>

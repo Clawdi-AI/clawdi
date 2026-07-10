@@ -130,6 +130,33 @@ describe("deploymentToTiles", () => {
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
 	});
+
+	test("projects dunning state as the hosted tile secondary status", () => {
+		const [tile] = hostedDeploymentToTiles(
+			deployment({
+				compute_subscription: {
+					status: "past_due",
+					payment_state: "requires_action",
+					billing_term_months: 1,
+					price_cents: 1_900,
+					currency: "usd",
+					cancel_at_period_end: false,
+					current_period_end: "2026-08-01T00:00:00Z",
+					cancel_at: null,
+					canceled_at: null,
+					latest_failed_invoice_id: "in_action_required",
+					latest_failed_invoice_hosted_url: "https://invoice.stripe.test/action",
+					next_payment_attempt_at: null,
+				},
+			}),
+		);
+
+		expect(tile?.secondaryStatus).toEqual({
+			label: "Payment action required",
+			title: "Complete payment authentication to keep Performance compute active.",
+			textClass: "text-warning-muted-foreground",
+		});
+	});
 });
 
 describe("hostedAgentTileStatus", () => {
