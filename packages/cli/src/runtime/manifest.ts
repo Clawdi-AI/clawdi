@@ -2828,11 +2828,9 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 				? {
 						controlUi: {
 							allowedOrigins,
-							// OpenClaw is exposed natively in v2 hosted manifests, not through
-							// Clawdi runtime bridge surfaces, so the first proxied Control UI
-							// load has no separate bridge flow that can complete OpenClaw device
-							// pairing before the operator session connects. Gateway token auth is
-							// the hosted boundary for this Control UI path.
+							// Clawdi's runtime bridge owns browser auth for hosted Control UI
+							// traffic, so OpenClaw's local device-auth prompt would be a second
+							// owner gate behind the already-authenticated edge.
 							dangerouslyDisableDeviceAuth: true,
 						},
 					}

@@ -151,6 +151,14 @@ export function useCreateTerminalSession() {
 	});
 }
 
+export function useCreateRuntimeUiRedemption() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (vars: { id: string }) => client.createRuntimeUiRedemption(vars.id),
+		onError: toastBillingError("Couldn't open runtime UI"),
+	});
+}
+
 export function useDeploymentLifecycle() {
 	const client = useBillingClient();
 	const qc = useQueryClient();

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, isIP, type Server, type Socket } from "node:net";
 import { z } from "zod";
 import {
@@ -10,6 +10,7 @@ import {
 
 export const RUNTIME_BRIDGE_TOKEN_ENV = "CLAWDI_RUNTIME_BRIDGE_TOKEN";
 export const RUNTIME_BRIDGE_COOKIE = "clawdi_runtime_bridge";
+export const RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM = "clawdi_code";
 export const RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV = "CLAWDI_RUNTIME_BRIDGE_FRAME_ANCESTORS";
 export const RUNTIME_BRIDGE_LISTEN_HOST_ENV = "CLAWDI_RUNTIME_BRIDGE_LISTEN_HOST";
 export const RUNTIME_BRIDGE_SURFACES_ENV = "CLAWDI_RUNTIME_BRIDGE_SURFACES";
@@ -63,11 +64,23 @@ interface AuthUnauthorized {
 
 type AuthResult = AuthQueryToken | AuthAuthorized | AuthUnauthorized;
 
+interface RuntimeBridgeRedemptionState {
+	usedJtis: Map<string, number>;
+	nowMs: () => number;
+}
+
+interface RuntimeBridgeRedemptionClaims {
+	jti: string;
+	expiresAtMs: number;
+	runtime: "openclaw" | "hermes";
+}
+
 const HEADER_TIMEOUT_MS = 60_000;
 const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
 const HEALTH_CONNECT_TIMEOUT_MS = 1_000;
 const MAX_HEADER_BYTES = 64 * 1024;
 const BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH = "/__clawdi_runtime_bridge_prefix.js";
+const RUNTIME_UI_REDEMPTION_SUBJECT = "v2_hosted_runtime_ui";
 const BRIDGE_PUBLIC_PREFIX_SCRIPT = String.raw`
 (() => {
 	const script = document.currentScript;
@@ -185,9 +198,13 @@ export async function startRuntimeBridge(
 		DEFAULT_RUNTIME_BRIDGE_FRAME_ANCESTORS;
 	const servers: Server[] = [];
 	const listeningSurfaces: RuntimeBridgeSurface[] = [];
+	const redemptionState: RuntimeBridgeRedemptionState = {
+		usedJtis: new Map(),
+		nowMs: () => Date.now(),
+	};
 	try {
 		for (const surface of surfaces) {
-			const server = createBridgeServer(surface, token, frameAncestors);
+			const server = createBridgeServer(surface, token, frameAncestors, redemptionState);
 			await listen(server, surface.listenHost, surface.listenPort);
 			const address = server.address();
 			const listenPort = typeof address === "object" && address ? address.port : surface.listenPort;
@@ -279,9 +296,10 @@ function createBridgeServer(
 	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
+	redemptionState: RuntimeBridgeRedemptionState,
 ): Server {
 	return createServer((clientSocket) => {
-		handleClientConnection(surface, token, frameAncestors, clientSocket);
+		handleClientConnection(surface, token, frameAncestors, redemptionState, clientSocket);
 	});
 }
 
@@ -289,6 +307,7 @@ function handleClientConnection(
 	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
+	redemptionState: RuntimeBridgeRedemptionState,
 	clientSocket: Socket,
 ): void {
 	let buffer = Buffer.alloc(0);
@@ -327,7 +346,15 @@ function handleClientConnection(
 			writeRawHttpResponse(clientSocket, 400, "Bad Request", "Bad Request");
 			return;
 		}
-		handleParsedRequest(surface, token, frameAncestors, clientSocket, parsed, remaining);
+		handleParsedRequest(
+			surface,
+			token,
+			frameAncestors,
+			redemptionState,
+			clientSocket,
+			parsed,
+			remaining,
+		);
 	};
 	clientSocket.on("data", onData);
 }
@@ -336,6 +363,7 @@ function handleParsedRequest(
 	surface: RuntimeBridgeSurface,
 	token: string,
 	frameAncestors: string,
+	redemptionState: RuntimeBridgeRedemptionState,
 	clientSocket: Socket,
 	parsed: ParsedHttpRequest,
 	remaining: Buffer,
@@ -344,7 +372,13 @@ function handleParsedRequest(
 		void respondToHealthCheck(surface, clientSocket);
 		return;
 	}
-	const auth = authenticate(parsed.requestTarget, parsed.headers, token);
+	const auth = authenticate(
+		parsed.requestTarget,
+		parsed.headers,
+		token,
+		redemptionState,
+		surface.name,
+	);
 	if (auth.status === "query-token") {
 		writeRedirectResponse(clientSocket, auth.redirectLocation, token);
 		return;
@@ -641,9 +675,20 @@ function authenticate(
 	requestTarget: string,
 	headers: Map<string, string[]>,
 	token: string,
+	redemptionState: RuntimeBridgeRedemptionState,
+	surfaceName: string,
 ): AuthResult {
 	const url = requestUrl(requestTarget);
 	if (!url) return { status: "unauthorized" };
+	const redemptionCode = url.searchParams.get(RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM);
+	if (
+		redemptionCode &&
+		redeemRuntimeBridgeCode(redemptionCode, token, redemptionState, surfaceName)
+	) {
+		url.searchParams.delete(RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM);
+		const redirectLocation = relativeRedirectLocation(url);
+		return { status: "query-token", redirectLocation: redirectLocation || "/" };
+	}
 	const queryToken = url.searchParams.get("t");
 	if (constantTimeEquals(queryToken, token)) {
 		url.searchParams.delete("t");
@@ -676,7 +721,91 @@ function proxyPath(requestTarget: string): string {
 	const url = requestUrl(requestTarget);
 	if (!url) return "/";
 	url.searchParams.delete("t");
+	url.searchParams.delete(RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM);
 	return `${url.pathname}${url.search}` || "/";
+}
+
+function redeemRuntimeBridgeCode(
+	code: string,
+	token: string,
+	state: RuntimeBridgeRedemptionState,
+	surfaceName: string,
+): boolean {
+	const claims = verifyRuntimeBridgeRedemptionCode(code, token, state.nowMs());
+	if (!claims) return false;
+	if (claims.runtime !== surfaceName) return false;
+	pruneUsedRedemptionCodes(state, state.nowMs());
+	if (state.usedJtis.has(claims.jti)) return false;
+	state.usedJtis.set(claims.jti, claims.expiresAtMs);
+	return true;
+}
+
+function verifyRuntimeBridgeRedemptionCode(
+	code: string,
+	token: string,
+	nowMs: number,
+): RuntimeBridgeRedemptionClaims | null {
+	if (!token) return null;
+	const parts = code.split(".");
+	if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+	const payloadPart = parts[0];
+	const signaturePart = parts[1];
+	const expectedSignature = hmacSha256Base64Url(token, payloadPart);
+	if (!constantTimeEquals(signaturePart, expectedSignature)) return null;
+	const payload = parseRedemptionPayload(payloadPart);
+	if (!payload) return null;
+	if (payload.expiresAtMs <= nowMs) return null;
+	return payload;
+}
+
+function parseRedemptionPayload(payloadPart: string): RuntimeBridgeRedemptionClaims | null {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(base64UrlDecode(payloadPart).toString("utf8"));
+	} catch {
+		return null;
+	}
+	const parsed = runtimeBridgeRedemptionPayloadSchema.safeParse(raw);
+	if (!parsed.success) return null;
+	return {
+		jti: parsed.data.jti,
+		expiresAtMs: parsed.data.exp * 1000,
+		runtime: parsed.data.runtime,
+	};
+}
+
+const runtimeBridgeRedemptionPayloadSchema = z
+	.object({
+		v: z.literal(1),
+		sub: z.literal(RUNTIME_UI_REDEMPTION_SUBJECT),
+		deployment_id: z.string().min(1),
+		runtime: z.enum(["openclaw", "hermes"]),
+		jti: z.string().min(1).max(128),
+		iat: z.number().int().nonnegative(),
+		exp: z.number().int().nonnegative(),
+	})
+	.strict();
+
+function pruneUsedRedemptionCodes(state: RuntimeBridgeRedemptionState, nowMs: number): void {
+	for (const [jti, expiresAtMs] of state.usedJtis) {
+		if (expiresAtMs <= nowMs) state.usedJtis.delete(jti);
+	}
+}
+
+function hmacSha256Base64Url(token: string, payloadPart: string): string {
+	return base64UrlEncode(
+		createHmac("sha256", Buffer.from(token, "utf8")).update(payloadPart, "ascii").digest(),
+	);
+}
+
+function base64UrlEncode(raw: Buffer): string {
+	return raw.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function base64UrlDecode(value: string): Buffer {
+	const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+	const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+	return Buffer.from(`${normalized}${padding}`, "base64");
 }
 
 function parseCookies(values: string[] | undefined): Map<string, string> {

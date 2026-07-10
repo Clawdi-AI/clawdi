@@ -18,6 +18,7 @@ export type DeployRequest = Schemas["V2HostedDeployRequest"];
 export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
 export type DeploymentDetailsInfo = Schemas["V2HostedDeploymentDetailsInfo"];
 export type HostedDeployment = Schemas["V2HostedDeploymentResponse"];
+export type RuntimeUiRedemption = Schemas["V2DeploymentRuntimeUiRedemptionResponse"];
 export type HostedUser = Schemas["V1UserResponse"];
 export type HostedConfigRequest = Schemas["V2HostedConfigRequest"];
 export type Plan = Schemas["V2PlanResponse"];

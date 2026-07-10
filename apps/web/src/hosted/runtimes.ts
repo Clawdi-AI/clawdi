@@ -60,6 +60,7 @@ export function runtimeConsoleUrl(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | null | undefined {
+	if (deployment.native_url) return deployment.native_url;
 	if (runtime === "openclaw") return deployment.openclaw_control_ui_url;
 	return deployment.hermes_control_ui_url;
 }

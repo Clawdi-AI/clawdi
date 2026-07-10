@@ -126,6 +126,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/deployments/{deployment_id}/runtime-ui/redemption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create V2 Deployment Runtime Ui Redemption */
+        post: operations["create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}/restart": {
         parameters: {
             query?: never;
@@ -654,6 +671,16 @@ export interface components {
              */
             expires_at: string;
         };
+        /** V2DeploymentRuntimeUiRedemptionResponse */
+        V2DeploymentRuntimeUiRedemptionResponse: {
+            /** Url */
+            url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {
             /** Status */
@@ -888,6 +915,8 @@ export interface components {
             failure_reason?: string | null;
             /** Endpoints */
             endpoints?: string[];
+            /** Native Url */
+            native_url?: string | null;
             /** Openclaw Control Ui Url */
             openclaw_control_ui_url?: string | null;
             /** Hermes Control Ui Url */
@@ -1406,6 +1435,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2DeploymentRuntimeUiRedemptionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { createHmac } from "node:crypto";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, createServer as createNetServer, type Server as NetServer } from "node:net";
 import {
 	RUNTIME_BRIDGE_COOKIE,
 	RUNTIME_BRIDGE_FRAME_ANCESTORS_ENV,
+	RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM,
 	RUNTIME_BRIDGE_SURFACES_ENV,
 	startRuntimeBridge,
 } from "../src/runtime/bridge";
@@ -199,6 +201,81 @@ describe("runtime bridge", () => {
 			expect(redirect.headers.get("set-cookie") ?? "").toContain(
 				`${RUNTIME_BRIDGE_COOKIE}=hermes-token`,
 			);
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
+	it("redeems short-lived one-time browser auth codes before cookie-authorized HTTP", async () => {
+		const seen: string[] = [];
+		const upstream = createServer((req, res) => {
+			seen.push(req.url ?? "");
+			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+			res.end("openclaw-ui");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeBridge({
+			token: "redemption-secret",
+			surfaces: [
+				{
+					...OPENCLAW_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		try {
+			const code = runtimeUiRedemptionCode("redemption-secret", {
+				jti: "single-use-code",
+				exp: Math.floor(Date.now() / 1000) + 60,
+			});
+			const redirect = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?x=1&${RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM}=${code}`,
+				{ redirect: "manual" },
+			);
+			expect(redirect.status).toBe(302);
+			expect(redirect.headers.get("location")).toBe("control?x=1");
+			const setCookie = redirect.headers.get("set-cookie") ?? "";
+			expect(setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=redemption-secret`);
+			expect(seen).toEqual([]);
+
+			const replay = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?${RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM}=${code}`,
+				{ redirect: "manual" },
+			);
+			expect(replay.status).toBe(401);
+
+			const expiredCode = runtimeUiRedemptionCode("redemption-secret", {
+				jti: "expired-code",
+				exp: Math.floor(Date.now() / 1000) - 1,
+			});
+			const expired = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?${RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM}=${expiredCode}`,
+				{ redirect: "manual" },
+			);
+			expect(expired.status).toBe(401);
+
+			const wrongRuntimeCode = runtimeUiRedemptionCode("redemption-secret", {
+				jti: "wrong-runtime",
+				runtime: "hermes",
+			});
+			const wrongRuntime = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?${RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM}=${wrongRuntimeCode}`,
+				{ redirect: "manual" },
+			);
+			expect(wrongRuntime.status).toBe(401);
+
+			const proxied = await fetch(
+				`http://127.0.0.1:${bridgePort}/control?x=1&${RUNTIME_BRIDGE_REDEMPTION_QUERY_PARAM}=ignored`,
+				{ headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=redemption-secret` } },
+			);
+			expect(proxied.status).toBe(200);
+			expect(await proxied.text()).toBe("openclaw-ui");
+			expect(seen).toEqual(["/control?x=1"]);
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -878,6 +955,44 @@ function hasForwardingHeader(rawRequest: string): boolean {
 			lowerName.startsWith("cf-")
 		);
 	});
+}
+
+function runtimeUiRedemptionCode(
+	token: string,
+	overrides: Partial<{
+		deployment_id: string;
+		runtime: "openclaw" | "hermes";
+		jti: string;
+		iat: number;
+		exp: number;
+	}> = {},
+): string {
+	const now = Math.floor(Date.now() / 1000);
+	const payload = {
+		deployment_id: "hdep_test",
+		exp: now + 60,
+		iat: now,
+		jti: "test-redemption",
+		runtime: "openclaw",
+		sub: "v2_hosted_runtime_ui",
+		v: 1,
+		...overrides,
+	};
+	const payloadPart = base64UrlEncode(Buffer.from(JSON.stringify(sortObject(payload)), "utf8"));
+	const signaturePart = base64UrlEncode(
+		createHmac("sha256", Buffer.from(token, "utf8")).update(payloadPart, "ascii").digest(),
+	);
+	return `${payloadPart}.${signaturePart}`;
+}
+
+function sortObject(value: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),
+	);
+}
+
+function base64UrlEncode(raw: Buffer): string {
+	return raw.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function listen(server: Server | NetServer, host: string, port: number): Promise<void> {
