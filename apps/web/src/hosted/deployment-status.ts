@@ -120,10 +120,9 @@ function failureReasonIndicatesNoBackingInfra(failureReason: string | null | und
 }
 
 /**
- * The single source of truth for "this deployment consumes a compute slot",
- * kept byte-for-byte in step with the deploy-API's `slot_occupancy.py`. A
- * `failed` deployment keeps its slot unless its failure reason proves the
- * backing infra is gone — a still-running pod costs us either way.
+ * Mirrors the deploy-API Free-slot product predicate in `slot_occupancy.py`.
+ * This is not the cluster tenant/disk reservation rule; stopped deployments
+ * release a user's Free slot while their PVC may still reserve cluster space.
  */
 export function occupiesComputeSlot(deployment: {
 	status: string | null | undefined;
