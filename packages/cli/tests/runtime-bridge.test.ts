@@ -116,7 +116,7 @@ describe("runtime bridge", () => {
 		}
 	});
 
-	it("authenticates with query token, sets a cookie, and proxies cookie-authorized HTTP", async () => {
+	it("rejects legacy token query params and proxies cookie-authorized HTTP", async () => {
 		const seen: Array<{ url: string; host: string | undefined }> = [];
 		const upstream = createServer((req, res) => {
 			seen.push({ url: req.url ?? "", host: req.headers.host });
@@ -149,17 +149,12 @@ describe("runtime bridge", () => {
 				`http://127.0.0.1:${bridgePort}/control?x=1&t=secret-token&y=2`,
 				{ redirect: "manual" },
 			);
-			expect(redirect.status).toBe(302);
-			expect(redirect.headers.get("location")).toBe("control?x=1&y=2");
-			const setCookie = redirect.headers.get("set-cookie") ?? "";
-			expect(setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=secret-token`);
-			expect(setCookie).toContain("Secure");
-			expect(setCookie).toContain("HttpOnly");
-			expect(setCookie).toContain("SameSite=Strict");
-			expect(setCookie).toContain("Path=/");
+			expect(redirect.status).toBe(401);
+			expect(redirect.headers.get("location")).toBeNull();
+			expect(redirect.headers.get("set-cookie")).toBeNull();
 			expect(seen).toEqual([]);
 
-			const proxied = await fetch(`http://127.0.0.1:${bridgePort}/control?x=1&t=ignored`, {
+			const proxied = await fetch(`http://127.0.0.1:${bridgePort}/control?x=1`, {
 				headers: { Cookie: `${RUNTIME_BRIDGE_COOKIE}=secret-token` },
 			});
 			expect(proxied.status).toBe(200);
@@ -172,8 +167,10 @@ describe("runtime bridge", () => {
 		}
 	});
 
-	it("redirects Hermes dashboard query-token logins back to the dashboard path", async () => {
+	it("rejects Hermes dashboard legacy token query-param logins", async () => {
+		let seen = 0;
 		const upstream = createServer((_req, res) => {
+			seen += 1;
 			res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
 			res.end("hermes-dashboard");
 		});
@@ -196,11 +193,10 @@ describe("runtime bridge", () => {
 			const redirect = await fetch(`http://127.0.0.1:${bridgePort}/dashboard?t=hermes-token`, {
 				redirect: "manual",
 			});
-			expect(redirect.status).toBe(302);
-			expect(redirect.headers.get("location")).toBe("dashboard");
-			expect(redirect.headers.get("set-cookie") ?? "").toContain(
-				`${RUNTIME_BRIDGE_COOKIE}=hermes-token`,
-			);
+			expect(redirect.status).toBe(401);
+			expect(redirect.headers.get("location")).toBeNull();
+			expect(redirect.headers.get("set-cookie")).toBeNull();
+			expect(seen).toBe(0);
 		} finally {
 			await bridge.close();
 			await close(upstream);
@@ -711,13 +707,13 @@ describe("runtime bridge", () => {
 			});
 			expect(unauthorized.statusCode).toBe(401);
 
-			const redirect = await websocketRequest({
+			const legacyTokenParam = await websocketRequest({
 				port: bridgePort,
 				path: "/socket?t=ws-token&x=1",
 			});
-			expect(redirect.statusCode).toBe(302);
-			expect(redirect.location).toBe("socket?x=1");
-			expect(redirect.setCookie).toContain(`${RUNTIME_BRIDGE_COOKIE}=ws-token`);
+			expect(legacyTokenParam.statusCode).toBe(401);
+			expect(legacyTokenParam.location).toBe("");
+			expect(legacyTokenParam.setCookie).toBe("");
 
 			const authorized = await websocketRequest({
 				port: bridgePort,
