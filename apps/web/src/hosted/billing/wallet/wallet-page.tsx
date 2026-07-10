@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -8,12 +10,21 @@ import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { getStripe } from "@/hosted/billing/stripe";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import {
+	cleanWalletTopupReturnUrl,
+	readWalletTopupReturn,
+	type WalletTopupReturnToast,
+	walletTopupReturnToast,
+} from "@/hosted/billing/wallet/top-up-return.logic";
 import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
+import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Your AI Credits balance, top-ups, and auto-reload.";
@@ -23,11 +34,75 @@ function scrollToAutoReload() {
 	document.getElementById("auto-reload")?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
+	if (result.kind === "success") {
+		toast.success(result.title, { description: result.description });
+		return;
+	}
+	if (result.kind === "error") {
+		toast.error(result.title, { description: result.description });
+		return;
+	}
+	toast.info(result.title, { description: result.description });
+}
+
 export function WalletPage() {
 	const wallet = useWallet();
+	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
 	const [topUpOpen, setTopUpOpen] = useState(false);
+
+	useEffect(() => {
+		const topupReturn = readWalletTopupReturn(window.location.search);
+		if (!topupReturn) return;
+		const { clientSecret } = topupReturn;
+		let cancelled = false;
+
+		async function refreshReturnedTopup() {
+			try {
+				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
+				if (!key) {
+					toast.error("Couldn't refresh top-up", {
+						description: "Stripe isn't configured in this environment.",
+					});
+					return;
+				}
+				const stripe = await getStripe(key);
+				if (!stripe) {
+					toast.error("Couldn't refresh top-up", {
+						description: "Reload the page and try again.",
+					});
+					return;
+				}
+				const result = await stripe.retrievePaymentIntent(clientSecret);
+				if (cancelled) return;
+				if (result.error) {
+					toast.error("Couldn't refresh top-up", {
+						description: result.error.message ?? "Open Wallet and try again.",
+					});
+					return;
+				}
+				showWalletTopupReturnToast(walletTopupReturnToast(result.paymentIntent?.status));
+				invalidateWalletActivity(queryClient);
+			} catch {
+				if (!cancelled) {
+					toast.error("Couldn't refresh top-up", {
+						description: "Check your connection and reload Wallet.",
+					});
+				}
+			} finally {
+				if (!cancelled) {
+					window.history.replaceState(null, "", cleanWalletTopupReturnUrl(window.location.href));
+				}
+			}
+		}
+
+		void refreshReturnedTopup();
+		return () => {
+			cancelled = true;
+		};
+	}, [queryClient]);
 
 	if (wallet.isLoading) {
 		return (
