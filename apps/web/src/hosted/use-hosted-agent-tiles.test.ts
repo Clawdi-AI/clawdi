@@ -27,9 +27,13 @@ function hostedAgentTileStatus(rawStatus: string) {
 	return getTileStatus(rawStatus);
 }
 
-function hostedRuntimeStatusView(rawStatus: string, environment: Env | null | undefined) {
+function hostedRuntimeStatusView(
+	rawStatus: string,
+	environment: Env | null | undefined,
+	failureReason?: string | null,
+) {
 	if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
-	return getRuntimeStatusView({ status: rawStatus }, environment);
+	return getRuntimeStatusView({ status: rawStatus, failure_reason: failureReason }, environment);
 }
 
 function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = []) {
@@ -157,6 +161,35 @@ describe("deploymentToTiles", () => {
 			textClass: "text-warning-muted-foreground",
 		});
 	});
+
+	test("projects failed deployment reasons ahead of dunning state", () => {
+		const [tile] = hostedDeploymentToTiles(
+			deployment({
+				status: "failed",
+				failure_reason: "startup_probe_failing; restart_count=2; container failed readiness probe",
+				compute_subscription: {
+					status: "past_due",
+					payment_state: "requires_action",
+					billing_term_months: 1,
+					price_cents: 1_900,
+					currency: "usd",
+					cancel_at_period_end: false,
+					current_period_end: "2026-08-01T00:00:00Z",
+					cancel_at: null,
+					canceled_at: null,
+					latest_failed_invoice_id: "in_action_required",
+					latest_failed_invoice_hosted_url: "https://invoice.stripe.test/action",
+					next_payment_attempt_at: null,
+				},
+			}),
+		);
+
+		expect(tile?.secondaryStatus).toEqual({
+			label: "Failure: startup_probe_failing; restart_count=2; container failed readiness probe",
+			title: "startup_probe_failing; restart_count=2; container failed readiness probe",
+			textClass: "text-destructive-muted-foreground font-medium",
+		});
+	});
 });
 
 describe("hostedAgentTileStatus", () => {
@@ -233,5 +266,21 @@ describe("hostedRuntimeStatusView", () => {
 		expect(running.secondary?.label).toBe("Sync pending");
 		expect(creating.primary.label).toBe("Provisioning");
 		expect(creating.secondary).toBeNull();
+	});
+
+	test("shows failed deployment reason as secondary status", () => {
+		const view = hostedRuntimeStatusView(
+			"failed",
+			null,
+			" startup_probe_failing;   restart_count=2 ",
+		);
+
+		expect(view.primary.label).toBe("Failed");
+		expect(view.secondary).toEqual({
+			kind: "failure_reason",
+			label: "Failure: startup_probe_failing; restart_count=2",
+			tooltip: "startup_probe_failing; restart_count=2",
+			textClass: "text-destructive-muted-foreground font-medium",
+		});
 	});
 });

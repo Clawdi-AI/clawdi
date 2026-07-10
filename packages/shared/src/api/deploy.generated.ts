@@ -871,6 +871,8 @@ export interface components {
              * @default unknown
              */
             status: string;
+            /** Failure Reason */
+            failure_reason?: string | null;
             /** Endpoints */
             endpoints?: string[];
             /** Openclaw Control Ui Url */

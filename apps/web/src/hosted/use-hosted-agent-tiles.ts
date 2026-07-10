@@ -23,6 +23,10 @@ import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
+	compactDeploymentFailureReason,
+	deploymentFailureReason,
+} from "@/hosted/deployment-failure";
+import {
 	type DeploymentStatus,
 	type DeploymentStatusTone,
 	deploymentStatusLabel,
@@ -37,7 +41,7 @@ import { normalizeAgentEnvId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
-type DeploymentStatusInput = Pick<HostedDeployment, "status">;
+type DeploymentStatusInput = Pick<HostedDeployment, "status" | "failure_reason">;
 
 const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
 
@@ -66,7 +70,7 @@ export interface HostedRuntimeStatusView {
 		textClass: string;
 	};
 	secondary: {
-		kind: DaemonStatusVisual["kind"];
+		kind: DaemonStatusVisual["kind"] | "failure_reason";
 		label: string;
 		tooltip: string;
 		textClass: string;
@@ -83,16 +87,24 @@ export function hostedRuntimeStatusView(
 	const computeTone = deploymentStatusTone(compute);
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
 	const computeIsRunning = isRunningStatus(compute);
+	const failureReason = compute.kind === "failed" ? deploymentFailureReason(deployment) : null;
 	const envIsFresh = isAgentActive(env?.last_seen_at);
-	const secondary =
-		computeIsRunning && sync && sync.kind !== "live"
-			? {
-					kind: sync.kind,
-					label: sync.badgeLabel,
-					tooltip: sync.tooltip,
-					textClass: sync.textClass,
-				}
-			: null;
+	let secondary: HostedRuntimeStatusView["secondary"] = null;
+	if (failureReason) {
+		secondary = {
+			kind: "failure_reason",
+			label: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
+			tooltip: failureReason,
+			textClass: COMPUTE_TEXT_TONE.destructive,
+		};
+	} else if (computeIsRunning && sync && sync.kind !== "live") {
+		secondary = {
+			kind: sync.kind,
+			label: sync.badgeLabel,
+			tooltip: sync.tooltip,
+			textClass: sync.textClass,
+		};
+	}
 
 	return {
 		compute,
@@ -241,6 +253,8 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
 	const dunningStatus = computeDunningTileStatus(d);
+	const failureReasonStatus =
+		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
 	return [
 		{
 			id: d.id,
@@ -260,15 +274,21 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 				label: runtimeStatus.primary.label,
 				dotClass: runtimeStatus.primary.dotClass,
 			},
-			secondaryStatus: dunningStatus
-				? dunningStatus
-				: runtimeStatus.secondary
-					? {
-							label: runtimeStatus.secondary.label,
-							title: runtimeStatus.secondary.tooltip,
-							textClass: runtimeStatus.secondary.textClass,
-						}
-					: null,
+			secondaryStatus: failureReasonStatus
+				? {
+						label: failureReasonStatus.label,
+						title: failureReasonStatus.tooltip,
+						textClass: failureReasonStatus.textClass,
+					}
+				: dunningStatus
+					? dunningStatus
+					: runtimeStatus.secondary
+						? {
+								label: runtimeStatus.secondary.label,
+								title: runtimeStatus.secondary.tooltip,
+								textClass: runtimeStatus.secondary.textClass,
+							}
+						: null,
 			env: matchedEnv ?? null,
 		},
 	];
