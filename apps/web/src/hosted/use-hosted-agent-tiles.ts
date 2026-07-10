@@ -17,6 +17,7 @@ import {
 } from "@/components/dashboard/daemon-status";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
+import { computeDunningTileStatus } from "@/hosted/billing/components/compute-dunning.logic";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
@@ -239,6 +240,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
+	const dunningStatus = computeDunningTileStatus(d);
 	return [
 		{
 			id: d.id,
@@ -258,13 +260,15 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 				label: runtimeStatus.primary.label,
 				dotClass: runtimeStatus.primary.dotClass,
 			},
-			secondaryStatus: runtimeStatus.secondary
-				? {
-						label: runtimeStatus.secondary.label,
-						title: runtimeStatus.secondary.tooltip,
-						textClass: runtimeStatus.secondary.textClass,
-					}
-				: null,
+			secondaryStatus: dunningStatus
+				? dunningStatus
+				: runtimeStatus.secondary
+					? {
+							label: runtimeStatus.secondary.label,
+							title: runtimeStatus.secondary.tooltip,
+							textClass: runtimeStatus.secondary.textClass,
+						}
+					: null,
 			env: matchedEnv ?? null,
 		},
 	];

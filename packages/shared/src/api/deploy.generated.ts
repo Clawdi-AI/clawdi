@@ -211,6 +211,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/fix-payment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fix Payment V2 Subscription */
+        post: operations["fix_payment_v2_subscription_v2_subscription_fix_payment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Subscription Invoices */
+        get: operations["list_v2_subscription_invoices_v2_subscription_invoices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/plans": {
         parameters: {
             query?: never;
@@ -488,6 +522,45 @@ export interface components {
             /** Locale */
             locale?: string | null;
         };
+        /** V2ComputeFixPaymentRequest */
+        V2ComputeFixPaymentRequest: {
+            /** Locale */
+            locale?: string | null;
+            /** Deployment Id */
+            deployment_id?: string | null;
+        };
+        /** V2ComputeInvoiceInfo */
+        V2ComputeInvoiceInfo: {
+            /** Id */
+            id: string;
+            /** Number */
+            number?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /** Hosted Invoice Url */
+            hosted_invoice_url?: string | null;
+            /** Created */
+            created?: string | null;
+        };
+        /** V2ComputeInvoicesResponse */
+        V2ComputeInvoicesResponse: {
+            /** Data */
+            data?: components["schemas"]["V2ComputeInvoiceInfo"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Starting After */
+            next_starting_after?: string | null;
+        };
         /** V2ComputePortalRequest */
         V2ComputePortalRequest: {
             /** Locale */
@@ -572,6 +645,12 @@ export interface components {
         V2HostedComputeSubscriptionInfo: {
             /** Status */
             status: string;
+            /**
+             * Payment State
+             * @default ok
+             * @enum {string}
+             */
+            payment_state: "ok" | "past_due" | "requires_action" | "unpaid";
             /** Billing Term Months */
             billing_term_months: number;
             /** Price Cents */
@@ -592,6 +671,12 @@ export interface components {
             cancel_at?: string | null;
             /** Canceled At */
             canceled_at?: string | null;
+            /** Latest Failed Invoice Id */
+            latest_failed_invoice_id?: string | null;
+            /** Latest Failed Invoice Hosted Url */
+            latest_failed_invoice_hosted_url?: string | null;
+            /** Next Payment Attempt At */
+            next_payment_attempt_at?: string | null;
         };
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
@@ -1496,6 +1581,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ComputeSubscriptionActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fix_payment_v2_subscription_v2_subscription_fix_payment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["V2ComputeFixPaymentRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2PortalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_v2_subscription_invoices_v2_subscription_invoices_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                starting_after?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeInvoicesResponse"];
                 };
             };
             /** @description Validation Error */

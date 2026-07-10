@@ -44,6 +44,7 @@ describe("applyDeploymentSubscriptionResult", () => {
 		qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
 			deployment({
 				status: "active",
+				payment_state: "ok",
 				billing_term_months: 1,
 				price_cents: 2_000,
 				currency: "usd",
@@ -81,6 +82,7 @@ describe("refreshCheckoutReturnQueries", () => {
 		});
 		const beforeCheckout = deployment({
 			status: "active",
+			payment_state: "ok",
 			billing_term_months: 1,
 			price_cents: 2_000,
 			currency: "usd",
@@ -93,6 +95,7 @@ describe("refreshCheckoutReturnQueries", () => {
 			name: "Performance agent after checkout",
 			compute_subscription: {
 				status: "active",
+				payment_state: "ok",
 				billing_term_months: 12,
 				price_cents: 20_000,
 				currency: "usd",

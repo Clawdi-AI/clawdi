@@ -12,6 +12,7 @@ import { useCallback } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
+	ComputeFixPaymentRequest,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
@@ -72,14 +73,27 @@ function subscriptionFromAction(
 	previous: HostedDeployment["compute_subscription"] | null | undefined,
 	next: ComputeSubscriptionActionResult,
 ): NonNullable<HostedDeployment["compute_subscription"]> {
+	const paymentState =
+		next.status === "past_due"
+			? (previous?.payment_state ?? "past_due")
+			: next.status === "unpaid"
+				? "unpaid"
+				: "ok";
 	return {
 		...(previous ?? {}),
 		status: next.status,
+		payment_state: paymentState,
 		billing_term_months: next.billing_term_months,
 		currency: previous?.currency ?? "usd",
 		cancel_at_period_end: next.cancel_at_period_end,
 		current_period_end: next.current_period_end ?? previous?.current_period_end ?? null,
 		cancel_at: next.cancel_at ?? null,
+		latest_failed_invoice_id:
+			paymentState === "ok" ? null : (previous?.latest_failed_invoice_id ?? null),
+		latest_failed_invoice_hosted_url:
+			paymentState === "ok" ? null : (previous?.latest_failed_invoice_hosted_url ?? null),
+		next_payment_attempt_at:
+			paymentState === "ok" ? null : (previous?.next_payment_attempt_at ?? null),
 	};
 }
 
@@ -227,6 +241,22 @@ export function usePortal() {
 	const client = useBillingClient();
 	return useMutation({
 		mutationFn: (body: PortalRequest) => client.portal(body),
+	});
+}
+
+export function useFixPayment() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (body: ComputeFixPaymentRequest) => client.fixPayment(body),
+	});
+}
+
+export function useComputeInvoices(limit = 12) {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.invoices(limit),
+		queryFn: () => client.getInvoices(limit),
+		staleTime: 60_000,
 	});
 }
 
