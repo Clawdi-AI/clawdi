@@ -313,27 +313,54 @@ export function unifiedHostedAgentTiles({
 	selfManagedTiles: AgentTile[];
 	hostedTiles: AgentTile[];
 	claimedEnvIds: ReadonlySet<string>;
-	legacyEnvIds: ReadonlySet<string>;
+	legacyEnvIds: ReadonlySet<string> | null;
+	cloudEnvs: Env[];
+	showLegacyAgents: boolean;
+}): AgentTile[] {
+	return [
+		...hostedTiles,
+		...connectedAgentTilesForHostedView({
+			selfManagedTiles,
+			claimedEnvIds,
+			legacyEnvIds,
+			cloudEnvs,
+			showLegacyAgents,
+		}),
+	];
+}
+
+export function connectedAgentTilesForHostedView({
+	selfManagedTiles,
+	claimedEnvIds,
+	legacyEnvIds,
+	cloudEnvs,
+	showLegacyAgents,
+}: {
+	selfManagedTiles: AgentTile[];
+	claimedEnvIds: ReadonlySet<string>;
+	legacyEnvIds: ReadonlySet<string> | null;
 	cloudEnvs: Env[];
 	showLegacyAgents: boolean;
 }): AgentTile[] {
 	const legacyConnectedTiles = showLegacyAgents
-		? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
+		? legacyEnvIds
+			? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
+			: []
 		: [];
 	const dedupedSelfManaged = selfManagedTiles.filter(
 		(tile) =>
 			!isOwnedEnvId(tile.id, claimedEnvIds, showLegacyAgents ? legacyEnvIds : EMPTY_ENV_IDS),
 	);
-	return [...hostedTiles, ...legacyConnectedTiles, ...dedupedSelfManaged];
+	return [...legacyConnectedTiles, ...dedupedSelfManaged];
 }
 
 function isOwnedEnvId(
 	id: string,
 	claimedEnvIds: ReadonlySet<string>,
-	legacyEnvIds: ReadonlySet<string>,
+	legacyEnvIds: ReadonlySet<string> | null,
 ): boolean {
 	const envId = normalizeAgentEnvId(id);
-	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds.has(envId)));
+	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds?.has(envId)));
 }
 
 export function HostedFleetSummary({
@@ -354,11 +381,8 @@ export function HostedFleetSummary({
 		includeDeployments: showCloudDeployments,
 	});
 	const ownership = useAgentOwnership();
-	const legacyEnvIds = showLegacyAgents ? ownership?.legacyEnvIds : EMPTY_ENV_IDS;
-	const ownershipLoading =
-		(showCloudDeployments && hosted.isLoading) || (showLegacyAgents && ownership === null);
+	const legacyEnvIds = showLegacyAgents ? (ownership?.legacyEnvIds ?? null) : EMPTY_ENV_IDS;
 	const tiles = useMemo(() => {
-		if (ownershipLoading || !legacyEnvIds) return selfManagedTiles;
 		return unifiedHostedAgentTiles({
 			selfManagedTiles,
 			hostedTiles: hosted.tiles,
@@ -372,7 +396,6 @@ export function HostedFleetSummary({
 		hosted.claimedEnvIds,
 		hosted.tiles,
 		legacyEnvIds,
-		ownershipLoading,
 		selfManagedTiles,
 		showLegacyAgents,
 	]);

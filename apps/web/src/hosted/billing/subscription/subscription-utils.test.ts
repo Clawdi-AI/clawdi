@@ -3,6 +3,8 @@ import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
 import {
 	COMPUTE_FREE_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	isComputeSubscriptionCancelable,
+	isComputeSubscriptionTermChangeable,
 	resolveFreePlan,
 	resolvePerformancePlan,
 	selectOfferForTerm,
@@ -106,5 +108,27 @@ describe("selectOfferForTerm", () => {
 			},
 			billingTermMonths: 1,
 		});
+	});
+});
+
+describe("compute subscription action status gates", () => {
+	test("matches the backend cancel and resume status set", () => {
+		expect(isComputeSubscriptionCancelable({ status: "trialing" })).toBe(true);
+		expect(isComputeSubscriptionCancelable({ status: "active" })).toBe(true);
+		expect(isComputeSubscriptionCancelable({ status: "past_due" })).toBe(true);
+
+		expect(isComputeSubscriptionCancelable({ status: "incomplete" })).toBe(false);
+		expect(isComputeSubscriptionCancelable({ status: "unpaid" })).toBe(false);
+		expect(isComputeSubscriptionCancelable({ status: "canceled" })).toBe(false);
+		expect(isComputeSubscriptionCancelable(null)).toBe(false);
+	});
+
+	test("keeps term changes stricter than cancel or resume", () => {
+		expect(isComputeSubscriptionTermChangeable({ status: "trialing" })).toBe(true);
+		expect(isComputeSubscriptionTermChangeable({ status: "active" })).toBe(true);
+
+		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
+		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
+		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
 	});
 });
