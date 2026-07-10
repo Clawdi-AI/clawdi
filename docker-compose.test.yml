@@ -1,0 +1,42 @@
+services:
+  test-runner:
+    image: ${TEST_RUNNER_IMAGE:-clawdi-test-runner:local}
+    build:
+      context: .
+      dockerfile: docker/test-runner.Dockerfile
+    user: "1000:1000"
+    environment:
+      HOME: /tmp/clawdi-home
+      CLAWDI_NO_AUTO_UPDATE: "1"
+      CLAWDI_NO_UPDATE_CHECK: "1"
+      BUN_INSTALL_CACHE_DIR: /var/cache/bun
+      BUN_TMPDIR: /tmp/bun
+      TMPDIR: /tmp
+      UV_CACHE_DIR: /var/cache/uv
+      UV_LINK_MODE: copy
+      UV_PYTHON_DOWNLOADS: never
+      DATABASE_URL: postgresql+asyncpg://clawdi:clawdi_test@postgres:5432/clawdi_test
+    volumes:
+      - .:/repo:ro
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777,uid=1000,gid=1000
+      - /var/cache/bun:rw,nosuid,nodev,noexec,size=2g,mode=1777,uid=1000,gid=1000
+      - /var/cache/uv:rw,nosuid,nodev,noexec,size=2g,mode=1777,uid=1000,gid=1000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg16
+    environment:
+      POSTGRES_DB: clawdi_test
+      POSTGRES_USER: clawdi
+      POSTGRES_PASSWORD: clawdi_test
+    tmpfs:
+      - /var/lib/postgresql/data:rw,nosuid,nodev,noexec,size=1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawdi -d clawdi_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s

@@ -19,7 +19,7 @@ Usage (wired up via `apps/web/package.json`):
 
     curl -s http://localhost:50021/openapi.json \
       | python3 scripts/filter-deploy-openapi.py \
-      | bun x openapi-typescript /dev/stdin \
+      | scripts/openapi-typescript.sh /dev/stdin \
           -o packages/shared/src/api/deploy.generated.ts
 
 To consume a new endpoint, add its path + HTTP method to

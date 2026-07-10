@@ -45,15 +45,21 @@ releases.
    ```bash
    bun run check
    bun run typecheck
-   bun run test
+   bun run test  # Docker-backed clean runner
    ```
+
+   `bun run test` builds or reuses the local Docker test image and runs against
+   an isolated container workspace. Host-local package tests are available as
+   `bun run test:local` for development loops, but the clean Docker runner is
+   the release gate.
 
 4. Run backend verification:
 
    ```bash
    cd backend
    uv run ruff check app tests
-   uv run pytest -q
+   cd ..
+   scripts/test.sh backend
    ```
 
 5. Review Alembic migrations when the PR changes database schema:

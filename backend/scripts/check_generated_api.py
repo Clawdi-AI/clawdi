@@ -30,8 +30,7 @@ def main() -> int:
 
         subprocess.run(
             [
-                "bunx",
-                "openapi-typescript",
+                "scripts/openapi-typescript.sh",
                 str(schema_path),
                 "-o",
                 str(expected_path),

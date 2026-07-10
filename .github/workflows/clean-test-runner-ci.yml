@@ -1,0 +1,62 @@
+name: Clean Test Runner CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "docker-compose.test.yml"
+      - "scripts/test.sh"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/clean-test-runner-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "docker-compose.test.yml"
+      - "scripts/test.sh"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/clean-test-runner-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-test-runner-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLAWDI_TEST_COMPOSE_PROJECT_NAME: clawdi-test-ci-${{ github.run_id }}
+      TEST_RUNNER_IMAGE: clawdi-test-runner:ci
+      CLAWDI_TEST_RUNNER_SKIP_BUILD: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check Docker availability
+        run: |
+          docker version
+          docker compose version
+      - name: Validate Compose config
+        run: docker compose -f docker-compose.test.yml config >/dev/null
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build cached test runner image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/test-runner.Dockerfile
+          load: true
+          tags: ${{ env.TEST_RUNNER_IMAGE }}
+          cache-from: type=gha,scope=clawdi-test-runner
+          cache-to: type=gha,mode=max,scope=clawdi-test-runner
+      - name: Default clean runner smoke
+        run: scripts/test.sh all tests/test_smoke.py
+      - name: Web clean runner
+        run: scripts/test.sh web
+      - name: CLI clean runner
+        run: scripts/test.sh cli
