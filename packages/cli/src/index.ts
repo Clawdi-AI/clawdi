@@ -726,6 +726,15 @@ runtimeCmd
 	);
 
 runtimeCmd
+	.command("verify")
+	.description("Validate hosted runtime CLI modules and cached manifest")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { runtimeVerify } = await import("./commands/runtime.js");
+		await runtimeVerify(opts);
+	});
+
+runtimeCmd
 	.command("sidecar")
 	.description("Run hosted runtime support modules")
 	.action(async () => {

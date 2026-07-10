@@ -19,11 +19,18 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { isSemverLessThan } from "../lib/semver";
 import { getCliVersion } from "../lib/version";
 import { ensureRuntimeAuthTokenFile, runtimeAuthTokenFileLabel } from "../runtime/auth-token";
 import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
-import { applyRuntimeCliDesiredState, type RuntimeCliUpdateResult } from "../runtime/cli-update";
+import {
+	applyRuntimeCliDesiredState,
+	completePendingRuntimeCliUpgrade,
+	type RuntimeCliRollbackResult,
+	type RuntimeCliUpdateResult,
+	rollbackPendingRuntimeCliUpgrade,
+} from "../runtime/cli-update";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
 	cacheRuntimeLastGoodManifest,
@@ -31,6 +38,7 @@ import {
 	loadRuntimeManifest,
 	withRuntimeConvergeLock,
 } from "../runtime/manifest";
+import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
 	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
@@ -1164,6 +1172,10 @@ interface RuntimeWatchOptions {
 	json?: boolean;
 }
 
+interface RuntimeVerifyOptions {
+	json?: boolean;
+}
+
 interface RuntimeDoctorCheck {
 	name: string;
 	ok: boolean;
@@ -1171,15 +1183,39 @@ interface RuntimeDoctorCheck {
 	hint?: string;
 }
 
-interface RuntimeApplyResult {
+interface MinimumCliVersionGate {
+	minimumCliVersion: string;
+	currentCliVersion: string;
+	rejectedGeneration: number;
+	activeGeneration: number | null;
+	error: string;
+}
+
+type RuntimeApplyResult = RuntimeApplyConvergedResult | RuntimeApplyGatedResult;
+
+interface RuntimeApplyConvergedResult {
+	kind: "converged";
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
+}
+
+interface RuntimeApplyGatedResult {
+	kind: "minimum_cli_version_gated";
+	cliUpdate: RuntimeCliUpdateResult;
+	gate: MinimumCliVersionGate;
 }
 
 interface RuntimeApplyOptions {
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
+	manifestIdentity?: RuntimeManifestIdentity;
+}
+
+interface RuntimeManifestIdentity {
+	generation?: number | null;
+	etag?: string | null;
+	previouslyApplied?: boolean;
 }
 
 function hasRuntimeCredential(input: {
@@ -1495,6 +1531,44 @@ function repairStatus(
 	);
 }
 
+export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
+	const paths = getRuntimePaths();
+	const manifestCacheExists = existsSync(paths.manifestLastGood);
+	const errors: string[] = [];
+	if (manifestCacheExists) {
+		try {
+			const raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
+			const parsed = runtimeDesiredStateSchema.safeParse(raw);
+			if (!parsed.success) {
+				errors.push(`cached manifest parse failed: ${z.prettifyError(parsed.error)}`);
+			}
+		} catch (error) {
+			errors.push(
+				`cached manifest parse failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+	const result = {
+		schemaVersion: "clawdi.runtimeVerify.v1",
+		status: errors.length === 0 ? "ok" : "error",
+		cliVersion: getCliVersion(),
+		manifestCache: {
+			path: paths.manifestLastGood,
+			exists: manifestCacheExists,
+			valid: errors.length === 0,
+		},
+		errors,
+	};
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(result, null, 2));
+	} else if (errors.length === 0) {
+		console.log(chalk.green("runtime verify ok"));
+	} else {
+		console.log(chalk.red(errors[0]));
+	}
+	if (errors.length > 0) process.exitCode = 1;
+}
+
 export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 	const paths = getRuntimePaths();
 	const mode = detectRuntimeMode();
@@ -1675,7 +1749,12 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		try {
 			applyResult = withRuntimeConvergeLock(paths, () =>
-				applyRuntimeDesiredState(convergenceLoad, paths),
+				applyRuntimeDesiredState(convergenceLoad, paths, {
+					manifestIdentity: {
+						generation: convergenceLoad.manifest.generation,
+						etag: loaded.etag ?? null,
+					},
+				}),
 			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -1711,6 +1790,48 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
 			}
 			process.exitCode = 23;
+			return;
+		}
+		if (applyResult.kind === "minimum_cli_version_gated") {
+			const status = buildRuntimeBootStatus(
+				{
+					mode: "repair",
+					status: "error",
+					stage: "config",
+					bootId,
+					runtimeMode: mode,
+					activeGeneration: applyResult.gate.activeGeneration,
+					rejectedGeneration: applyResult.gate.rejectedGeneration,
+					instanceId: convergenceLoad.manifest.instanceId,
+					enabledRuntimes: [],
+					error: applyResult.gate.error,
+					errors: [applyResult.gate.error],
+					exitCode: 24,
+					datasource: "RuntimeSource",
+					hostPolicy: hostPolicySummary(hostPolicy),
+					manifestSource: {
+						type: convergenceLoad.source,
+						path: convergenceLoad.sourcePath,
+						offline: convergenceLoad.offline,
+					},
+				},
+				paths,
+			);
+			writeRuntimeBootStatus(status, paths);
+			if (opts.json || !process.stdout.isTTY) {
+				console.log(
+					JSON.stringify(
+						{ ...status, cliUpdate: applyResult.cliUpdate, gate: applyResult.gate },
+						null,
+						2,
+					),
+				);
+			} else {
+				console.log(chalk.bold("clawdi runtime init"));
+				console.log(chalk.yellow(`  repair: ${applyResult.gate.error}`));
+				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+			}
+			process.exitCode = 24;
 			return;
 		}
 		const { convergence } = applyResult;
@@ -1853,13 +1974,41 @@ async function runtimeWatchTick(
 	try {
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
-		const { convergence, cliUpdate } = withRuntimeConvergeLock(paths, () =>
+		const manifestIdentity = runtimeManifestIdentityForWatch(
+			manifestLoad,
+			manifestEtag,
+			loaded.manifest.generation,
+			paths,
+		);
+		const applyResult = withRuntimeConvergeLock(paths, () =>
 			applyRuntimeDesiredState(loaded, paths, {
 				continueOnCliUpdateError: true,
 				deferCliInstall: opts.deferCliInstall,
 				deferCliInstallReason: opts.deferCliInstallReason,
+				manifestIdentity,
 			}),
 		);
+		if (applyResult.kind === "minimum_cli_version_gated") {
+			const cliUpdateError =
+				applyResult.cliUpdate.status === "error"
+					? (applyResult.cliUpdate.error ?? "CLI update failed")
+					: null;
+			const errors = [...(cliUpdateError ? [cliUpdateError] : []), applyResult.gate.error];
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				stage: cliUpdateError ? "cli-update" : "config",
+				mode: "minimum_cli_version_gated",
+				errors,
+				error: errors[0],
+				activeGeneration: applyResult.gate.activeGeneration,
+				rejectedGeneration: applyResult.gate.rejectedGeneration,
+				cliUpdate: applyResult.cliUpdate,
+				selfReexec: shouldSelfReexecForCliUpdate(applyResult.cliUpdate),
+				gate: applyResult.gate,
+			};
+		}
+		const { convergence, cliUpdate } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
 		let systemdApplyResult = {
@@ -1887,7 +2036,7 @@ async function runtimeWatchTick(
 			...convergence.installErrors,
 			...(systemdApplyError ? [systemdApplyError] : []),
 		];
-		const selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		let selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
@@ -1901,6 +2050,8 @@ async function runtimeWatchTick(
 					writeRuntimeChannelsEtag(paths, channelsLoad.etag);
 				}
 			}
+			const cliRollback = maybeRollbackFailedCliUpgrade(paths, manifestIdentity, errors);
+			if (cliRollback.status === "rolled_back") selfReexec = false;
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
@@ -1909,6 +2060,7 @@ async function runtimeWatchTick(
 				error: errors[0],
 				activeGeneration: convergence.manifest.generation,
 				cliUpdate,
+				cliRollback,
 				selfReexec,
 				systemdUnitsChanged,
 				systemdApply: systemdApplyResult,
@@ -1922,6 +2074,7 @@ async function runtimeWatchTick(
 		if (!("notModified" in channelsLoad)) {
 			writeRuntimeChannelsEtag(paths, channelsLoad.etag);
 		}
+		completePendingRuntimeCliUpgrade(paths, getCliVersion(), manifestIdentity);
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
@@ -1965,13 +2118,46 @@ function applyRuntimeDesiredState(
 		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
 			deferInstall: opts.deferCliInstall,
 			deferReason: opts.deferCliInstallReason,
+			manifestIdentity: opts.manifestIdentity,
 		});
 	} catch (error) {
 		if (!opts.continueOnCliUpdateError) throw error;
 		cliUpdate = runtimeCliUpdateError(load.manifest, paths, error);
 	}
+	const gate = minimumCliVersionGate(load.manifest, paths);
+	if (gate) {
+		return { kind: "minimum_cli_version_gated", cliUpdate, gate };
+	}
 	const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
-	return { cliUpdate, convergence };
+	return { kind: "converged", cliUpdate, convergence };
+}
+
+function minimumCliVersionGate(
+	manifest: RuntimeManifestLoad["manifest"],
+	paths: RuntimePaths,
+): MinimumCliVersionGate | null {
+	const minimumCliVersion = manifest.minimumCliVersion?.trim();
+	if (!minimumCliVersion) return null;
+	const currentCliVersion = getCliVersion();
+	if (!isSemverLessThan(currentCliVersion, minimumCliVersion)) return null;
+	return {
+		minimumCliVersion,
+		currentCliVersion,
+		rejectedGeneration: manifest.generation,
+		activeGeneration: readLastGoodManifestGeneration(paths),
+		error: `runtime desired state requires clawdi CLI >= ${minimumCliVersion}; current CLI is ${currentCliVersion}. Keeping last-good applied state while CLI self-upgrade runs.`,
+	};
+}
+
+function readLastGoodManifestGeneration(paths: RuntimePaths): number | null {
+	try {
+		const parsed = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+		const generation = (parsed as Record<string, unknown>).generation;
+		return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
+	} catch {
+		return null;
+	}
 }
 
 function runtimeCliUpdateError(
@@ -1997,6 +2183,46 @@ function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolea
 	if (cliUpdate.status === "installed") return true;
 	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
 	return cliUpdate.version !== getCliVersion();
+}
+
+function runtimeManifestIdentityForWatch(
+	manifestLoad: RuntimeManifestLoad | RuntimeManifestNotModified,
+	existingEtag: string | undefined,
+	generation: number,
+	paths: RuntimePaths,
+): RuntimeManifestIdentity {
+	const etag =
+		"notModified" in manifestLoad
+			? (manifestLoad.etag ?? existingEtag ?? null)
+			: (manifestLoad.etag ?? null);
+	const lastGoodGeneration = readLastGoodManifestGeneration(paths);
+	return {
+		generation,
+		etag,
+		previouslyApplied:
+			(existingEtag !== undefined && etag === existingEtag) ||
+			(existingEtag === undefined && lastGoodGeneration === generation),
+	};
+}
+
+function maybeRollbackFailedCliUpgrade(
+	paths: RuntimePaths,
+	manifestIdentity: RuntimeManifestIdentity,
+	errors: string[],
+): RuntimeCliRollbackResult {
+	const rollback = rollbackPendingRuntimeCliUpgrade(
+		paths,
+		`first converge after CLI upgrade failed: ${errors[0] ?? "unknown error"}`,
+		manifestIdentity,
+	);
+	if (rollback.status === "rolled_back") {
+		errors.push(
+			`rolled back clawdi CLI ${rollback.version} to previous version ${rollback.previousVersion ?? "unknown"}`,
+		);
+	} else if (rollback.status === "error") {
+		errors.push(`failed to roll back clawdi CLI ${rollback.version}: ${rollback.error}`);
+	}
+	return rollback;
 }
 
 async function runtimeWatchLoadForApply(

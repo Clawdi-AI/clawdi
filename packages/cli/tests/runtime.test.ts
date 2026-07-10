@@ -4787,6 +4787,10 @@ if [ "\${1:-}" = "--version" ]; then
   echo "0.13.1-beta.0"
   exit 0
 fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
 echo "fake clawdi"
 SH
 chmod +x "$prefix/bin/clawdi"
@@ -4939,6 +4943,10 @@ cat > "$prefix/bin/clawdi" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
   echo "0.13.2-beta.0"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
   exit 0
 fi
 echo "fake upgraded clawdi"
@@ -5178,6 +5186,10 @@ if [ "\${1:-}" = "--version" ]; then
   echo "0.12.10-beta.22"
   exit 0
 fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
 echo "fake clawdi"
 SH
 chmod +x "$prefix/bin/clawdi"
@@ -5255,6 +5267,10 @@ cat > "$prefix/bin/clawdi" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
   echo "0.13.3-beta.0"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
   exit 0
 fi
 echo "fake clawdi"
@@ -5384,6 +5400,180 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		}
 	});
 
+	it("rolls back a CLI upgrade when first converge fails for an already-applied manifest", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const npmLog = join(root, "npm.log");
+		const openclawInstaller = join(root, "install-openclaw.sh");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${npmLog}'
+if [ "\${1:-}" = "view" ]; then
+  echo '"0.13.5-beta.0"'
+  exit 0
+fi
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.5-beta.0"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+echo "fake clawdi"
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		writeFileSync(openclawInstaller, "#!/usr/bin/env bash\necho install failed >&2\nexit 73\n");
+		chmodSync(openclawInstaller, 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		seedCurrentCliInstall(state, "clawdi@beta", "0.13.4-beta.0");
+		const paths = getRuntimePaths();
+		const oldTarget = readlinkSync(paths.cliManagedBin);
+		mkdirSync(dirname(paths.manifestEtag), { recursive: true });
+		writeFileSync(paths.manifestEtag, '"etag-cli-rollback"\n');
+		const manifest = {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "openclaw",
+			deploymentId: "dep_cli_rollback",
+			environmentId: "env_cli_rollback",
+			instanceId: "iid_cli_rollback",
+			generation: 18,
+			issuedAt: "2026-06-06T00:00:00Z",
+			system: { home, workspace: join(home, "clawdi") },
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
+			runtimes: {
+				openclaw: hostedOpenClawRuntime({
+					install: { source: "official", channel: "stable" },
+					paths: { home },
+				}),
+			},
+		};
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							manifest,
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json", etag: '"etag-cli-rollback"' },
+						},
+					),
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: () =>
+					new Response(JSON.stringify([]), {
+						status: 200,
+						headers: { "content-type": "application/json", etag: '"channels-cli-rollback"' },
+					}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.cliUpdate.status).toBe("installed");
+			expect(event.cliRollback.status).toBe("rolled_back");
+			expect(event.cliRollback.version).toBe("0.13.5-beta.0");
+			expect(event.selfReexec).toBe(false);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
+			const upgradeState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(upgradeState.pendingUpgrade).toBeNull();
+			expect(upgradeState.badVersions).toContainEqual(
+				expect.objectContaining({
+					packageSpec: "clawdi@beta",
+					version: "0.13.5-beta.0",
+				}),
+			);
+			const beforeRetryLog = readFileSync(npmLog, "utf-8");
+			expect(() =>
+				applyRuntimeCliDesiredState(
+					{
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: "dep_cli_rollback",
+						environmentId: "env_cli_rollback",
+						instanceId: "iid_cli_rollback",
+						generation: 18,
+						issuedAt: "2026-06-06T00:00:00Z",
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
+						runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+						recovery: {},
+					},
+					paths,
+				),
+			).toThrow(/marked bad/);
+			const afterRetryLog = readFileSync(npmLog, "utf-8");
+			expect(afterRetryLog.split("\n").filter((line) => line.startsWith("install ")).length).toBe(
+				beforeRetryLog.split("\n").filter((line) => line.startsWith("install ")).length,
+			);
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("runtime watch applies systemd state when CLI install fails", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5490,6 +5680,134 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		}
 	});
 
+	it("runs CLI update before blocking desired state below minimumCliVersion", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.10-beta.0"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/manifest",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							manifest: {
+								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								runtime: "openclaw",
+								deploymentId: "dep_min_cli",
+								environmentId: "env_min_cli",
+								instanceId: "iid_min_cli",
+								generation: 19,
+								minimumCliVersion: "999.0.0",
+								issuedAt: "2026-06-06T00:00:00Z",
+								system: { home, workspace: join(home, "clawdi") },
+								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+								clawdiCli: {
+									source: "npm:clawdi",
+									packageSpec: "clawdi@0.13.10-beta.0",
+								},
+								runtimes: { openclaw: hostedOpenClawRuntime() },
+							},
+							secretValues: {},
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json", etag: '"etag-min-cli"' },
+						},
+					),
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: () =>
+					new Response(JSON.stringify([]), {
+						status: 200,
+						headers: { "content-type": "application/json", etag: '"channels-min-cli"' },
+					}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const event = JSON.parse(logs[0]);
+			expect(event.status).toBe("error");
+			expect(event.stage).toBe("config");
+			expect(event.mode).toBe("minimum_cli_version_gated");
+			expect(event.cliUpdate.status).toBe("installed");
+			expect(event.selfReexec).toBe(true);
+			expect(event.gate.minimumCliVersion).toBe("999.0.0");
+			const paths = getRuntimePaths();
+			expect(existsSync(paths.manifestEtag)).toBe(false);
+			expect(existsSync(paths.manifestLastGood)).toBe(false);
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("keeps the previous active CLI when installed CLI smoke fails", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5557,6 +5875,81 @@ chmod +x "$prefix/bin/clawdi"
 
 		try {
 			expect(() => applyRuntimeCliDesiredState(manifest, paths)).toThrow(/smoke check/);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(status).toEqual(oldStatus);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("keeps the previous active CLI when installed CLI self-check fails", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "0.13.2-beta.1"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"error","errors":["manifest parse failed"]}'
+  exit 42
+fi
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.1-beta.0", "0.13.1-beta.0");
+		const paths = getRuntimePaths();
+		const oldTarget = readlinkSync(paths.cliManagedBin);
+		const oldStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_selfcheck_failure",
+			environmentId: "env_cli_selfcheck_failure",
+			instanceId: "iid_cli_selfcheck_failure",
+			generation: 14,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.13.2-beta.1",
+			},
+			runtimes: {
+				openclaw: { enabled: false },
+				hermes: { enabled: false },
+			},
+			recovery: {},
+		};
+
+		try {
+			expect(() => applyRuntimeCliDesiredState(manifest, paths)).toThrow(/self-check/);
 			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
 			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 			expect(status).toEqual(oldStatus);
@@ -5646,6 +6039,10 @@ if [ "\${1:-}" = "--version" ]; then
   echo "0.13.6-beta.0"
   exit 0
 fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
 SH
 chmod +x "$prefix/bin/clawdi"
 `,
@@ -5717,6 +6114,10 @@ cat > "$prefix/bin/clawdi" <<SH
 #!/usr/bin/env bash
 if [ "\\\${1:-}" = "--version" ]; then
   echo "$version"
+  exit 0
+fi
+if [ "\\\${1:-} \\\${2:-} \\\${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
   exit 0
 fi
 SH

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidSemver } from "../lib/semver";
 import { mitmProfileInputBundleSchema } from "./mitm-profiles";
 import {
 	runtimeNameSchema,
@@ -19,6 +20,7 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 };
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
+const semverSchema = z.string().min(1).refine(isValidSemver, "must be a semver string");
 
 const installSchema = z
 	.object({
@@ -130,6 +132,7 @@ const runtimeDesiredStateShape = {
 	environmentId: z.string().min(1),
 	instanceId: z.string().min(1),
 	generation: z.number().int().nonnegative(),
+	minimumCliVersion: semverSchema.optional(),
 	issuedAt: z.string().min(1),
 	expiresAt: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
@@ -250,6 +253,7 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 			appId: z.string().min(1).optional(),
 			instanceId: z.string().min(1),
 			generation: z.number().int().nonnegative(),
+			minimumCliVersion: semverSchema.optional(),
 			issuedAt: z.string().min(1),
 			expiresAt: z.string().min(1).optional(),
 			system: z
