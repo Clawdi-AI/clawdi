@@ -102,6 +102,45 @@ export function isRunningStatus(status: DeploymentStatus): boolean {
 	}
 }
 
+/**
+ * Mirror of the deploy-API's `NO_BACKING_INFRA_FAILURE_REASONS`
+ * (backend/app/v2/hosted/slot_occupancy.py). A deployment that failed for one
+ * of these reasons has no k8s resources, so it holds no compute slot.
+ */
+const NO_BACKING_INFRA_FAILURE_REASONS = new Set([
+	"backend_status=not_found",
+	"creation_interrupted",
+]);
+
+function failureReasonIndicatesNoBackingInfra(failureReason: string | null | undefined): boolean {
+	const normalized = failureReason?.trim().replace(/\s+/g, " ") ?? "";
+	if (!normalized) return false;
+	if (NO_BACKING_INFRA_FAILURE_REASONS.has(normalized)) return true;
+	return normalized.startsWith("backend_status=not_found;");
+}
+
+/**
+ * The single source of truth for "this deployment consumes a compute slot",
+ * kept byte-for-byte in step with the deploy-API's `slot_occupancy.py`. A
+ * `failed` deployment keeps its slot unless its failure reason proves the
+ * backing infra is gone — a still-running pod costs us either way.
+ */
+export function occupiesComputeSlot(deployment: {
+	status: string | null | undefined;
+	failure_reason?: string | null;
+	stopped_at?: string | null;
+	deleted_at?: string | null;
+}): boolean {
+	if (deployment.deleted_at) return false;
+	if (deployment.stopped_at) return false;
+	const status = parseDeploymentStatus(deployment.status);
+	if (status.kind === "deleted" || status.kind === "stopped") return false;
+	if (status.kind === "failed" && failureReasonIndicatesNoBackingInfra(deployment.failure_reason)) {
+		return false;
+	}
+	return true;
+}
+
 export function isTerminalStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
