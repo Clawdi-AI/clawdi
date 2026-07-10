@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.46
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.46
+
+Package: `clawdi@0.12.10-beta.46`
+
+### Fixed
+
+- Isolated hosted runtime npm metadata lookups in the managed CLI cache so
+  root bootstrap does not leave root-owned npm files in the runtime user's
+  home directory.
+
 ## Clawdi CLI v0.12.10-beta.45
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.45
