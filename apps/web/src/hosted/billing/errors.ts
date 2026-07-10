@@ -85,12 +85,19 @@ export function isRetryableError(error: unknown): boolean {
 }
 
 /**
- * Shared TanStack Query `retry` predicate for the billing surfaces. Retries
- * transient failures up to twice; lets deterministic 4xx (validation errors,
- * auth, not-found, conflict) fall through on the first attempt so their
- * tailored UI shows without a multi-second spinner.
+ * Shared TanStack Query `retry` predicate for the billing surfaces. Lets
+ * deterministic 4xx (validation errors, auth, not-found, conflict) fall
+ * through on the first attempt so their tailored UI shows without a
+ * multi-second spinner.
+ *
+ * Network errors get a longer budget (~7s of backoff) than 5xx/429 (~3s):
+ * every backend deploy swaps containers behind the proxy, and for a few
+ * seconds the proxy answers with its own CORS-less 502, which the browser
+ * can only see as a fetch failure. Two retries give up inside that window
+ * and strand the error banner on a service that is already healthy again.
  */
 export function billingQueryRetry(failureCount: number, error: unknown): boolean {
+	if (isNetworkError(error)) return failureCount < 3;
 	return failureCount < 2 && isRetryableError(error);
 }
 
