@@ -7,6 +7,7 @@ function wallet(over: Partial<WalletState> = {}): WalletState {
 		balance_credits: 50_000,
 		balance_snapshot_at: null,
 		payment_mode: "card",
+		x402_enabled: true,
 		auto_reload_enabled: false,
 		auto_reload_threshold_credits: 1000,
 		auto_reload_amount_cents: 2500,

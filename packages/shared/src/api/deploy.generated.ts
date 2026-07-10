@@ -888,6 +888,8 @@ export interface components {
             failure_reason?: string | null;
             /** Endpoints */
             endpoints?: string[];
+            /** Native Url */
+            native_url?: string | null;
             /** Openclaw Control Ui Url */
             openclaw_control_ui_url?: string | null;
             /** Hermes Control Ui Url */
@@ -1089,6 +1091,8 @@ export interface components {
              * @constant
              */
             payment_mode: "card";
+            /** X402 Enabled */
+            x402_enabled: boolean;
             /** Auto Reload Enabled */
             auto_reload_enabled: boolean;
             /** Auto Reload Threshold Credits */
