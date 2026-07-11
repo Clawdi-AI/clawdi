@@ -53,6 +53,23 @@ The public contract does not cover:
 - internal service implementation;
 - image build pipelines or platform rollout details.
 
+## Version Dimensions
+
+These version labels are independent and must not be inferred from one
+another:
+
+| Dimension | Meaning |
+| --- | --- |
+| Agent deployment v1 | Unified baked image launched by entrypoint/supervisord; runs `clawdi daemon run`, not manifest-driven `clawdi runtime init` |
+| Agent deployment v2 | Stable capability image plus exact CLI bootstrap, canonical `/v1/runtime/manifest`, and CLI convergence |
+| API `/v1` and `/api` | Canonical API prefix and hidden compatibility alias mounting the same router; `/api/runtime/manifest` is not agent deployment v1 |
+| Manifest schema `clawdi.hosted-runtime.manifest.v1` | Wire-format version for the hosted runtime manifest |
+| Internal desired-state v1 | CLI-local desired-state contract, independent of deployment and API route versions |
+
+Historical backend `app/v1` rows whose profile is `hosted-runtime` may select
+the deployment-v2 image. That storage naming does not make them the actual
+agent deployment v1 generation.
+
 ## Core Architecture
 
 The primary hosted runtime model is a Linux-like runtime host. The host image
