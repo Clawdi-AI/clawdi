@@ -51,8 +51,8 @@ describe("runtime transparent egress nftables", () => {
 				[
 					'CLAWDI_RUNTIME_USER="clawdi"',
 					'CLAWDI_RUNTIME_UID="10001"',
-					'CLAWDI_EGRESS_USER="clawdi-egress"',
 					'CLAWDI_EGRESS_UID="10002"',
+					'CLAWDI_EGRESS_GID="10003"',
 					'CLAWDI_EGRESS_TRANSPARENT_PORT="25080"',
 					'CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"',
 					`CLAWDI_EGRESS_PROFILE_BUNDLE="${join(root, "profiles.json")}"`,
@@ -76,15 +76,49 @@ describe("runtime transparent egress nftables", () => {
 			});
 
 			expect(config.runtimeUser).toBe("clawdi");
-			expect(config.egressUser).toBe("clawdi-egress");
 			expect(config.runtimeUid).toBe(10001);
 			expect(config.egressUid).toBe(10002);
+			expect(config.egressGid).toBe(10003);
 			expect(config.transparentPort).toBe(26080);
 			expect(config.nftTable).toBe("clawdi_transparent_egress");
 			expect(config.engineSha256).toBe("b".repeat(64));
 			expect(config.addonSha256).toBe("a".repeat(64));
 		} finally {
 			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects invalid or root egress numeric identities", () => {
+		const base = {
+			CLAWDI_RUNTIME_USER: "clawdi",
+			CLAWDI_RUNTIME_UID: "10001",
+			CLAWDI_EGRESS_UID: "10002",
+			CLAWDI_EGRESS_GID: "10002",
+			CLAWDI_EGRESS_TRANSPARENT_PORT: "25080",
+			CLAWDI_EGRESS_NFT_TABLE: "clawdi_transparent_egress",
+			CLAWDI_EGRESS_PROFILE_BUNDLE: "/tmp/profiles.json",
+			CLAWDI_EGRESS_CA_DIR: "/tmp/ca",
+			CLAWDI_EGRESS_CA_CERT: "/tmp/ca/mitmproxy-ca-cert.pem",
+			CLAWDI_EGRESS_SYSTEM_CA_BUNDLE: "/tmp/ca.pem",
+			CLAWDI_EGRESS_ENGINE_VERSION: "12.2.3",
+			CLAWDI_EGRESS_ENGINE_URL: "https://example.invalid/mitmproxy.tar.gz",
+			CLAWDI_EGRESS_ENGINE_SHA256: "b".repeat(64),
+			CLAWDI_EGRESS_ENGINE_BINARY_PATH: "/tmp/mitmdump",
+			CLAWDI_EGRESS_ADDON_PATH: "/tmp/addon.py",
+			CLAWDI_EGRESS_ADDON_SHA256: "a".repeat(64),
+		};
+
+		for (const [key, value] of [
+			["CLAWDI_EGRESS_UID", "0"],
+			["CLAWDI_EGRESS_UID", "-1"],
+			["CLAWDI_EGRESS_UID", "4294967295"],
+			["CLAWDI_EGRESS_UID", "4294967296"],
+			["CLAWDI_EGRESS_GID", "0"],
+			["CLAWDI_EGRESS_GID", "1.5"],
+		] as const) {
+			expect(() => loadTransparentEgressEnvConfig({ ...base, [key]: value })).toThrow(
+				`${key} must be a positive Linux UID/GID`,
+			);
 		}
 	});
 });

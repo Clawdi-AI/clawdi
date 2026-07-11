@@ -81,8 +81,8 @@ const ENV_KEYS = [
 	"CLAWDI_SYSTEMCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
 	"CLAWDI_RUNTIME_UID",
-	"CLAWDI_EGRESS_USER",
 	"CLAWDI_EGRESS_UID",
+	"CLAWDI_EGRESS_GID",
 	"OPENCLAW_GATEWAY_TOKEN",
 	RUNTIME_BRIDGE_TOKEN_ENV,
 	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
@@ -8001,8 +8001,8 @@ exit 64
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
-		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_USER="clawdi-egress"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
+		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
 		expect(transparentEgressEnv).toContain(
 			`CLAWDI_EGRESS_PROFILE_BUNDLE="${join(state, "config", "egress", "profiles.json")}"`,
@@ -8024,6 +8024,10 @@ exit 64
 		expect(statSync(aggregateSecretPath).mode & 0o777).toBe(0o600);
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
 		expect(statSync(egressSecretPath).mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(statSync(egressSecretPath).uid).toBe(10002);
+			expect(statSync(egressSecretPath).gid).toBe(10002);
+		}
 		const egressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8"));
 		expect(egressSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
 		expect(JSON.stringify(egressSecrets)).not.toContain("sk-other-runtime");
@@ -8092,49 +8096,48 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		const mitmproxy = seedMitmproxyCache();
 
-		convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_transparent_egress",
-					environmentId: "env_transparent_egress",
-					instanceId: "iid_transparent_egress",
-					generation: 1,
-					issuedAt: "2026-06-26T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					egressEngine: mitmproxy,
-					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
-					},
-					egressProfiles: {
-						profiles: [
-							{
-								id: "deny-metadata",
-								enabled: true,
-								kind: "deny",
-								match: {
-									scheme: "https",
-									host: "169.254.169.254",
-									pathPrefix: "/",
-								},
-								priority: 1,
-							},
-						],
-					},
-					recovery: {},
+		const load: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_transparent_egress",
+				environmentId: "env_transparent_egress",
+				instanceId: "iid_transparent_egress",
+				generation: 1,
+				issuedAt: "2026-06-26T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				egressEngine: mitmproxy,
+				runtimes: {
+					openclaw: { enabled: true },
+					hermes: { enabled: false },
 				},
-				source: "fixture-file",
-				sourcePath: "test://transparent-egress",
-				offline: false,
-				secretValues: {},
+				egressProfiles: {
+					profiles: [
+						{
+							id: "deny-metadata",
+							enabled: true,
+							kind: "deny",
+							match: {
+								scheme: "https",
+								host: "169.254.169.254",
+								pathPrefix: "/",
+							},
+							priority: 1,
+						},
+					],
+				},
+				recovery: {},
 			},
-			getRuntimePaths(),
-		);
+			source: "fixture-file",
+			sourcePath: "test://transparent-egress",
+			offline: false,
+			secretValues: {},
+		};
+		convergeRuntimeManifest(load, getRuntimePaths());
 
 		const paths = getRuntimePaths();
 		const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
+		const initialSidecarRevision = systemdEnvRevision(sidecarEnv);
 		const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -8148,6 +8151,7 @@ exit 64
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
+		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(sidecarEnv).toContain(
 			`CLAWDI_EGRESS_ENV_FILE="${join(run, "egress", "transparent-egress.env")}"`,
 		);
@@ -8172,6 +8176,10 @@ exit 64
 		expect(statSync(paths.egressAddon).mode & 0o777).toBe(0o644);
 		expect(statSync(paths.egressTransparentEnv).mode & 0o777).toBe(0o644);
 		expect(statSync(paths.egressCaDir).mode & 0o777).toBe(0o700);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(statSync(paths.egressCaDir).uid).toBe(10002);
+			expect(statSync(paths.egressCaDir).gid).toBe(10002);
+		}
 		expect(statSync(join(run, "egress-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawEnv).not.toContain("CLAWDI_EGRESS_PROFILE_BUNDLE");
@@ -8183,6 +8191,19 @@ exit 64
 			`NODE_EXTRA_CA_CERTS="${join(run, "egress", "systemd", "ca.pem")}"`,
 		);
 		expect(openclawUnit).not.toContain("clawdi run -- openclaw");
+
+		process.env.CLAWDI_EGRESS_UID = "10012";
+		process.env.CLAWDI_EGRESS_GID = "10013";
+		convergeRuntimeManifest(load, paths);
+		const updatedSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
+		const updatedTransparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
+		expect(systemdEnvRevision(updatedSidecarEnv)).not.toBe(initialSidecarRevision);
+		expect(updatedTransparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10012"');
+		expect(updatedTransparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10013"');
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(statSync(paths.egressCaDir).uid).toBe(10012);
+			expect(statSync(paths.egressCaDir).gid).toBe(10013);
+		}
 	});
 
 	it("does not advance last-good manifest cache when convergence has install errors", async () => {

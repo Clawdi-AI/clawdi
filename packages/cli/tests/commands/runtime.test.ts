@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+	assertCurrentEgressIdentity,
+	buildEgressEngineSpawnCommand,
 	runtimeApplyCommand,
 	runtimePlanCommand,
 	runtimeStatusCommand,
@@ -21,6 +23,76 @@ import { jsonResponse, mockFetch } from "./helpers";
 let tmpHome: string;
 let origHome: string | undefined;
 let origApiUrl: string | undefined;
+
+describe("runtime sidecar egress privilege drop", () => {
+	it("prefers setpriv with an explicit non-root numeric identity", () => {
+		expect(
+			buildEgressEngineSpawnCommand(
+				(command) => command === "setpriv" || command === "gosu",
+				10002,
+				10003,
+				"/opt/mitmdump",
+				["--mode", "transparent"],
+			),
+		).toEqual({
+			command: "setpriv",
+			args: [
+				"--reuid=10002",
+				"--regid=10003",
+				"--clear-groups",
+				"--",
+				"/opt/mitmdump",
+				"--mode",
+				"transparent",
+			],
+		});
+	});
+
+	it("uses a numeric gosu identity and never runuser", () => {
+		const checked: string[] = [];
+		const child = buildEgressEngineSpawnCommand(
+			(command) => {
+				checked.push(command);
+				return command === "gosu";
+			},
+			10002,
+			10003,
+			"/opt/mitmdump",
+			[],
+		);
+
+		expect(child).toEqual({
+			command: "gosu",
+			args: ["10002:10003", "/opt/mitmdump"],
+		});
+		expect(checked).toEqual(["setpriv", "gosu"]);
+	});
+
+	it("fails closed for root or unavailable privilege-drop tools", () => {
+		expect(() => buildEgressEngineSpawnCommand(() => true, 0, 10002, "mitmdump", [])).toThrow(
+			"egress engine identity must be non-root",
+		);
+		expect(() => buildEgressEngineSpawnCommand(() => false, 10002, 10002, "mitmdump", [])).toThrow(
+			"install setpriv or gosu",
+		);
+	});
+
+	it("allows a matching non-root current identity", () => {
+		expect(() => assertCurrentEgressIdentity(10002, 10003, 10002, 10003)).not.toThrow();
+	});
+
+	it("rejects mismatching or unverifiable non-root current identities", () => {
+		expect(() => assertCurrentEgressIdentity(10001, 10001, 10002, 10002)).toThrow(
+			"current egress engine identity 10001:10001 does not match configured 10002:10002",
+		);
+		expect(() => assertCurrentEgressIdentity(undefined, 10002, 10002, 10002)).toThrow(
+			"cannot verify non-root egress engine UID/GID",
+		);
+		expect(() => assertCurrentEgressIdentity(10002, 0, 10002, 10002)).toThrow(
+			"egress engine identity must be non-root",
+		);
+	});
+});
 
 beforeEach(() => {
 	origHome = process.env.HOME;

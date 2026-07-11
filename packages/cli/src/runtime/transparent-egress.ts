@@ -16,9 +16,9 @@ export interface TransparentEgressNftRulesInput {
 export interface TransparentEgressEnvConfig {
 	envFile?: string;
 	runtimeUser: string;
-	egressUser: string;
 	runtimeUid: number;
 	egressUid: number;
+	egressGid: number;
 	transparentPort: number;
 	nftTable: string;
 	profileBundlePath: string;
@@ -107,18 +107,18 @@ export function loadTransparentEgressEnvConfig(
 		if (key.startsWith("CLAWDI_")) config[key] = value;
 	}
 	const runtimeUser = requiredConfig(config, "CLAWDI_RUNTIME_USER");
-	const egressUser = requiredConfig(config, "CLAWDI_EGRESS_USER");
 	const runtimeUid = numericConfig(config, "CLAWDI_RUNTIME_UID");
-	const egressUid = numericConfig(config, "CLAWDI_EGRESS_UID");
+	const egressUid = positiveLinuxIdConfig(config, "CLAWDI_EGRESS_UID");
+	const egressGid = positiveLinuxIdConfig(config, "CLAWDI_EGRESS_GID");
 	const transparentPort = numericConfig(config, "CLAWDI_EGRESS_TRANSPARENT_PORT");
 	const nftTable = requiredConfig(config, "CLAWDI_EGRESS_NFT_TABLE");
 	validateNftIdentifier(nftTable, "CLAWDI_EGRESS_NFT_TABLE");
 	return {
 		envFile,
 		runtimeUser,
-		egressUser,
 		runtimeUid,
 		egressUid,
+		egressGid,
 		transparentPort,
 		nftTable,
 		profileBundlePath: requiredConfig(config, "CLAWDI_EGRESS_PROFILE_BUNDLE"),
@@ -146,6 +146,15 @@ export function parseEnvFile(path: string): Record<string, string> {
 		output[normalizedKey] = unquoteEnvValue(rest.join("=").trim());
 	}
 	return output;
+}
+
+export function parsePositiveLinuxId(raw: string, key: string): number {
+	if (!/^[0-9]+$/.test(raw)) throw new Error(`${key} must be a positive Linux UID/GID`);
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < 1 || parsed > 4_294_967_294) {
+		throw new Error(`${key} must be a positive Linux UID/GID`);
+	}
+	return parsed;
 }
 
 function applyNftRules(rules: string, action: "apply" | "cleanup"): void {
@@ -182,6 +191,10 @@ function numericConfig(config: Record<string, string | undefined>, key: string):
 		throw new Error(`${key} must be numeric`);
 	}
 	return parsed;
+}
+
+function positiveLinuxIdConfig(config: Record<string, string | undefined>, key: string): number {
+	return parsePositiveLinuxId(requiredConfig(config, key), key);
 }
 
 function firstNonempty(value: string | undefined): string | undefined {

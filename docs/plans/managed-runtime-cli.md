@@ -157,6 +157,10 @@ Their tokens, network direction, and failure domains must stay visible in
 manifest state, status, and logs. The sidecar must not become a hidden wrapper
 around official runtime commands.
 
+The runtime image is a stable capability envelope, while the CLI owns egress
+module paths, numeric UID/GID permissions, and name-free privilege dropping.
+See [ADR-0002](../adr/0002-runtime-image-is-a-stable-capability-envelope.md).
+
 Hermes deployments that need both gateway and dashboard should declare two
 official Hermes user services. The official Hermes Docker image is useful
 prior art for this fan-out, but the Linux-like host keeps in-place

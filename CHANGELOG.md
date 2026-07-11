@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.47
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.47
+
+Package: `clawdi@0.12.10-beta.47`
+
+### Changed
+
+- Made the CLI the owner of hosted egress module paths, numeric UID/GID
+  permissions, and name-free privilege dropping. Runtime images no longer need
+  a dedicated named egress account.
+
 ## Clawdi CLI v0.12.10-beta.46
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.46

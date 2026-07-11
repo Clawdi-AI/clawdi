@@ -402,8 +402,11 @@ ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfi
 
 When bridge surfaces or egress profiles are enabled, systemd runs the Clawdi
 support processes: the bridge surface process and, for egress interception, a
-runtime-fetched `mitmdump` (mitmproxy) transparent gateway owned by a dedicated
-`clawdi-egress` user. Engagement is a minimal nft redirect of the runtime UID's
+runtime-fetched `mitmdump` (mitmproxy) transparent gateway running under the
+explicit non-root `CLAWDI_EGRESS_UID` and `CLAWDI_EGRESS_GID` numeric identity
+(both default to `10002`). The CLI owns its paths, permissions, and privilege
+drop; the image does not need a named egress account. Engagement is a minimal
+nft redirect of the runtime UID's
 outbound :80/:443 to the local mitmproxy port (default-allow: non-profiled hosts
 pass through end-to-end against the real upstream CA); no forward-proxy env is
 injected. Bridge token/surface config and egress profile/CA/secret config stay
@@ -411,6 +414,9 @@ inside those support processes. Runtime programs therefore receive only CA-trust
 env such as `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`;
 support control env and secret-file paths stay out of the official runtime
 process.
+
+This ownership boundary is codified in
+[ADR-0002](adr/0002-runtime-image-is-a-stable-capability-envelope.md).
 
 Hermes has multiple official long-running surfaces. The Linux-like host should
 use official service installers for each runtime-owned surface when both are
