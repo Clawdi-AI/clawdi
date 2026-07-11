@@ -247,14 +247,14 @@ hosted manifest channel. Do not bypass the repository-level workflow contract
 with a PAT, GitHub App token, or a copied smoke implementation.
 
 Safe rollout order: merge the smoke-only Hosted workflow PR, enable
-organization Actions access, then merge this CLI release and publish `.50`.
+organization Actions access, then merge this CLI release and publish `.51`.
 Cloud #387 and Hosted #780 require a controlled short maintenance window, not
 a rolling cross-service deploy: pause agent-v2 creation and every Hosted
 runtime-state writer/reconciliation path, deploy Cloud #387, immediately deploy
 Hosted #780, verify runtime-state writes and hosted manifests, then resume.
 Brief runtime unavailability is possible and expected during the window:
 pre-#780 pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so a pod that self-updates
-to `.50` after Cloud #387 starts serving `agent-v2` can fail closed. After
+to `.51` after Cloud #387 starts serving `agent-v2` can fail closed. After
 deploying Hosted #780, force or reconcile affected prelaunch pods so they
 receive the final bootstrap environment, then verify manifest fetch and runtime
 services before resuming creation and writers. Do not add a temporary

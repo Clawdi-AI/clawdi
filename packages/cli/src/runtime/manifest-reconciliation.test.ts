@@ -33,6 +33,7 @@ import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
+const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-reconcile-test-"));
@@ -86,6 +87,27 @@ function baseManifest(
 	};
 }
 
+function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		runtime: "openclaw",
+		deploymentId: "hdep_locale",
+		environmentId: "env_locale",
+		instanceId: "hri_locale",
+		generation: 1,
+		issuedAt: "2026-07-11T00:00:00.000Z",
+		locale: TEST_HOSTED_LOCALE,
+		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+		clawdiCli: {
+			source: "npm:clawdi",
+			packageSpec: "clawdi@agent-v2",
+			registry: "https://registry.npmjs.org",
+		},
+		runtimes: { openclaw: { enabled: true } },
+		...overrides,
+	};
+}
+
 function writeFakeGatewayCli(input: {
 	path: string;
 	runtime: "openclaw" | "hermes";
@@ -128,6 +150,36 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
+	test("accepts and preserves the exact hosted locale contract", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({ locale: { language: "zh-CN", timezone: "Asia/Shanghai" } }),
+		);
+		expect(parsed.locale).toEqual({ language: "zh-CN", timezone: "Asia/Shanghai" });
+		expect(hostedManifestToRuntimeManifest(parsed).locale).toEqual(parsed.locale);
+	});
+
+	test.each([
+		["missing locale", undefined],
+		["unknown locale key", { language: "en", timezone: "UTC", personality: "warm" }],
+		["malformed language", { language: "zh-cn", timezone: "UTC" }],
+		["unsupported language", { language: "en-US", timezone: "UTC" }],
+		["invalid timezone", { language: "en", timezone: "Mars/Olympus" }],
+	])("rejects hosted manifests with %s", (_name, locale) => {
+		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ locale })).success).toBe(
+			false,
+		);
+	});
+
+	test.each([
+		["language", "en"],
+		["timezone", "UTC"],
+		["personality", "warm"],
+	])("rejects the top-level %s compatibility field", (field, value) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ [field]: value })).success,
+		).toBe(false);
+	});
+
 	test("rejects hosted manifests without an explicit CLI package policy", () => {
 		expect(() =>
 			normalizeManifestPayload({
@@ -139,6 +191,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					instanceId: "hri_missing_cli_policy",
 					generation: 1,
 					issuedAt: "2026-07-11T00:00:00.000Z",
+					locale: TEST_HOSTED_LOCALE,
 					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 					runtimes: { openclaw: { enabled: true } },
 				},
@@ -189,6 +242,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					instanceId: "hri_invalid_cli_policy",
 					generation: 1,
 					issuedAt: "2026-07-11T00:00:00.000Z",
+					locale: TEST_HOSTED_LOCALE,
 					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 					clawdiCli,
 					runtimes: { openclaw: { enabled: true } },
@@ -208,6 +262,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				instanceId: "hri_normalize",
 				generation: 7,
 				issuedAt: "2026-07-01T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
 				system: {
 					home: "/home/clawdi-test",
 					workspace: "/workspace/clawdi",
@@ -343,6 +398,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			instanceId: "hri_infer_runtime",
 			generation: 1,
 			issuedAt: "2026-07-07T00:00:00.000Z",
+			locale: TEST_HOSTED_LOCALE,
 			controlPlane: {
 				cloudApiUrl: "https://cloud-api.example.test",
 			},
@@ -372,6 +428,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			instanceId: "hri_forward_compat",
 			generation: 1,
 			issuedAt: "2026-07-01T00:00:00.000Z",
+			locale: TEST_HOSTED_LOCALE,
 			controlPlane: {
 				cloudApiUrl: "https://cloud-api.example.test",
 			},
@@ -424,6 +481,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				instanceId: "hri_multi",
 				generation: 1,
 				issuedAt: "2026-07-01T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},

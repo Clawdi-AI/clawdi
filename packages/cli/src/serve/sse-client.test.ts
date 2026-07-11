@@ -129,6 +129,21 @@ describe("parseRecord", () => {
 		});
 	});
 
+	it("parses runtime manifest change signals", () => {
+		const record =
+			'event: runtime_manifest_changed\ndata: {"type":"runtime_manifest_changed","environment_id":"env-runtime-1"}';
+		expect(parseRecord(record)).toEqual({
+			type: "runtime_manifest_changed",
+			environment_id: "env-runtime-1",
+		});
+	});
+
+	it("rejects malformed runtime manifest change signals", () => {
+		const record =
+			'event: runtime_manifest_changed\ndata: {"type":"runtime_manifest_changed","environment_id":""}';
+		expect(parseRecord(record)).toBeNull();
+	});
+
 	it("ignores leading colon-comment lines (heartbeats)", () => {
 		// `: ping` is the SSE heartbeat the server emits every 25s.
 		// Mixed with a real event in the same record, the comment
@@ -136,7 +151,7 @@ describe("parseRecord", () => {
 		const record =
 			': ping\nevent: skill_changed\ndata: {"type":"skill_changed","skill_key":"a","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}';
 		const parsed = parseRecord(record);
-		expect(parsed?.skill_key).toBe("a");
+		expect(parsed).toEqual(expect.objectContaining({ skill_key: "a" }));
 	});
 
 	it("strips a single optional space after the field colon", () => {
@@ -146,7 +161,7 @@ describe("parseRecord", () => {
 		// every event's JSON and break the parse.
 		const record = `event:skill_changed\ndata:{"type":"skill_changed","skill_key":"x","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":1}`;
 		const parsed = parseRecord(record);
-		expect(parsed?.skill_key).toBe("x");
+		expect(parsed).toEqual(expect.objectContaining({ skill_key: "x" }));
 	});
 
 	it("concatenates multi-line data fields with newline", () => {
@@ -157,7 +172,7 @@ describe("parseRecord", () => {
 		const record =
 			'event: skill_changed\ndata: {"type":"skill_changed",\ndata: "skill_key":"multi","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":2}';
 		const parsed = parseRecord(record);
-		expect(parsed?.skill_key).toBe("multi");
+		expect(parsed).toEqual(expect.objectContaining({ skill_key: "multi" }));
 	});
 
 	it("returns null for a record with no data field", () => {

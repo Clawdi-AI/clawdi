@@ -1,5 +1,5 @@
 /**
- * Outbound SSE consumer for `GET /api/sync/events`.
+ * Outbound SSE consumer for `GET /v1/sync/events`.
  *
  * Why outbound, not webhook: pods don't open inbound HTTP
  * servers (k8s ingress, NAT, no public domain), but they can
@@ -37,7 +37,7 @@ import { log, toErrorMessage } from "./log";
  * skill with the same skill_key. The phase-1 design defers
  * server-side filtering to phase 2; daemon-side filtering is the
  * v1 mitigation. */
-export type ServerEvent =
+export type SkillServerEvent =
 	| {
 			type: "skill_changed";
 			skill_key: string;
@@ -58,6 +58,13 @@ export type ServerEvent =
 			project_id: string;
 			skills_revision: number;
 	  };
+
+export type RuntimeManifestChangedEvent = {
+	type: "runtime_manifest_changed";
+	environment_id: string;
+};
+
+export type ServerEvent = SkillServerEvent | RuntimeManifestChangedEvent;
 
 const STALE_MS = 60_000;
 const HEARTBEAT_HINT_MS = 25_000;
@@ -357,7 +364,11 @@ export function parseRecord(record: string): ServerEvent | null {
 	if (!eventType || !dataPayload) return null;
 
 	try {
-		const parsed = JSON.parse(dataPayload) as ServerEvent;
+		const parsed = parseServerEvent(JSON.parse(dataPayload) as unknown);
+		if (!parsed) {
+			log.warn("sse.event_invalid", { event_type: eventType });
+			return null;
+		}
 		if (parsed.type !== eventType) {
 			log.warn("sse.event_type_mismatch", { header: eventType, body_type: parsed.type });
 		}
@@ -366,6 +377,41 @@ export function parseRecord(record: string): ServerEvent | null {
 		log.warn("sse.parse_failed", { record, error: toErrorMessage(e) });
 		return null;
 	}
+}
+
+function parseServerEvent(value: unknown): ServerEvent | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const event = value as Record<string, unknown>;
+	if (event.type === "runtime_manifest_changed") {
+		return typeof event.environment_id === "string" && event.environment_id.length > 0
+			? { type: event.type, environment_id: event.environment_id }
+			: null;
+	}
+	if (event.type !== "skill_changed" && event.type !== "skill_deleted") return null;
+	if (
+		typeof event.skill_key !== "string" ||
+		event.skill_key.length === 0 ||
+		typeof event.project_id !== "string" ||
+		event.project_id.length === 0 ||
+		typeof event.skills_revision !== "number" ||
+		!Number.isInteger(event.skills_revision)
+	) {
+		return null;
+	}
+	return event.type === "skill_changed"
+		? {
+				type: event.type,
+				skill_key: event.skill_key,
+				project_id: event.project_id,
+				skills_revision: event.skills_revision,
+				...(typeof event.content_hash === "string" ? { content_hash: event.content_hash } : {}),
+			}
+		: {
+				type: event.type,
+				skill_key: event.skill_key,
+				project_id: event.project_id,
+				skills_revision: event.skills_revision,
+			};
 }
 
 function errorInfo(err: unknown): { reason: string; http_status?: number; request_id?: string } {

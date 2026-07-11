@@ -10,6 +10,22 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.51
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.51
+
+Package: `clawdi@0.12.10-beta.51`
+
+### Changed
+
+- Added the strict hosted locale contract for supported response languages and
+  IANA timezones. The CLI now preserves user-authored agent identity files while
+  maintaining a delimited locale instruction block, projects runtime-native
+  timezone settings, and restarts only affected runtime services.
+- Added immediate hosted runtime manifest convergence from environment-scoped
+  SSE notifications while retaining 15-second ETag polling and five-minute
+  self-healing when the notification channel is unavailable.
+
 ## Clawdi CLI v0.12.10-beta.50
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.50

@@ -70,8 +70,17 @@ import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { type QueueItem, RetryQueue } from "./queue";
 import { watchSessions } from "./sessions-watcher";
-import { consumeSse, type ServerEvent, type SseReconnectInfo } from "./sse-client";
+import {
+	consumeSse,
+	type ServerEvent,
+	type SkillServerEvent,
+	type SseReconnectInfo,
+} from "./sse-client";
 import { watchSkills } from "./watcher";
+
+export function isSkillSyncServerEvent(event: ServerEvent): event is SkillServerEvent {
+	return event.type === "skill_changed" || event.type === "skill_deleted";
+}
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
@@ -560,6 +569,13 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// is defense-in-depth in case a future broker bug fans out
 	// without filtering.
 	const onServerEvent = async (event: ServerEvent) => {
+		if (!isSkillSyncServerEvent(event)) {
+			log.debug("engine.sse_event_ignored", {
+				type: event.type,
+				environment_id: event.environment_id,
+			});
+			return;
+		}
 		if (event.project_id !== defaultProjectId) {
 			log.debug("engine.sse_event_other_project", {
 				type: event.type,

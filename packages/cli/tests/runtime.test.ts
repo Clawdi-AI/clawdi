@@ -173,6 +173,98 @@ const TEST_EGRESS_ENGINE_PIN = {
 	sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
 };
 
+const TEST_HOSTED_LOCALE = {
+	language: "en" as const,
+	timezone: "UTC",
+};
+
+function runtimeWatchLocaleManifest(
+	home: string,
+	generation: number,
+	language: "en" | "fr" = "en",
+	timezone = "UTC",
+): RuntimeManifest {
+	return {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "dep_watch_locale",
+		environmentId: "env_watch_locale",
+		instanceId: "iid_watch_locale",
+		generation,
+		issuedAt: "2026-07-11T00:00:00Z",
+		locale: { language, timezone },
+		workspaceRoot: join(home, "clawdi"),
+		controlPlane: { apiUrl: "https://cloud-api.test" },
+		clawdiCli: {
+			source: "npm:clawdi",
+			packageSpec: "clawdi@agent-v2",
+			registry: "https://registry.npmjs.org",
+		},
+		runtimes: {
+			openclaw: {
+				enabled: true,
+				run: hostedOpenClawRuntime().run,
+				services: {},
+			},
+		},
+		recovery: { cacheManifest: true, allowOfflineBoot: true },
+	};
+}
+
+function hostedRuntimeWatchLocalePayload(
+	home: string,
+	generation: number,
+	language: "en" | "fr" = "fr",
+	timezone = "Europe/Paris",
+): unknown {
+	return {
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "openclaw",
+			deploymentId: "dep_watch_locale",
+			environmentId: "env_watch_locale",
+			instanceId: "iid_watch_locale",
+			generation,
+			issuedAt: "2026-07-11T00:00:00Z",
+			locale: { language, timezone },
+			system: { home, workspace: join(home, "clawdi") },
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { openclaw: hostedOpenClawRuntime() },
+		},
+		secretValues: {},
+	};
+}
+
+function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string): RuntimePaths {
+	mkdirSync(join(run, "secrets"), { recursive: true });
+	mkdirSync(home, { recursive: true });
+	process.env.HOME = home;
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_SERVICE_STATE_DIR = state;
+	process.env.CLAWDI_RUN_DIR = run;
+	process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+	seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+	const paths = getRuntimePaths();
+	convergeRuntimeManifest(
+		{
+			manifest: runtimeWatchLocaleManifest(home, 1),
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/runtime/manifest",
+			offline: false,
+			secretValues: {},
+		},
+		paths,
+	);
+	writeFileSync(paths.manifestEtag, '"manifest-locale-1"\n');
+	writeFileSync(paths.channelsEtag, '"channels-locale-1"\n');
+	return paths;
+}
+
 function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_EGRESS_ENGINE_PIN {
 	const binary = join(
 		paths.egressEngineMaintainedRoot,
@@ -972,6 +1064,7 @@ describe("runtime manifest datasource", () => {
 							instanceId: "iid_remote",
 							generation: 3,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: {
 								user: "clawdi",
 								home,
@@ -1127,6 +1220,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							instanceId: "iid_runtime_bridge",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "managed-workspace") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
@@ -1220,6 +1314,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							instanceId: "iid_chat_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
@@ -1317,6 +1412,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							instanceId: "iid_codex_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
@@ -1431,6 +1527,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				instanceId: "iid_direct_provider",
 				generation: 1,
 				issuedAt: "2026-06-22T00:00:00Z",
+				locale: { language: "fr", timezone: "Europe/Paris" },
 				workspaceRoot: join(home, "clawdi"),
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
@@ -1477,6 +1574,11 @@ chmod +x "$HOME/.local/bin/hermes"
 		]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
 		expect(JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"))).toEqual({
+			agents: {
+				defaults: {
+					userTimezone: "Europe/Paris",
+				},
+			},
 			gateway: {
 				auth: {
 					mode: "token",
@@ -2820,6 +2922,7 @@ exit 0
 					instanceId: "iid_hosted_provider_secret",
 					generation: 5,
 					issuedAt: "2026-06-15T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -2979,6 +3082,7 @@ exit 64
 					instanceId: "iid_bridge_token",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -3024,6 +3128,7 @@ exit 64
 					instanceId: "iid_bridge_token_explicit",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -3088,6 +3193,7 @@ exit 64
 							instanceId: "iid_custom_auth",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
@@ -3148,6 +3254,7 @@ exit 64
 							instanceId: "iid_same_token",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime.test/v1/runtime/manifest",
@@ -3180,6 +3287,7 @@ exit 64
 							instanceId: "iid_same_token",
 							generation: 2,
 							issuedAt: "2026-06-06T00:01:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime.test/v1/runtime/manifest",
@@ -3786,6 +3894,179 @@ exit 64
 		]);
 	});
 
+	it("runtime watch wakes on its own manifest SSE signal and restarts only the runtime unit", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-locale.log");
+		const abort = new AbortController();
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${systemctlLog}'
+exit 0
+`,
+		);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		seedRuntimeWatchLocaleBaseline(home, state, run);
+		console.log = (value?: unknown) => logs.push(String(value));
+		let manifestCalls = 0;
+		let manifestRequestsBeforeOwnSignal = 0;
+		let resolveInitialManifestRequest: (() => void) | null = null;
+		const initialManifestRequest = new Promise<void>((resolveRequest) => {
+			resolveInitialManifestRequest = resolveRequest;
+		});
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					manifestCalls += 1;
+					if (manifestCalls === 1) {
+						resolveInitialManifestRequest?.();
+						return new Response(null, {
+							status: 304,
+							headers: { etag: '"manifest-locale-1"' },
+						});
+					}
+					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
+						status: 200,
+						headers: {
+							"content-type": "application/json",
+							etag: '"manifest-locale-2"',
+						},
+					});
+				},
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: (request) => {
+					if (request.headers["if-none-match"]) {
+						return new Response(null, {
+							status: 304,
+							headers: { etag: '"channels-locale-1"' },
+						});
+					}
+					setTimeout(() => abort.abort(), 0);
+					return jsonResponse([]);
+				},
+			},
+		]);
+
+		try {
+			await runtimeWatch({
+				intervalMs: 60_000,
+				selfHealMs: 300_000,
+				json: true,
+				abort: abort.signal,
+				notificationConsumer: async (options) => {
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_other",
+					});
+					await initialManifestRequest;
+					manifestRequestsBeforeOwnSignal = captured.filter(
+						(request) => request.path === "/v1/runtime/manifest",
+					).length;
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_watch_locale",
+					});
+					await new Promise<void>((resolveDone) => {
+						if (options.abort.aborted) return resolveDone();
+						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
+					});
+				},
+			});
+
+			expect(manifestRequestsBeforeOwnSignal).toBe(1);
+			expect(manifestCalls).toBe(2);
+			const events = logs.map((line) => JSON.parse(line));
+			expect(events.map((event) => event.status)).toEqual(["not_modified", "applied"]);
+			expect(events[1].etag).toBe('"manifest-locale-2"');
+			expect(
+				captured.filter((request) => request.path === "/v1/runtime/manifest")[1].headers[
+					"if-none-match"
+				],
+			).toBe('"manifest-locale-1"');
+			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
+			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
+				false,
+			);
+			const observed = readHostedRuntimeObserved(getRuntimePaths());
+			expect(expectRecord(observed?.watch, "runtime watch observed status").generation).toBe(2);
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+	});
+
+	it("runtime watch keeps polling after SSE authentication failure", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const abort = new AbortController();
+		const previousLog = console.log;
+		const logs: string[] = [];
+		seedRuntimeWatchLocaleBaseline(home, state, run);
+		console.log = (value?: unknown) => logs.push(String(value));
+		let manifestCalls = 0;
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					manifestCalls += 1;
+					if (manifestCalls === 1) return new Response(null, { status: 304 });
+					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
+						status: 200,
+						headers: {
+							"content-type": "application/json",
+							etag: '"manifest-locale-2"',
+						},
+					});
+				},
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: (request) => {
+					if (request.headers["if-none-match"]) return new Response(null, { status: 304 });
+					setTimeout(() => abort.abort(), 0);
+					return jsonResponse([]);
+				},
+			},
+		]);
+
+		try {
+			await runtimeWatch({
+				intervalMs: 20,
+				selfHealMs: 300_000,
+				json: true,
+				abort: abort.signal,
+				notificationConsumer: async (options) => {
+					options.onAuthFailure?.();
+				},
+			});
+
+			expect(manifestCalls).toBe(2);
+			expect(logs.map((line) => JSON.parse(line).status)).toEqual(["not_modified", "applied"]);
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+	});
+
 	it("runtime watch applies remote changes, tracks systemd unit changes, and saves the new ETag", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -3841,6 +4122,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								instanceId: "iid_watch",
 								generation: 12,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -3983,6 +4265,7 @@ exit 42
 								instanceId: "iid_watch_systemd_failure",
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -4059,6 +4342,7 @@ exit 42
 				instanceId: "iid_watch_secret",
 				generation: 22,
 				issuedAt: "2026-06-06T00:00:00Z",
+				locale: TEST_HOSTED_LOCALE,
 				system: { home, workspace: join(home, "clawdi") },
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
@@ -4338,6 +4622,7 @@ exit 64
 								instanceId: "iid_watch_recovery",
 								generation: 18,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -4917,6 +5202,7 @@ chmod +x "$prefix/bin/clawdi"
 								instanceId: "iid_cli_update",
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -5153,6 +5439,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								instanceId: "iid_cli_mitm",
 								generation: 2,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								egressEngine: mitmproxy,
@@ -5319,6 +5606,7 @@ chmod +x "$prefix/bin/clawdi"
 					instanceId: "iid_floating_cli_tag",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -5396,6 +5684,7 @@ exit 97
 					instanceId: "iid_cli_bootstrap_current",
 					generation: 1,
 					issuedAt: "2026-07-11T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -5510,6 +5799,7 @@ chmod +x "$prefix/bin/clawdi"
 				instanceId: "iid_cli_self_heal",
 				generation: 30,
 				issuedAt: "2026-07-11T00:00:00Z",
+				locale: TEST_HOSTED_LOCALE,
 				system: { home, workspace: join(home, "clawdi") },
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
@@ -5561,7 +5851,12 @@ chmod +x "$prefix/bin/clawdi"
 
 		try {
 			await Promise.race([
-				runtimeWatch({ intervalMs: 20, selfHealMs: 10, json: true }),
+				runtimeWatch({
+					intervalMs: 20,
+					selfHealMs: 10,
+					json: true,
+					notifications: false,
+				}),
 				new Promise<never>(
 					(_, reject) =>
 						(timeoutId = setTimeout(
@@ -5708,6 +6003,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								instanceId: "iid_cli_update_converge_failure",
 								generation: 16,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -5763,7 +6059,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			expect(event.status).toBe("error");
 			expect(event.cliUpdate.status).toBe("installed");
 			expect(event.selfReexec).toBe(true);
-			expect(event.errors[0]).toContain("runtime openclaw channel projection failed");
+			expect(event.errors[0]).toContain("runtime openclaw provider projection failed");
 			expect(event.errors[0]).toContain("projection boom");
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 		} finally {
@@ -5862,6 +6158,7 @@ chmod +x "$prefix/bin/clawdi"
 			instanceId: "iid_cli_rollback",
 			generation: 18,
 			issuedAt: "2026-06-06T00:00:00Z",
+			locale: TEST_HOSTED_LOCALE,
 			system: { home, workspace: join(home, "clawdi") },
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			clawdiCli: {
@@ -6007,6 +6304,7 @@ chmod +x "$prefix/bin/clawdi"
 								instanceId: "iid_cli_update_failure",
 								generation: 17,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -6145,6 +6443,7 @@ chmod +x "$prefix/bin/clawdi"
 								generation: 19,
 								minimumCliVersion: "999.0.0",
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -6628,6 +6927,7 @@ exit 64
 								instanceId: "iid_init",
 								generation: 7,
 								issuedAt: "2026-06-06T00:00:00Z",
+								locale: TEST_HOSTED_LOCALE,
 								system: { home, workspace: join(home, "clawdi") },
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
@@ -7776,6 +8076,7 @@ exit 64
 							instanceId: "iid_workspace",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
@@ -7899,6 +8200,7 @@ exit 64
 					instanceId: "iid_legacy_api_url",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home },
 					controlPlane: { apiUrl: "https://api.test" },
 					clawdiCli: {
@@ -7944,6 +8246,7 @@ exit 64
 					instanceId: "iid_runtime_workspace",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "system-workspace") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -8650,6 +8953,125 @@ exit 64
 		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
 	});
 
+	it("updates the OpenClaw locale block without changing user-authored workspace content", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const soulPath = join(workspace, "SOUL.md");
+		const userPath = join(workspace, "USER.md");
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(soulPath, "User preface.\n\nUser epilogue.\n");
+		writeFileSync(userPath, "User profile stays untouched.\n");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const manifestFor = (language: "en" | "fr", timezone: string): RuntimeManifest => ({
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_locale_openclaw",
+			environmentId: "env_locale_openclaw",
+			instanceId: "iid_locale_openclaw",
+			generation: language === "en" ? 1 : 2,
+			issuedAt: "2026-07-11T00:00:00Z",
+			locale: { language, timezone },
+			workspaceRoot: workspace,
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: { command: "/bin/true", args: [], env: {}, prependPath: [] },
+				},
+			},
+			recovery: {},
+		});
+		const paths = getRuntimePaths();
+		const converge = (manifest: RuntimeManifest) =>
+			convergeRuntimeManifest(
+				{
+					manifest,
+					source: "fixture-file",
+					sourcePath: "test://locale-openclaw",
+					offline: false,
+					secretValues: {},
+				},
+				paths,
+			);
+
+		converge(manifestFor("en", "UTC"));
+		const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
+		expect(readSystemdEnvFile(paths, "openclaw-gateway")).toContain('TZ="UTC"');
+
+		converge(manifestFor("fr", "Europe/Paris"));
+		const soul = readFileSync(soulPath, "utf-8");
+		expect(soul.startsWith("User preface.\n\nUser epilogue.\n")).toBe(true);
+		expect(soul.match(/clawdi managed locale/g)).toHaveLength(2);
+		expect(soul).toContain("`fr`");
+		expect(soul).toContain("`Europe/Paris`");
+		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
+		const updatedEnv = readSystemdEnvFile(paths, "openclaw-gateway");
+		expect(updatedEnv).toContain('TZ="Europe/Paris"');
+		expect(systemdEnvRevision(updatedEnv)).not.toBe(initialRevision);
+		converge(manifestFor("fr", "Europe/Paris"));
+		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+			systemdEnvRevision(updatedEnv),
+		);
+	});
+
+	it("projects Hermes locale into its managed SOUL block and timezone config", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const hermesHome = join(home, ".hermes");
+		mkdirSync(hermesHome, { recursive: true });
+		writeFileSync(join(hermesHome, "SOUL.md"), "User Hermes identity.\n");
+		writeFileSync(join(hermesHome, "config.yaml"), "custom_setting: keep\n");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_locale_hermes",
+			environmentId: "env_locale_hermes",
+			instanceId: "iid_locale_hermes",
+			generation: 1,
+			issuedAt: "2026-07-11T00:00:00Z",
+			locale: { language: "zh-TW", timezone: "Asia/Taipei" },
+			workspaceRoot: join(home, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: {
+				hermes: {
+					enabled: true,
+					run: { command: "/bin/true", args: [], env: {}, prependPath: [] },
+				},
+			},
+			recovery: {},
+		};
+		const paths = getRuntimePaths();
+		convergeRuntimeManifest(
+			{
+				manifest,
+				source: "fixture-file",
+				sourcePath: "test://locale-hermes",
+				offline: false,
+				secretValues: {},
+			},
+			paths,
+		);
+
+		const soul = readFileSync(join(hermesHome, "SOUL.md"), "utf-8");
+		expect(soul.startsWith("User Hermes identity.\n")).toBe(true);
+		expect(soul).toContain("`zh-TW`");
+		const config = readHermesConfigYaml(home);
+		expect(config.custom_setting).toBe("keep");
+		expect(config.timezone).toBe("Asia/Taipei");
+		expect(readSystemdEnvFile(paths, "clawdi-hermes")).toContain('TZ="Asia/Taipei"');
+	});
+
 	it("runtime program revision changes for control-plane changes but not sibling runtimes", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -8828,6 +9250,7 @@ exit 64
 							instanceId: "iid_manifest_only",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/desired-state/",
@@ -8882,6 +9305,7 @@ exit 64
 							instanceId: "iid_remote",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
@@ -9161,6 +9585,7 @@ exit 64
 							instanceId: "iid_sync",
 							generation: 9,
 							issuedAt: "2026-06-06T00:00:00Z",
+							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
 								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
@@ -9265,6 +9690,7 @@ exit 64
 					instanceId: "iid_no_secret_ref",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
@@ -9309,6 +9735,7 @@ exit 64
 					instanceId: "iid_bad_mitm",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {

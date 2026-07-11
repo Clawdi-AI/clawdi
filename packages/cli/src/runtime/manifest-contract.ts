@@ -22,6 +22,34 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
 const semverSchema = z.string().min(1).refine(isValidSemver, "must be a semver string");
 
+export const HOSTED_LOCALE_LANGUAGES = [
+	"en",
+	"zh-CN",
+	"zh-TW",
+	"ja",
+	"ko",
+	"es",
+	"fr",
+	"de",
+	"pt",
+] as const;
+
+function isValidIanaTimezone(value: string): boolean {
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export const runtimeLocaleSchema = z
+	.object({
+		language: z.enum(HOSTED_LOCALE_LANGUAGES),
+		timezone: z.string().min(1).refine(isValidIanaTimezone, "must be a valid IANA timezone"),
+	})
+	.strict();
+
 const installSchema = z.object({
 	authority: z.literal("official"),
 	method: z.literal("official-installer"),
@@ -127,6 +155,7 @@ const runtimeDesiredStateShape = {
 	minimumCliVersion: semverSchema.optional(),
 	issuedAt: z.string().min(1),
 	expiresAt: z.string().min(1).optional(),
+	locale: runtimeLocaleSchema.optional(),
 	workspaceRoot: z.string().min(1).optional(),
 	runtime: hostedRuntimeChoiceSchema.optional(),
 	controlPlane: z.object({
@@ -306,6 +335,10 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 			minimumCliVersion: semverSchema.optional(),
 			issuedAt: z.string().min(1),
 			expiresAt: z.string().min(1).optional(),
+			locale: runtimeLocaleSchema,
+			language: z.never().optional(),
+			timezone: z.never().optional(),
+			personality: z.never().optional(),
 			system: z
 				.object({
 					user: z.string().min(1).optional(),

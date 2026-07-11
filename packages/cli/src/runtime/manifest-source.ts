@@ -561,6 +561,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		minimumCliVersion: hosted.minimumCliVersion,
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
+		locale: hosted.locale,
 		workspaceRoot,
 		runtime: selectedRuntime,
 		controlPlane: {

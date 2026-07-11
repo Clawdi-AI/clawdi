@@ -38,6 +38,7 @@ import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
 	mergeHermesMcpServer,
+	mergeHermesRuntimeLocale,
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -125,6 +126,7 @@ export interface RuntimeConvergenceResult {
 		manifestLastGood: string | null;
 		installInventory: string[];
 		projections: string[];
+		managedLocaleFiles: string[];
 		runConfigs: string[];
 		systemdSystemUnitRoot: string;
 		systemdSystemUnits: string[];
@@ -1147,6 +1149,7 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 		runtime: name,
 		generation: manifest.generation,
 		instanceId: manifest.instanceId,
+		locale: manifest.locale ?? null,
 		managedBy: "clawdi runtime init",
 		target:
 			name === "openclaw"
@@ -1156,6 +1159,80 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 					: "clawdi mcp",
 		projection: projection ?? null,
 	};
+}
+
+const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
+const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
+
+function managedLocaleBlock(manifest: RuntimeManifest): string | null {
+	if (!manifest.locale) return null;
+	return [
+		MANAGED_LOCALE_BLOCK_START,
+		"## Clawdi managed locale",
+		"",
+		`Use \`${manifest.locale.language}\` as the default response language unless the user explicitly requests another language.`,
+		`Interpret ambiguous dates and times in \`${manifest.locale.timezone}\` unless the user specifies another timezone.`,
+		MANAGED_LOCALE_BLOCK_END,
+	].join("\n");
+}
+
+function updateManagedLocaleFile(path: string, block: string | null): string | null {
+	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
+	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
+	const hasStart = start !== -1;
+	const hasEnd = end !== -1;
+	if (hasStart !== hasEnd || (hasStart && end < start)) {
+		throw new Error(`managed locale block markers are malformed in ${path}`);
+	}
+	if (
+		hasStart &&
+		(existing.indexOf(MANAGED_LOCALE_BLOCK_START, start + MANAGED_LOCALE_BLOCK_START.length) !==
+			-1 ||
+			existing.indexOf(MANAGED_LOCALE_BLOCK_END, end + MANAGED_LOCALE_BLOCK_END.length) !== -1)
+	) {
+		throw new Error(`managed locale block markers are duplicated in ${path}`);
+	}
+
+	let next = existing;
+	if (hasStart && hasEnd) {
+		const suffixStart = end + MANAGED_LOCALE_BLOCK_END.length;
+		next = `${existing.slice(0, start)}${block ?? ""}${existing.slice(suffixStart)}`;
+	} else if (block) {
+		const separator = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+		next = `${existing}${separator}${block}\n`;
+	}
+
+	if (next === existing) return block ? path : null;
+	if (!block && next.length === 0) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
+	makeRuntimeUserOwned(path);
+	return block ? path : null;
+}
+
+function applyHostedLocaleProjection(
+	runtime: string,
+	manifest: RuntimeManifest,
+	home: string,
+	workspaceRoot: string,
+): string | null {
+	if (!manifest.locale) return null;
+	const block = managedLocaleBlock(manifest);
+	if (runtime === "openclaw") {
+		return updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), block);
+	}
+	if (runtime === "hermes") {
+		const hermesHome = join(home, ".hermes");
+		makeRuntimeUserPrivateDir(hermesHome);
+		const configPath = join(hermesHome, "config.yaml");
+		mergeHermesRuntimeLocale(configPath, manifest.locale.timezone);
+		makeRuntimeUserOwned(configPath);
+		return updateManagedLocaleFile(join(hermesHome, "SOUL.md"), block);
+	}
+	return null;
 }
 
 export function hostedAiProviderCatalog(
@@ -2821,29 +2898,42 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = process.env[OPENCLAW_GATEWAY_TOKEN_ENV]?.trim();
-	if (allowedOrigins.length === 0 && !gatewayToken) return null;
+	if (allowedOrigins.length === 0 && !gatewayToken && !manifest.locale) return null;
 	return {
-		gateway: {
-			...(gatewayToken
-				? {
-						auth: {
-							mode: "token",
-							token: gatewayToken,
+		...(manifest.locale
+			? {
+					agents: {
+						defaults: {
+							userTimezone: manifest.locale.timezone,
 						},
-					}
-				: {}),
-			...(allowedOrigins.length > 0
-				? {
-						controlUi: {
-							allowedOrigins,
-							// Clawdi's runtime bridge owns browser auth for hosted Control UI
-							// traffic, so OpenClaw's local device-auth prompt would be a second
-							// owner gate behind the already-authenticated edge.
-							dangerouslyDisableDeviceAuth: true,
-						},
-					}
-				: {}),
-		},
+					},
+				}
+			: {}),
+		...(gatewayToken || allowedOrigins.length > 0
+			? {
+					gateway: {
+						...(gatewayToken
+							? {
+									auth: {
+										mode: "token",
+										token: gatewayToken,
+									},
+								}
+							: {}),
+						...(allowedOrigins.length > 0
+							? {
+									controlUi: {
+										allowedOrigins,
+										// Clawdi's runtime bridge owns browser auth for hosted Control UI
+										// traffic, so OpenClaw's local device-auth prompt would be a second
+										// owner gate behind the already-authenticated edge.
+										dangerouslyDisableDeviceAuth: true,
+									},
+								}
+							: {}),
+					},
+				}
+			: {}),
 	};
 }
 
@@ -3770,6 +3860,7 @@ export function runtimeProgramRevision(
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		egressProfiles: manifest.egressProfiles ?? null,
+		locale: manifest.locale ?? null,
 		projection: manifest.projection ?? null,
 		providerProjectionRevision,
 		runtime: manifest.runtimes[runtime] ?? null,
@@ -3788,6 +3879,7 @@ function runtimeServiceProgramRevision(
 		runtime: runtime,
 		service,
 		settings: manifest.runtimes[runtime]?.services?.[service] ?? null,
+		timezone: manifest.locale?.timezone ?? null,
 	});
 }
 
@@ -4639,6 +4731,7 @@ function writeSystemdUnits(
 		const runtimeEnvironment = {
 			...commonEnvironment,
 			...program.env,
+			...(manifest.locale ? { TZ: manifest.locale.timezone } : {}),
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
 				manifest,
@@ -4732,6 +4825,7 @@ export function convergeRuntimeManifest(
 	const instanceSemaphores: string[] = [];
 	const installInventory: string[] = [];
 	const projections: string[] = [];
+	const managedLocaleFiles: string[] = [];
 	const runConfigs: string[] = [];
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
@@ -4761,6 +4855,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		controlPlane: manifest.controlPlane,
 		egressEngine: manifest.egressEngine ?? null,
 		auth: {
@@ -4776,6 +4871,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		runtimes: Object.fromEntries(
 			Object.entries(manifest.runtimes).map(([name, runtime]) => [
 				name,
@@ -4794,6 +4890,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		controlPlane: manifest.controlPlane,
 		workspaceRoot,
 	});
@@ -4913,6 +5010,21 @@ export function convergeRuntimeManifest(
 		const projectionPath = join(paths.projectionRoot, `${name}.json`);
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
+		try {
+			const localeFile = applyHostedLocaleProjection(
+				name,
+				manifest,
+				projectionSystemHome(manifest) ?? paths.userHome,
+				workspaceRoot,
+			);
+			if (localeFile) managedLocaleFiles.push(localeFile);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} locale projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 		try {
 			const providerProjection = applyHostedAiProviderProjection(
 				name,
@@ -5091,6 +5203,7 @@ export function convergeRuntimeManifest(
 			manifestLastGood,
 			installInventory,
 			projections,
+			managedLocaleFiles,
 			runConfigs,
 			systemdSystemUnitRoot: paths.systemdSystemRoot,
 			systemdSystemUnits: systemdUnits.systemUnits,

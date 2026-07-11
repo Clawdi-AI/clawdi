@@ -110,14 +110,14 @@ releases.
    long-lived credentials or duplicated private smoke code.
 
    Safe rollout order: smoke-only Hosted workflow PR -> organization Actions
-   access -> merge this CLI PR and publish `.50` -> controlled short
+   access -> merge this CLI PR and publish `.51` -> controlled short
    maintenance window. During that window, pause agent-v2 creation and all
    Hosted runtime-state writers/reconciliation, deploy Cloud #387, immediately
    deploy Hosted #780, then force or reconcile affected prelaunch pods so they
    receive the final bootstrap environment. Verify runtime-state writes,
    hosted manifest fetch, and runtime services before resuming creation and
    writers. Brief runtime unavailability is possible and expected: pre-#780
-   pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so pods that self-update to `.50`
+   pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so pods that self-update to `.51`
    after Cloud #387 starts serving `agent-v2` can fail closed. This is not a
    rolling cross-service deployment. Cloud #387 removes or rejects admin
    `clawdi_cli` while pre-#780 Hosted still sends it; do not add a temporary

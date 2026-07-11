@@ -12,6 +12,7 @@ import {
 	heartbeatDelayMs,
 	isAuthFailure,
 	isOversizedUploadError,
+	isSkillSyncServerEvent,
 	lastSyncErrorForSseReconnect,
 	projectRefreshDelayMs,
 	reconcileDelayMs,
@@ -19,6 +20,17 @@ import {
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
 } from "./sync-engine";
+
+describe("daemon SSE routing", () => {
+	it("ignores runtime manifest notifications without dispatching skill work", () => {
+		expect(
+			isSkillSyncServerEvent({
+				type: "runtime_manifest_changed",
+				environment_id: "env-runtime-1",
+			}),
+		).toBe(false);
+	});
+});
 
 describe("isAuthFailure", () => {
 	// Pull-side and push-side both rely on this classifier to decide
