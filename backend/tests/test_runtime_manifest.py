@@ -115,6 +115,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
+    assert manifest["minimumCliVersion"] == "0.12.10-beta.48"
     assert manifest["deploymentId"] == expected["deployment_id"]
     assert manifest["environmentId"] == str(env.id)
     assert manifest["instanceId"] == expected["instance_id"]
@@ -137,6 +138,42 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["etag"] == etag
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        legacy_response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert legacy_response.status_code == 200, legacy_response.text
+    assert "minimumCliVersion" not in legacy_response.json()["manifest"]
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-protocol-metadata-{uuid4().hex[:8]}",
+        machine_name="Runtime protocol metadata",
+        agent_type="openclaw",
+    )
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "dep-protocol-metadata",
+            "instance_id": "hri-protocol-metadata",
+            "generation": 1,
+            "runtimes": {"openclaw": {"enabled": True}},
+            "minimumCliVersion": "0.12.10-beta.48",
+        },
+    )
+
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.asyncio

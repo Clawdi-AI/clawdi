@@ -31,6 +31,12 @@ the environment variable containing the manifest bearer credential. The CLI
 validates both selectors and fails closed before datasource access. A hosted
 runtime does not read `host-policy.json` or `runtime-source.json`.
 
+API route versions and agent deployment generations are separate dimensions.
+Agent deployment v2 uses the canonical `/v1/runtime/manifest` route, including
+historical backend `app/v1` rows with `profile=hosted-runtime`. Actual agent
+deployment v1 keeps the legacy `/api/runtime/manifest` alias and does not
+receive the agent-v2 minimum-CLI protocol gate.
+
 For transparent egress:
 
 - `clawdi runtime sidecar` remains the only public support command;
