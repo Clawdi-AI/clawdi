@@ -78,6 +78,7 @@ from app.services.session_content import (
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
+from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 router = APIRouter(tags=["sessions"])
 log = logging.getLogger(__name__)
@@ -1096,6 +1097,7 @@ async def _delete_agent_identity(
             status.HTTP_409_CONFLICT,
             "This agent uses an explicit identity and cannot be disconnected here",
         )
+    await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.delete(env)
     await db.commit()
 

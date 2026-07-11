@@ -1016,6 +1016,7 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "instance_id": "iid-admin-agent-alias",
             "generation": 7,
             "provider_id": "clawdi-managed",
+            "locale": {"language": "en", "timezone": "America/Los_Angeles"},
             "runtimes": {"codex": {"enabled": True}},
         },
     )

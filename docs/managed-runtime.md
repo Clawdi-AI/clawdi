@@ -253,8 +253,9 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It can include `system`, `controlPlane`, `clawdiCli`, `runtimes`,
-  `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and `recovery`.
+  shape. It includes strict `locale` and can include `system`, `controlPlane`,
+  `clawdiCli`, `runtimes`, `providers`, `liveSync`, `egressProfiles`, `mcp`,
+  `tools`, and `recovery`.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -263,9 +264,11 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
+| `locale.language`, `locale.timezone` | Product-supported agent language and valid IANA timezone |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
 | `controlPlane.manifestUrl`, `controlPlane.cloudApiUrl` | Manifest datasource and API origin |
-| `clawdiCli.packageSpec` | System-managed CLI package selection |
+| `clawdiCli.packageSpec` | System-managed CLI package selection; agent v2 uses the floating `clawdi@agent-v2` channel |
+| `clawdiCli.registry` | System-managed npm registry; agent v2 uses `https://registry.npmjs.org` |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
@@ -287,6 +290,28 @@ Manifest validation is defensive. Enabled built-in runtimes must use the
 expected official installer metadata unless they provide an explicit run
 command. Unknown runtime names require `run.command`; otherwise the manifest is
 rejected so the image does not need to know every future agent.
+
+For agent deployment v2, Cloud API manifest assembly owns `clawdiCli` and emits
+`npm:clawdi` with `clawdi@agent-v2`, the official
+`https://registry.npmjs.org` registry. Admin desired state and ambient npm
+configuration cannot override that channel or registry. The
+deployment bootstrap environment seeds the CLI before its first manifest; the
+CLI persists the selected channel and registry, then ordinary self-updates
+resolve the ongoing authority emitted by Cloud manifests. `minimumCliVersion`
+is the independent protocol floor, currently `0.12.10-beta.51` for this
+contract.
+The obsolete physical `hosted_runtime_states.clawdi_cli` column remains during
+the rolling deployment and is scheduled for a separate post-deploy contract
+migration after no old pods remain.
+
+`locale` contains exactly `language` and `timezone`; personality is not part of
+Cloud desired state. Revision `d8f2a1c4b6e9` adds the first-class
+`hosted_runtime_states.locale` column as nullable expansion state without a
+default or data backfill. Admin runtime-state writes require locale immediately,
+and manifest reads fail closed when an old row is still NULL. Hosted must
+repush/reconcile those rows during the controlled cutover. A later contract
+migration may enforce `NOT NULL` only after a null-count audit confirms the
+fleet has converged.
 
 ## Commands
 
@@ -312,6 +337,15 @@ sidecar` is the single Clawdi support process for optional runtime-local modules
 the bridge module exposes manifest-declared browser surfaces behind hosted access
 controls, and the egress module proxies outbound runtime traffic when explicit
 egress profiles are enabled.
+
+Cloud also emits a signal-only `runtime_manifest_changed` event on the existing
+`/v1/sync/events` SSE plane after a manifest-affecting transaction commits. The
+event contains only `type` and `environment_id`; the CLI always fetches the
+manifest and applies the normal ETag contract. Bound deploy keys are filtered
+to their exact environment, while unbound user keys may receive any owned
+environment and filter again client-side. PostgreSQL LISTEN/NOTIFY carries the
+signal across API workers and replicas. ETag polling remains the reliability
+fallback when an SSE connection or bounded queue drops an event.
 
 The current hosted bridge surfaces are browser-facing runtime UIs. Each surface
 declares its listen address, upstream target, protocol behavior, auth model, and
@@ -339,7 +373,7 @@ the official runtime together cover those responsibilities.
 
 The CLI consumes a desired-state document plus optional secret values. The
 desired state should contain only non-secret configuration such as enabled
-runtimes, command launch settings, channel projections, and provider routing
+runtimes, locale, command launch settings, channel projections, and provider routing
 metadata. Secret values are delivered separately and must not be cached in
 plain text.
 

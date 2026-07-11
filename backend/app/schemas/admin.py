@@ -12,6 +12,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from app.schemas.runtime import HostedRuntimeLocale
+
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
@@ -111,9 +113,9 @@ class AdminRuntimeStateUpsert(BaseModel):
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
     provider_id: str | None = Field(default=None, min_length=2, max_length=80)
+    locale: HostedRuntimeLocale
     system: dict[str, Any] | None = None
     control_plane: dict[str, Any] | None = None
-    clawdi_cli: dict[str, Any] | None = None
     egress_engine: dict[str, Any] | None = None
     runtimes: dict[str, Any] = Field(default_factory=dict)
     bridge: dict[str, Any] | None = None

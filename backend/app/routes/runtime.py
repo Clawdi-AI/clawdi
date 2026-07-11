@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,7 @@ from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
+from app.schemas.runtime import HostedRuntimeLocale
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_ID,
@@ -47,7 +49,14 @@ class _RuntimeProviderManifestBinding:
 
 
 _SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.48"
+# Deployment bootstrap seeds the CLI before its first manifest. Once connected,
+# this manifest is the ongoing channel authority and the CLI persists/resolves it.
+_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.51"
+_AGENT_V2_CLAWDI_CLI = {
+    "source": "npm:clawdi",
+    "packageSpec": "clawdi@agent-v2",
+    "registry": "https://registry.npmjs.org",
+}
 
 
 @router.get("/manifest")
@@ -94,6 +103,13 @@ async def get_runtime_manifest(
     ).scalar_one_or_none()
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Hosted runtime state not found")
+    try:
+        locale = HostedRuntimeLocale.model_validate(state.locale)
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime locale is invalid or not configured",
+        ) from exc
 
     (
         providers,
@@ -109,16 +125,16 @@ async def get_runtime_manifest(
         "instanceId": state.instance_id,
         "generation": state.generation,
         "issuedAt": issued_at,
+        "locale": locale.model_dump(),
         "system": state.system or _default_system(),
         "controlPlane": _control_plane(state.control_plane),
-        "clawdiCli": state.clawdi_cli or _default_clawdi_cli(),
+        "clawdiCli": _AGENT_V2_CLAWDI_CLI,
         "runtimes": _runtime_manifest_runtimes(state.runtimes, runtime_provider_bindings),
         "providers": providers,
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
     }
-    if request.scope["path"] == "/v1/runtime/manifest":
-        manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
+    manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
     if state.bridge:
         manifest["bridge"] = state.bridge
     if state.app_id:
@@ -193,15 +209,6 @@ def _control_plane(value: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "manifestUrl": f"{api_url}/v1/runtime/manifest",
         "cloudApiUrl": api_url,
-    }
-
-
-def _default_clawdi_cli() -> dict[str, Any]:
-    return {
-        "source": "npm:clawdi",
-        "packageSpec": "clawdi@latest",
-        "managedConfig": True,
-        "userEditableConfig": False,
     }
 
 

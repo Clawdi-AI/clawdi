@@ -1,12 +1,11 @@
 """SSE event channel for `clawdi daemon` processes.
 
 Daemon opens a long-lived `GET /v1/sync/events` connection authed
-with the same Bearer token it uses for any other API call; server
-pushes
-`{"type":"skill_changed"|"skill_deleted","skill_key":"…","project_id":"…","skills_revision":N}`
-events as the user's skills change. Daemon immediately pulls the
-affected skill — sub-second propagation rather than waiting for
-the 60s reconcile safety net.
+with the same Bearer token it uses for any other API call. The server pushes
+skill revision events and signal-only
+`{"type":"runtime_manifest_changed","environment_id":"…"}` events. The
+daemon immediately pulls the affected resource instead of waiting for normal
+reconcile and ETag polling.
 
 Outbound-only: daemon doesn't open an inbound HTTP server. Auth
 is the Bearer token at handshake; `401` mid-stream (key revoked)
@@ -27,9 +26,9 @@ receives `skill_changed` for skills in env B's project — not even
 as metadata. The daemon keeps a client-side filter as
 defense-in-depth.
 
-Single-replica v1: in-process fan-out via `app.services.sync_events`.
-Multi-replica needs Redis pubsub or equivalent — explicit v1.5
-work, deliberately not in this PR.
+Cross-process delivery uses PostgreSQL LISTEN/NOTIFY through
+`app.services.sync_events`, so streams remain active across multiple uvicorn
+workers or API replicas.
 """
 
 from __future__ import annotations
@@ -51,9 +50,13 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 log = logging.getLogger(__name__)
 
 
-# Per-user open-connection cap. 10 is generous for a single user
-# running daemons across laptop + a few pods; stops a misbehaving
-# daemon from reconnecting in a tight loop and starving the pool.
+# Per-user open-connection cap. Bound deploy keys may each hold
+# three streams (daemon skill sync, runtime-watch invalidation,
+# and one debug/diagnostic stream), but the aggregate user cap
+# remains authoritative: five keys with their two routine streams
+# consume all 10 slots, so an additional diagnostic stream gets
+# 429 until another stream closes. This bounds account-level
+# memory and connection use.
 PER_USER_CONNECTION_CAP = 10
 
 # Heartbeat cadence. SSE comments (`: ping\n\n`) are ignored by
@@ -151,10 +154,12 @@ async def events(
         api_key_id=auth.api_key.id if auth.api_key is not None else None,
         # Per-key cap only applies to Agent API keys. Unbound
         # CLI keys are user-level (one key shared across N daemons
-        # via `clawdi daemon install --all`), so the per-key cap of 2
-        # would silently 429 the third local agent on a multi-agent
-        # machine.
+        # via `clawdi daemon install --all`), so any small per-key
+        # cap would silently 429 later local agents on a multi-agent
+        # machine. Bound keys use `try_subscribe`'s single default
+        # authority of 3: skill sync + runtime watch + one diagnostic.
         is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),
+        environment_id=(auth.api_key.environment_id if auth.api_key is not None else None),
     )
     if subscription is None:
         raise HTTPException(

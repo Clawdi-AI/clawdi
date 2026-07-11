@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
+from sqlalchemy import text
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
@@ -18,12 +20,14 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
+from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
+TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 TEST_EGRESS_ENGINE_PIN = {
     "type": "mitmproxy",
     "version": "12.2.3",
@@ -69,6 +73,7 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed-v2",
+        "locale": TEST_LOCALE,
         "runtimes": {
             "openclaw": {
                 "enabled": True,
@@ -115,7 +120,15 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
-    assert manifest["minimumCliVersion"] == "0.12.10-beta.48"
+    assert manifest["minimumCliVersion"] == "0.12.10-beta.51"
+    assert manifest["locale"] == TEST_LOCALE
+    assert set(manifest["locale"]) == {"language", "timezone"}
+    assert "personality" not in manifest
+    assert manifest["clawdiCli"] == {
+        "source": "npm:clawdi",
+        "packageSpec": "clawdi@agent-v2",
+        "registry": "https://registry.npmjs.org",
+    }
     assert manifest["deploymentId"] == expected["deployment_id"]
     assert manifest["environmentId"] == str(env.id)
     assert manifest["instanceId"] == expected["instance_id"]
@@ -140,11 +153,175 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.content == b""
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        legacy_response = await client.get("/api/runtime/manifest")
+        alias_response = await client.get("/api/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert legacy_response.status_code == 200, legacy_response.text
-    assert "minimumCliVersion" not in legacy_response.json()["manifest"]
+    assert alias_response.status_code == 200, alias_response.text
+    assert alias_response.json() == payload
+    assert alias_response.headers["etag"] == etag
+
+
+@pytest.mark.asyncio
+async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-unchanged-{uuid4().hex[:8]}",
+        machine_name="Runtime unchanged",
+        agent_type="openclaw",
+    )
+    body = await _write_runtime_state(admin_client, str(env.id))
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        response = await admin_client.put(
+            f"/v1/admin/environments/{env.id}/runtime-state",
+            headers=_AUTH,
+            json=body,
+        )
+
+        assert response.status_code == 200, response.text
+        await asyncio.sleep(0)
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_agent_type_refresh_invalidates_default_live_sync_manifest(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-agent-type-{uuid4().hex[:8]}",
+        machine_name="Runtime agent type",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        response = await admin_client.post(
+            "/v1/admin/agents",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "agent_id": str(env.id),
+                "machine_id": env.machine_id,
+                "machine_name": env.machine_name,
+                "agent_type": "hermes",
+                "agent_version": "test",
+                "os_name": env.os,
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_environment_delete_invalidates_cascaded_runtime_manifest(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-delete-env-{uuid4().hex[:8]}",
+        machine_name="Runtime delete environment",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        response = await admin_client.delete(
+            f"/v1/admin/agents/{env.id}",
+            headers=_AUTH,
+        )
+
+        assert response.status_code == 204, response.text
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_agent_v2_manifest_channel_and_protocol_are_cloud_owned(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-cli-authority-{uuid4().hex[:8]}",
+        machine_name="Runtime CLI authority",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    await db_session.execute(
+        text(
+            """
+            UPDATE hosted_runtime_states
+            SET clawdi_cli = CAST(:clawdi_cli AS jsonb)
+            WHERE environment_id = :environment_id
+            """
+        ),
+        {
+            "clawdi_cli": json.dumps(
+                {
+                    "source": "npm:clawdi",
+                    "packageSpec": "clawdi@0.12.9",
+                    "registry": "https://registry.example.test",
+                }
+            ),
+            "environment_id": env.id,
+        },
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+        alias_response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["clawdiCli"] == {
+        "source": "npm:clawdi",
+        "packageSpec": "clawdi@agent-v2",
+        "registry": "https://registry.npmjs.org",
+    }
+    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.51"
+    assert alias_response.status_code == 200, alias_response.text
+    assert alias_response.json() == response.json()
+    assert alias_response.headers["etag"] == response.headers["etag"]
 
 
 @pytest.mark.asyncio
@@ -168,12 +345,158 @@ async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
             "deployment_id": "dep-protocol-metadata",
             "instance_id": "hri-protocol-metadata",
             "generation": 1,
+            "locale": TEST_LOCALE,
             "runtimes": {"openclaw": {"enabled": True}},
-            "minimumCliVersion": "0.12.10-beta.48",
+            "minimumCliVersion": "0.12.10-beta.51",
         },
     )
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_cli_desired_state_authority(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-cli-metadata-{uuid4().hex[:8]}",
+        machine_name="Runtime CLI metadata",
+        agent_type="openclaw",
+    )
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "dep-cli-metadata",
+            "instance_id": "hri-cli-metadata",
+            "generation": 1,
+            "locale": TEST_LOCALE,
+            "runtimes": {"openclaw": {"enabled": True}},
+            "clawdi_cli": {"packageSpec": "clawdi@0.12.9"},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "locale",
+    [
+        None,
+        {"language": "it", "timezone": "Europe/Rome"},
+        {"language": "en", "timezone": "Mars/Olympus"},
+        {"language": "en", "timezone": "UTC", "region": "global"},
+        {"language": "en"},
+    ],
+)
+async def test_admin_runtime_state_requires_strict_locale(
+    admin_client,
+    db_session,
+    seed_user,
+    locale,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-locale-{uuid4().hex[:8]}",
+        machine_name="Runtime locale",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": "dep-locale",
+        "instance_id": "hri-locale",
+        "generation": 1,
+        "runtimes": {"openclaw": {"enabled": True}},
+    }
+    if locale is not None:
+        body["locale"] = locale
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_state_rejects_personality_desired_state(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-personality-{uuid4().hex[:8]}",
+        machine_name="Runtime personality",
+        agent_type="openclaw",
+    )
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "dep-personality",
+            "instance_id": "hri-personality",
+            "generation": 1,
+            "locale": TEST_LOCALE,
+            "runtimes": {"openclaw": {"enabled": True}},
+            "personality": "helpful",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored_locale",
+    [
+        None,
+        {"language": "en", "timezone": "UTC", "personality": "helpful"},
+    ],
+)
+async def test_runtime_manifest_rejects_invalid_stored_locale(
+    db_session,
+    seed_user,
+    stored_locale,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-null-locale-{uuid4().hex[:8]}",
+        machine_name="Runtime null locale",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id="dep-null-locale",
+            instance_id="hri-null-locale",
+            generation=1,
+            locale=stored_locale,
+            runtimes={"openclaw": {"enabled": True}},
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        canonical = await client.get("/v1/runtime/manifest")
+        compatibility = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert canonical.status_code == 409, canonical.text
+    assert compatibility.status_code == 409, compatibility.text
+    assert compatibility.json() == canonical.json()
 
 
 @pytest.mark.asyncio
@@ -1112,6 +1435,7 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {"openclaw": {"enabled": True}},
         field: {},
     }
@@ -1191,6 +1515,7 @@ async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {"openclaw": {"enabled": True}},
         "bridge": bridge,
     }
@@ -1232,6 +1557,7 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {"openclaw": {"enabled": True}},
         field: value,
     }
@@ -1264,6 +1590,7 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {
             "openclaw": {"enabled": True},
             "channels": {},
@@ -1298,6 +1625,7 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {
             "openclaw": {"enabled": True},
             "claude_code": {"enabled": True},
@@ -1334,13 +1662,13 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
             instance_id=f"hri_{uuid4().hex}",
             generation=7,
             provider_id="clawdi-managed-v2",
+            locale=TEST_LOCALE,
             runtimes={
                 "claude_code": {"enabled": True},
                 "openclaw": {"enabled": False},
             },
             system=None,
             control_plane=None,
-            clawdi_cli=None,
             live_sync=None,
             recovery=None,
             egress_profiles=None,
@@ -1392,6 +1720,7 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                 instance_id=f"hri_{uuid4().hex}",
                 generation=7,
                 provider_id="openai-codex",
+                locale=TEST_LOCALE,
                 runtimes={
                     "codex": {
                         "enabled": True,
@@ -1405,7 +1734,6 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                 },
                 system=None,
                 control_plane=None,
-                clawdi_cli=None,
                 live_sync=None,
                 recovery=None,
                 egress_profiles=None,
@@ -1462,6 +1790,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "control_plane": {
             "manifestUrl": "https://cloud-api.test/api/runtime/manifest",
             "apiUrl": "https://api.clawdi.test",
@@ -1934,6 +2263,7 @@ async def test_admin_runtime_state_accepts_codex_hosted_runtime(
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "provider_id": "clawdi-managed",
+        "locale": TEST_LOCALE,
         "runtimes": {"codex": {"enabled": True}},
     }
 

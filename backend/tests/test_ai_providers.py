@@ -10,6 +10,9 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.main import app
 from app.models.api_key import ApiKey
+from app.models.hosted_runtime import HostedRuntimeState
+from app.services import sync_events
+from tests.conftest import create_env_with_project
 
 
 def _test_jwt(account_id: str = "account-123") -> str:
@@ -87,6 +90,79 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
     empty = await client.get("/v1/ai-providers")
     assert empty.status_code == 200, empty.text
     assert empty.json()["providers"] == []
+
+
+@pytest.mark.asyncio
+async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-event-a-{uuid.uuid4().hex[:8]}",
+        machine_name="Provider event A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-event-b-{uuid.uuid4().hex[:8]}",
+        machine_name="Provider event B",
+        agent_type="openclaw",
+    )
+    for env, provider_id in ((env_a, "openai-main"), (env_b, "anthropic-main")):
+        db_session.add(
+            HostedRuntimeState(
+                environment_id=env.id,
+                deployment_id=f"dep-{provider_id}",
+                instance_id=f"hri-{provider_id}",
+                generation=1,
+                locale={"language": "en", "timezone": "UTC"},
+                runtimes={
+                    "openclaw": {
+                        "enabled": True,
+                        "provider_ids": [provider_id],
+                    }
+                },
+            )
+        )
+    await db_session.commit()
+
+    q_a = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env_a.id)
+    q_b = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env_b.id)
+    try:
+        created = await client.post(
+            "/v1/ai-providers",
+            json={
+                "provider_id": "openai-main",
+                "type": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "auth": {"type": "api_key", "source": "managed"},
+                "runtime_env_name": "OPENAI_API_KEY",
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert q_a.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env_a.id),
+        }
+        assert q_b.empty()
+
+        rotated = await client.post(
+            "/v1/ai-providers/openai-main/auth/api-key",
+            json={"value": "sk-rotated", "runtime_env_name": "OPENAI_API_KEY"},
+        )
+        assert rotated.status_code == 200, rotated.text
+        assert q_a.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env_a.id),
+        }
+        assert q_b.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, q_a)
+        sync_events.unsubscribe(seed_user.id, q_b)
 
 
 @pytest.mark.asyncio

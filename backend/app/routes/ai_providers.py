@@ -43,6 +43,7 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
     managed_provider_api_mode,
 )
+from app.services.sync_events import queue_provider_runtime_manifest_changed
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
@@ -119,10 +120,13 @@ async def upsert_ai_provider(
     existing = await _find_provider(db, auth, body.provider_id, include_archived=True)
     if existing is not None and existing.archived_at is None and not replace:
         raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
+    previous_signature = _runtime_manifest_provider_signature(existing)
     provider = existing or AiProvider(owner_user_id=auth.user_id, provider_id=body.provider_id)
     _apply_provider_body(provider, body)
     provider.archived_at = None
     db.add(provider)
+    if previous_signature != _runtime_manifest_provider_signature(provider):
+        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -146,6 +150,7 @@ async def patch_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    previous_signature = _runtime_manifest_provider_signature(provider)
     merged = _response_to_upsert(provider)
     update = body.model_dump(exclude_unset=True)
     null_errors = _validate_patch_nulls(update)
@@ -161,6 +166,8 @@ async def patch_ai_provider(
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
     _apply_provider_body(provider, merged)
+    if previous_signature != _runtime_manifest_provider_signature(provider):
+        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -190,6 +197,7 @@ async def delete_ai_provider(
     )
     for payload in payloads:
         payload.archived_at = archived_at
+    await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     return AiProviderDeleteResponse(status="deleted", provider_id=provider_id)
 
@@ -237,6 +245,7 @@ async def set_ai_provider_api_key(
     provider.auth_metadata = {"source": "managed", "profile": profile}
     if runtime_env_name is not None:
         provider.runtime_env_name = runtime_env_name
+    await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -254,6 +263,7 @@ async def import_ai_provider_auth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    previous_signature = _runtime_manifest_provider_signature(provider)
     profile = _normalize_profile(body.profile)
     if body.type == "agent_profile":
         if not body.tool:
@@ -281,6 +291,8 @@ async def import_ai_provider_auth(
         body.payload.get_secret_value(),
         provider.auth_metadata,
     )
+    if previous_signature != _runtime_manifest_provider_signature(provider):
+        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -375,6 +387,7 @@ async def complete_ai_provider_oauth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    previous_signature = _runtime_manifest_provider_signature(provider)
     state = _decode_oauth_state(body.state)
     if state.get("provider_id") != provider_id or state.get("owner_user_id") != str(auth.user_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
@@ -427,6 +440,8 @@ async def complete_ai_provider_oauth(
     provider.auth_type = provider_auth_type
     provider.auth_ref = None
     provider.auth_metadata = metadata
+    if previous_signature != _runtime_manifest_provider_signature(provider):
+        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return _to_response(provider)
@@ -867,6 +882,26 @@ def _to_response(provider: AiProvider) -> AiProviderResponse:
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
+
+
+def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | None:
+    if provider is None:
+        return None
+    return {
+        "scope": provider.scope,
+        "type": provider.type,
+        "label": provider.label,
+        "base_url": provider.base_url,
+        "api_mode": provider.api_mode,
+        "capabilities": provider.capabilities,
+        "models": provider.models,
+        "auth_type": provider.auth_type,
+        "auth_ref": provider.auth_ref,
+        "auth_metadata": provider.auth_metadata,
+        "managed_by": provider.managed_by,
+        "runtime_env_name": provider.runtime_env_name,
+        "archived_at": provider.archived_at,
+    }
 
 
 def _response_to_upsert(provider: AiProvider) -> AiProviderUpsert:

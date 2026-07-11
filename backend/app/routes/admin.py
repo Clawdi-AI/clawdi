@@ -87,6 +87,11 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
     upsert_clawdi_managed_provider,
 )
+from app.services.sync_events import (
+    queue_environment_runtime_manifest_changed,
+    queue_provider_runtime_manifest_changed,
+    queue_runtime_manifest_changed,
+)
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 logger = logging.getLogger(__name__)
@@ -277,6 +282,12 @@ async def admin_upsert_clawdi_managed_ai_provider(
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    await queue_provider_runtime_manifest_changed(
+        db,
+        target.id,
+        provider.provider_id,
+    )
 
     record_control_plane_audit(
         db,
@@ -631,6 +642,7 @@ async def _admin_delete_environment(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.delete(env)
     await db.commit()
     logger.info("admin_environment_deleted env_id=%s", environment_id)
@@ -705,9 +717,9 @@ async def _admin_upsert_runtime_state(
     state.instance_id = body.instance_id
     state.generation = body.generation
     state.provider_id = body.provider_id
+    state.locale = body.locale.model_dump()
     state.system = body.system
     state.control_plane = body.control_plane
-    state.clawdi_cli = body.clawdi_cli
     state.runtimes = body.runtimes
     state.bridge = body.bridge
     state.live_sync = body.live_sync
@@ -736,6 +748,7 @@ async def _admin_upsert_runtime_state(
             "generation": body.generation,
             "previous_generation": previous_generation,
             "provider_id": body.provider_id,
+            "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(body.runtimes),
             "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
@@ -743,6 +756,8 @@ async def _admin_upsert_runtime_state(
             "changed_fields": changed_fields,
         },
     )
+    if changed_fields:
+        queue_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.commit()
     logger.info(
         "admin_runtime_state_upserted environment_id=%s deployment_id=%s generation=%s",
@@ -817,6 +832,7 @@ async def _admin_delete_runtime_state(
             }
         )
         await db.delete(state)
+        queue_runtime_manifest_changed(db, env.user_id, environment_id)
 
     record_control_plane_audit(
         db,
@@ -917,9 +933,9 @@ def _runtime_state_changed_fields(
         "instance_id",
         "generation",
         "provider_id",
+        "locale",
         "system",
         "control_plane",
-        "clawdi_cli",
         "egress_engine",
         "runtimes",
         "bridge",
@@ -934,7 +950,7 @@ def _runtime_state_changed_fields(
     changed: list[str] = []
     preserve_when_omitted = {"egress_engine", "egress_profiles", "mcp", "tools"}
     for field in fields:
-        body_value = getattr(body, field)
+        body_value = body.locale.model_dump() if field == "locale" else getattr(body, field)
         if field in preserve_when_omitted and body_value is None:
             continue
         if getattr(state, field) != body_value:

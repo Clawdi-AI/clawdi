@@ -19,10 +19,11 @@ regressions would land.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -192,6 +193,105 @@ async def test_broadcast_drops_event_with_unparseable_project():
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_event_is_environment_isolated():
+    user_id = uuid.uuid4()
+    environment_a = uuid.uuid4()
+    environment_b = uuid.uuid4()
+    q_a = sync_events.subscribe(user_id, frozenset(), environment_id=environment_a)
+    q_b = sync_events.subscribe(user_id, frozenset(), environment_id=environment_b)
+    q_unbound = sync_events.subscribe(user_id, frozenset())
+    try:
+        sync_events._broadcast(
+            user_id,
+            {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(environment_a),
+            },
+        )
+
+        expected = {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_a),
+        }
+        assert q_a.get_nowait() == expected
+        assert q_b.empty()
+        assert q_unbound.get_nowait() == expected
+    finally:
+        sync_events.unsubscribe(user_id, q_a)
+        sync_events.unsubscribe(user_id, q_b)
+        sync_events.unsubscribe(user_id, q_unbound)
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    environment_id = uuid.uuid4()
+    user_id = seed_user.id
+    queue = sync_events.subscribe(
+        user_id,
+        frozenset(),
+        environment_id=environment_id,
+    )
+    try:
+        await db_session.execute(select(User.id).where(User.id == user_id))
+        sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
+        assert queue.empty()
+        await db_session.commit()
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_id),
+        }
+
+        await db_session.execute(select(User.id).where(User.id == user_id))
+        sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
+        assert queue.empty()
+        await db_session.rollback()
+        await asyncio.sleep(0)
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(user_id, queue)
+
+
+@pytest.mark.asyncio
+async def test_postgres_listener_delivers_remote_process_event(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    environment_id = uuid.uuid4()
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=environment_id,
+    )
+    await sync_events.start_postgres_listener()
+    try:
+        event = {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_id),
+        }
+        envelope = json.dumps(
+            {
+                "origin": "other-api-process",
+                "user_id": str(seed_user.id),
+                "event": event,
+            },
+            separators=(",", ":"),
+        )
+        await db_session.execute(
+            text("SELECT pg_notify(:channel, :payload)"),
+            {"channel": sync_events._POSTGRES_CHANNEL, "payload": envelope},
+        )
+        await db_session.commit()
+
+        assert await asyncio.wait_for(queue.get(), timeout=2) == event
+    finally:
+        await sync_events.stop_postgres_listener()
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
 async def test_bump_skills_revision_after_commit_broadcasts(
     db_session: AsyncSession, seed_user: User
 ):
@@ -332,12 +432,17 @@ async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
        and exhaust process memory.
 
     2. Per-key cap (Agent API keys only): a bound
-       `api_key_id` may hold at most `max_per_key` simultaneous
-       subscribers — a leaked deploy key can't fan out to the
-       per-user limit. Unbound keys (multi-agent personal
-       install: serve --all spawns N daemons sharing one auth
-       key from ~/.clawdi/auth.json) MUST bypass this cap so 3+
-       agent installs continue to receive realtime sync.
+       `api_key_id` may hold three simultaneous subscribers for
+       daemon skill sync, runtime-watch invalidation, and one
+       debug/diagnostic connection. A fourth is rejected. Unbound
+       keys (multi-agent personal install: serve --all spawns N
+       daemons sharing one auth key from ~/.clawdi/auth.json) MUST
+       bypass this cap so 3+ agent installs continue to receive
+       realtime sync.
+
+    3. Aggregate user cap remains authoritative: five bound keys
+       with two routine streams each fill all ten user slots. A
+       key's otherwise-allowed third diagnostic stream is rejected.
     """
     user_id = seed_user.id
     bound_key = uuid.uuid4()
@@ -373,28 +478,26 @@ async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
         sync_events.unsubscribe(user_id, q)
     sync_events._subscribers.pop(user_id, None)
 
-    # 2a) bound deploy key capped at max_per_key.
+    # 2a) bound deploy key uses the production default cap of 3.
     bound_handles: list = []
-    for _ in range(2):
+    for _ in range(3):
         h = await sync_events.try_subscribe(
             user_id,
             frozenset(),
             max_per_user=10,
             api_key_id=bound_key,
             is_env_bound=True,
-            max_per_key=2,
         )
         assert h is not None
         bound_handles.append(h)
-    third = await sync_events.try_subscribe(
+    fourth = await sync_events.try_subscribe(
         user_id,
         frozenset(),
         max_per_user=10,
         api_key_id=bound_key,
         is_env_bound=True,
-        max_per_key=2,
     )
-    assert third is None, "bound deploy key must cap at max_per_key"
+    assert fourth is None, "bound deploy key must reject its fourth subscriber"
 
     # 2b) unbound key (multi-agent personal install) bypasses
     # the per-key cap — `serve --all` runs N daemons that all
@@ -408,11 +511,41 @@ async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
             max_per_user=10,
             api_key_id=unbound_key,
             is_env_bound=False,
-            max_per_key=2,
         )
         assert h is not None, "unbound key must bypass max_per_key"
         unbound_handles.append(h)
 
     for q, _sub in (*bound_handles, *unbound_handles):
+        sync_events.unsubscribe(user_id, q)
+    sync_events._subscribers.pop(user_id, None)
+
+    # 3) Five bound keys with their two routine streams fill the
+    # aggregate user cap. The first key is still below its cap of
+    # three, but its diagnostic stream must be rejected by the
+    # account-level ceiling.
+    routine_handles: list = []
+    routine_keys = [uuid.uuid4() for _ in range(5)]
+    for key_id in routine_keys:
+        for _ in range(2):
+            h = await sync_events.try_subscribe(
+                user_id,
+                frozenset(),
+                max_per_user=10,
+                api_key_id=key_id,
+                is_env_bound=True,
+            )
+            assert h is not None
+            routine_handles.append(h)
+
+    diagnostic = await sync_events.try_subscribe(
+        user_id,
+        frozenset(),
+        max_per_user=10,
+        api_key_id=routine_keys[0],
+        is_env_bound=True,
+    )
+    assert diagnostic is None, "per-user cap must reject an otherwise-allowed third stream"
+
+    for q, _sub in routine_handles:
         sync_events.unsubscribe(user_id, q)
     sync_events._subscribers.pop(user_id, None)

@@ -11,6 +11,10 @@ from app.models.session import AgentEnvironment  # noqa: F401 - register FK targ
 class HostedRuntimeState(Base, TimestampMixin):
     __tablename__ = "hosted_runtime_states"
 
+    # The physical clawdi_cli column remains temporarily for rolling-deploy
+    # compatibility with old pods, but new application code intentionally does
+    # not map it. A post-deploy contract migration will remove it.
+
     environment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("agent_environments.id", ondelete="CASCADE"),
@@ -21,9 +25,9 @@ class HostedRuntimeState(Base, TimestampMixin):
     instance_id: Mapped[str] = mapped_column(String(200), nullable=False)
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
     provider_id: Mapped[str | None] = mapped_column(String(80))
+    locale: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     system: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     control_plane: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    clawdi_cli: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     egress_engine: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     runtimes: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     bridge: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
