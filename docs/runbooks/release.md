@@ -73,6 +73,13 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
+   For the managed `agent-v2` channel, do not treat a successful npm upload as
+   approval. `publishConfig.tag` uploads to the non-production
+   `agent-v2-candidate` tag. Promote the exact tested version to `agent-v2` only
+   after the Hosted stable-envelope paired smoke passes. Until a workflow with
+   the required Hosted smoke and npm promotion credentials exists, automatic
+   promotion is a release blocker/follow-up; do not replace it with
+   cross-repository polling or long-lived token automation.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -95,6 +102,19 @@ releases.
    npm view clawdi version
    npm view clawdi dist-tags
    ```
+
+   Agent-v2 releases appear first under `agent-v2-candidate`. After the Hosted
+   stable-envelope paired smoke passes for that exact version, a maintainer
+   with npm package permission promotes it explicitly:
+
+   ```bash
+   npm dist-tag add clawdi@<exact-version> agent-v2
+   npm view clawdi dist-tags
+   ```
+
+   Done: `agent-v2` points to the paired-smoke-approved exact version while
+   `beta` and `latest` are unchanged. Automated promotion remains blocked until
+   a reusable Hosted smoke and npm credential contract exists.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has

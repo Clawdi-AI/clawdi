@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.49
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.49
+
+Package: `clawdi@0.12.10-beta.49`
+
+### Changed
+
+- Added managed self-update support for the isolated floating `agent-v2`
+  channel. Agent-v2 builds upload first to `agent-v2-candidate`; the production
+  channel is promoted only after the Hosted stable-envelope paired smoke.
+
 ## Clawdi CLI v0.12.10-beta.48
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.48

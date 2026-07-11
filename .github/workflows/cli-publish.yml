@@ -55,9 +55,11 @@ jobs:
         #      requires the package to already exist on the registry to accept
         #      a workflow as the publisher. Until that bootstrap happens, the
         #      workflow stays inert.
-        # The package may declare an isolated release channel through
+        # The package may declare an isolated upload channel through
         # `publishConfig.tag`; otherwise prereleases use `beta` and stable
-        # versions use `latest`.
+        # versions use `latest`. Managed agent-v2 releases upload to
+        # `agent-v2-candidate`; the production `agent-v2` tag is promoted only
+        # after the separate Hosted stable-envelope paired smoke.
         run: |
           LOCAL=$(node -p "require('./package.json').version")
           REMOTE_LATEST=$(npm view clawdi version 2>/dev/null || echo "0.0.0")

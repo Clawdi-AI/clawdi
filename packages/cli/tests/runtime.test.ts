@@ -5167,7 +5167,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		}
 	});
 
-	it("runtime CLI update resolves floating npm tags through the managed npm cache", () => {
+	it("runtime CLI update resolves the floating agent-v2 npm tag through the managed npm cache", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5196,7 +5196,7 @@ if [ "\${1:-}" = "view" ]; then
 	fi
 	install -d "$cache"
 	touch "$cache/view-proof"
-  echo '"0.12.10-beta.22"'
+  echo '"0.12.10-beta.49"'
   exit 0
 fi
 prefix=""
@@ -5216,7 +5216,7 @@ install -d "$prefix/bin"
 cat > "$prefix/bin/clawdi" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
-  echo "0.12.10-beta.22"
+  echo "0.12.10-beta.49"
   exit 0
 fi
 if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
@@ -5236,7 +5236,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUN_DIR = run;
 		try {
 			const paths = getRuntimePaths();
-			seedCurrentCliInstall(state, "clawdi@beta", "0.12.10-beta.21");
+			seedCurrentCliInstall(state, "clawdi@agent-v2", "0.12.10-beta.48");
 			const result = applyRuntimeCliDesiredState(
 				{
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -5248,18 +5248,18 @@ chmod +x "$prefix/bin/clawdi"
 					issuedAt: "2026-06-06T00:00:00Z",
 					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-					clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@beta" },
+					clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@agent-v2" },
 					runtimes: { openclaw: hostedOpenClawRuntime() },
 				},
 				paths,
 			);
 
 			expect(result.status).toBe("installed");
-			expect(result.version).toBe("0.12.10-beta.22");
+			expect(result.version).toBe("0.12.10-beta.49");
 			expect(readlinkSync(paths.cliManagedBin)).toBe(result.activeTarget);
 			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
-			expect(status.packageSpec).toBe("clawdi@beta");
-			expect(status.version).toBe("0.12.10-beta.22");
+			expect(status.packageSpec).toBe("clawdi@agent-v2");
+			expect(status.version).toBe("0.12.10-beta.49");
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			const npmViewCalls = npmCalls.filter((call) => call.startsWith("view "));
 			expect(npmViewCalls.length).toBeGreaterThan(0);
