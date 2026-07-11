@@ -53,6 +53,15 @@ const cliPayloadPolicySchema = z.object({
 	registry: z.string().min(1).optional(),
 });
 
+const hostedCliPayloadPolicySchema = z
+	.object({
+		// The image env seeds pre-manifest bootstrap only; Cloud owns every hosted update after that.
+		source: z.literal("npm:clawdi"),
+		packageSpec: z.string().min(1),
+		registry: z.literal("https://registry.npmjs.org"),
+	})
+	.strict();
+
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
 export const egressEngineSchema = z.object({
@@ -306,7 +315,7 @@ export const hostedRuntimeManifestSchema = z.preprocess(
 				})
 				.optional(),
 			controlPlane: hostedControlPlaneSchema,
-			clawdiCli: cliPayloadPolicySchema.optional(),
+			clawdiCli: hostedCliPayloadPolicySchema,
 			egressEngine: egressEngineSchema.optional(),
 			runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 			bridge: runtimeBridgeSchema.optional(),

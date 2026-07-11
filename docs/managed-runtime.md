@@ -265,7 +265,9 @@ Normalization maps hosted fields into the internal shape:
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
 | `controlPlane.manifestUrl`, `controlPlane.cloudApiUrl` | Manifest datasource and API origin |
-| `clawdiCli.packageSpec` | System-managed CLI package selection |
+| `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
+| `clawdiCli.packageSpec` | Required Cloud-owned managed CLI package selection |
+| `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |

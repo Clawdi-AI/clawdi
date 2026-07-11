@@ -128,6 +128,76 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
+	test("rejects hosted manifests without an explicit CLI package policy", () => {
+		expect(() =>
+			normalizeManifestPayload({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
+					deploymentId: "hdep_missing_cli_policy",
+					environmentId: "env_missing_cli_policy",
+					instanceId: "hri_missing_cli_policy",
+					generation: 1,
+					issuedAt: "2026-07-11T00:00:00.000Z",
+					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+					runtimes: { openclaw: { enabled: true } },
+				},
+				secretValues: {},
+			}),
+		).toThrow(/clawdiCli/);
+	});
+
+	test.each([
+		{
+			name: "wrong source",
+			clawdiCli: {
+				source: "npm:other",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.npmjs.org",
+			},
+		},
+		{
+			name: "missing registry",
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@agent-v2" },
+		},
+		{
+			name: "non-official registry",
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.example.test",
+			},
+		},
+		{
+			name: "dead managed flags",
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.npmjs.org",
+				managedConfig: true,
+				userEditableConfig: false,
+			},
+		},
+	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
+		expect(() =>
+			normalizeManifestPayload({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
+					deploymentId: "hdep_invalid_cli_policy",
+					environmentId: "env_invalid_cli_policy",
+					instanceId: "hri_invalid_cli_policy",
+					generation: 1,
+					issuedAt: "2026-07-11T00:00:00.000Z",
+					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+					clawdiCli,
+					runtimes: { openclaw: { enabled: true } },
+				},
+				secretValues: {},
+			}),
+		).toThrow();
+	});
+
 	test("normalizes hosted manifest responses into runtime desired state without embedding secrets", () => {
 		const hostedResponse = {
 			manifest: {
@@ -145,6 +215,11 @@ describe("runtime manifest reconciliation invariants", () => {
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 					manifestUrl: "https://cloud-api.example.test/v1/runtime/manifest",
+				},
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@agent-v2",
+					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
 					openclaw: {
@@ -271,6 +346,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			controlPlane: {
 				cloudApiUrl: "https://cloud-api.example.test",
 			},
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.npmjs.org",
+			},
 			runtimes: {
 				openclaw: {
 					enabled: true,
@@ -294,6 +374,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			issuedAt: "2026-07-01T00:00:00.000Z",
 			controlPlane: {
 				cloudApiUrl: "https://cloud-api.example.test",
+			},
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@agent-v2",
+				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
 				openclaw: {
@@ -341,6 +426,11 @@ describe("runtime manifest reconciliation invariants", () => {
 				issuedAt: "2026-07-01T00:00:00.000Z",
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
+				},
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@agent-v2",
+					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
 					openclaw: {

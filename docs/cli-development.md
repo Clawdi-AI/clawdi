@@ -230,11 +230,36 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
-Managed agent-v2 packages upload to the non-production
-`agent-v2-candidate` dist-tag. The runtime never consumes that tag. Promote an
-exact candidate to `agent-v2` only after the Hosted stable-envelope paired
-smoke passes, following `docs/runbooks/release.md`. The production tag means
-paired-smoke-approved, not merely published.
+Managed agent-v2 releases build, test, and pack one immutable tarball. The
+release workflow passes that artifact through the mandatory reusable Hosted
+paired smoke, then the protected npm job publishes that exact tarball once to
+the `agent-v2` tag with trusted-publisher OIDC. There is no candidate tag or
+separate dist-tag promotion.
+
+The reusable workflow is private at
+`Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main`.
+Before this release workflow can run, the focused smoke-only Hosted PR that
+adds this reusable workflow must be merged to Hosted `main`, and the Hosted
+repository Actions access must be changed from `none` to `organization` so
+organization repositories can call it. Do not use Hosted #780 as the workflow
+prerequisite: its runtime behavior must deploy only after Cloud #387 owns the
+hosted manifest channel. Do not bypass the repository-level workflow contract
+with a PAT, GitHub App token, or a copied smoke implementation.
+
+Safe rollout order: merge the smoke-only Hosted workflow PR, enable
+organization Actions access, then merge this CLI release and publish `.50`.
+Cloud #387 and Hosted #780 require a controlled short maintenance window, not
+a rolling cross-service deploy: pause agent-v2 creation and every Hosted
+runtime-state writer/reconciliation path, deploy Cloud #387, immediately deploy
+Hosted #780, verify runtime-state writes and hosted manifests, then resume.
+Brief runtime unavailability is possible and expected during the window:
+pre-#780 pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so a pod that self-updates
+to `.50` after Cloud #387 starts serving `agent-v2` can fail closed. After
+deploying Hosted #780, force or reconcile affected prelaunch pods so they
+receive the final bootstrap environment, then verify manifest fetch and runtime
+services before resuming creation and writers. Do not add a temporary
+accepted-but-ignored `clawdi_cli` field; Cloud #387 intentionally removes or
+rejects it while pre-#780 Hosted still sends it.
 
 The monorepo has two GitHub Release lines:
 
@@ -286,9 +311,9 @@ onward releases are automatic.
 
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
-3. The workflow runs typecheck → `bun run build` → `bun test` →
-   `npm publish --access public --provenance`. Each step is a separate
-   job so a failing test doesn't pollute the publish log.
+3. The workflow builds, tests, and packs one artifact, runs the mandatory
+   Hosted paired smoke, then publishes the same tarball with
+   `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
 5. Watch the Actions tab; on green, `npm view clawdi version` will
    reflect the new number within ~60s.

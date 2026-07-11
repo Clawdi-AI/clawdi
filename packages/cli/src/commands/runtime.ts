@@ -2308,6 +2308,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		const now = Date.now();
 		const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
 		const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+		// Full refreshes also re-resolve floating CLI channels when manifest ETags are unchanged.
 		const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
 		const event = await runtimeWatchTick(paths, {
 			forceRefresh,

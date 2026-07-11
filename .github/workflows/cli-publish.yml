@@ -1,10 +1,4 @@
-name: Publish CLI
-
-# Auto-publishes `clawdi` to npm whenever `packages/cli/` lands on main with
-# a new version. The `skip-if-same-version` gate means a merge with no
-# version bump is a no-op, so every PR to main is safe — only deliberate
-# `"version": "..."` changes trigger a release. Mirrors the pattern used by
-# `@clawdi/openclaw-plugin` in the main clawdi repo.
+name: Publish Agent v2 CLI
 
 on:
   workflow_dispatch:
@@ -18,19 +12,20 @@ concurrency:
   group: cli-publish
   cancel-in-progress: false
 
+env:
+  CLI_ARTIFACT_NAME: clawdi-cli-release
+
+# This one artifact is the release identity: Hosted smokes it, then npm publishes it once.
+# There is intentionally no candidate upload or later dist-tag mutation.
 jobs:
-  publish:
+  build-immutable-artifact:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    # `environment: npm` gates the job behind the repo's `npm` environment
-    # secrets/rules. Combined with `id-token: write` this enables npm
-    # trusted-publisher OIDC so no NPM_TOKEN secret is needed.
-    environment: npm
     permissions:
-      contents: write
-      id-token: write
-    defaults:
-      run:
-        working-directory: packages/cli
+      contents: read
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      version: ${{ steps.check.outputs.version }}
+      cli_tarball_filename: ${{ steps.check.outputs.cli_tarball_filename }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -45,158 +40,168 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Skip if no publish needed
+      - name: Check whether the exact version needs publishing
         id: check
-        # Skip cases:
-        #   1. Local exact version already exists on npm (no bump → no publish).
-        #   2. Package has never been published (`npm view` fails, fallback "0.0.0").
-        #      The first publish must be manual — `npm publish --access public`
-        #      from a maintainer's machine — because npm trusted-publisher OIDC
-        #      requires the package to already exist on the registry to accept
-        #      a workflow as the publisher. Until that bootstrap happens, the
-        #      workflow stays inert.
-        # The package may declare an isolated upload channel through
-        # `publishConfig.tag`; otherwise prereleases use `beta` and stable
-        # versions use `latest`. Managed agent-v2 releases upload to
-        # `agent-v2-candidate`; the production `agent-v2` tag is promoted only
-        # after the separate Hosted stable-envelope paired smoke.
+        working-directory: packages/cli
         run: |
-          LOCAL=$(node -p "require('./package.json').version")
-          REMOTE_LATEST=$(npm view clawdi version 2>/dev/null || echo "0.0.0")
-          CONFIGURED_TAG=$(node -p "require('./package.json').publishConfig?.tag || ''")
-          if [ -n "$CONFIGURED_TAG" ]; then
-            NPM_TAG="$CONFIGURED_TAG"
-          elif [[ "$LOCAL" == *-* ]]; then
-            NPM_TAG=beta
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"
+          if npm view "clawdi@$version" version >/dev/null 2>&1; then
+            echo "clawdi@$version already exists on npm"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
           else
-            NPM_TAG=latest
-          fi
-          echo "local=$LOCAL remote_latest=$REMOTE_LATEST npm_tag=$NPM_TAG"
-          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
-          if [ "$REMOTE_LATEST" = "0.0.0" ]; then
-            echo "Package not on npm yet — bootstrap with manual publish first."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif npm view "clawdi@$LOCAL" version >/dev/null 2>&1; then
-            echo "Package version clawdi@$LOCAL already exists on npm."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install workspace deps
-        if: steps.check.outputs.skip != 'true'
-        working-directory: ${{ github.workspace }}
+      - name: Install workspace dependencies
+        if: steps.check.outputs.should_publish == 'true'
         run: bun install --frozen-lockfile
 
       - name: Typecheck
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.should_publish == 'true'
+        working-directory: packages/cli
         run: bun run typecheck
 
-      # Build before Test so the smoke test in tests/smoke.test.ts — which
-      # execs the bundled `dist/index.js` — has its artifact ready.
-      - name: Build
-        if: steps.check.outputs.skip != 'true'
-        run: bun run build
-
-      - name: Build standalone CLI binary
-        if: steps.check.outputs.skip != 'true'
+      - name: Build package and standalone binary
+        if: steps.check.outputs.should_publish == 'true'
+        working-directory: packages/cli
         run: |
+          bun run build
           bun run build:binary
           ./dist-bin/clawdi --version
           bun run package:binary-release
-          test -f dist-release/clawdi-cli-linux-x64.tar.gz
-          test -f dist-release/clawdi-cli-linux-x64.tar.gz.sha256
 
       - name: Test
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.should_publish == 'true'
+        working-directory: packages/cli
         run: bun test --isolate --max-concurrency=1
 
-      - name: Validate npm tarball install
-        if: steps.check.outputs.skip != 'true'
+      - name: Pack and verify immutable release artifact
+        if: steps.check.outputs.should_publish == 'true'
+        working-directory: packages/cli
         run: |
           node scripts/check-publish-manifest.mjs
-          TMP=$(mktemp -d)
-          PACK_DIR=$(mktemp -d)
-          cleanup() {
-            rm -rf "$TMP"
-            rm -rf "$PACK_DIR"
-          }
-          trap cleanup EXIT
-          PACK_JSON=$(npm pack --json --ignore-scripts --pack-destination "$PACK_DIR")
-          TARBALL=$(node -e "const fs=require('node:fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); console.log(data[0].filename)" <<< "$PACK_JSON")
-          TARBALL_PATH="$PACK_DIR/$TARBALL"
-          cd "$TMP"
+          release_dir="$RUNNER_TEMP/clawdi-cli-release"
+          install_dir="$RUNNER_TEMP/clawdi-cli-install"
+          mkdir -p "$release_dir" "$install_dir"
+          pack_json=$(npm pack --json --ignore-scripts --pack-destination "$release_dir")
+          tarball=$(node -e "const fs=require('node:fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); console.log(data[0].filename)" <<< "$pack_json")
+          tarball_path="$release_dir/$tarball"
+          tarball_sha=$(sha256sum "$tarball_path" | cut -d' ' -f1)
+          printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"
+          cp dist-release/clawdi-cli-linux-x64.tar.gz "$release_dir/"
+          cp dist-release/clawdi-cli-linux-x64.tar.gz.sha256 "$release_dir/"
+          cd "$install_dir"
           npm init -y >/dev/null
-          npm install "$TARBALL_PATH" --ignore-scripts --no-audit --no-fund
+          npm install "$tarball_path" --ignore-scripts --no-audit --no-fund
+          "$install_dir/node_modules/.bin/clawdi" --version
 
-      # `prepublishOnly` would re-run the build. We pass `--ignore-scripts`
-      # because the step above already built everything; rerunning wastes
-      # ~10s of CI time and risks a silent re-bundle with stale env.
-      #
-      # `--provenance` attaches a SLSA provenance attestation. Requires:
-      #   - `repository.url` in package.json points at a public GitHub repo
-      #     (Clawdi-AI/clawdi — confirmed public)
-      #   - workflow has `id-token: write` (above) for OIDC token minting
-      #   - npm trusted-publisher OIDC enabled for the package (env: npm)
-      # Once published, `npm view clawdi --json` shows a `dist.attestations`
-      # block, and the package page on npmjs.com gets the green "provenance"
-      # badge linking back to this exact workflow run.
-      - name: Publish to npm
-        if: steps.check.outputs.skip != 'true'
-        run: npm publish --access public --provenance --ignore-scripts --tag "${{ steps.check.outputs.npm_tag }}"
+      - name: Upload immutable CLI release artifact
+        if: steps.check.outputs.should_publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CLI_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/clawdi-cli-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  hosted-paired-smoke:
+    if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
+    needs: build-immutable-artifact
+    permissions:
+      contents: read
+      actions: read
+    uses: Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main
+    with:
+      cli_artifact_name: clawdi-cli-release
+      cli_tarball_filename: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
+
+  publish-paired-artifact-with-oidc:
+    if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
+    needs: [build-immutable-artifact, hosted-paired-smoke]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download paired-smoked CLI release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.CLI_ARTIFACT_NAME }}
+          path: release
+
+      - name: Verify release artifact
+        env:
+          VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
+          CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
+        run: |
+          cd release
+          tarball="$CLI_TARBALL_FILENAME"
+          test -s "$tarball"
+          test -s "$tarball.sha256"
+          test -s clawdi-cli-linux-x64.tar.gz
+          test -s clawdi-cli-linux-x64.tar.gz.sha256
+          sha256sum --check "$tarball.sha256"
+          sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256
+          manifest=$(tar -xOf "$tarball" package/package.json)
+          test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
+          test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
+
+      - name: Publish paired-smoked tarball to agent-v2
+        env:
+          CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
+        run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2
 
       - name: Create GitHub release
-        if: steps.check.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          NPM_TAG="${{ steps.check.outputs.npm_tag }}"
-          TAG="clawdi-cli-v${VERSION}"
+          tag="clawdi-cli-v$VERSION"
+          previous=$(git tag --list 'clawdi-cli-v*' --sort=-version:refname | grep -Fxv "$tag" | head -n 1 || true)
+          notes=$(cat <<EOF
+          ## Package
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub release $TAG already exists; uploading standalone CLI assets."
-            gh release upload "$TAG" \
-              dist-release/clawdi-cli-linux-x64.tar.gz \
-              dist-release/clawdi-cli-linux-x64.tar.gz.sha256 \
-              --clobber
-            exit 0
-          fi
+          \`npm install -g clawdi@agent-v2\`
 
-          PREVIOUS=$(
-            git tag --list 'clawdi-cli-v*' --sort=-v:refname \
-              | grep -v "^${TAG}$" \
-              | head -n 1 || true
-          )
+          Published as \`clawdi@$VERSION\` after the mandatory Hosted paired smoke.
 
-          NOTES=$(cat <<EOF
-          ## npm
-          - Package: \`clawdi@${VERSION}\`
-          - Dist tag: \`${NPM_TAG}\`
-          - Install: \`npm i -g clawdi@${VERSION}\`
-          - Dist-tag install: \`npm i -g clawdi@${NPM_TAG}\`
-
-          ## Scope
           This is the release for the published \`packages/cli\` package.
           Clawdi app/backend/web changes are versioned separately as
           \`clawdi-YYYY-MM-DD[-N]\` releases.
           EOF
           )
-
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              release/clawdi-cli-linux-x64.tar.gz \
+              release/clawdi-cli-linux-x64.tar.gz.sha256 \
+              --clobber
+            exit 0
+          fi
           args=(
-            release create "$TAG"
-            dist-release/clawdi-cli-linux-x64.tar.gz
-            dist-release/clawdi-cli-linux-x64.tar.gz.sha256
+            release create "$tag"
+            release/clawdi-cli-linux-x64.tar.gz
+            release/clawdi-cli-linux-x64.tar.gz.sha256
             --target "$GITHUB_SHA"
-            --title "Clawdi CLI v${VERSION}"
-            --notes "$NOTES"
+            --title "Clawdi CLI v$VERSION"
+            --notes "$notes"
             --generate-notes
             --latest=false
+            --prerelease
           )
-          if [ "$NPM_TAG" != "latest" ]; then
-            args+=(--prerelease)
-          fi
-          if [ -n "$PREVIOUS" ]; then
-            args+=(--notes-start-tag "$PREVIOUS")
+          if [ -n "$previous" ]; then
+            args+=(--notes-start-tag "$previous")
           fi
           gh "${args[@]}"

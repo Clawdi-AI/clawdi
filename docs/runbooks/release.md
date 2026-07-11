@@ -73,13 +73,10 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
-   For the managed `agent-v2` channel, do not treat a successful npm upload as
-   approval. `publishConfig.tag` uploads to the non-production
-   `agent-v2-candidate` tag. Promote the exact tested version to `agent-v2` only
-   after the Hosted stable-envelope paired smoke passes. Until a workflow with
-   the required Hosted smoke and npm promotion credentials exists, automatic
-   promotion is a release blocker/follow-up; do not replace it with
-   cross-repository polling or long-lived token automation.
+   For the managed `agent-v2` channel, the release workflow must build and pack
+   one immutable artifact, pass it through the reusable Hosted paired smoke,
+   and publish that exact tarball once to `agent-v2` with npm trusted-publisher
+   OIDC. There is no candidate tag or dist-tag promotion step.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -103,18 +100,28 @@ releases.
    npm view clawdi dist-tags
    ```
 
-   Agent-v2 releases appear first under `agent-v2-candidate`. After the Hosted
-   stable-envelope paired smoke passes for that exact version, a maintainer
-   with npm package permission promotes it explicitly:
+   Done: `agent-v2` points directly to the paired-smoke-approved exact version
+   while `beta` and `latest` are unchanged. Before merge/release, the focused
+   smoke-only Hosted reusable-workflow PR must be on Hosted `main`, and the
+   private Hosted repository Actions access must be set to `organization`; its
+   current `none` setting prevents the reusable workflow call. Hosted #780 is
+   not this prerequisite because its runtime behavior must deploy after Cloud
+   #387 owns the hosted manifest channel. Do not work around this with
+   long-lived credentials or duplicated private smoke code.
 
-   ```bash
-   npm dist-tag add clawdi@<exact-version> agent-v2
-   npm view clawdi dist-tags
-   ```
-
-   Done: `agent-v2` points to the paired-smoke-approved exact version while
-   `beta` and `latest` are unchanged. Automated promotion remains blocked until
-   a reusable Hosted smoke and npm credential contract exists.
+   Safe rollout order: smoke-only Hosted workflow PR -> organization Actions
+   access -> merge this CLI PR and publish `.50` -> controlled short
+   maintenance window. During that window, pause agent-v2 creation and all
+   Hosted runtime-state writers/reconciliation, deploy Cloud #387, immediately
+   deploy Hosted #780, then force or reconcile affected prelaunch pods so they
+   receive the final bootstrap environment. Verify runtime-state writes,
+   hosted manifest fetch, and runtime services before resuming creation and
+   writers. Brief runtime unavailability is possible and expected: pre-#780
+   pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so pods that self-update to `.50`
+   after Cloud #387 starts serving `agent-v2` can fail closed. This is not a
+   rolling cross-service deployment. Cloud #387 removes or rejects admin
+   `clawdi_cli` while pre-#780 Hosted still sends it; do not add a temporary
+   accepted-but-ignored compatibility field.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has

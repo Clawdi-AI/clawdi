@@ -8,7 +8,6 @@ import {
 } from "./auth-token";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
-	DEFAULT_CLAWDI_CLI_POLICY,
 	type HostedRuntimeManifest,
 	hostedRuntimeManifestResponseSchema,
 	manifestSchema,
@@ -567,13 +566,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		controlPlane: {
 			apiUrl: hostedControlPlaneApiUrl(hosted),
 		},
-		clawdiCli: hosted.clawdiCli
-			? {
-					...DEFAULT_CLAWDI_CLI_POLICY,
-					...hosted.clawdiCli,
-					source: hosted.clawdiCli.source ?? DEFAULT_CLAWDI_CLI_POLICY.source,
-				}
-			: { ...DEFAULT_CLAWDI_CLI_POLICY },
+		clawdiCli: { ...hosted.clawdiCli },
 		egressEngine: hosted.egressEngine,
 		runtimes: {
 			[selectedRuntime]: {
