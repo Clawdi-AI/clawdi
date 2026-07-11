@@ -32,10 +32,16 @@ validates both selectors and fails closed before datasource access. A hosted
 runtime does not read `host-policy.json` or `runtime-source.json`.
 
 API route versions and agent deployment generations are separate dimensions.
-Agent deployment v2 uses the canonical `/v1/runtime/manifest` route, including
-historical backend `app/v1` rows with `profile=hosted-runtime`. Actual agent
-deployment v1 keeps the legacy `/api/runtime/manifest` alias and does not
-receive the agent-v2 minimum-CLI protocol gate.
+`/v1/runtime/manifest` is the canonical manifest resource and
+`/api/runtime/manifest` is only a hidden compatibility alias for that same
+resource, so both paths carry identical protocol metadata. Agent deployment v2
+uses the canonical route with the capability image, exact CLI bootstrap, and
+CLI-owned convergence. Historical backend `app/v1` rows with
+`profile=hosted-runtime` may select the v2 image, but those row names do not
+describe the actual deployment generation. Actual agent deployment v1 is the
+unified baked image started by its entrypoint and supervisord, including
+`clawdi daemon run`; it does not run `clawdi runtime init` and is not driven by
+the runtime manifest.
 
 For transparent egress:
 

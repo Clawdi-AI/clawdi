@@ -116,9 +116,8 @@ async def get_runtime_manifest(
         "providers": providers,
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
+        "minimumCliVersion": _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     }
-    if request.scope["path"] == "/v1/runtime/manifest":
-        manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
     if state.bridge:
         manifest["bridge"] = state.bridge
     if state.app_id:

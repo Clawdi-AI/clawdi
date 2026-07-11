@@ -144,7 +144,10 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     app.dependency_overrides.clear()
 
     assert legacy_response.status_code == 200, legacy_response.text
-    assert "minimumCliVersion" not in legacy_response.json()["manifest"]
+    assert legacy_response.json() == payload
+    assert legacy_response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.48"
+    assert legacy_response.headers["etag"] == etag
+    assert legacy_response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio
