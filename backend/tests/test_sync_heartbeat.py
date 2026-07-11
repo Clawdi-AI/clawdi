@@ -30,6 +30,8 @@ from app.main import app
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 
+_TEST_LOCALE = {"language": "en", "timezone": "UTC"}
+
 
 async def _create_env(client: httpx.AsyncClient) -> str:
     """Register an env via the public route — fixture-style helper.
@@ -398,6 +400,7 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
         deployment_id="dep-observed",
         instance_id="iid-observed",
         generation=1,
+        locale=_TEST_LOCALE,
         runtimes={"openclaw": {"enabled": True}},
     )
     db_session.add(state)
@@ -431,6 +434,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         instance_id="iid-observed-api",
         generation=4,
         provider_id="clawdi-managed",
+        locale=_TEST_LOCALE,
         runtimes={
             "openclaw": {"enabled": True},
             "hermes": {"enabled": False},
@@ -486,6 +490,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
         instance_id="iid-observed-dedupe",
         generation=4,
         provider_id="clawdi-managed",
+        locale=_TEST_LOCALE,
         runtimes={"openclaw": {"enabled": True}},
     )
     db_session.add(state)
@@ -530,6 +535,7 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
         deployment_id="dep-supervisor-error",
         instance_id="iid-supervisor-error",
         generation=5,
+        locale=_TEST_LOCALE,
         runtimes={"openclaw": {"enabled": True}},
     )
     db_session.add(state)
@@ -577,6 +583,7 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         instance_id="iid-provider-error",
         generation=6,
         provider_id="clawdi-managed",
+        locale=_TEST_LOCALE,
         runtimes={"openclaw": {"enabled": True}},
     )
     db_session.add(state)
@@ -668,6 +675,7 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 deployment_id="dep-summary-ok",
                 instance_id="iid-summary-ok",
                 generation=1,
+                locale=_TEST_LOCALE,
                 runtimes={"openclaw": {"enabled": True}},
             ),
             HostedRuntimeState(
@@ -676,6 +684,7 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 instance_id="iid-summary-error",
                 generation=1,
                 provider_id="clawdi-managed",
+                locale=_TEST_LOCALE,
                 runtimes={"openclaw": {"enabled": True}},
             ),
         ]

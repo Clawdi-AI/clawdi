@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.hosted_runtime import HostedRuntimeState
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
+_TEST_LOCALE = {"language": "en", "timezone": "UTC"}
 
 
 def _agent_body(machine_id: str) -> dict[str, str]:
@@ -92,6 +93,7 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
             instance_id="iid-agent-alias",
             generation=3,
             provider_id="clawdi-managed",
+            locale=_TEST_LOCALE,
             runtimes={"codex": {"enabled": True}},
         )
     )

@@ -243,6 +243,7 @@ async def _create_hosted_runtime_graph(
                 instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
                 generation=3,
                 provider_id=DEV_V2_PROVIDER_ID,
+                locale={"language": "en", "timezone": "UTC"},
                 system={"status": "running", "seed": "dashboard-dev"},
                 control_plane={
                     "cloudApiUrl": settings.public_api_url,

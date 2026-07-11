@@ -250,6 +250,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             deployment_id="hdep_test",
             instance_id="instance-test",
             generation=1,
+            locale={"language": "en", "timezone": "UTC"},
             runtimes={"openclaw": {"enabled": True}},
         )
     )
