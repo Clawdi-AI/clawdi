@@ -423,32 +423,28 @@ async def test_admin_runtime_state_rejects_personality_desired_state(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "stored_locale",
-    [
-        None,
-        {"language": "en", "timezone": "UTC", "personality": "helpful"},
-    ],
-)
 async def test_runtime_manifest_rejects_invalid_stored_locale(
     db_session,
     seed_user,
-    stored_locale,
 ):
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
-        machine_id=f"runtime-null-locale-{uuid4().hex[:8]}",
-        machine_name="Runtime null locale",
+        machine_id=f"runtime-invalid-locale-{uuid4().hex[:8]}",
+        machine_name="Runtime invalid locale",
         agent_type="openclaw",
     )
     db_session.add(
         HostedRuntimeState(
             environment_id=env.id,
-            deployment_id="dep-null-locale",
-            instance_id="hri-null-locale",
+            deployment_id="dep-invalid-locale",
+            instance_id="hri-invalid-locale",
             generation=1,
-            locale=stored_locale,
+            locale={
+                "language": "en",
+                "timezone": "UTC",
+                "personality": "helpful",
+            },
             runtimes={"openclaw": {"enabled": True}},
         )
     )

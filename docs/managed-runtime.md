@@ -302,11 +302,11 @@ is the independent protocol floor, currently `0.12.10-beta.51` for this
 contract.
 
 `locale` contains exactly `language` and `timezone`; personality is not part of
-Cloud desired state. Revision `d8f2a1c4b6e9` adds the first-class
-`hosted_runtime_states.locale` column as nullable expansion state without a
-default or data backfill and removes the obsolete `clawdi_cli` column. Admin
-runtime-state writes require locale immediately, and manifest reads fail closed
-when a row is NULL.
+Cloud desired state. Revision `d8f2a1c4b6e9` adds the required
+`hosted_runtime_states.locale` column without a default or data backfill and
+removes the obsolete `clawdi_cli` column. Existing experiment rows must be
+removed before rollout; the database never admits a partial runtime-state row
+without locale.
 
 ## Commands
 

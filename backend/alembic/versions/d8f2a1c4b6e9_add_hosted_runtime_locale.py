@@ -24,7 +24,7 @@ def upgrade() -> None:
         sa.Column(
             "locale",
             postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
+            nullable=False,
         ),
     )
     op.drop_column("hosted_runtime_states", "clawdi_cli")

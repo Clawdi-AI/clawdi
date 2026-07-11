@@ -51,10 +51,11 @@ Every agent-v2 hosted manifest has a strict top-level `locale` object with
 exactly `language` and `timezone`. `language` must be one of the product's
 supported language codes, and `timezone` must be a valid IANA timezone.
 Personality is not Cloud runtime desired state and is rejected by the admin
-writer. Revision `d8f2a1c4b6e9` adds a nullable JSONB column with no default or
-backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` column. New
-admin writes require a valid locale, while manifest reads fail closed for NULL
-rows.
+writer. Revision `d8f2a1c4b6e9` adds a required JSONB column with no default or
+backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` column. The
+migration deliberately fails if obsolete experiment rows still exist; operators
+must remove those rows before rollout instead of preserving a nullable protocol
+state.
 
 `GET /v1/sync/events` carries a signal-only
 `runtime_manifest_changed` event containing the environment id, never desired

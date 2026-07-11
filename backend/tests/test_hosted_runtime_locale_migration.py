@@ -35,12 +35,11 @@ def test_hosted_runtime_locale_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "c4e8f1a2b3d5"
 
 
-def test_hosted_runtime_locale_migration_contracts_cli_and_adds_nullable_locale(
+def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
     schema = f"hosted_runtime_locale_migration_{uuid.uuid4().hex}"
-    environment_id = uuid.uuid4()
 
     def run_migration(sync_conn: sa.Connection) -> None:
         old_op = migration.op
@@ -57,16 +56,6 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_nullable_locale(
                     """
                 )
             )
-            sync_conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO hosted_runtime_states (environment_id, clawdi_cli)
-                    VALUES (CAST(:environment_id AS uuid), '{"packageSpec": "clawdi@old"}')
-                    """
-                ),
-                {"environment_id": str(environment_id)},
-            )
-
             migration.op = Operations(MigrationContext.configure(sync_conn))
             migration.upgrade()
 
@@ -82,21 +71,9 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_nullable_locale(
                 ),
                 {"schema": schema},
             ).one()
-            assert column.is_nullable == "YES"
+            assert column.is_nullable == "NO"
             assert column.column_default is None
             assert column.data_type == "jsonb"
-
-            locale = sync_conn.execute(
-                sa.text(
-                    """
-                    SELECT locale
-                    FROM hosted_runtime_states
-                    WHERE environment_id = CAST(:environment_id AS uuid)
-                    """
-                ),
-                {"environment_id": str(environment_id)},
-            ).scalar_one()
-            assert locale is None
 
             removed_cli_column = sync_conn.execute(
                 sa.text(
