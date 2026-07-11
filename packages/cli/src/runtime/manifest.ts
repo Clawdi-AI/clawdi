@@ -3394,6 +3394,13 @@ function ensureRuntimeUserManagerReady(runtimeUser: string): void {
 	}
 }
 
+// Only official service installers may invoke systemctl --user. Config,
+// projection, plugin, and installer commands need privilege drop but not a manager.
+function ensureConfiguredRuntimeUserManagerReady(): void {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (runtimeUser) ensureRuntimeUserManagerReady(runtimeUser);
+}
+
 function spawnRuntimeUserCommand(
 	command: string,
 	args: string[],
@@ -3404,7 +3411,6 @@ function spawnRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			return spawnSync("gosu", [runtimeUser, command, ...args], {
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
@@ -3437,7 +3443,6 @@ function runRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			execFileSync("gosu", [runtimeUser, command, ...args], {
 				input: stdin,
@@ -4452,6 +4457,7 @@ function installOfficialRuntimeUserService(
 		return `official ${runtimeSystemdProgramName(program)} service installer command is unavailable: ${program.command}`;
 	}
 	try {
+		ensureConfiguredRuntimeUserManagerReady();
 		runRuntimeUserCommand(program.command, args, "", paths.userHome, program.cwd);
 		return null;
 	} catch (error) {
@@ -4473,6 +4479,7 @@ function uninstallOfficialRuntimeUserService(input: {
 		return `official ${input.unitName} uninstaller command is unavailable: ${command}`;
 	}
 	try {
+		ensureConfiguredRuntimeUserManagerReady();
 		runRuntimeUserCommand(
 			command,
 			descriptor.uninstallArgs,

@@ -26,6 +26,11 @@ Package: `clawdi@0.12.10-beta.51`
   SSE notifications while retaining 15-second ETag polling and five-minute
   self-healing when the notification channel is unavailable.
 
+### Fixed
+
+- Kept headless runtime convergence independent of a systemd user manager while
+  still requiring the manager for official runtime service installation.
+
 ## Clawdi CLI v0.12.10-beta.50
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.50
