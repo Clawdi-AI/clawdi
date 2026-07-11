@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "d8f2a1c4b6e9"
-HEAD_REVISION = "a26c40c6965e"
-HEAD_DOWN_REVISION = REVISION
+HEAD_REVISION = "f3a1c7d9e2b4"
+HEAD_DOWN_REVISION = "a26c40c6965e"
 MIGRATION_FILENAME = f"{REVISION}_finalize_agent_v2_runtime_contract.py"
 
 

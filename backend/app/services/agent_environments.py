@@ -56,6 +56,7 @@ async def register_agent_environment(
     sort_order: int,
     environment_id: UUID | None = None,
     registration_key: str | None = None,
+    commit: bool = True,
 ) -> AgentEnvironmentRegistration:
     """Create or refresh an agent row.
 
@@ -74,15 +75,14 @@ async def register_agent_environment(
         existing = (
             await db.execute(
                 select(AgentEnvironment)
-                .where(AgentEnvironment.id == environment_id)
+                .where(
+                    AgentEnvironment.id == environment_id,
+                    AgentEnvironment.user_id == user_id,
+                )
                 .with_for_update()
             )
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.user_id != user_id:
-                raise AgentEnvironmentIdConflict(
-                    f"environment {environment_id} is owned by another user"
-                )
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -94,8 +94,18 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             return AgentEnvironmentRegistration(env=existing, created=False)
+        owner_exists = await db.scalar(
+            select(AgentEnvironment.id).where(AgentEnvironment.id == environment_id)
+        )
+        if owner_exists is not None:
+            raise AgentEnvironmentIdConflict(
+                f"environment {environment_id} is owned by another user"
+            )
     elif registration_key is not None:
         existing = (
             await db.execute(
@@ -119,7 +129,10 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             return AgentEnvironmentRegistration(env=existing, created=False)
 
     assigned_default_name = None
@@ -153,7 +166,10 @@ async def register_agent_environment(
         db.add(env)
         await db.flush()
         project.origin_environment_id = env.id
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(env)
         return AgentEnvironmentRegistration(env=env, created=True)
     except IntegrityError:
@@ -161,17 +177,23 @@ async def register_agent_environment(
         if environment_id is not None:
             winner = (
                 await db.execute(
-                    select(AgentEnvironment).where(AgentEnvironment.id == environment_id)
+                    select(AgentEnvironment).where(
+                        AgentEnvironment.id == environment_id,
+                        AgentEnvironment.user_id == user_id,
+                    )
                 )
             ).scalar_one_or_none()
             if winner is None:
+                owner_exists = await db.scalar(
+                    select(AgentEnvironment.id).where(AgentEnvironment.id == environment_id)
+                )
+                if owner_exists is not None:
+                    raise AgentEnvironmentIdConflict(
+                        f"environment {environment_id} is owned by another user"
+                    ) from None
                 raise AgentEnvironmentIdConflict(
                     f"environment {environment_id} could not be registered"
                 ) from None
-            if winner.user_id != user_id:
-                raise AgentEnvironmentIdConflict(
-                    f"environment {environment_id} is owned by another user"
-                )
             await _refresh_agent_environment(
                 db,
                 winner,
@@ -183,7 +205,10 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             return AgentEnvironmentRegistration(env=winner, created=False)
         if registration_key is None:
             raise

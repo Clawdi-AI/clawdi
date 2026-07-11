@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401 - register models
     device_authorization,
     hosted_runtime,
     memory,
+    platform_idempotency,
     project,
     project_invitation,
     project_membership,

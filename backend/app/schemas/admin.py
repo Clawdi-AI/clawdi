@@ -34,6 +34,7 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_bridge,
+    validate_no_plaintext_tool_secrets,
 )
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
@@ -179,7 +180,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     @classmethod
     def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None:
-            _reject_plaintext_tool_secret(value)
+            validate_no_plaintext_tool_secrets(value)
         return value
 
 
@@ -314,33 +315,3 @@ def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str]
             raise ValueError("secret values cannot be blank")
         cleaned[name] = secret
     return cleaned
-
-
-_FORBIDDEN_TOOL_SECRET_KEYS = {
-    "apikey",
-    "api_key",
-    "authorization",
-    "bearer",
-    "header",
-    "headers",
-    "password",
-    "secret",
-    "secrets",
-    "secretvalues",
-    "token",
-}
-
-
-def _reject_plaintext_tool_secret(value: Any, path: str = "") -> None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            normalized = str(key).replace("-", "_").lower()
-            if normalized in _FORBIDDEN_TOOL_SECRET_KEYS:
-                location = f" at {path}.{key}" if path else f" at {key}"
-                raise ValueError(
-                    f"mcp/tools desired state must not contain plaintext secrets{location}"
-                )
-            _reject_plaintext_tool_secret(child, f"{path}.{key}" if path else str(key))
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            _reject_plaintext_tool_secret(child, f"{path}[{index}]")
