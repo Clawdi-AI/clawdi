@@ -316,7 +316,7 @@ function isFloatingNpmPackageSpec(packageSpec: string): boolean {
 	const match = /^clawdi@(.+)$/.exec(packageSpec);
 	if (!match) return false;
 	const specifier = match[1] ?? "";
-	if (!/^(alpha|beta|canary|next|rc)$/.test(specifier)) return false;
+	if (!/^(agent-v2|alpha|beta|canary|next|rc)$/.test(specifier)) return false;
 	return !isExactNpmPackageVersion(specifier);
 }
 
