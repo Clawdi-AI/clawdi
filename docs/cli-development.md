@@ -239,27 +239,19 @@ separate dist-tag promotion.
 The reusable workflow is private at
 `Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main`.
 Before this release workflow can run, the focused smoke-only Hosted PR that
-adds this reusable workflow must be merged to Hosted `main`, and the Hosted
-repository Actions access must be changed from `none` to `organization` so
-organization repositories can call it. Do not use Hosted #780 as the workflow
-prerequisite: its runtime behavior must deploy only after Cloud #387 owns the
-hosted manifest channel. Do not bypass the repository-level workflow contract
-with a PAT, GitHub App token, or a copied smoke implementation.
+adds the reusable workflow must be merged to Hosted `main`, and the Hosted
+repository Actions access must be `organization` so organization repositories
+can call it. The final capability-envelope change must then be on Hosted
+`main` before this CLI release runs, because the reusable workflow checks out
+its own exact Hosted source. Do not bypass that cross-repository gate with a
+PAT, GitHub App token, or copied smoke implementation.
 
-Safe rollout order: merge the smoke-only Hosted workflow PR, enable
-organization Actions access, then merge this CLI release and publish `.51`.
-Cloud #387 and Hosted #780 require a controlled short maintenance window, not
-a rolling cross-service deploy: pause agent-v2 creation and every Hosted
-runtime-state writer/reconciliation path, deploy Cloud #387, immediately deploy
-Hosted #780, verify runtime-state writes and hosted manifests, then resume.
-Brief runtime unavailability is possible and expected during the window:
-pre-#780 pods do not have `CLAWDI_RUNTIME_AUTH_ENV`, so a pod that self-updates
-to `.51` after Cloud #387 starts serving `agent-v2` can fail closed. After
-deploying Hosted #780, force or reconcile affected prelaunch pods so they
-receive the final bootstrap environment, then verify manifest fetch and runtime
-services before resuming creation and writers. Do not add a temporary
-accepted-but-ignored `clawdi_cli` field; Cloud #387 intentionally removes or
-rejects it while pre-#780 Hosted still sends it.
+Agent deployment v2 is not live, so there is no rolling compatibility window.
+Keep v2 creation and runtime-state reconciliation disabled until the smoke-only
+workflow, final Hosted capability envelope, this `.51` release, and the Cloud
+manifest contract are all landed and deployed. Then verify a fresh deployment's
+runtime-state write, canonical `/v1/runtime/manifest` fetch, SSE invalidation,
+and runtime services before enabling v2. Do not add legacy fields or aliases.
 
 The monorepo has two GitHub Release lines:
 
