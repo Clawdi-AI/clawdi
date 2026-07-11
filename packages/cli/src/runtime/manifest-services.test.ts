@@ -27,6 +27,7 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 	process.env.CLAWDI_HOME = join(root, "clawdi-home");
 	process.env.CLAWDI_AUTH_TOKEN = "test-token";
+	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	return getRuntimePaths({ mode: "hosted" });
 }
 

@@ -58,7 +58,10 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_RUNTIME_MODE      Explicit runtime mode override for hosted tests/operators
-  CLAWDI_AUTH_TOKEN        Clawdi Cloud auth token; the only hosted container credential
+  CLAWDI_RUNTIME_MANIFEST_URL
+                           Hosted runtime manifest datasource URL
+  CLAWDI_RUNTIME_AUTH_ENV  Name of the env var containing the hosted bearer credential
+  CLAWDI_AUTH_TOKEN        Default deployment-selected hosted bearer credential
   CLAWDI_RUNTIME_BRIDGE_TOKEN
                            Hosted runtime bridge token for authenticated surfaces
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)

@@ -23,6 +23,14 @@ The runtime image supplies stable operating-system capabilities. The Clawdi CLI
 owns runtime-local module paths, generated configuration, permissions,
 privilege dropping, and lifecycle behavior.
 
+Hosted mode is an explicit CLI contract selected by
+`CLAWDI_RUNTIME_MODE=hosted`; it is not inferred from image files. The hosted
+command policy is built into the CLI. Deployment must provide
+`CLAWDI_RUNTIME_MANIFEST_URL` and `CLAWDI_RUNTIME_AUTH_ENV`, whose value names
+the environment variable containing the manifest bearer credential. The CLI
+validates both selectors and fails closed before datasource access. A hosted
+runtime does not read `host-policy.json` or `runtime-source.json`.
+
 For transparent egress:
 
 - `clawdi runtime sidecar` remains the only public support command;
@@ -68,9 +76,9 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
 - UID/GID `0`, malformed values, and unavailable privilege-drop tools prevent
   egress startup instead of silently running mitmproxy as root.
 - Hosted image changes that add runtime business logic violate this decision.
-- Coordinated rollout order is: merge and publish CLI `0.12.10-beta.47` first;
+- Coordinated rollout order is: merge and publish CLI `0.12.10-beta.48` first;
   merge the Hosted generic-envelope PR after Hosted main compatibility smoke
-  uses beta.47; release and promote the generic image; then recreate prelaunch
+  uses beta.48; release and promote the generic image; then recreate prelaunch
   development and canary instances. No old-state repair is required.
 
 ## Related Documentation

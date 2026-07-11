@@ -12,7 +12,8 @@ interface Capabilities {
 	commands: string[];
 	restrictedByHostedPolicy: Array<{ command: string; reason?: string }>;
 	hostPolicy: {
-		path: string;
+		source: "builtin" | "file";
+		path?: string;
 		exists: boolean;
 		valid: boolean;
 		error?: string;
@@ -68,7 +69,8 @@ function buildCapabilities(): Capabilities {
 		commands: COMMANDS,
 		restrictedByHostedPolicy: normalizeDeniedCommands(hostPolicy.policy),
 		hostPolicy: {
-			path: hostPolicy.path,
+			source: hostPolicy.source,
+			...(hostPolicy.path ? { path: hostPolicy.path } : {}),
 			exists: hostPolicy.exists,
 			valid: hostPolicy.valid,
 			error: hostPolicy.error,

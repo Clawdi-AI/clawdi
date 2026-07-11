@@ -60,6 +60,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUN_DIR",
 	"CLAWDI_RUNTIME_HOME",
 	"CLAWDI_AUTH_TOKEN",
+	"CLAWDI_RUNTIME_AUTH_ENV",
 	"CLAWDI_RUNTIME_MANIFEST_PATH",
 	"CLAWDI_RUNTIME_MANIFEST_URL",
 	"CLAWDI_RUNTIME_SOURCE_PATH",
@@ -105,6 +106,7 @@ beforeEach(() => {
 	root = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(root, { recursive: true });
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 });
 
 afterEach(() => {
@@ -747,47 +749,31 @@ describe("runtime run config", () => {
 });
 
 describe("host policy", () => {
-	it("parses denied commands from strings and objects", () => {
-		const path = join(root, "host-policy.json");
+	it("uses the first-class built-in hosted contract", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_HOST_POLICY_PATH = path;
-		writeFileSync(
-			path,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				deniedCommands: ["setup", { command: "config set", reason: "managed config" }],
-				managedState: ["/var/lib/clawdi/config"],
-				systemWritableState: ["/var/lib/clawdi", "/run/clawdi"],
-				userWritableState: ["/home/clawdi", "/tmp"],
-				ordinaryUserDeniedState: ["/var/lib/clawdi"],
-			}),
-		);
-
-		const result = readHostPolicy(path);
+		const result = readHostPolicy();
 		expect(result.valid).toBe(true);
+		expect(result.source).toBe("builtin");
+		expect(result.path).toBeUndefined();
 		expect(result.policy?.systemWritableState).toEqual(["/var/lib/clawdi", "/run/clawdi"]);
 		expect(result.policy?.userWritableState).toEqual(["/home/clawdi", "/tmp"]);
 		expect(result.policy?.ordinaryUserDeniedState).toEqual(["/var/lib/clawdi"]);
-		expect(deniedCommandReason(result.policy, "setup")).toBe("disabled by hosted runtime policy");
-		expect(deniedCommandReason(result.policy, "config set apiUrl http://x")).toBe("managed config");
+		expect(deniedCommandReason(result.policy, "setup")).toBe(
+			"runtime setup is managed by clawdi runtime init",
+		);
+		expect(deniedCommandReason(result.policy, "update")).toBe(
+			"CLI updates are managed by the hosted runtime installation",
+		);
 		expect(deniedCommandReason(result.policy, "mcp")).toBe(null);
-		expect(evaluateHostPolicyForCommand("config set apiUrl http://x")).toEqual({
-			allowed: false,
-			command: "config set apiUrl http://x",
-			runtimeMode: "hosted",
-			policyPath: path,
-			reason: "managed config",
-		});
 		expect(evaluateHostPolicyForCommand("mcp")).toEqual({
 			allowed: true,
 			command: "mcp",
 			runtimeMode: "hosted",
-			policyPath: path,
+			policySource: "builtin",
 		});
 	});
 
-	it("fails closed for malformed policy JSON", () => {
+	it("ignores image policy files in hosted mode", () => {
 		const path = join(root, "host-policy.json");
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_HOST_POLICY_PATH = path;
@@ -795,22 +781,16 @@ describe("host policy", () => {
 
 		const result = readHostPolicy(path);
 		expect(result.exists).toBe(true);
-		expect(result.valid).toBe(false);
-		expect(result.error).toBeTruthy();
-		expect(evaluateHostPolicyForCommand("config set apiUrl http://x").allowed).toBe(false);
-		expect(evaluateHostPolicyForCommand("runtime doctor").allowed).toBe(true);
+		expect(result.valid).toBe(true);
+		expect(result.source).toBe("builtin");
+		expect(result.path).toBeUndefined();
 	});
 
-	it("fails closed for missing policy except recovery commands", () => {
-		const path = join(root, "missing-host-policy.json");
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	it("does not infer hosted mode from a policy file", () => {
+		const path = join(root, "host-policy.json");
 		process.env.CLAWDI_HOST_POLICY_PATH = path;
-
-		const denied = evaluateHostPolicyForCommand("auth login");
-		expect(denied.allowed).toBe(false);
-		expect(denied.reason).toContain("missing hosted runtime policy");
-		expect(evaluateHostPolicyForCommand("config paths").allowed).toBe(true);
-		expect(evaluateHostPolicyForCommand("runtime status").allowed).toBe(true);
+		writeFileSync(path, "{}");
+		expect(detectRuntimeMode()).toBe("local");
 	});
 });
 
@@ -822,6 +802,7 @@ describe("runtime manifest datasource", () => {
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		delete process.env.CLAWDI_RUNTIME_MANIFEST_URL;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
@@ -831,7 +812,7 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.mode).toBe("repair");
 		expect(loaded.stage).toBe("network");
 		expect(loaded.errors[0]).toContain("could not fetch runtime manifest");
-		expect(loaded.errors[0]).toContain("runtime source config does not exist");
+		expect(loaded.errors[0]).toContain("missing CLAWDI_RUNTIME_MANIFEST_URL");
 	});
 
 	it("loads last-good offline boot when cached secret values satisfy refs", async () => {
@@ -935,7 +916,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/manifest";
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -1087,7 +1068,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER = hermesInstaller;
 		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH = pid1EnvPath;
@@ -3019,7 +3000,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "bootstrap-token";
 		process.env.CUSTOM_RUNTIME_TOKEN = "stale-token";
 		writeFileSync(join(run, "secrets", "auth-token"), "stale-file-token\n");
@@ -3076,7 +3057,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = wrongSourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-file-token";
 		writeFileSync(
 			wrongSourcePath,
@@ -3189,7 +3170,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
@@ -3240,7 +3221,8 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL =
+			"https://runtime.test/prefix/v1/runtime/manifest?environment_id=env_runtime";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -3749,7 +3731,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
@@ -3885,7 +3867,7 @@ exit 42
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.exitCode = undefined;
@@ -4073,7 +4055,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -4207,7 +4189,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -4301,7 +4283,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		writeFileSync(join(run, "secrets", "auth-token"), "revoked-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -4807,7 +4789,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -4973,7 +4955,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.exitCode = undefined;
@@ -5331,7 +5313,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 		process.exitCode = undefined;
@@ -5483,7 +5465,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 		process.exitCode = undefined;
@@ -5620,7 +5602,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -5753,7 +5735,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -6244,7 +6226,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH = sourcePath;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
 		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {

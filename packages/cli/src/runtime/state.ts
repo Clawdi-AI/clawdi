@@ -55,7 +55,8 @@ export interface RuntimeBootStatus {
 	exitCode: number;
 	datasource: "RuntimeSource";
 	hostPolicy: {
-		path: string;
+		source: "builtin" | "file";
+		path?: string;
 		exists: boolean;
 		valid: boolean;
 		mode?: string;
@@ -159,7 +160,8 @@ export function buildRuntimeBootStatus(
 
 export function hostPolicySummary(policy: HostPolicyReadResult): RuntimeBootStatus["hostPolicy"] {
 	return {
-		path: policy.path,
+		source: policy.source,
+		...(policy.path ? { path: policy.path } : {}),
 		exists: policy.exists,
 		valid: policy.valid,
 		mode: policy.policy?.mode,
