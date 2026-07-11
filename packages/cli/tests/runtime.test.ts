@@ -920,14 +920,15 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors[0]).toContain("missing CLAWDI_RUNTIME_MANIFEST_URL");
 	});
 
-	it("rejects noncanonical hosted manifest paths", async () => {
+	it("rejects the /api hosted manifest path even when it has a normal query", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://cloud-api.example.test/api/runtime/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL =
+			"https://cloud-api.example.test/api/runtime/manifest?environment_id=env_runtime";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
