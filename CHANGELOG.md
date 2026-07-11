@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.48
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.48
+
+Package: `clawdi@0.12.10-beta.48`
+
+### Changed
+
+- Made hosted policy and runtime datasource validation CLI-owned contracts, so
+  runtime images no longer carry command policy, control-plane URLs, or CLI
+  release-channel metadata.
+
 ## Clawdi CLI v0.12.10-beta.47
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.47

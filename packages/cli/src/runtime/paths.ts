@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getClawdiDir } from "../lib/config";
@@ -98,9 +97,8 @@ export function getRuntimeSourcePath(): string {
 
 export function detectRuntimeMode(): RuntimeMode {
 	const explicit = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
-	if (explicit === "hosted" || explicit === "hosted-runtime") return "hosted";
+	if (explicit === "hosted") return "hosted";
 	if (explicit === "local") return "local";
-	if (existsSync(getHostPolicyPath())) return "hosted";
 	return "local";
 }
 

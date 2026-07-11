@@ -4523,9 +4523,6 @@ function writeSystemdUnits(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(manifest, sourcePath),
-		CLAWDI_RUNTIME_SOURCE_PATH:
-			process.env.CLAWDI_RUNTIME_SOURCE_PATH?.trim() || paths.runtimeSource,
-		CLAWDI_HOST_POLICY_PATH: paths.hostPolicy,
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		[RUNTIME_BRIDGE_SURFACES_ENV]: "",

@@ -20,7 +20,8 @@ export interface HostPolicy {
 }
 
 export interface HostPolicyReadResult {
-	path: string;
+	source: "builtin" | "file";
+	path?: string;
 	exists: boolean;
 	valid: boolean;
 	policy?: HostPolicy;
@@ -31,18 +32,25 @@ export interface HostPolicyCommandDecision {
 	allowed: boolean;
 	command: string;
 	runtimeMode: RuntimeMode;
-	policyPath?: string;
+	policySource?: "builtin";
 	reason?: string;
 }
 
-const POLICY_RECOVERY_COMMANDS = [
-	"runtime",
-	"capabilities",
-	"auth status",
-	"config paths",
-	"status",
-	"doctor",
-] as const;
+const HOSTED_POLICY: HostPolicy = {
+	schemaVersion: "clawdi.hostPolicy.v1",
+	mode: "hosted",
+	cliUpdateMode: "system-managed-npm",
+	immutableShim: true,
+	deniedCommands: [
+		{ command: "setup", reason: "runtime setup is managed by clawdi runtime init" },
+		{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
+		{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
+	],
+	managedState: ["/var/lib/clawdi/config", "/var/lib/clawdi/sync", "/run/clawdi"],
+	systemWritableState: ["/var/lib/clawdi", "/run/clawdi"],
+	userWritableState: ["/home/clawdi", "/tmp"],
+	ordinaryUserDeniedState: ["/var/lib/clawdi"],
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -66,7 +74,10 @@ function parseDeniedCommands(value: unknown): Array<string | DeniedCommand> | un
 }
 
 export function readHostPolicy(path = getRuntimePaths().hostPolicy): HostPolicyReadResult {
-	if (!existsSync(path)) return { path, exists: false, valid: false };
+	if (detectRuntimeMode() === "hosted") {
+		return { source: "builtin", exists: true, valid: true, policy: HOSTED_POLICY };
+	}
+	if (!existsSync(path)) return { source: "file", path, exists: false, valid: false };
 
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
@@ -104,9 +115,10 @@ export function readHostPolicy(path = getRuntimePaths().hostPolicy): HostPolicyR
 			policy.ordinaryUserDeniedState = parsed.ordinaryUserDeniedState;
 		}
 
-		return { path, exists: true, valid: true, policy };
+		return { source: "file", path, exists: true, valid: true, policy };
 	} catch (e) {
 		return {
+			source: "file",
 			path,
 			exists: true,
 			valid: false,
@@ -136,56 +148,26 @@ export function deniedCommandReason(
 	return null;
 }
 
-function commandMatches(command: string, prefix: string): boolean {
-	return command === prefix || command.startsWith(`${prefix} `);
-}
-
-function isPolicyRecoveryCommand(command: string): boolean {
-	return POLICY_RECOVERY_COMMANDS.some((allowed) => commandMatches(command, allowed));
-}
-
 export function evaluateHostPolicyForCommand(command: string): HostPolicyCommandDecision {
 	const normalized = command.trim().replace(/\s+/g, " ");
 	const runtimeMode = detectRuntimeMode();
 	if (runtimeMode !== "hosted") return { allowed: true, command: normalized, runtimeMode };
 
-	const policy = readHostPolicy();
-	if (!policy.exists) {
-		if (isPolicyRecoveryCommand(normalized)) {
-			return { allowed: true, command: normalized, runtimeMode, policyPath: policy.path };
-		}
-		return {
-			allowed: false,
-			command: normalized,
-			runtimeMode,
-			policyPath: policy.path,
-			reason: `missing hosted runtime policy at ${policy.path}`,
-		};
-	}
-
-	if (!policy.valid) {
-		if (isPolicyRecoveryCommand(normalized)) {
-			return { allowed: true, command: normalized, runtimeMode, policyPath: policy.path };
-		}
-		return {
-			allowed: false,
-			command: normalized,
-			runtimeMode,
-			policyPath: policy.path,
-			reason: `invalid hosted runtime policy at ${policy.path}: ${policy.error ?? "parse failed"}`,
-		};
-	}
-
-	const reason = deniedCommandReason(policy.policy, normalized);
+	const reason = deniedCommandReason(HOSTED_POLICY, normalized);
 	if (reason) {
 		return {
 			allowed: false,
 			command: normalized,
 			runtimeMode,
-			policyPath: policy.path,
+			policySource: "builtin",
 			reason,
 		};
 	}
 
-	return { allowed: true, command: normalized, runtimeMode, policyPath: policy.path };
+	return {
+		allowed: true,
+		command: normalized,
+		runtimeMode,
+		policySource: "builtin",
+	};
 }

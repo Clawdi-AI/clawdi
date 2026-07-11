@@ -20,6 +20,7 @@ async function runCli(
 		...process.env,
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
+		CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
 	};
 	for (const [key, value] of Object.entries(envOverrides)) {
 		if (value === undefined) delete env[key];
@@ -861,7 +862,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		}
 	});
 
-	it("runtime init writes repair status when host policy is missing", async () => {
+	it("runtime init uses built-in policy when image policy is missing", async () => {
 		const { tmpdir } = await import("node:os");
 		const { existsSync, mkdirSync, rmSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-no-policy-${Date.now()}`);
@@ -879,46 +880,38 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
 				CLAWDI_AUTH_TOKEN: "auth-test-token",
 			});
-			expect(code).toBe(20);
+			expect(code).toBe(21);
 			const parsed = JSON.parse(stdout);
 			expect(parsed.mode).toBe("repair");
-			expect(parsed.stage).toBe("detect");
-			expect(parsed.hostPolicy.exists).toBe(false);
-			expect(parsed.errors[0]).toContain("missing hosted runtime policy");
+			expect(parsed.stage).toBe("network");
+			expect(parsed.hostPolicy.exists).toBe(true);
+			expect(parsed.hostPolicy.valid).toBe(true);
+			expect(parsed.hostPolicy.source).toBe("builtin");
+			expect(parsed.hostPolicy.path).toBeUndefined();
+			expect(parsed.errors[0]).toContain("missing CLAWDI_RUNTIME_MANIFEST_URL");
 			expect(existsSync(join(serviceStateRoot, "cache", "boot-status.json"))).toBe(true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("hosted policy denies local-user mutation commands", async () => {
+	it("built-in hosted policy denies CLI self-update", async () => {
 		const { tmpdir } = await import("node:os");
-		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+		const { mkdirSync, rmSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-policy-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
-		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
-		mkdirSync(dirname(policyPath), { recursive: true });
 		mkdirSync(home, { recursive: true });
-		writeFileSync(
-			policyPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				deniedCommands: [{ command: "config set", reason: "managed config is runtime-owned" }],
-			}),
-		);
 
 		try {
-			const result = await runCli(["config", "set", "apiUrl", "http://example.test"], {
+			const result = await runCli(["update"], {
 				HOME: home,
 				CLAWDI_RUNTIME_MODE: "hosted",
-				CLAWDI_HOST_POLICY_PATH: policyPath,
 				CLAWDI_SERVICE_STATE_DIR: join(root, "var", "lib", "clawdi"),
 				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
 			});
 			expect(result.code).not.toBe(0);
 			expect(result.stderr).toContain("disabled in hosted runtime mode");
-			expect(result.stderr).toContain("managed config is runtime-owned");
+			expect(result.stderr).toContain("managed by the hosted runtime installation");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

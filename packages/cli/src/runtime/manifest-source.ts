@@ -277,11 +277,33 @@ function runtimeCredential(paths: RuntimePaths): string | null {
 function resolveRuntimeSource(paths: RuntimePaths): RuntimeSource {
 	const explicit = process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim();
 	if (explicit) {
+		let url: URL;
+		try {
+			url = new URL(explicit);
+		} catch {
+			throw new Error("invalid CLAWDI_RUNTIME_MANIFEST_URL: expected an absolute URL");
+		}
+		if (url.protocol !== "https:" && url.protocol !== "http:") {
+			throw new Error("invalid CLAWDI_RUNTIME_MANIFEST_URL: protocol must be http or https");
+		}
+		if (url.username || url.password || url.hash) {
+			throw new Error(
+				"invalid CLAWDI_RUNTIME_MANIFEST_URL: credentials and fragments are forbidden",
+			);
+		}
+		if (paths.mode === "hosted" && !url.pathname.endsWith("/v1/runtime/manifest")) {
+			throw new Error(
+				"invalid CLAWDI_RUNTIME_MANIFEST_URL: hosted manifest path must end with /v1/runtime/manifest",
+			);
+		}
 		return {
 			schemaVersion: "clawdi.runtimeSource.v1",
 			type: "http",
 			url: explicit,
 		};
+	}
+	if (paths.mode === "hosted") {
+		throw new Error("missing CLAWDI_RUNTIME_MANIFEST_URL");
 	}
 	return readRuntimeSource(paths);
 }
@@ -361,11 +383,8 @@ function runtimeChannelsUrl(source: RuntimeSource): string {
 	const url = new URL(source.url);
 	const environmentId = url.searchParams.get("environment_id");
 	const path = url.pathname.replace(/\/+$/, "");
-	// Manifest URLs persisted before the /v1 migration still use /api.
-	const manifestSuffix = ["/v1/runtime/manifest", "/api/runtime/manifest"].find((suffix) =>
-		path.endsWith(suffix),
-	);
-	if (manifestSuffix) {
+	const manifestSuffix = "/v1/runtime/manifest";
+	if (path.endsWith(manifestSuffix)) {
 		const prefix = path.slice(0, -manifestSuffix.length);
 		url.pathname = `${prefix}/v1/channels`;
 	} else {
@@ -682,6 +701,9 @@ function hostedControlPlaneApiUrl(hosted: HostedRuntimeManifest): string {
 function runtimeManifestUrlFromEnvOrSource(): string {
 	const explicit = process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim();
 	if (explicit) return explicit;
+	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") {
+		throw new Error("missing CLAWDI_RUNTIME_MANIFEST_URL");
+	}
 	const sourcePath =
 		process.env.CLAWDI_RUNTIME_SOURCE_PATH?.trim() || "/etc/clawdi/runtime-source.json";
 	if (existsSync(sourcePath)) {
