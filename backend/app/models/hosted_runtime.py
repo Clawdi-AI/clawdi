@@ -11,10 +11,6 @@ from app.models.session import AgentEnvironment  # noqa: F401 - register FK targ
 class HostedRuntimeState(Base, TimestampMixin):
     __tablename__ = "hosted_runtime_states"
 
-    # The physical clawdi_cli column remains temporarily for rolling-deploy
-    # compatibility with old pods, but new application code intentionally does
-    # not map it. A post-deploy contract migration will remove it.
-
     environment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("agent_environments.id", ondelete="CASCADE"),

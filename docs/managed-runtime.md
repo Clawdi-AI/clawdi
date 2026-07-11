@@ -300,18 +300,13 @@ CLI persists the selected channel and registry, then ordinary self-updates
 resolve the ongoing authority emitted by Cloud manifests. `minimumCliVersion`
 is the independent protocol floor, currently `0.12.10-beta.51` for this
 contract.
-The obsolete physical `hosted_runtime_states.clawdi_cli` column remains during
-the rolling deployment and is scheduled for a separate post-deploy contract
-migration after no old pods remain.
 
 `locale` contains exactly `language` and `timezone`; personality is not part of
 Cloud desired state. Revision `d8f2a1c4b6e9` adds the first-class
 `hosted_runtime_states.locale` column as nullable expansion state without a
-default or data backfill. Admin runtime-state writes require locale immediately,
-and manifest reads fail closed when an old row is still NULL. Hosted must
-repush/reconcile those rows during the controlled cutover. A later contract
-migration may enforce `NOT NULL` only after a null-count audit confirms the
-fleet has converged.
+default or data backfill and removes the obsolete `clawdi_cli` column. Admin
+runtime-state writes require locale immediately, and manifest reads fail closed
+when a row is NULL.
 
 ## Commands
 

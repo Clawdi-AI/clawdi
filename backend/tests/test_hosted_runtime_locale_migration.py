@@ -35,7 +35,7 @@ def test_hosted_runtime_locale_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "c4e8f1a2b3d5"
 
 
-def test_hosted_runtime_locale_migration_adds_nullable_column_without_backfill(
+def test_hosted_runtime_locale_migration_contracts_cli_and_adds_nullable_locale(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
@@ -51,7 +51,8 @@ def test_hosted_runtime_locale_migration_adds_nullable_column_without_backfill(
                 sa.text(
                     """
                     CREATE TABLE hosted_runtime_states (
-                        environment_id uuid PRIMARY KEY
+                        environment_id uuid PRIMARY KEY,
+                        clawdi_cli jsonb
                     )
                     """
                 )
@@ -59,8 +60,8 @@ def test_hosted_runtime_locale_migration_adds_nullable_column_without_backfill(
             sync_conn.execute(
                 sa.text(
                     """
-                    INSERT INTO hosted_runtime_states (environment_id)
-                    VALUES (CAST(:environment_id AS uuid))
+                    INSERT INTO hosted_runtime_states (environment_id, clawdi_cli)
+                    VALUES (CAST(:environment_id AS uuid), '{"packageSpec": "clawdi@old"}')
                     """
                 ),
                 {"environment_id": str(environment_id)},
@@ -96,6 +97,52 @@ def test_hosted_runtime_locale_migration_adds_nullable_column_without_backfill(
                 {"environment_id": str(environment_id)},
             ).scalar_one()
             assert locale is None
+
+            removed_cli_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT count(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'clawdi_cli'
+                    """
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert removed_cli_column == 0
+
+            migration.downgrade()
+
+            restored_cli_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'clawdi_cli'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert restored_cli_column.is_nullable == "YES"
+            assert restored_cli_column.column_default is None
+            assert restored_cli_column.data_type == "jsonb"
+
+            removed_locale_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT count(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'locale'
+                    """
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert removed_locale_column == 0
         finally:
             migration.op = old_op
 

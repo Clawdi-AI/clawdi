@@ -10,7 +10,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
-from sqlalchemy import text
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
@@ -152,14 +151,6 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
 
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
-        alias_response = await client.get("/api/runtime/manifest")
-    app.dependency_overrides.clear()
-
-    assert alias_response.status_code == 200, alias_response.text
-    assert alias_response.json() == payload
-    assert alias_response.headers["etag"] == etag
-
 
 @pytest.mark.asyncio
 async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
@@ -285,31 +276,9 @@ async def test_agent_v2_manifest_channel_and_protocol_are_cloud_owned(
         agent_type="openclaw",
     )
     await _write_runtime_state(admin_client, str(env.id))
-    await db_session.execute(
-        text(
-            """
-            UPDATE hosted_runtime_states
-            SET clawdi_cli = CAST(:clawdi_cli AS jsonb)
-            WHERE environment_id = :environment_id
-            """
-        ),
-        {
-            "clawdi_cli": json.dumps(
-                {
-                    "source": "npm:clawdi",
-                    "packageSpec": "clawdi@0.12.9",
-                    "registry": "https://registry.example.test",
-                }
-            ),
-            "environment_id": env.id,
-        },
-    )
-    await db_session.commit()
-
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
-        alias_response = await client.get("/api/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
@@ -319,9 +288,6 @@ async def test_agent_v2_manifest_channel_and_protocol_are_cloud_owned(
         "registry": "https://registry.npmjs.org",
     }
     assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.51"
-    assert alias_response.status_code == 200, alias_response.text
-    assert alias_response.json() == response.json()
-    assert alias_response.headers["etag"] == response.headers["etag"]
 
 
 @pytest.mark.asyncio
@@ -491,12 +457,9 @@ async def test_runtime_manifest_rejects_invalid_stored_locale(
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         canonical = await client.get("/v1/runtime/manifest")
-        compatibility = await client.get("/api/runtime/manifest")
     app.dependency_overrides.clear()
 
     assert canonical.status_code == 409, canonical.text
-    assert compatibility.status_code == 409, compatibility.text
-    assert compatibility.json() == canonical.json()
 
 
 @pytest.mark.asyncio

@@ -133,36 +133,6 @@ releases.
 The deployment platform is outside this repository, but every deploy should
 run these checks before traffic is considered healthy:
 
-### Agent V2 Cloud/Hosted Cutover
-
-The Cloud manifest authority change is not a normal rolling cross-service
-deploy because pre-#780 Hosted writers still send `clawdi_cli`, which Cloud
-#387 rejects. After the focused Hosted smoke workflow and organization Actions
-access are ready, #388 must publish the paired-smoke-tested immutable `.51` tgz
-directly to `agent-v2`. Then use one controlled short maintenance window:
-
-1. Pause agent-v2 creation and every Hosted runtime-state writer and
-   reconciliation loop.
-2. Deploy Cloud #387.
-3. Immediately deploy Hosted #780.
-4. Force/reconcile affected prelaunch pods so #780 rewrites every runtime-state
-   row with strict `locale` and recreates pods with the final bootstrap
-   environment, including `CLAWDI_RUNTIME_AUTH_ENV`. Cloud does not backfill or
-   synthesize locale for historical rows.
-5. Verify Hosted runtime-state writes, `/v1/runtime/manifest` and
-   `/api/runtime/manifest`, `runtime_manifest_changed` delivery, manifest fetch
-   from the reconciled pods, and runtime service health.
-6. Resume reconciliation, runtime-state writers, and agent-v2 creation.
-
-Brief runtime unavailability is possible and expected. A pre-#780 pod can
-self-update to `.51` from the Cloud-hardcoded `agent-v2` channel, then fail
-closed because its bootstrap environment lacks `CLAWDI_RUNTIME_AUTH_ENV`.
-Do not resume until #780 has reconciled affected pods and the checks above pass.
-Do not temporarily accept or ignore the obsolete admin field.
-Keep `hosted_runtime_states.locale` nullable during this expand rollout. A later
-contract migration may set it `NOT NULL` only after an explicit null-count audit;
-do not stamp, backfill, or rewrite the expand revision.
-
 1. Apply migrations before starting code that depends on them:
 
    ```bash

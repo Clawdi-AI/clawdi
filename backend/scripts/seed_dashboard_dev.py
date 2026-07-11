@@ -248,7 +248,6 @@ async def _create_hosted_runtime_graph(
                     "cloudApiUrl": settings.public_api_url,
                     "dashboardUrl": settings.web_origin,
                 },
-                clawdi_cli={"version": "dev"},
                 runtimes={runtime: {"enabled": True, "status": "running"}},
                 live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
                 recovery={"mode": "dev"},

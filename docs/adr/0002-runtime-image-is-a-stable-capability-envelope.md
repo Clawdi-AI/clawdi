@@ -32,10 +32,9 @@ validates both selectors and fails closed before datasource access. A hosted
 runtime does not read `host-policy.json` or `runtime-source.json`.
 
 API route versions and agent deployment generations are separate dimensions.
-`/v1/runtime/manifest` is canonical and `/api/runtime/manifest` is its hidden
-API alias; both assemble the same agent-v2 payload and ETag. Route selection
-must not infer deployment generation. Agent deployment v1 does not consume the
-`HostedRuntimeState` manifest surface.
+`/v1/runtime/manifest` is the only agent-v2 runtime manifest URL. The runtime
+router is not exposed through the legacy `/api` alias. Agent deployment v1 does
+not consume the `HostedRuntimeState` manifest surface.
 
 The Cloud API manifest assembler is the sole authority for the agent-v2 CLI
 desired state. It emits the managed floating `clawdi@agent-v2` npm channel and
@@ -52,11 +51,10 @@ Every agent-v2 hosted manifest has a strict top-level `locale` object with
 exactly `language` and `timezone`. `language` must be one of the product's
 supported language codes, and `timezone` must be a valid IANA timezone.
 Personality is not Cloud runtime desired state and is rejected by the admin
-writer. The database rollout is expand-first: revision `d8f2a1c4b6e9` adds a
-nullable JSONB column with no default or backfill. New admin writes require a
-valid locale, while manifest reads fail closed for historical NULL rows. Hosted
-#780 must repush/reconcile those rows during the maintenance window. A later
-contract migration may set `NOT NULL` only after a null-count audit.
+writer. Revision `d8f2a1c4b6e9` adds a nullable JSONB column with no default or
+backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` column. New
+admin writes require a valid locale, while manifest reads fail closed for NULL
+rows.
 
 `GET /v1/sync/events` carries a signal-only
 `runtime_manifest_changed` event containing the environment id, never desired
@@ -66,12 +64,6 @@ client-side. The mutation transaction queues PostgreSQL `NOTIFY`, which is
 released only after commit, and every API process keeps a reconnecting
 `LISTEN` connection. Normal manifest ETag polling remains the missed-event
 fallback.
-
-The application model no longer maps `hosted_runtime_states.clawdi_cli`, but
-this rollout leaves the physical nullable column in place so old pods can keep
-serving while new pods start and run automatic migrations. A separate
-post-deploy contract-migration PR may drop the column only after this version is
-fully deployed and no old application instances remain.
 
 For transparent egress:
 
@@ -123,19 +115,12 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
   Actions access; use that workflow in Clawdi #388 to pass one immutable
   `0.12.10-beta.51` tgz through the Hosted paired smoke and publish that same
   tgz directly through OIDC under `agent-v2` without moving `beta` or `latest`;
-  then enter a controlled maintenance window. Pause agent-v2 creation and all
-  Hosted runtime-state writers/reconciliation, deploy Clawdi #387, immediately
-  deploy Hosted #780, and force/reconcile affected prelaunch pods so they
-  receive the final bootstrap environment. Brief runtime unavailability is
-  possible and expected: pre-#780 pods lack `CLAWDI_RUNTIME_AUTH_ENV`, so a pod
-  that self-updates to `.51` can fail closed until #780 recreates its bootstrap
-  environment. Hosted #780 must also repush strict locale for every affected
-  runtime-state row; Cloud deliberately does not guess or backfill locale.
-  Verify runtime-state writes, both manifest paths, manifest fetch, sync-event
-  invalidation, and runtime services before resuming creation and writers. This
-  avoids accepting obsolete desired-state fields and prevents the old Cloud
-  default from selecting `latest`. Do not use the legacy agent image controls;
-  no old state repair is required.
+  then deploy Clawdi #387 and Hosted #780 before launching agent deployment v2.
+  Verify runtime-state writes, `/v1/runtime/manifest`, manifest fetch,
+  sync-event invalidation, and runtime services. This avoids accepting obsolete
+  desired-state fields and prevents the old Cloud default from selecting
+  `latest`. Do not use the legacy agent image controls; no old state repair is
+  required.
 
 ## Related Documentation
 
