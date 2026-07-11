@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     # `environment: npm` gates the job behind the repo's `npm` environment
     # secrets/rules. Combined with `id-token: write` this enables npm
     # trusted-publisher OIDC so no NPM_TOKEN secret is needed.

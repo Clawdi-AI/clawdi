@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   docker-runner:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     env:
       CLAWDI_TEST_COMPOSE_PROJECT_NAME: clawdi-test-ci-${{ github.run_id }}
