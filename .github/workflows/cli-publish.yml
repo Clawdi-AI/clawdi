@@ -120,7 +120,7 @@ jobs:
   publish-paired-artifact-with-oidc:
     if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
     needs: [build-immutable-artifact, hosted-paired-smoke]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     environment: npm
     permissions:
       contents: write
