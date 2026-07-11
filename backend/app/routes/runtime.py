@@ -47,7 +47,7 @@ class _RuntimeProviderManifestBinding:
 
 
 _SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
-_HOSTED_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.48"
+_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.48"
 
 
 @router.get("/manifest")
@@ -104,7 +104,6 @@ async def get_runtime_manifest(
     issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
-        "minimumCliVersion": _HOSTED_MANIFEST_MINIMUM_CLI_VERSION,
         "deploymentId": state.deployment_id,
         "environmentId": str(environment_id),
         "instanceId": state.instance_id,
@@ -118,6 +117,8 @@ async def get_runtime_manifest(
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
     }
+    if request.scope["path"] == "/v1/runtime/manifest":
+        manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
     if state.bridge:
         manifest["bridge"] = state.bridge
     if state.app_id:

@@ -139,6 +139,13 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
 
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        legacy_response = await client.get("/api/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert legacy_response.status_code == 200, legacy_response.text
+    assert "minimumCliVersion" not in legacy_response.json()["manifest"]
+
 
 @pytest.mark.asyncio
 async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
