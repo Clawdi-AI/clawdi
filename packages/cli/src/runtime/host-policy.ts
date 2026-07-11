@@ -32,19 +32,9 @@ export interface HostPolicyCommandDecision {
 	allowed: boolean;
 	command: string;
 	runtimeMode: RuntimeMode;
-	policyPath?: string;
-	policySource?: "builtin" | "file";
+	policySource?: "builtin";
 	reason?: string;
 }
-
-const POLICY_RECOVERY_COMMANDS = [
-	"runtime",
-	"capabilities",
-	"auth status",
-	"config paths",
-	"status",
-	"doctor",
-] as const;
 
 const HOSTED_POLICY: HostPolicy = {
 	schemaVersion: "clawdi.hostPolicy.v1",
@@ -158,68 +148,18 @@ export function deniedCommandReason(
 	return null;
 }
 
-function commandMatches(command: string, prefix: string): boolean {
-	return command === prefix || command.startsWith(`${prefix} `);
-}
-
-function isPolicyRecoveryCommand(command: string): boolean {
-	return POLICY_RECOVERY_COMMANDS.some((allowed) => commandMatches(command, allowed));
-}
-
 export function evaluateHostPolicyForCommand(command: string): HostPolicyCommandDecision {
 	const normalized = command.trim().replace(/\s+/g, " ");
 	const runtimeMode = detectRuntimeMode();
 	if (runtimeMode !== "hosted") return { allowed: true, command: normalized, runtimeMode };
 
-	const policy = readHostPolicy();
-	if (!policy.exists) {
-		if (isPolicyRecoveryCommand(normalized)) {
-			return {
-				allowed: true,
-				command: normalized,
-				runtimeMode,
-				policySource: policy.source,
-				...(policy.path ? { policyPath: policy.path } : {}),
-			};
-		}
-		return {
-			allowed: false,
-			command: normalized,
-			runtimeMode,
-			policySource: policy.source,
-			...(policy.path ? { policyPath: policy.path } : {}),
-			reason: `missing hosted runtime policy at ${policy.path}`,
-		};
-	}
-
-	if (!policy.valid) {
-		if (isPolicyRecoveryCommand(normalized)) {
-			return {
-				allowed: true,
-				command: normalized,
-				runtimeMode,
-				policySource: policy.source,
-				...(policy.path ? { policyPath: policy.path } : {}),
-			};
-		}
-		return {
-			allowed: false,
-			command: normalized,
-			runtimeMode,
-			policySource: policy.source,
-			...(policy.path ? { policyPath: policy.path } : {}),
-			reason: `invalid hosted runtime policy at ${policy.path}: ${policy.error ?? "parse failed"}`,
-		};
-	}
-
-	const reason = deniedCommandReason(policy.policy, normalized);
+	const reason = deniedCommandReason(HOSTED_POLICY, normalized);
 	if (reason) {
 		return {
 			allowed: false,
 			command: normalized,
 			runtimeMode,
-			policySource: policy.source,
-			...(policy.path ? { policyPath: policy.path } : {}),
+			policySource: "builtin",
 			reason,
 		};
 	}
@@ -228,7 +168,6 @@ export function evaluateHostPolicyForCommand(command: string): HostPolicyCommand
 		allowed: true,
 		command: normalized,
 		runtimeMode,
-		policySource: policy.source,
-		...(policy.path ? { policyPath: policy.path } : {}),
+		policySource: "builtin",
 	};
 }

@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { runtimeInit, runtimeWatch } from "../src/commands/runtime";
+import { runtimeAuthEnvName } from "../src/runtime/auth-token";
 import {
 	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
 	RUNTIME_BRIDGE_SURFACES_ENV,
@@ -795,6 +796,17 @@ describe("host policy", () => {
 });
 
 describe("runtime manifest datasource", () => {
+	it("validates the deployment-selected auth environment name", () => {
+		delete process.env.CLAWDI_RUNTIME_AUTH_ENV;
+		expect(() => runtimeAuthEnvName()).toThrow("missing CLAWDI_RUNTIME_AUTH_ENV");
+
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "lowercase_token";
+		expect(() => runtimeAuthEnvName()).toThrow("expected an uppercase environment variable name");
+
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CUSTOM_RUNTIME_TOKEN";
+		expect(runtimeAuthEnvName()).toBe("CUSTOM_RUNTIME_TOKEN");
+	});
+
 	it("reports missing runtime source when no fixture or cache exists", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -813,6 +825,24 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.stage).toBe("network");
 		expect(loaded.errors[0]).toContain("could not fetch runtime manifest");
 		expect(loaded.errors[0]).toContain("missing CLAWDI_RUNTIME_MANIFEST_URL");
+	});
+
+	it("rejects noncanonical hosted manifest paths", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://cloud-api.example.test/api/runtime/manifest";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths());
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+		expect(loaded.mode).toBe("repair");
+		expect(loaded.errors[0]).toContain("hosted manifest path must end with /v1/runtime/manifest");
 	});
 
 	it("loads last-good offline boot when cached secret values satisfy refs", async () => {
@@ -916,20 +946,20 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/v1/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/v1/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -948,7 +978,7 @@ describe("runtime manifest datasource", () => {
 								persistentPaths: [home],
 							},
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -1001,7 +1031,7 @@ describe("runtime manifest datasource", () => {
 			expect(captured).toHaveLength(1);
 			expect(captured[0].headers.authorization).toBe("Bearer auth-token");
 			expect(loaded.source).toBe("remote-datasource");
-			expect(loaded.sourcePath).toBe("https://runtime.test/v1/manifest");
+			expect(loaded.sourcePath).toBe("https://runtime.test/v1/runtime/manifest");
 			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 			expect(loaded.manifest.workspaceRoot).toBe(join(home, "managed-workspace"));
 			expect(loaded.manifest.environmentId).toBe("env_test");
@@ -1068,7 +1098,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER = hermesInstaller;
 		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH = pid1EnvPath;
@@ -1077,14 +1107,14 @@ chmod +x "$HOME/.local/bin/hermes"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/v1/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/v1/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -1098,7 +1128,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home, workspace: join(home, "managed-workspace") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
@@ -1168,11 +1198,11 @@ chmod +x "$HOME/.local/bin/hermes"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -1186,7 +1216,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							issuedAt: "2026-06-22T00:00:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
@@ -1256,7 +1286,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		const run = join(root, "run", "clawdi");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
@@ -1264,7 +1294,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -1278,7 +1308,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							issuedAt: "2026-06-22T00:00:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
@@ -2989,7 +3019,7 @@ exit 64
 		);
 	});
 
-	it("ignores runtime source auth env and uses the runtime auth token env before the file", async () => {
+	it("uses the deployment-selected auth env and ignores runtime source file auth", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3000,23 +3030,24 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
-		process.env.CLAWDI_AUTH_TOKEN = "bootstrap-token";
-		process.env.CUSTOM_RUNTIME_TOKEN = "stale-token";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CUSTOM_RUNTIME_TOKEN";
+		process.env.CLAWDI_AUTH_TOKEN = "stale-default-token";
+		process.env.CUSTOM_RUNTIME_TOKEN = "bootstrap-token";
 		writeFileSync(join(run, "secrets", "auth-token"), "stale-file-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CUSTOM_RUNTIME_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -3056,8 +3087,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-file-token";
 		writeFileSync(
 			wrongSourcePath,
@@ -3071,7 +3101,7 @@ exit 64
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -3084,7 +3114,7 @@ exit 64
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime.test/manifest",
+								manifestUrl: "https://runtime.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -3098,7 +3128,7 @@ exit 64
 			},
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -3111,7 +3141,7 @@ exit 64
 							issuedAt: "2026-06-06T00:01:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime.test/manifest",
+								manifestUrl: "https://runtime.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -3139,10 +3169,10 @@ exit 64
 			const watched = await loadRemoteRuntimeManifest(paths);
 
 			expect("manifest" in watched).toBe(true);
-			expect(watchManifestUrl).toBe("https://runtime.test/manifest");
+			expect(watchManifestUrl).toBe("https://runtime.test/v1/runtime/manifest");
 			expect(captured.map((entry) => entry.url)).toEqual([
-				"https://runtime.test/manifest",
-				"https://runtime.test/manifest",
+				"https://runtime.test/v1/runtime/manifest",
+				"https://runtime.test/v1/runtime/manifest",
 			]);
 			expect(captured.map((entry) => entry.headers.authorization)).toEqual([
 				"Bearer runtime-file-token",
@@ -3153,6 +3183,8 @@ exit 64
 				"runtime-file-token\n",
 			);
 			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
+			expect(watchEnv).not.toContain("CLAWDI_HOST_POLICY_PATH");
+			expect(watchEnv).not.toContain("CLAWDI_RUNTIME_SOURCE_PATH");
 			expect(watchEnv).not.toContain("runtime-file-token");
 		} finally {
 			restore();
@@ -3170,7 +3202,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
@@ -3178,14 +3210,14 @@ exit 64
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(null, {
 						status: 304,
@@ -3731,7 +3763,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
@@ -3744,14 +3776,14 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -3867,7 +3899,7 @@ exit 42
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.exitCode = undefined;
@@ -3881,14 +3913,14 @@ exit 42
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -4055,7 +4087,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -4067,13 +4099,13 @@ exit 64
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const paths = getRuntimePaths();
 		const initial = mockFetch([
-			{ method: "GET", path: "/manifest", response: manifestResponse },
+			{ method: "GET", path: "/v1/runtime/manifest", response: manifestResponse },
 			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 		try {
@@ -4119,7 +4151,7 @@ exit 64
 		const watchFetch = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: (request) =>
 					request.headers["if-none-match"]
 						? new Response(null, {
@@ -4138,9 +4170,9 @@ exit 64
 				throw new Error(logs.join("\n"));
 			}
 			expect(watchFetch.captured.map((request) => request.path)).toEqual([
-				"/manifest",
+				"/v1/runtime/manifest",
 				"/v1/channels",
-				"/manifest",
+				"/v1/runtime/manifest",
 			]);
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
 			expect(watchFetch.captured[1].headers["if-none-match"]).toBe('"channels-etag-current"');
@@ -4189,14 +4221,14 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -4211,7 +4243,7 @@ exit 64
 			process.exitCode = undefined;
 			logs.length = 0;
 			const { restore } = mockFetch([
-				{ method: "GET", path: "/manifest", response: manifestResponse },
+				{ method: "GET", path: "/v1/runtime/manifest", response: manifestResponse },
 				{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
 			]);
 			try {
@@ -4283,14 +4315,14 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		writeFileSync(join(run, "secrets", "auth-token"), "revoked-runtime-token\n");
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -4300,7 +4332,7 @@ exit 64
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () => new Response("revoked", { status: 401 }),
 			},
 			{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
@@ -4789,7 +4821,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -4800,14 +4832,14 @@ chmod +x "$prefix/bin/clawdi"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -4955,7 +4987,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.exitCode = undefined;
@@ -4968,7 +5000,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -5042,7 +5074,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -5313,7 +5345,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 		process.exitCode = undefined;
@@ -5326,14 +5358,14 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -5465,7 +5497,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 		process.exitCode = undefined;
@@ -5478,7 +5510,7 @@ chmod +x "$prefix/bin/clawdi"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -5508,7 +5540,7 @@ chmod +x "$prefix/bin/clawdi"
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -5602,7 +5634,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -5613,14 +5645,14 @@ chmod +x "$prefix/bin/clawdi"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -5735,7 +5767,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -5746,14 +5778,14 @@ chmod +x "$prefix/bin/clawdi"
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -6218,7 +6250,7 @@ exit 64
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeSource.v1",
 				type: "http",
-				url: "https://runtime.test/manifest",
+				url: "https://runtime.test/v1/runtime/manifest",
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
@@ -6226,7 +6258,7 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/manifest";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
@@ -6236,7 +6268,7 @@ exit 64
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/manifest",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					new Response(
 						JSON.stringify({
@@ -6322,7 +6354,10 @@ exit 64
 
 			expect(process.exitCode).toBe(0);
 			expect(captured).toHaveLength(2);
-			expect(captured.map((request) => request.path)).toEqual(["/manifest", "/v1/channels"]);
+			expect(captured.map((request) => request.path)).toEqual([
+				"/v1/runtime/manifest",
+				"/v1/channels",
+			]);
 			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
 				'"manifest-etag-init-7"\n',
 			);
@@ -7374,11 +7409,11 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -8411,11 +8446,11 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -8458,12 +8493,12 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		const mitmproxy = seedMitmproxyCache();
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -8476,7 +8511,7 @@ exit 64
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							egressEngine: mitmproxy,
@@ -8733,11 +8768,11 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/desired-state";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/desired-state",
+				path: "/v1/runtime/manifest",
 				response: () =>
 					jsonResponse({
 						manifest: {
@@ -8750,7 +8785,7 @@ exit 64
 							issuedAt: "2026-06-06T00:00:00Z",
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/desired-state",
+								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							runtimes: {
@@ -8803,7 +8838,7 @@ exit 64
 			expect(systemUnitNames).toContain("clawdi-daemon.service");
 			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
 			expect(watchEnv).toContain(
-				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/desired-state"',
+				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/v1/runtime/manifest"',
 			);
 			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).toContain(
@@ -8818,7 +8853,7 @@ exit 64
 			expect(daemonEnv).toContain('CLAWDI_RUNTIME_REV="');
 			expect(daemonEnv).toContain("https://cloud-api.test");
 			expect(watchEnv).toContain(
-				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/desired-state"',
+				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/v1/runtime/manifest"',
 			);
 			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
 			expect(watchUnit).not.toContain("runtime-auth-token");

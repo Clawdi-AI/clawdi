@@ -19,7 +19,8 @@
 		"node": ">=22.5"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"tag": "agent-v2"
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
