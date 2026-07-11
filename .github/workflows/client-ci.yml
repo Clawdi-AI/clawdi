@@ -41,7 +41,7 @@ env:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
       web: ${{ steps.filter.outputs.web }}
       cli: ${{ steps.filter.outputs.cli }}
@@ -76,7 +76,7 @@ jobs:
       needs.changes.outputs.cli == 'true' ||
       needs.changes.outputs.shared == 'true' ||
       needs.changes.outputs.infra == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -93,7 +93,7 @@ jobs:
       needs.changes.outputs.cli == 'true' ||
       needs.changes.outputs.shared == 'true' ||
       needs.changes.outputs.infra == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -151,7 +151,7 @@ jobs:
       needs.changes.outputs.cli == 'true' ||
       needs.changes.outputs.shared == 'true' ||
       needs.changes.outputs.infra == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -178,7 +178,7 @@ jobs:
       needs.changes.outputs.web == 'true' ||
       needs.changes.outputs.shared == 'true' ||
       needs.changes.outputs.infra == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

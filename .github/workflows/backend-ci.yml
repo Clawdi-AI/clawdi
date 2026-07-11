@@ -43,7 +43,7 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
       any: ${{ steps.filter.outputs.any }}
       test: ${{ steps.filter.outputs.test }}
@@ -83,7 +83,7 @@ jobs:
   lint-and-typecheck:
     needs: changes
     if: needs.changes.outputs.any == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     defaults:
       run:
@@ -124,7 +124,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.test == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     defaults:
       run:
