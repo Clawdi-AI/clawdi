@@ -654,7 +654,7 @@ chmod +x "$HOME/.local/bin/hermes"
 
 	it("runtime init rejects fixture secretRefs without inline secretValues", async () => {
 		const { tmpdir } = await import("node:os");
-		const { mkdirSync, rmSync } = await import("node:fs");
+		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-secretref-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
