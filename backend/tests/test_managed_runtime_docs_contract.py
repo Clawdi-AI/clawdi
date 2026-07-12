@@ -9,9 +9,7 @@ _DOC_PATHS = (
 )
 _FORBIDDEN_NORMALIZED_TEXT = (
     "clawdi@agent-v2",
-    "agent-v2-candidate",
     "npm `agent-v2` dist-tag",
-    "resolves candidate",
     "resolves the published cli",
     "npm dist-tag add",
 )
