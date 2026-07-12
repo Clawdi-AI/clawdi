@@ -241,15 +241,17 @@ support self-hosted or third-party GitHub Actions runners. The publish job uses
 Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm 11.5.1.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
-verifies the candidate tag and exact package publication, then explicitly
-supplies the exact `clawdi@<semver>` package spec to the separate Hosted image
-workflow. That workflow fails closed when the exact input is missing, never
-resolves `agent-v2-candidate` or any other npm dist-tag, and runs its image/CLI
-pairing smoke before publishing the image. The CLI workflow stops after making
-the exact candidate version public; it does not modify `latest` or `beta` and
-does not coordinate with the Hosted repository. Cloud-owned Hosted manifests
-select `clawdi@<exact-semver>` only. The runtime installs that exact public
-version directly and never calls `npm view` for Hosted desired state.
+verifies the exact package publication, then explicitly supplies the exact
+`clawdi@<semver>` package spec to the separate Hosted image workflow. That
+workflow fails closed when the exact input is missing, verifies registry
+integrity, signatures, and provenance, never resolves `agent-v2-candidate` or
+any other npm dist-tag, and runs its image/CLI pairing smoke before publishing
+the image. The candidate tag is only a workflow implementation detail that
+avoids moving `latest`; it is not an operator gate or rollout authority. The CLI
+workflow does not modify `latest` or `beta` and does not coordinate with the
+Hosted repository. Cloud-owned Hosted manifests select `clawdi@<exact-semver>`
+only. The runtime installs that exact public version directly and never calls
+`npm view` for Hosted desired state.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
 Keep v2 creation and runtime-state reconciliation disabled until the final
@@ -314,9 +316,9 @@ onward releases are automatic.
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2-candidate`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
 5. Watch the Actions tab; on green,
-   `npm view clawdi@agent-v2-candidate version` and
-   `npm view clawdi@<exact-version> version` reflect the new number while
-   `latest` and `beta` remain unchanged.
+   `npm view clawdi@<exact-version> version` reflects the new number while
+   `latest` and `beta` remain unchanged. The workflow's non-production
+   `agent-v2-candidate` tag is diagnostic metadata, not a release gate.
 
 Stop here for this release workflow. Hosted rollout selects the approved exact
 version through its Cloud manifest; no production runtime reads a dist-tag.

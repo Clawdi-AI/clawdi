@@ -101,18 +101,20 @@ releases.
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
-   npm view clawdi version
+   CLI_VERSION='<exact-version>'
+   test "$(npm view "clawdi@$CLI_VERSION" version)" = "$CLI_VERSION"
    npm view clawdi dist-tags
    ```
 
-   Done: `agent-v2-candidate` points to the exact version published from the
-   verified CLI artifact while `beta` and `latest` are unchanged.
-   The Hosted image repository has a separate release boundary. An operator
-   verifies the candidate tag and exact package publication, then explicitly
-   supplies the exact `clawdi@<semver>` package spec to the Hosted image workflow.
-   That workflow fails when the exact spec is missing and never resolves
-   `agent-v2-candidate` or any other npm dist-tag. It runs the image/CLI pairing
-   smoke before publishing the image and does not call back into this workflow.
+   Done: the exact version exists from the verified CLI artifact while `beta`
+   and `latest` are unchanged. The Hosted image repository has a separate
+   release boundary. An operator supplies the exact `clawdi@<semver>` package
+   spec to the Hosted image workflow. That workflow fails when the exact spec is
+   missing, verifies registry integrity, signatures, and provenance, and never
+   resolves `agent-v2-candidate` or any other npm dist-tag. It runs the image/CLI
+   pairing smoke before publishing the image and does not call back into this
+   workflow. The candidate tag is workflow-internal diagnostic metadata, not an
+   operator gate.
 
    Hosted rollout uses that same exact package spec in the Cloud manifest. The
    runtime never resolves an npm dist-tag.
