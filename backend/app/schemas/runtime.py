@@ -1,5 +1,5 @@
 import re
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,7 +19,11 @@ HostedRuntimeLanguage = Literal[
 HostedRuntimeName = Literal["openclaw", "hermes"]
 
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+_EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_RUNTIME_BRIDGE_SURFACE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _EXACT_SEMVER_PATTERN = re.compile(
@@ -119,6 +123,278 @@ def _validate_http_origin(value: str) -> str:
     if value != canonical:
         raise ValueError("must be an HTTP(S) URL origin")
     return value
+
+
+def _validate_absolute_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("must be an absolute URL") from exc
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("must be an absolute URL")
+    return value
+
+
+def _is_safe_egress_host(host: str) -> bool:
+    if not host or len(host) > 253 or host.startswith(".") or host.endswith("."):
+        return False
+    return not any(char in "@?#/\\ %" or ord(char) < 0x20 or ord(char) == 0x7F for char in host)
+
+
+class _StrictHostedWireModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_explicit_null_fields(cls, value: object) -> object:
+        if isinstance(value, dict):
+            null_fields = sorted(key for key, field_value in value.items() if field_value is None)
+            if null_fields:
+                raise ValueError(f"explicit null is not supported for: {', '.join(null_fields)}")
+        return value
+
+
+class HostedEgressEngine(_StrictHostedWireModel):
+    type: Literal["mitmproxy"]
+    version: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    sha256: str = Field(pattern=_SHA256_PATTERN.pattern)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        return _validate_absolute_url(value)
+
+
+class HostedEgressHeaderExistsMatcher(_StrictHostedWireModel):
+    type: Literal["exists"]
+
+
+class HostedEgressHeaderEqualsMatcher(_StrictHostedWireModel):
+    type: Literal["equals"]
+    value: str
+    prefix: str | None = None
+
+
+class HostedEgressHeaderSecretRefEqualsMatcher(_StrictHostedWireModel):
+    type: Literal["secretRefEquals"]
+    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    prefix: str | None = None
+
+
+HostedEgressHeaderMatcher = Annotated[
+    HostedEgressHeaderExistsMatcher
+    | HostedEgressHeaderEqualsMatcher
+    | HostedEgressHeaderSecretRefEqualsMatcher,
+    Field(discriminator="type"),
+]
+
+
+class HostedEgressPathEqualsMatcher(_StrictHostedWireModel):
+    type: Literal["equals"]
+    value: str = Field(min_length=1)
+
+
+class HostedEgressPathPrefixMatcher(_StrictHostedWireModel):
+    type: Literal["prefix"]
+    value: str = Field(min_length=1)
+
+
+class HostedEgressPathSecretRefMatcher(_StrictHostedWireModel):
+    type: Literal["secretRefEquals", "secretRefPrefix"]
+    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    prefix: str | None = None
+    suffix: str | None = None
+
+
+HostedEgressPathMatcher = Annotated[
+    HostedEgressPathEqualsMatcher
+    | HostedEgressPathPrefixMatcher
+    | HostedEgressPathSecretRefMatcher,
+    Field(discriminator="type"),
+]
+
+
+class HostedEgressHeaderSecretRefSetter(_StrictHostedWireModel):
+    type: Literal["secretRef"]
+    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    prefix: str | None = None
+
+
+class HostedEgressPathReplace(_StrictHostedWireModel):
+    type: Literal["secretRefPrefix"]
+    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    replacementSecretRef: str = Field(min_length=1, pattern=r"^secret://")
+    prefix: str | None = None
+    suffix: str | None = None
+
+
+def _validate_egress_header_names(
+    value: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if value is not None and any(
+        _EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value
+    ):
+        raise ValueError("egress header names must be canonical")
+    return value
+
+
+class HostedEgressProfileMatch(_StrictHostedWireModel):
+    scheme: Literal["http", "https", "ws", "wss"] | None = None
+    host: str = Field(min_length=1)
+    pathPrefix: str | None = Field(default=None, min_length=1)
+    path: HostedEgressPathMatcher | None = None
+    headers: dict[str, HostedEgressHeaderMatcher] | None = None
+    query: dict[str, HostedEgressHeaderMatcher] | None = None
+
+    @field_validator("pathPrefix")
+    @classmethod
+    def _validate_path_prefix(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("/"):
+            raise ValueError("pathPrefix must start with /")
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(
+        cls,
+        value: dict[str, HostedEgressHeaderMatcher] | None,
+    ) -> dict[str, HostedEgressHeaderMatcher] | None:
+        _validate_egress_header_names(value)
+        return value
+
+    @field_validator("query")
+    @classmethod
+    def _validate_query_names(
+        cls,
+        value: dict[str, HostedEgressHeaderMatcher] | None,
+    ) -> dict[str, HostedEgressHeaderMatcher] | None:
+        if value is not None and any(not name for name in value):
+            raise ValueError("egress query names must be non-empty")
+        return value
+
+
+class HostedEgressProfileRewrite(_StrictHostedWireModel):
+    upstreamBaseUrl: str | None = Field(default=None, min_length=1)
+    preservePath: bool | None = None
+    pathReplace: HostedEgressPathReplace | None = None
+    setHeaders: dict[str, str | HostedEgressHeaderSecretRefSetter] | None = None
+
+    @field_validator("upstreamBaseUrl")
+    @classmethod
+    def _validate_upstream_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        _validate_absolute_url(value)
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https", "ws", "wss"}:
+            raise ValueError("upstreamBaseUrl must use http, https, ws, or wss")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("upstreamBaseUrl must not include credentials")
+        if parsed.hostname is None or not _is_safe_egress_host(parsed.hostname.lower()):
+            raise ValueError("upstreamBaseUrl must use a safe host")
+        return value
+
+    @field_validator("setHeaders")
+    @classmethod
+    def _validate_set_headers(
+        cls,
+        value: dict[str, str | HostedEgressHeaderSecretRefSetter] | None,
+    ) -> dict[str, str | HostedEgressHeaderSecretRefSetter] | None:
+        _validate_egress_header_names(value)
+        return value
+
+
+class HostedEgressProfileLogging(_StrictHostedWireModel):
+    redactHeaders: list[str] | None = None
+    redactUrlPatterns: list[str] | None = None
+
+    @field_validator("redactHeaders")
+    @classmethod
+    def _validate_redact_headers(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(
+            _EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value
+        ):
+            raise ValueError("redactHeaders must contain canonical header names")
+        return value
+
+    @field_validator("redactUrlPatterns")
+    @classmethod
+    def _validate_redact_url_patterns(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(not pattern for pattern in value):
+            raise ValueError("redactUrlPatterns must contain non-empty strings")
+        return value
+
+
+class HostedEgressProfile(_StrictHostedWireModel):
+    id: str = Field(min_length=1, pattern=_EGRESS_PROFILE_ID_PATTERN.pattern)
+    enabled: bool | None = None
+    kind: Literal["http", "websocket", "provider", "passthrough", "deny"]
+    match: HostedEgressProfileMatch
+    rewrite: HostedEgressProfileRewrite | None = None
+    logging: HostedEgressProfileLogging | None = None
+    priority: int | None = None
+    owner: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_rewrite(self) -> "HostedEgressProfile":
+        if self.kind in {"http", "websocket"} and (
+            self.rewrite is None or self.rewrite.upstreamBaseUrl is None
+        ):
+            raise ValueError(f"{self.kind} profiles require rewrite.upstreamBaseUrl")
+        if self.kind in {"deny", "passthrough"} and self.rewrite is not None:
+            raise ValueError(f"{self.kind} profiles must not include rewrite rules")
+        return self
+
+
+class HostedEgressProfiles(_StrictHostedWireModel):
+    profiles: list[HostedEgressProfile] | None = None
+
+
+class HostedRuntimeBridgeSurface(_StrictHostedWireModel):
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=_RUNTIME_BRIDGE_SURFACE_NAME_PATTERN.pattern,
+    )
+    kind: Literal["control-ui"]
+    listenHost: str | None = Field(default=None, min_length=1)
+    listenPort: int = Field(ge=1, le=65535)
+    upstreamHost: str | None = Field(default=None, min_length=1)
+    upstreamPort: int = Field(ge=1, le=65535)
+
+
+class HostedRuntimeBridge(_StrictHostedWireModel):
+    surfaces: list[HostedRuntimeBridgeSurface]
+
+
+def validate_hosted_runtime_bridge(
+    runtime: HostedRuntimeName,
+    bridge: HostedRuntimeBridge | None,
+) -> None:
+    surfaces = bridge.surfaces if bridge is not None else []
+    if runtime == "openclaw" and not surfaces:
+        return
+    if len(surfaces) != 1:
+        raise ValueError(f"{runtime} must declare exactly one bridge surface")
+    surface = surfaces[0]
+    expected = {
+        "openclaw": ("openclaw", 28789, 18789),
+        "hermes": ("hermes", 28793, 9119),
+    }[runtime]
+    if (
+        surface.name != expected[0]
+        or surface.kind != "control-ui"
+        or surface.listenPort != expected[1]
+        or surface.upstreamHost != "127.0.0.1"
+        or surface.upstreamPort != expected[2]
+    ):
+        raise ValueError(
+            f"{runtime} bridge surface must be {runtime} control-ui "
+            f"{expected[1]} -> 127.0.0.1:{expected[2]}"
+        )
 
 
 class HostedRuntimeSystem(BaseModel):

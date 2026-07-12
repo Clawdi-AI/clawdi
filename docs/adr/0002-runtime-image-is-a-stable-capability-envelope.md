@@ -105,7 +105,8 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
 - Hosted image changes that add runtime business logic violate this decision.
 - The CLI repository independently builds, tests, packs, installs, and
   SHA-verifies one tarball before trusted-publisher OIDC publishes that exact
-  version to the non-production `agent-v2-candidate` dist-tag.
+  prerelease under the standard npm `beta` dist-tag. `beta` is
+  non-authoritative publication metadata, not a Hosted rollout selector.
 - The Hosted image workflow takes an operator-supplied exact
   `clawdi@<semver>` package spec and performs no npm dist-tag lookup. Production
   rollout selection lives in persisted Hosted setting/config, and Cloud

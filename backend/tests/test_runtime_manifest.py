@@ -53,6 +53,59 @@ TEST_EGRESS_ENGINE_PIN = {
     "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
     "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
 }
+TEST_EGRESS_PROFILES = {
+    "profiles": [
+        {
+            "id": "managed-provider",
+            "enabled": True,
+            "kind": "provider",
+            "match": {
+                "scheme": "https",
+                "host": "ai-gateway.example.test",
+                "headers": {},
+                "query": {},
+            },
+            "rewrite": {
+                "preservePath": True,
+                "setHeaders": {
+                    "authorization": {
+                        "type": "secretRef",
+                        "secretRef": "secret://provider.default.apiKey",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+            "logging": {
+                "redactHeaders": ["authorization"],
+                "redactUrlPatterns": [],
+            },
+            "priority": 80,
+            "owner": "provider-projection",
+        }
+    ]
+}
+TEST_OPENCLAW_BRIDGE = {
+    "surfaces": [
+        {
+            "name": "openclaw",
+            "kind": "control-ui",
+            "listenPort": 28789,
+            "upstreamHost": "127.0.0.1",
+            "upstreamPort": 18789,
+        }
+    ]
+}
+TEST_HERMES_BRIDGE = {
+    "surfaces": [
+        {
+            "name": "hermes",
+            "kind": "control-ui",
+            "listenPort": 28793,
+            "upstreamHost": "127.0.0.1",
+            "upstreamPort": 9119,
+        }
+    ]
+}
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 
 
@@ -548,6 +601,8 @@ async def test_runtime_selection_changes_manifest_and_etag(
     assert first.status_code == 200, first.text
 
     body["runtimes"] = _runtime_state("hermes")
+    body["bridge"] = TEST_HERMES_BRIDGE
+    body["live_sync"] = _live_sync(str(env.id), "hermes")
     body["generation"] = 8
     updated = await admin_client.put(
         f"/v1/admin/environments/{env.id}/runtime-state",
@@ -1454,6 +1509,135 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "sha256": "not-a-sha256"}),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "unexpected": True,
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "owner": None,
+                    }
+                ]
+            },
+        ),
+    ],
+)
+async def test_runtime_manifest_rejects_invalid_stored_egress_state(
+    db_session,
+    seed_user,
+    field,
+    value,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-stored-egress-{uuid4().hex[:8]}",
+        machine_name="Runtime stored egress invalid",
+        agent_type="openclaw",
+    )
+    state_values = {
+        "environment_id": env.id,
+        "deployment_id": f"dep_{uuid4().hex}",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "cli_package_spec": TEST_CLI_PACKAGE_SPEC,
+        "locale": TEST_LOCALE,
+        "system": TEST_SYSTEM,
+        "runtimes": _runtime_state(),
+        "live_sync": _live_sync(str(env.id)),
+        "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        field: value,
+    }
+    db_session.add(HostedRuntimeState(**state_values))
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "Hosted runtime egress state is invalid"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime", "bridge"),
+    [
+        ("hermes", None),
+        ("hermes", TEST_OPENCLAW_BRIDGE),
+        ("openclaw", TEST_HERMES_BRIDGE),
+        (
+            "openclaw",
+            {
+                "surfaces": [
+                    {
+                        key: value
+                        for key, value in TEST_OPENCLAW_BRIDGE["surfaces"][0].items()
+                        if key != "upstreamHost"
+                    }
+                ]
+            },
+        ),
+    ],
+)
+async def test_runtime_manifest_rejects_stored_runtime_bridge_mismatch(
+    db_session,
+    seed_user,
+    runtime,
+    bridge,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-stored-bridge-{runtime}-{uuid4().hex[:8]}",
+        machine_name=f"Runtime stored bridge mismatch {runtime}",
+        agent_type=runtime,
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+            locale=TEST_LOCALE,
+            system=TEST_SYSTEM,
+            runtimes=_runtime_state(runtime),
+            bridge=bridge,
+            live_sync=_live_sync(str(env.id), runtime),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "detail": "Hosted runtime bridge state does not match the selected runtime"
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_includes_egress_engine_pin(
     admin_client,
     db_session,
@@ -1478,6 +1662,67 @@ async def test_runtime_manifest_includes_egress_engine_pin(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime", "bridge"),
+    [
+        ("openclaw", None),
+        ("openclaw", TEST_OPENCLAW_BRIDGE),
+        ("hermes", TEST_HERMES_BRIDGE),
+    ],
+)
+async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contract(
+    admin_client,
+    db_session,
+    seed_user,
+    runtime,
+    bridge,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-hosted-contract-{runtime}-{uuid4().hex[:8]}",
+        machine_name=f"Runtime hosted contract {runtime}",
+        agent_type=runtime,
+    )
+    body = _runtime_state_body(
+        str(env.id),
+        runtimes=_runtime_state(runtime),
+        bridge=bridge,
+        live_sync=_live_sync(str(env.id), runtime),
+        egress_engine=TEST_EGRESS_ENGINE_PIN,
+        egress_profiles=TEST_EGRESS_PROFILES,
+    )
+
+    written = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert written.status_code == 200, written.text
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
+    assert state.egress_profiles == TEST_EGRESS_PROFILES
+    assert state.bridge == bridge
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    manifest = response.json()["manifest"]
+    assert manifest["runtime"] == runtime
+    assert manifest["egressEngine"] == TEST_EGRESS_ENGINE_PIN
+    assert manifest["egressProfiles"] == TEST_EGRESS_PROFILES
+    if bridge is None:
+        assert "bridge" not in manifest
+    else:
+        assert manifest["bridge"] == bridge
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_includes_declared_bridge_surfaces(
     admin_client,
     db_session,
@@ -1490,17 +1735,7 @@ async def test_runtime_manifest_includes_declared_bridge_surfaces(
         machine_name="Runtime bridge",
         agent_type="openclaw",
     )
-    bridge = {
-        "surfaces": [
-            {
-                "name": "openclaw",
-                "kind": "control-ui",
-                "listenPort": 28789,
-                "upstreamHost": "127.0.0.1",
-                "upstreamPort": 18789,
-            }
-        ]
-    }
+    bridge = TEST_OPENCLAW_BRIDGE
     await _write_runtime_state(admin_client, str(env.id), bridge=bridge)
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
@@ -1609,6 +1844,7 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
     "cli_package_spec",
     [
         "clawdi@latest",
+        "clawdi@beta",
         "clawdi@0.12.10-beta.50",
         "clawdi@1.2.3+build.1",
     ],
@@ -1837,7 +2073,7 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
         admin_client,
         str(env.id),
         egress_engine=TEST_EGRESS_ENGINE_PIN,
-        egress_profiles={"profiles": [{"id": "profile-1", "enabled": True}]},
+        egress_profiles=TEST_EGRESS_PROFILES,
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
     )
@@ -1855,7 +2091,7 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
     assert state is not None
     assert state.generation == 8
     assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
-    assert state.egress_profiles == {"profiles": [{"id": "profile-1", "enabled": True}]}
+    assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"enabled": True}
     assert state.tools == {"catalog": "clawdi-default"}
 
@@ -2354,6 +2590,112 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         "runtimes": _runtime_state(),
         field: {},
     }
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "sha256": "not-a-sha256"}),
+        ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "unexpected": True}),
+        ("egress_profiles", {**TEST_EGRESS_PROFILES, "unexpected": True}),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "rewrite": {"preservePath": True, "unexpected": True},
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "owner": None,
+                    }
+                ]
+            },
+        ),
+    ],
+)
+async def test_admin_runtime_state_rejects_invalid_egress_contract(
+    admin_client,
+    db_session,
+    seed_user,
+    field,
+    value,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"egress-invalid-{uuid4().hex[:8]}",
+        machine_name="Runtime invalid egress",
+        agent_type="openclaw",
+    )
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=_runtime_state_body(str(env.id), **{field: value}),
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime", "bridge"),
+    [
+        ("hermes", None),
+        ("hermes", TEST_OPENCLAW_BRIDGE),
+        ("openclaw", TEST_HERMES_BRIDGE),
+        (
+            "openclaw",
+            {
+                "surfaces": [
+                    {
+                        key: value
+                        for key, value in TEST_OPENCLAW_BRIDGE["surfaces"][0].items()
+                        if key != "upstreamHost"
+                    }
+                ]
+            },
+        ),
+    ],
+)
+async def test_admin_runtime_state_rejects_runtime_bridge_mismatch(
+    admin_client,
+    db_session,
+    seed_user,
+    runtime,
+    bridge,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"bridge-mismatch-{runtime}-{uuid4().hex[:8]}",
+        machine_name=f"Runtime bridge mismatch {runtime}",
+        agent_type=runtime,
+    )
+    body = _runtime_state_body(
+        str(env.id),
+        runtimes=_runtime_state(runtime),
+        bridge=bridge,
+        live_sync=_live_sync(str(env.id), runtime),
+    )
 
     response = await admin_client.put(
         f"/v1/admin/environments/{env.id}/runtime-state",

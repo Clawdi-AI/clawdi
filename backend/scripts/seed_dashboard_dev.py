@@ -274,6 +274,21 @@ async def _create_hosted_runtime_graph(
                         },
                     }
                 },
+                bridge=(
+                    {
+                        "surfaces": [
+                            {
+                                "name": "hermes",
+                                "kind": "control-ui",
+                                "listenPort": 28793,
+                                "upstreamHost": "127.0.0.1",
+                                "upstreamPort": 9119,
+                            }
+                        ]
+                    }
+                    if runtime == "hermes"
+                    else None
+                ),
                 live_sync={
                     "enabled": True,
                     "agents": [

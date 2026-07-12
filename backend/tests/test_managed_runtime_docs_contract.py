@@ -9,6 +9,7 @@ _DOC_PATHS = (
 )
 _FORBIDDEN_NORMALIZED_TEXT = (
     "clawdi@agent-v2",
+    "agent-v2-candidate",
     "npm `agent-v2` dist-tag",
     "resolves candidate",
     "resolves the published cli",
@@ -37,11 +38,18 @@ def test_hosted_runtime_docs_pin_final_authority_boundaries() -> None:
         "`locale.language`, `locale.timezone`",
         "codex remains a live-sync agent type",
         "`controlplane` contains only `cloudapiurl`",
+        "`egressengine` and `egressprofiles` use closed schemas",
+        "invalid stored egress json fails closed with `409`",
+        "`mcp` and `tools` remain explicit pass-through projections",
+        "standard npm `beta` dist-tag",
+        "non-authoritative publication metadata",
+        "`clawdi@beta` is rejected at both write and manifest-read boundaries",
     ):
         assert required in managed
 
     for required in (
-        "non-production `agent-v2-candidate` dist-tag",
+        "standard npm `beta` dist-tag",
+        "`beta` is non-authoritative publication metadata",
         "operator-supplied exact `clawdi@<semver>` package spec",
         "performs no npm dist-tag lookup",
         "cloud constructs the public manifest from that exact selection",

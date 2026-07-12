@@ -302,11 +302,11 @@ non-empty `error.message`. A
 healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
 
 This strict typing claim applies only to the Hosted fields modeled in this
-release. `mcp` and `tools` remain explicit pass-through projections, while
-egress retains its existing separate handling; this pass does not claim a
-complete product schema for any of those surfaces. Further `mcp`, `tools`, and
-egress modeling is separate future schema work. They are not compatibility
-aliases and are not removed or remodeled here. The normalized generic
+release. `egressEngine` and `egressProfiles` use closed schemas matching the
+Hosted CLI wire and are validated at admin write and manifest read boundaries.
+Invalid stored egress JSON fails closed with `409`. `mcp` and `tools` remain
+explicit pass-through projections; this work does not broaden, alias, remove,
+or remodel those surfaces. The normalized generic
 `clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
 default install args, and arbitrary provider projection data such as singular
 `model` for non-Hosted inputs.
@@ -316,7 +316,11 @@ bare package names, build-metadata versions such as `clawdi@1.2.3+build.1`, and
 malformed SemVer prereleases are rejected before normalization. Valid
 prereleases follow SemVer identifier rules, including forms such as `beta.51`
 and `rc-1.2`; empty identifiers and numeric identifiers with leading zeroes are
-invalid. A managed bootstrap tgz
+invalid. Prerelease CLI publication uses the standard npm `beta` dist-tag, but
+that tag is non-authoritative publication metadata. Cloud and Hosted production
+never resolve or persist it: rollout state contains an exact `clawdi@<semver>`
+package spec, and `clawdi@beta` is rejected at both write and manifest-read
+boundaries. A managed bootstrap tgz
 under `/usr/local/share/clawdi/bootstrap/` is accepted only when the entire
 manifest is loaded from the explicit `CLAWDI_RUNTIME_MANIFEST_PATH` test-fixture
 entry point. Remote fetches cannot use that fixture schema. Generic

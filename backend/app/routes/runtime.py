@@ -20,12 +20,17 @@ from app.models.session import AgentEnvironment
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
     _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
+    HostedEgressEngine,
+    HostedEgressProfiles,
+    HostedRuntimeBridge,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeName,
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
     validate_clawdi_cli_package_spec,
+    validate_hosted_runtime_bridge,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.managed_ai_provider import (
@@ -97,6 +102,31 @@ async def get_runtime_manifest(
             "is invalid or not configured",
         ) from exc
     try:
+        bridge = (
+            HostedRuntimeBridge.model_validate(state.bridge) if state.bridge is not None else None
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime bridge state is invalid",
+        ) from exc
+    try:
+        egress_engine = (
+            HostedEgressEngine.model_validate(state.egress_engine)
+            if state.egress_engine is not None
+            else None
+        )
+        egress_profiles = (
+            HostedEgressProfiles.model_validate(state.egress_profiles)
+            if state.egress_profiles is not None
+            else None
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime egress state is invalid",
+        ) from exc
+    try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
         raise HTTPException(
@@ -104,6 +134,13 @@ async def get_runtime_manifest(
             "Hosted runtime CLI package spec is invalid or below the minimum version",
         ) from exc
     runtime, runtime_state = _validated_runtime_state(state.runtimes)
+    try:
+        validate_hosted_runtime_bridge(runtime, bridge)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime bridge state does not match the selected runtime",
+        ) from exc
 
     (
         providers,
@@ -138,12 +175,20 @@ async def get_runtime_manifest(
         "recovery": recovery.model_dump(mode="json"),
     }
     manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
-    if state.bridge:
-        manifest["bridge"] = state.bridge
-    if state.egress_engine:
-        manifest["egressEngine"] = state.egress_engine
-    if state.egress_profiles:
-        manifest["egressProfiles"] = state.egress_profiles
+    if bridge is not None:
+        manifest["bridge"] = bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+    if egress_engine is not None:
+        manifest["egressEngine"] = egress_engine.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+            mode="json",
+        )
+    if egress_profiles is not None:
+        manifest["egressProfiles"] = egress_profiles.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+            mode="json",
+        )
     if state.mcp:
         manifest["mcp"] = state.mcp
     if state.tools:
@@ -199,18 +244,21 @@ def _control_plane() -> dict[str, str]:
     return {"cloudApiUrl": api_url}
 
 
-def _validated_runtime_state(runtimes: dict | None) -> tuple[str, dict[str, Any]]:
+def _validated_runtime_state(
+    runtimes: dict | None,
+) -> tuple[HostedRuntimeName, dict[str, Any]]:
     if not isinstance(runtimes, dict) or len(runtimes) != 1:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "hosted runtime state must select exactly one enabled runtime",
         )
-    runtime_name, raw_runtime = next(iter(runtimes.items()))
-    if runtime_name not in _SUPPORTED_PROVIDER_RUNTIMES:
+    raw_runtime_name, raw_runtime = next(iter(runtimes.items()))
+    if raw_runtime_name not in _SUPPORTED_PROVIDER_RUNTIMES:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"unsupported enabled runtime: {runtime_name}",
+            f"unsupported enabled runtime: {raw_runtime_name}",
         )
+    runtime_name: HostedRuntimeName = "hermes" if raw_runtime_name == "hermes" else "openclaw"
     try:
         runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
     except ValidationError as exc:

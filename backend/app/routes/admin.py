@@ -714,6 +714,21 @@ async def _admin_upsert_runtime_state(
     system_state = body.system.model_dump(exclude_none=True, mode="json")
     live_sync_state = body.live_sync.model_dump(mode="json")
     recovery_state = body.recovery.model_dump(mode="json")
+    bridge_state = (
+        body.bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.bridge is not None
+        else None
+    )
+    egress_engine_state = (
+        body.egress_engine.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.egress_engine is not None
+        else None
+    )
+    egress_profiles_state = (
+        body.egress_profiles.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.egress_profiles is not None
+        else None
+    )
     runtime_state = {
         name: runtime.model_dump(exclude_none=True, mode="json")
         for name, runtime in body.runtimes.items()
@@ -759,13 +774,13 @@ async def _admin_upsert_runtime_state(
     state.locale = body.locale.model_dump()
     state.system = system_state
     state.runtimes = runtime_state
-    state.bridge = body.bridge
+    state.bridge = bridge_state
     state.live_sync = live_sync_state
     state.recovery = recovery_state
     if state is not existing_state or body.egress_engine is not None:
-        state.egress_engine = body.egress_engine
+        state.egress_engine = egress_engine_state
     if state is not existing_state or body.egress_profiles is not None:
-        state.egress_profiles = body.egress_profiles
+        state.egress_profiles = egress_profiles_state
     if state is not existing_state or body.mcp is not None:
         state.mcp = body.mcp
     if state is not existing_state or body.tools is not None:
@@ -996,6 +1011,13 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
+        elif field in {"bridge", "egress_engine", "egress_profiles"}:
+            field_value = getattr(body, field)
+            body_value = (
+                field_value.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+                if field_value is not None
+                else None
+            )
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")
         else:

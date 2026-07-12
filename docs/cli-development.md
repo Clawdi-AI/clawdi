@@ -230,11 +230,11 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
-Managed agent-v2 packages upload to the non-production
-`agent-v2-candidate` dist-tag. The runtime never consumes that tag. Promote an
-exact candidate to `agent-v2` only after the Hosted stable-envelope paired
-smoke passes, following `docs/runbooks/release.md`. The production tag means
-paired-smoke-approved, not merely published.
+Prerelease packages publish under the standard npm `beta` dist-tag. That tag is
+non-authoritative publication metadata and is never a Hosted runtime selector.
+After the Hosted stable-envelope paired smoke passes, production rollout pins
+the exact tested `clawdi@<semver>` through Cloud state; neither Cloud nor the
+runtime resolves `beta`. Follow `docs/runbooks/release.md` for the full flow.
 
 The monorepo has two GitHub Release lines:
 
