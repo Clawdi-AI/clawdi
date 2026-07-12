@@ -10,6 +10,74 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.51
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.51
+
+Package: `clawdi@0.12.10-beta.51`
+
+### Changed
+
+- Added the strict hosted locale contract for supported response languages and
+  IANA timezones. The CLI now preserves user-authored agent identity files while
+  maintaining a delimited locale instruction block, projects runtime-native
+  timezone settings, and restarts only affected runtime services.
+- Added immediate hosted runtime manifest convergence from environment-scoped
+  SSE notifications while retaining 15-second ETag polling and five-minute
+  self-healing when the notification channel is unavailable.
+- Made the hosted manifest fail closed on unknown fields and require explicit
+  `runtime`, `minimumCliVersion`, `controlPlane.cloudApiUrl`, and the canonical
+  `environmentId` identity, without inference, `appId`, datasource, or
+  deployment fallbacks.
+- Restricted runtime bindings, provider transport fields, runtime paths, and
+  OpenClaw Control UI origins to the canonical Hosted wire shape.
+- Required explicit Hosted system user, home, workspace, persistent paths, and
+  runtime home/workspace paths instead of deriving image-default locations.
+- Required a non-empty unique Hosted runtime provider selection and a structured
+  primary model constrained to that selection.
+- Required the selected Hosted runtime to include exactly
+  `install: {source: "official"}` while the CLI remains the sole owner of the
+  official installer URL and argument vector.
+- Required Hosted provider `kind` to be exactly `openai-compatible`, and
+  rejected singular Hosted provider `model` and empty provider objects while
+  accepting Cloud's healthy, `provider_not_found`, and
+  `provider_secret_unavailable` projections with required non-empty error
+  messages. Generic runtime desired state
+  keeps its existing provider and installer behavior.
+- Restricted remote Hosted CLI package selection to exact
+  `clawdi@<semver>` without build metadata, using strict SemVer prerelease
+  identifier rules and the Cloud 200-character limit. Managed bootstrap tgz paths are
+  accepted only through strict Hosted test fixtures. Runtime desired state no
+  longer resolves floating package tags.
+- Standardized npm publication on `beta` for prereleases and `latest` for
+  stable releases, with no package-level tag override. Hosted runtime updates
+  consume the public exact version from the Cloud manifest and never resolve a
+  dist-tag.
+
+### Fixed
+
+- Kept headless runtime convergence independent of a systemd user manager while
+  still requiring the manager for official runtime service installation.
+- Restored SSE subscriptions after authentication failure or terminal task
+  completion while retaining polling as the bounded retry cadence.
+
+## Clawdi CLI v0.12.10-beta.50
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.50
+
+Package: `clawdi@0.12.10-beta.50`
+
+### Changed
+
+- Made the Cloud hosted manifest the fail-closed authority for the ongoing
+  managed CLI channel. Hosted manifests must explicitly provide
+  the strict `clawdiCli` source, package spec, and official npm registry; they
+  can no longer implicitly select `clawdi@latest` or inherit npm registry
+  configuration.
+- Made agent-v2 publishing repository-autonomous: build, test, pack, install,
+  and SHA-verify one immutable tarball, then publish prereleases to the standard
+  npm `beta` channel with trusted-publisher OIDC.
+
 ## Clawdi CLI v0.12.10-beta.49
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.49
@@ -18,9 +86,8 @@ Package: `clawdi@0.12.10-beta.49`
 
 ### Changed
 
-- Added managed self-update support for the isolated floating `agent-v2`
-  channel. Agent-v2 builds upload first to `agent-v2-candidate`; the production
-  channel is promoted only after the Hosted stable-envelope paired smoke.
+- Added managed self-update support for beta builds through the standard npm
+  `beta` channel while Hosted rollout remains pinned to an exact CLI version.
 
 ## Clawdi CLI v0.12.10-beta.48
 

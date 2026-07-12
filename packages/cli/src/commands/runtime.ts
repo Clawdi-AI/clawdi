@@ -21,7 +21,11 @@ import { getConfig } from "../lib/config";
 import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { isSemverLessThan } from "../lib/semver";
 import { getCliVersion } from "../lib/version";
-import { ensureRuntimeAuthTokenFile, runtimeAuthTokenFileLabel } from "../runtime/auth-token";
+import {
+	ensureRuntimeAuthTokenFile,
+	readRuntimeAuthToken,
+	runtimeAuthTokenFileLabel,
+} from "../runtime/auth-token";
 import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
 import {
@@ -70,6 +74,7 @@ import {
 	type TransparentEgressEnvConfig,
 } from "../runtime/transparent-egress";
 import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
+import { consumeSse } from "../serve/sse-client";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreate = components["schemas"]["ChannelAccountCreate"];
@@ -1170,6 +1175,9 @@ interface RuntimeWatchOptions {
 	selfHealMs?: number | string;
 	once?: boolean;
 	json?: boolean;
+	abort?: AbortSignal;
+	notifications?: boolean;
+	notificationConsumer?: typeof consumeSse;
 }
 
 interface RuntimeVerifyOptions {
@@ -1305,8 +1313,136 @@ function parsePositiveMs(
 	return parsed;
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+interface RuntimeWatchWakeSignal {
+	signal: () => void;
+	wait: (ms: number, abort?: AbortSignal) => Promise<"notification" | "poll" | "aborted">;
+}
+
+function createRuntimeWatchWakeSignal(): RuntimeWatchWakeSignal {
+	let queued = false;
+	let wake: (() => void) | null = null;
+	return {
+		signal: () => {
+			queued = true;
+			wake?.();
+		},
+		wait: async (ms, abort) => {
+			if (abort?.aborted) return "aborted";
+			if (queued) {
+				queued = false;
+				return "notification";
+			}
+			return new Promise((resolveWait) => {
+				let settled = false;
+				const finish = (reason: "notification" | "poll" | "aborted") => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					abort?.removeEventListener("abort", onAbort);
+					wake = null;
+					if (reason === "notification") queued = false;
+					resolveWait(reason);
+				};
+				const timer = setTimeout(() => finish("poll"), ms);
+				const onAbort = () => finish("aborted");
+				wake = () => finish("notification");
+				abort?.addEventListener("abort", onAbort, { once: true });
+			});
+		},
+	};
+}
+
+interface RuntimeWatchNotificationConfig {
+	apiUrl: string;
+	apiKey: string;
+	environmentId: string;
+}
+
+interface RuntimeWatchNotificationSubscription {
+	config: RuntimeWatchNotificationConfig;
+	abort: AbortController;
+	task: Promise<void>;
+	settled: boolean;
+}
+
+function sameRuntimeWatchNotificationConfig(
+	left: RuntimeWatchNotificationConfig,
+	right: RuntimeWatchNotificationConfig,
+): boolean {
+	return (
+		left.apiUrl === right.apiUrl &&
+		left.apiKey === right.apiKey &&
+		left.environmentId === right.environmentId
+	);
+}
+
+function readRuntimeWatchNotificationConfig(
+	paths: ReturnType<typeof getRuntimePaths>,
+): RuntimeWatchNotificationConfig | null {
+	const apiKey = readRuntimeAuthToken(paths);
+	if (!apiKey || !existsSync(paths.manifestLastGood)) return null;
+	try {
+		const parsed = runtimeDesiredStateSchema.safeParse(
+			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
+		);
+		if (!parsed.success) return null;
+		return {
+			apiUrl: parsed.data.controlPlane.apiUrl,
+			apiKey,
+			environmentId: parsed.data.environmentId,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function ensureRuntimeWatchNotificationSubscription(
+	current: RuntimeWatchNotificationSubscription | null,
+	paths: ReturnType<typeof getRuntimePaths>,
+	wakeSignal: RuntimeWatchWakeSignal,
+	opts: RuntimeWatchOptions,
+): RuntimeWatchNotificationSubscription | null {
+	if (opts.once || opts.notifications === false) return current;
+	const config = readRuntimeWatchNotificationConfig(paths);
+	if (!config) {
+		current?.abort.abort();
+		return null;
+	}
+	if (current && !current.settled && sameRuntimeWatchNotificationConfig(current.config, config)) {
+		return current;
+	}
+	current?.abort.abort();
+	const abort = new AbortController();
+	const consumer = opts.notificationConsumer ?? consumeSse;
+	const subscription: RuntimeWatchNotificationSubscription = {
+		config,
+		abort,
+		task: Promise.resolve(),
+		settled: false,
+	};
+	subscription.task = consumer({
+		apiUrl: config.apiUrl,
+		apiKey: config.apiKey,
+		abort: abort.signal,
+		onEvent: (event) => {
+			if (
+				event.type === "runtime_manifest_changed" &&
+				event.environment_id === config.environmentId
+			) {
+				wakeSignal.signal();
+			}
+		},
+		// Runtime-watch keeps ETag polling alive after auth failure. The settled
+		// subscription becomes eligible for replacement on the next watch pass.
+		onAuthFailure: () => {},
+	}).finally(() => {
+		subscription.settled = true;
+	});
+	void subscription.task.catch(() => {
+		// The shared SSE consumer already handles transient reconnects. An
+		// unexpected terminal failure must not take down the polling fallback.
+	});
+	return subscription;
 }
 
 function readFileIfExists(path: string): string | null {
@@ -2272,6 +2408,8 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	let cliInstallRetryPending = false;
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
+	const wakeSignal = createRuntimeWatchWakeSignal();
+	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
 
 	if (mode !== "hosted") {
 		const event = {
@@ -2304,44 +2442,64 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		return;
 	}
 
-	for (;;) {
-		const now = Date.now();
-		const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
-		const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
-		const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
-		const event = await runtimeWatchTick(paths, {
-			forceRefresh,
-			deferCliInstall,
-			deferCliInstallReason: deferCliInstall
-				? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
-				: undefined,
-		});
-		const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
-		if (cliUpdateStatus === "error") {
-			cliInstallRetryPending = true;
-			cliInstallBackoffMs = nextCliInstallBackoffMs(cliInstallBackoffMs);
-			nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
-		} else if (
-			cliUpdateStatus === "installed" ||
-			cliUpdateStatus === "current" ||
-			cliUpdateStatus === "not_requested"
-		) {
-			cliInstallRetryPending = false;
-			cliInstallBackoffMs = 0;
-			nextCliInstallRetryAt = 0;
+	try {
+		notificationSubscription = ensureRuntimeWatchNotificationSubscription(
+			notificationSubscription,
+			paths,
+			wakeSignal,
+			opts,
+		);
+		for (;;) {
+			if (opts.abort?.aborted) return;
+			const now = Date.now();
+			const cliInstallRetryDue = cliInstallRetryPending && now >= nextCliInstallRetryAt;
+			const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+			// Full refreshes also re-resolve floating CLI channels when manifest ETags are unchanged.
+			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
+			const event = await runtimeWatchTick(paths, {
+				forceRefresh,
+				deferCliInstall,
+				deferCliInstallReason: deferCliInstall
+					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
+					: undefined,
+			});
+			const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
+			if (cliUpdateStatus === "error") {
+				cliInstallRetryPending = true;
+				cliInstallBackoffMs = nextCliInstallBackoffMs(cliInstallBackoffMs);
+				nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+			} else if (
+				cliUpdateStatus === "installed" ||
+				cliUpdateStatus === "current" ||
+				cliUpdateStatus === "not_requested"
+			) {
+				cliInstallRetryPending = false;
+				cliInstallBackoffMs = 0;
+				nextCliInstallRetryAt = 0;
+			}
+			if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
+			writeRuntimeWatchStatus(event, paths);
+			emitRuntimeWatchEvent(event, opts.json);
+			notificationSubscription = ensureRuntimeWatchNotificationSubscription(
+				notificationSubscription,
+				paths,
+				wakeSignal,
+				opts,
+			);
+			if (opts.once) {
+				if (event.status === "error") process.exitCode = 1;
+				else process.exitCode = 0;
+				return;
+			}
+			if (event.selfReexec === true || opts.abort?.aborted) {
+				return;
+			}
+			const wakeReason = await wakeSignal.wait(intervalMs, opts.abort);
+			if (wakeReason === "aborted") return;
 		}
-		if (event.status === "applied" || forceRefresh) lastFullFetchAt = Date.now();
-		writeRuntimeWatchStatus(event, paths);
-		emitRuntimeWatchEvent(event, opts.json);
-		if (opts.once) {
-			if (event.status === "error") process.exitCode = 1;
-			else process.exitCode = 0;
-			return;
-		}
-		if (event.selfReexec === true) {
-			return;
-		}
-		await sleep(intervalMs);
+	} finally {
+		notificationSubscription?.abort.abort();
+		await notificationSubscription?.task.catch(() => {});
 	}
 }
 

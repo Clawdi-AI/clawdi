@@ -67,6 +67,9 @@ Verified sources:
 - `website/docs/integrations/providers.md`: `config.yaml` is the source of truth
   for model, provider, and base URL. Multiple custom providers use
   `custom_providers` list entries and `model.provider: custom:<name>`.
+- `website/docs/user-guide/configuration.md` defines top-level `timezone` as an
+  IANA timezone; `website/docs/guides/migrate-from-openclaw.md` maps OpenClaw
+  `agents.defaults.userTimezone` directly to it.
 - `hermes_cli/config.py`: current config supports a v12 `providers` dict,
   normalizes it into the legacy custom-provider view, and validates
   `custom_providers` as a list.

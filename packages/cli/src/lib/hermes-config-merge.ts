@@ -85,6 +85,15 @@ export function mergeHermesChannelConfig(
 	});
 }
 
+export function mergeHermesRuntimeLocale(configPath: string, timezone: string): void {
+	const document = readHermesConfig(configPath);
+	document.set("timezone", timezone);
+	writePrivateFileAtomic(configPath, String(document), {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
+}
+
 export function removeHermesMcpServer(configPath: string, name: string): void {
 	if (!existsSync(configPath)) return;
 	const document = readHermesConfig(configPath);

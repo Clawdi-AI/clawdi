@@ -215,509 +215,27 @@ describe("CLI smoke — src entry", () => {
 		}
 	});
 
-	it("runtime init performs first-install convergence from a fixture manifest", async () => {
-		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } =
-			await import("node:fs");
-		const root = join(tmpdir(), `clawdi-smoke-runtime-full-${Date.now()}`);
-		const home = join(root, "home", "clawdi");
-		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
-		const manifestPath = join(root, "runtime-manifest.json");
-		const staleManifestPath = join(root, "runtime-manifest-stale.json");
-		const serviceStateRoot = join(root, "var", "lib", "clawdi");
-		const runRoot = join(root, "run", "clawdi");
-		const openclawInstaller = join(root, "fixtures", "openclaw-install.sh");
-		const hermesInstaller = join(root, "fixtures", "hermes-install.sh");
-		mkdirSync(dirname(policyPath), { recursive: true });
-		mkdirSync(dirname(openclawInstaller), { recursive: true });
-		mkdirSync(home, { recursive: true });
-		writeFileSync(
-			policyPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				cliUpdateMode: "system-managed-npm",
-				deniedCommands: ["setup", "teardown", "update"],
-			}),
-		);
-		writeFileSync(
-			openclawInstaller,
-			`#!/usr/bin/env bash
-set -euo pipefail
-install -d "$HOME/.openclaw/bin" "$HOME/.openclaw/install-proof"
-printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.openclaw/install-proof/npm-config-prefix"
-printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.openclaw/install-proof/npm-config-cache"
-printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.openclaw/install-proof/node-extra-ca-certs"
-printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.openclaw/install-proof/npm-config-cafile"
-cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
-#!/usr/bin/env bash
-echo "openclaw fixture"
-SH
-chmod +x "$HOME/.openclaw/bin/openclaw"
-`,
-		);
-		chmodSync(openclawInstaller, 0o700);
-		writeFileSync(
-			hermesInstaller,
-			`#!/usr/bin/env bash
-set -euo pipefail
-install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent" "$HOME/.hermes/install-proof"
-printf '%s\\n' "\${NPM_CONFIG_PREFIX:-}" > "$HOME/.hermes/install-proof/npm-config-prefix"
-printf '%s\\n' "\${NPM_CONFIG_CACHE:-}" > "$HOME/.hermes/install-proof/npm-config-cache"
-printf '%s\\n' "\${NODE_EXTRA_CA_CERTS:-}" > "$HOME/.hermes/install-proof/node-extra-ca-certs"
-printf '%s\\n' "\${NPM_CONFIG_CAFILE:-}" > "$HOME/.hermes/install-proof/npm-config-cafile"
-printf '%s\\n' "\${HERMES_HOME:-}" > "$HOME/.hermes/install-proof/hermes-home"
-printf '%s\\n' "\${UV_PYTHON_INSTALL_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-install-dir"
-printf '%s\\n' "\${UV_PYTHON_BIN_DIR:-}" > "$HOME/.hermes/install-proof/uv-python-bin-dir"
-printf '%s\\n' "\${UV_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-managed-python"
-printf '%s\\n' "\${UV_NO_MANAGED_PYTHON:-}" > "$HOME/.hermes/install-proof/uv-no-managed-python"
-printf '%s\\n' "\${UV_PYTHON_DOWNLOADS:-}" > "$HOME/.hermes/install-proof/uv-python-downloads"
-cat > "$HOME/.local/bin/hermes" <<'SH'
-#!/usr/bin/env bash
-echo "hermes fixture"
-SH
-chmod +x "$HOME/.local/bin/hermes"
-`,
-		);
-		chmodSync(hermesInstaller, 0o700);
-		const mitmproxy = {
-			type: "mitmproxy" as const,
-			version: "12.2.3",
-			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
-			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
-		};
-		const mitmdump = join(
-			serviceStateRoot,
-			"maintained",
-			"mitmproxy",
-			mitmproxy.version,
-			mitmproxy.sha256,
-			"mitmdump",
-		);
-		mkdirSync(dirname(mitmdump), { recursive: true });
-		writeFileSync(mitmdump, "#!/usr/bin/env sh\necho fake mitmdump\n");
-		chmodSync(mitmdump, 0o755);
-
-		const manifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_test",
-			environmentId: "env_test",
-			instanceId: "iid_test",
-			generation: 7,
-			issuedAt: "2026-06-03T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.example.test" },
-			clawdiCli: { version: "0.10.1", channel: "stable", source: "npm:clawdi@stable" },
-			egressEngine: mitmproxy,
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					updateChannel: "stable",
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://openclaw.ai/install-cli.sh",
-						home,
-						args: ["--json", "--version", "stable", "--no-onboard"],
-					},
-				},
-				hermes: {
-					enabled: true,
-					updateChannel: "main",
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://hermes-agent.nousresearch.com/install.sh",
-						home,
-						args: ["--branch", "main", "--skip-setup", "--non-interactive"],
-					},
-					run: {
-						env: {
-							DISCORD_API_BASE_URL: "http://127.0.0.1:4500/discord",
-						},
-						args: ["gateway", "run"],
-					},
-				},
-			},
-			egressProfiles: {
-				profiles: [
-					{
-						id: "codex-openai-responses",
-						kind: "provider",
-						match: {
-							scheme: "https",
-							host: "api.openai.com",
-							pathPrefix: "/v1/",
-							headers: {
-								authorization: {
-									type: "equals",
-									value: "clawdi-egress-placeholder",
-									prefix: "Bearer ",
-								},
-							},
-						},
-						rewrite: {
-							upstreamBaseUrl: "http://127.0.0.1:18890/provider/openai/responses",
-							preservePath: false,
-							setHeaders: {
-								authorization: "Bearer smoke-provider-key",
-							},
-						},
-						logging: { redactHeaders: ["authorization"] },
-						owner: "provider-projection",
-					},
-				],
-			},
-			projection: {
-				aiProviders: {
-					default: "openai-main/gpt-5.2",
-				},
-				mcp: { command: "clawdi mcp" },
-			},
-			liveSync: {
-				enabled: true,
-				agents: [{ agentType: "codex", environmentId: "env-codex" }],
-			},
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		};
-		writeFileSync(manifestPath, JSON.stringify(manifest));
-
-		const env = {
-			HOME: home,
-			CLAWDI_RUNTIME_MODE: "hosted",
-			CLAWDI_HOST_POLICY_PATH: policyPath,
-			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
-			CLAWDI_RUN_DIR: runRoot,
-			CLAWDI_AUTH_TOKEN: undefined,
-			CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
-			CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: openclawInstaller,
-			CLAWDI_RUNTIME_TEST_HERMES_INSTALLER: hermesInstaller,
-			CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
-			NPM_CONFIG_PREFIX: "/var/lib/clawdi/npm",
-			NPM_CONFIG_CACHE: "/var/lib/clawdi/npm-cache",
-			HERMES_HOME: undefined,
-			OPENCLAW_STATE_DIR: undefined,
-		};
-
-		try {
-			const first = await runCli(
-				["runtime", "init", "--non-interactive", "--json", "--manifest-file", manifestPath],
-				env,
-			);
-			expect(first.code).toBe(0);
-			const parsed = JSON.parse(first.stdout);
-			expect(parsed.mode).toBe("normal");
-			expect(parsed.status).toBe("ok");
-			expect(parsed.stage).toBe("final");
-			expect(parsed.activeGeneration).toBe(7);
-			expect(parsed.enabledRuntimes).toEqual(["hermes", "openclaw"]);
-			expect(parsed.manifestSource.type).toBe("fixture-file");
-			expect(parsed.paths.workspaceRoot).toBe(join(home, "clawdi"));
-			expect(parsed.convergence.egressProfileBundle).toBe(
-				join(serviceStateRoot, "config", "egress", "profiles.json"),
-			);
-			expect(parsed.convergence.daemonAuthTokenFile).toBeNull();
-			expect(parsed.convergence.systemdSystemUnits).toEqual([
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
-			]);
-
-			for (const outputPath of [
-				join(serviceStateRoot, "config", "clawdi.json"),
-				join(serviceStateRoot, "sync", "runtimes.json"),
-				join(serviceStateRoot, "cache", "manifest.last-good.json"),
-				join(runRoot, "instance-data.json"),
-				join(runRoot, "instance-data-sensitive.json"),
-				join(serviceStateRoot, "install-inventory", "openclaw.json"),
-				join(serviceStateRoot, "install-inventory", "hermes.json"),
-				join(serviceStateRoot, "config", "projections", "openclaw.json"),
-				join(serviceStateRoot, "config", "projections", "hermes.json"),
-				join(serviceStateRoot, "config", "run", "openclaw.json"),
-				join(serviceStateRoot, "config", "run", "hermes.json"),
-				join(
-					home,
-					".config",
-					"systemd",
-					"user",
-					"openclaw-gateway.service.d",
-					"10-clawdi-hosted.conf",
-				),
-				join(
-					home,
-					".config",
-					"systemd",
-					"user",
-					"hermes-gateway.service.d",
-					"10-clawdi-hosted.conf",
-				),
-				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
-				join(runRoot, "systemd", "env", "hermes-gateway.service.env"),
-				join(runRoot, "systemd", "env", "clawdi-runtime-sidecar.service.env"),
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
-				join(runRoot, "egress", "transparent-egress.env"),
-				join(runRoot, "egress", "clawdi_egress_addon.py"),
-				join(serviceStateRoot, "config", "egress", "profiles.json"),
-				join(serviceStateRoot, "instances", "iid_test", "boot-finished"),
-				join(home, "clawdi"),
-				join(home, ".openclaw", "bin", "openclaw"),
-				join(home, ".local", "bin", "hermes"),
-			]) {
-				if (!existsSync(outputPath)) {
-					throw new Error(`expected runtime init output to exist: ${outputPath}`);
-				}
-			}
-			for (const staleShimPath of [
-				join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"),
-				join(serviceStateRoot, "bin", "openclaw"),
-				join(serviceStateRoot, "bin", "hermes"),
-				join(serviceStateRoot, "bin", "codex"),
-				join(serviceStateRoot, "config", "runtime-command-shims.json"),
-				join(serviceStateRoot, "supervisor", "supervisord.conf"),
-				join(runRoot, "supervisor", "supervisord.conf"),
-				join(runRoot, "launch", "openclaw.sh"),
-				join(runRoot, "launch", "openclaw.env"),
-				join(runRoot, "launch", "hermes.sh"),
-				join(runRoot, "launch", "hermes.env"),
-			]) {
-				expect(existsSync(staleShimPath)).toBe(false);
-			}
-			expect(statSync(join(serviceStateRoot, "cache", "boot-status.json")).mode & 0o777).toBe(
-				0o644,
-			);
-			expect(statSync(join(serviceStateRoot, "boot", "status.json")).mode & 0o777).toBe(0o644);
-			expect(statSync(join(serviceStateRoot, "boot", "result.json")).mode & 0o777).toBe(0o644);
-			expect(statSync(join(runRoot, "instance-data-sensitive.json")).mode & 0o777).toBe(0o600);
-			expect(
-				JSON.parse(readFileSync(join(runRoot, "instance-data-sensitive.json"), "utf-8"))
-					.tokenSource,
-			).toBe("fixture-file");
-			expect(
-				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-prefix"), "utf-8"),
-			).toBe("\n");
-			expect(
-				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cache"), "utf-8"),
-			).toBe("\n");
-			expect(
-				readFileSync(join(home, ".openclaw", "install-proof", "node-extra-ca-certs"), "utf-8"),
-			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
-			expect(
-				readFileSync(join(home, ".openclaw", "install-proof", "npm-config-cafile"), "utf-8"),
-			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "npm-config-prefix"), "utf-8"),
-			).toBe("\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cache"), "utf-8"),
-			).toBe("\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "node-extra-ca-certs"), "utf-8"),
-			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "npm-config-cafile"), "utf-8"),
-			).toBe("/etc/ssl/certs/ca-certificates.crt\n");
-			expect(readFileSync(join(home, ".hermes", "install-proof", "hermes-home"), "utf-8")).toBe(
-				`${join(home, ".hermes")}\n`,
-			);
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "uv-python-install-dir"), "utf-8"),
-			).toBe(`${join(home, ".hermes", "uv", "python")}\n`);
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "uv-python-bin-dir"), "utf-8"),
-			).toBe(`${join(home, ".hermes", "uv", "bin")}\n`);
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "uv-managed-python"), "utf-8"),
-			).toBe("1\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "uv-no-managed-python"), "utf-8"),
-			).toBe("\n");
-			expect(
-				readFileSync(join(home, ".hermes", "install-proof", "uv-python-downloads"), "utf-8"),
-			).toBe("\n");
-
-			const managed = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "clawdi.json"), "utf-8"),
-			);
-			expect(managed.generation).toBe(7);
-			expect(JSON.stringify(managed)).not.toContain("auth-test-token");
-			const hermesUnit = readFileSync(
-				join(
-					home,
-					".config",
-					"systemd",
-					"user",
-					"hermes-gateway.service.d",
-					"10-clawdi-hosted.conf",
-				),
-				"utf-8",
-			);
-			const openclawUnit = readFileSync(
-				join(
-					home,
-					".config",
-					"systemd",
-					"user",
-					"openclaw-gateway.service.d",
-					"10-clawdi-hosted.conf",
-				),
-				"utf-8",
-			);
-			const sidecarUnit = readFileSync(
-				join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"),
-				"utf-8",
-			);
-			const openclawEnv = readFileSync(
-				join(runRoot, "systemd", "env", "openclaw-gateway.service.env"),
-				"utf-8",
-			);
-			expect(hermesUnit).toContain(
-				`ExecStart="${join(home, ".local", "bin", "hermes")}" "gateway" "run"`,
-			);
-			expect(openclawUnit).toContain(
-				`ExecStart="${join(home, ".openclaw", "bin", "openclaw")}" "gateway" "run"`,
-			);
-			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
-			expect(existsSync(join(runRoot, "systemd", "system", "clawdi-runtime-sidecar.service"))).toBe(
-				true,
-			);
-			expect(hermesUnit).not.toContain("clawdi run -- hermes");
-			expect(openclawUnit).not.toContain("clawdi run -- openclaw");
-			expect(openclawEnv).toContain('CLAWDI_RUNTIME_REV="');
-			expect(openclawEnv).toContain('OPENCLAW_SYSTEMD_UNIT="openclaw-gateway.service"');
-			expect(openclawUnit).not.toContain("auth-test-token");
-			expect(openclawEnv).not.toContain("auth-test-token");
-			const inventory = JSON.parse(
-				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
-			);
-			expect(inventory.install.url).toBe("https://openclaw.ai/install-cli.sh");
-			expect(inventory.install.args).not.toContain("--dir");
-			expect(inventory.install.args).not.toContain("--prefix");
-			expect(inventory.status).toBe("installed");
-			expect(inventory.commandPath).toBe(join(home, ".openclaw", "bin", "openclaw"));
-			expect(typeof inventory.installStartedAt).toBe("string");
-			expect(typeof inventory.installFinishedAt).toBe("string");
-			expect(typeof inventory.installDurationMs).toBe("number");
-			expect(inventory.installDurationMs).toBeGreaterThanOrEqual(0);
-			const openclawRunConfig = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "run", "openclaw.json"), "utf-8"),
-			);
-			expect(openclawRunConfig.schemaVersion).toBe("clawdi.runtimeRunConfig.v1");
-			expect(openclawRunConfig.commandPath).toBe(join(home, ".openclaw", "bin", "openclaw"));
-			expect(openclawRunConfig.defaultArgs).toEqual([
-				"gateway",
-				"run",
-				"--allow-unconfigured",
-				"--bind",
-				"loopback",
-				"--force",
-			]);
-			expect(openclawRunConfig.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
-			const hermesRunConfig = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
-			);
-			expect(hermesRunConfig.schemaVersion).toBe("clawdi.runtimeRunConfig.v1");
-			expect(hermesRunConfig.commandPath).toBe(join(home, ".local", "bin", "hermes"));
-			expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
-			expect(hermesRunConfig.env.DISCORD_API_BASE_URL).toBe("http://127.0.0.1:4500/discord");
-			expect(hermesRunConfig.env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
-			expect(hermesRunConfig.egressProfileBundlePath).toBe(
-				join(serviceStateRoot, "config", "egress", "profiles.json"),
-			);
-			const egressProfiles = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "egress", "profiles.json"), "utf-8"),
-			);
-			expect(egressProfiles.schemaVersion).toBe("clawdi.egressProfiles.v1");
-			expect(egressProfiles.profiles[0].id).toBe("codex-openai-responses");
-			expect(JSON.stringify(egressProfiles)).toContain("smoke-provider-key");
-			expect(JSON.stringify(egressProfiles)).not.toContain("auth-test-token");
-
-			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
-			expect(offline.code).toBe(0);
-			const offlineParsed = JSON.parse(offline.stdout);
-			expect(offlineParsed.mode).toBe("degraded-offline");
-			expect(offlineParsed.status).toBe("ok");
-
-			writeFileSync(staleManifestPath, JSON.stringify({ ...manifest, generation: 6 }));
-			const stale = await runCli(
-				["runtime", "init", "--non-interactive", "--json", "--manifest-file", staleManifestPath],
-				env,
-			);
-			expect(stale.code).toBe(0);
-			const staleParsed = JSON.parse(stale.stdout);
-			expect(staleParsed.mode).toBe("normal");
-			expect(staleParsed.activeGeneration).toBe(6);
-			const lastGood = JSON.parse(
-				readFileSync(join(serviceStateRoot, "cache", "manifest.last-good.json"), "utf-8"),
-			);
-			expect(lastGood.generation).toBe(6);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("runtime init rejects fixture secretRefs without inline secretValues", async () => {
+	it("runtime init rejects a generic manifest-file fixture in hosted mode", async () => {
 		const { tmpdir } = await import("node:os");
 		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
-		const root = join(tmpdir(), `clawdi-smoke-runtime-secretref-${Date.now()}`);
+		const root = join(tmpdir(), `clawdi-smoke-runtime-generic-reject-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
-		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
-		const manifestPath = join(root, "runtime-manifest.json");
-		const serviceStateRoot = join(root, "var", "lib", "clawdi");
-		const runRoot = join(root, "run", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "generic-manifest.json");
 		mkdirSync(home, { recursive: true });
-		mkdirSync(dirname(policyPath), { recursive: true });
-		writeFileSync(
-			policyPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				cliUpdateMode: "system-managed-npm",
-				deniedCommands: ["setup", "teardown", "update"],
-			}),
-		);
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_secretref_reject",
-				environmentId: "env_secretref_reject",
-				instanceId: "iid_secretref_reject",
+				deploymentId: "dep_generic_reject",
+				environmentId: "env_generic_reject",
+				instanceId: "iid_generic_reject",
 				generation: 1,
-				issuedAt: "2026-06-04T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.example.test" },
-				runtimes: {
-					openclaw: { enabled: false },
-					hermes: { enabled: false },
-				},
-				egressProfiles: {
-					profiles: [
-						{
-							id: "codex-openai-responses",
-							kind: "provider",
-							match: {
-								scheme: "https",
-								host: "api.openai.com",
-								pathPrefix: "/v1/",
-								headers: {
-									authorization: {
-										type: "equals",
-										value: "clawdi-egress-placeholder",
-										prefix: "Bearer ",
-									},
-								},
-							},
-							rewrite: {
-								upstreamBaseUrl: "https://sub2api.test/v1/responses",
-								preservePath: false,
-								setHeaders: {
-									authorization: {
-										type: "secretRef",
-										secretRef: "secret://provider.default.apiKey",
-										prefix: "Bearer ",
-									},
-								},
-							},
-						},
-					],
-				},
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
+				issuedAt: "2026-07-12T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: false } },
+				recovery: {},
 			}),
 		);
 
@@ -727,86 +245,106 @@ chmod +x "$HOME/.local/bin/hermes"
 				{
 					HOME: home,
 					CLAWDI_RUNTIME_MODE: "hosted",
-					CLAWDI_HOST_POLICY_PATH: policyPath,
-					CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
-					CLAWDI_RUN_DIR: runRoot,
-					CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
+					CLAWDI_SERVICE_STATE_DIR: state,
+					CLAWDI_RUN_DIR: run,
 				},
 			);
 			expect(result.code).toBe(22);
-			const parsed = JSON.parse(result.stdout);
-			expect(parsed.mode).toBe("manifest-rejected");
-			expect(parsed.errors[0]).toContain("fixture references secretValues");
+			expect(JSON.parse(result.stdout).mode).toBe("manifest-rejected");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("runtime init installs only selected runtimes", async () => {
+	it("runtime init converges a strict hosted manifest-file fixture", async () => {
 		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import(
+		const { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } = await import(
 			"node:fs"
 		);
-		const root = join(tmpdir(), `clawdi-smoke-runtime-selection-${Date.now()}`);
+		const root = join(tmpdir(), `clawdi-smoke-runtime-strict-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
-		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
-		const manifestPath = join(root, "runtime-manifest.json");
-		const serviceStateRoot = join(root, "var", "lib", "clawdi");
-		const runRoot = join(root, "run", "clawdi");
-		const openclawInstaller = join(root, "fixtures", "openclaw-install.sh");
-		mkdirSync(dirname(policyPath), { recursive: true });
-		mkdirSync(dirname(openclawInstaller), { recursive: true });
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "strict-hosted-manifest.json");
+		const installer = join(root, "install-openclaw.sh");
+		const managedCli = join(state, "bin", "clawdi");
+		const managedCliTarget = join(state, "npm", "bin", "clawdi");
 		mkdirSync(home, { recursive: true });
+		mkdirSync(dirname(installer), { recursive: true });
+		mkdirSync(dirname(managedCli), { recursive: true });
+		mkdirSync(dirname(managedCliTarget), { recursive: true });
+		mkdirSync(join(state, "status"), { recursive: true });
 		writeFileSync(
-			policyPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				cliUpdateMode: "system-managed-npm",
-				deniedCommands: ["setup", "teardown", "update"],
-			}),
-		);
-		writeFileSync(
-			openclawInstaller,
-			`#!/usr/bin/env bash
-set -euo pipefail
-install -d "$HOME/.openclaw/bin"
-cat > "$HOME/.openclaw/bin/openclaw" <<'SH'
-#!/usr/bin/env bash
-echo "openclaw fixture"
-SH
+			installer,
+			`#!/usr/bin/env sh
+set -eu
+mkdir -p "$HOME/.openclaw/bin"
+printf '#!/usr/bin/env sh\nexit 0\n' > "$HOME/.openclaw/bin/openclaw"
 chmod +x "$HOME/.openclaw/bin/openclaw"
 `,
 		);
-		chmodSync(openclawInstaller, 0o700);
-
+		chmodSync(installer, 0o700);
+		writeFileSync(managedCliTarget, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(managedCliTarget, 0o700);
+		symlinkSync(managedCliTarget, managedCli);
+		writeFileSync(
+			join(state, "status", "cli-bootstrap.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+				status: "installed",
+				source: "npm",
+				packageSpec: "clawdi@0.12.10-beta.51",
+				registry: "https://registry.npmjs.org",
+				activePath: managedCli,
+				activeTarget: managedCliTarget,
+				version: "0.12.10-beta.51",
+			}),
+		);
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_selection",
-				environmentId: "env_selection",
-				instanceId: "iid_selection",
-				generation: 1,
-				issuedAt: "2026-06-04T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.example.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						updateChannel: "stable",
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: ["--json", "--no-onboard"],
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: "0.12.10-beta.51",
+					runtime: "openclaw",
+					deploymentId: "dep_strict_smoke",
+					environmentId: "env_strict_smoke",
+					instanceId: "iid_strict_smoke",
+					generation: 1,
+					issuedAt: "2026-07-12T00:00:00Z",
+					locale: { language: "en", timezone: "UTC" },
+					system: {
+						user: "clawdi",
+						home,
+						workspace: join(home, "clawdi"),
+						persistentPaths: [home],
+					},
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec: "clawdi@0.12.10-beta.51",
+						registry: "https://registry.npmjs.org",
+					},
+					runtimes: {
+						openclaw: {
+							enabled: true,
+							install: { source: "official" },
+							provider_ids: ["default"],
+							primary_model: { provider_id: "default", model: "gpt-5" },
+							paths: { home, workspace: join(home, "clawdi") },
 						},
 					},
-					hermes: {
-						enabled: false,
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							status: "error",
+							error: { code: "provider_not_found", message: "fixture provider unavailable" },
+						},
 					},
+					liveSync: { enabled: false, agents: [] },
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
 				},
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
+				secretValues: {},
 			}),
 		);
 
@@ -816,47 +354,20 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				{
 					HOME: home,
 					CLAWDI_RUNTIME_MODE: "hosted",
-					CLAWDI_HOST_POLICY_PATH: policyPath,
-					CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
-					CLAWDI_RUN_DIR: runRoot,
-					CLAWDI_AUTH_TOKEN: "auth-selection-token",
+					CLAWDI_SERVICE_STATE_DIR: state,
+					CLAWDI_RUN_DIR: run,
 					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
-					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: openclawInstaller,
-					CLAWDI_RUNTIME_TEST_HERMES_INSTALLER: undefined,
-					CLAWDI_RUNTIME_MANIFEST_PATH: undefined,
-					HERMES_HOME: undefined,
-					OPENCLAW_STATE_DIR: undefined,
+					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: installer,
 				},
 			);
 			expect(result.code).toBe(0);
 			const parsed = JSON.parse(result.stdout);
+			expect(parsed.status).toBe("ok");
+			expect(parsed.stage).toBe("final");
 			expect(parsed.enabledRuntimes).toEqual(["openclaw"]);
+			expect(parsed.manifestSource.type).toBe("fixture-file");
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
-			expect(existsSync(join(home, ".local", "bin", "hermes"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "bin", "openclaw"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "bin", "hermes"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "bin", "codex"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "bin", ".clawdi-runtime-command-shim"))).toBe(false);
-			expect(existsSync(join(serviceStateRoot, "config", "runtime-command-shims.json"))).toBe(
-				false,
-			);
-			expect(existsSync(join(runRoot, "launch", "openclaw.sh"))).toBe(false);
-			expect(existsSync(join(runRoot, "launch", "openclaw.env"))).toBe(false);
-			expect(existsSync(join(runRoot, "launch", "hermes.sh"))).toBe(false);
-			expect(existsSync(join(runRoot, "launch", "hermes.env"))).toBe(false);
-
-			const openclawInventory = JSON.parse(
-				readFileSync(join(serviceStateRoot, "install-inventory", "openclaw.json"), "utf-8"),
-			);
-			const hermesInventory = JSON.parse(
-				readFileSync(join(serviceStateRoot, "install-inventory", "hermes.json"), "utf-8"),
-			);
-			expect(openclawInventory.status).toBe("installed");
-			expect(hermesInventory.status).toBe("disabled");
-			const hermesRunConfig = JSON.parse(
-				readFileSync(join(serviceStateRoot, "config", "run", "hermes.json"), "utf-8"),
-			);
-			expect(hermesRunConfig.enabled).toBe(false);
+			expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

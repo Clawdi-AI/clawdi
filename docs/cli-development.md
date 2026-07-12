@@ -230,11 +230,36 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
-Managed agent-v2 packages upload to the non-production
-`agent-v2-candidate` dist-tag. The runtime never consumes that tag. Promote an
-exact candidate to `agent-v2` only after the Hosted stable-envelope paired
-smoke passes, following `docs/runbooks/release.md`. The production tag means
-paired-smoke-approved, not merely published.
+Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
+typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
+the tarball, records and checks its SHA-256, transfers the same artifact to the
+protected npm job, checks it again, and publishes it exactly once to the
+standard npm channel derived from the package version: prereleases use `beta`
+and stable releases use `latest`. Package-level tag overrides are rejected.
+The build/test job may use the configured fast runner, but the protected
+publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
+does not support self-hosted or third-party GitHub Actions runners. The publish
+job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
+11.5.1.
+
+The CLI workflow neither calls nor checks out the Hosted repository. An operator
+verifies the exact package publication, then explicitly supplies the exact
+`clawdi@<semver>` package spec to the separate Hosted image workflow. That
+workflow fails closed when the exact input is missing, verifies registry
+integrity, signatures, and provenance, never resolves an npm dist-tag, and runs
+its image/CLI pairing smoke before publishing the image. The `beta` tag is npm
+publication metadata for prereleases, not an operator gate or rollout
+authority. The CLI workflow does not coordinate with the Hosted repository.
+Cloud-owned Hosted manifests select `clawdi@<exact-semver>` only. The runtime
+installs that exact public version directly and never calls `npm view` for
+Hosted desired state.
+
+Agent deployment v2 is not live, so there is no rolling compatibility window.
+Keep v2 creation and runtime-state reconciliation disabled until the final
+Hosted capability envelope, exact CLI release, and Cloud manifest contract are
+all deployed. Then verify a fresh deployment's runtime-state write, canonical
+`/v1/runtime/manifest` fetch, SSE invalidation, and runtime services before
+enabling v2. Do not add legacy fields or aliases.
 
 The monorepo has two GitHub Release lines:
 
@@ -274,7 +299,8 @@ first version has to be published manually:
 cd packages/cli
 npm login                    # use a maintainer account that owns the org
 bun run build                # produces dist/
-npm publish --access public  # plain publish, no --provenance
+NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.version.includes('-') ? 'beta' : 'latest')")
+npm publish --access public --tag "$NPM_TAG"  # plain publish, no --provenance
 ```
 
 The workflow detects this case (`npm view clawdi` returns nothing → falls
@@ -286,12 +312,18 @@ onward releases are automatic.
 
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
-3. The workflow runs typecheck → `bun run build` → `bun test` →
-   `npm publish --access public --provenance`. Each step is a separate
-   job so a failing test doesn't pollute the publish log.
+3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
+   one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
+   from GitHub-hosted `ubuntu-latest` with
+   `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
-5. Watch the Actions tab; on green, `npm view clawdi version` will
-   reflect the new number within ~60s.
+5. Watch the Actions tab; on green,
+   `npm view clawdi@<exact-version> version` reflects the new number. A
+   prerelease updates `beta`; a stable release updates `latest`.
+
+Stop here for this release workflow. Hosted rollout selects the approved exact
+version through its Cloud manifest. The `beta` tag is publication metadata;
+production and Hosted never resolve an npm dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run
 needs a nudge (e.g. npm was transiently unavailable).
@@ -326,3 +358,8 @@ this one-time on npmjs.com:
 2. Select GitHub Actions, enter `Clawdi-AI/clawdi`, workflow
    `cli-publish.yml`, environment `npm`
 3. Save. Subsequent pushes to `main` with a version bump auto-publish.
+
+The OIDC publish job must remain on a GitHub-hosted runner. Do not replace its
+`ubuntu-latest` runner with `vars.CI_RUNNER`, Blacksmith, or another self-hosted
+runner. OIDC is used only to publish the non-production candidate in this
+workflow; production selection is outside this PR.

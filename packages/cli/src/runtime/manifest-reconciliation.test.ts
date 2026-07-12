@@ -19,7 +19,9 @@ import {
 	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
+	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestSchema,
+	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
@@ -33,6 +35,20 @@ import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
+const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
+const TEST_HOSTED_HOME = "/home/clawdi";
+const TEST_HOSTED_WORKSPACE = "/home/clawdi/clawdi";
+
+function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		user: "clawdi",
+		home: TEST_HOSTED_HOME,
+		workspace: TEST_HOSTED_WORKSPACE,
+		persistentPaths: [TEST_HOSTED_HOME, TEST_HOSTED_WORKSPACE],
+		...overrides,
+	};
+}
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-reconcile-test-"));
@@ -86,6 +102,63 @@ function baseManifest(
 	};
 }
 
+function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+		runtime: "openclaw",
+		deploymentId: "hdep_locale",
+		environmentId: "env_locale",
+		instanceId: "hri_locale",
+		generation: 1,
+		issuedAt: "2026-07-11T00:00:00.000Z",
+		locale: TEST_HOSTED_LOCALE,
+		system: hostedSystemFixture(),
+		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+		clawdiCli: {
+			source: "npm:clawdi",
+			packageSpec: "clawdi@0.12.10-beta.51",
+			registry: "https://registry.npmjs.org",
+		},
+		providers: {
+			default: {
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "fixture provider unavailable" },
+			},
+		},
+		liveSync: { enabled: false, agents: [] },
+		recovery: { cacheManifest: true, allowOfflineBoot: true },
+		runtimes: {
+			openclaw: {
+				enabled: true,
+				install: { source: "official" },
+				provider_ids: ["default"],
+				primary_model: { provider_id: "default", model: "gpt-test" },
+				paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
+			},
+		},
+		...overrides,
+	};
+}
+
+function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	const paths =
+		typeof overrides.paths === "object" &&
+		overrides.paths !== null &&
+		!Array.isArray(overrides.paths)
+			? (overrides.paths as Record<string, unknown>)
+			: {};
+	return {
+		enabled: true,
+		install: { source: "official" },
+		provider_ids: ["default"],
+		primary_model: { provider_id: "default", model: "gpt-test" },
+		...overrides,
+		paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE, ...paths },
+	};
+}
+
 function writeFakeGatewayCli(input: {
 	path: string;
 	runtime: "openclaw" | "hermes";
@@ -128,28 +201,673 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
+	test("accepts and preserves the exact hosted locale contract", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({ locale: { language: "zh-CN", timezone: "Asia/Shanghai" } }),
+		);
+		expect(parsed.locale).toEqual({ language: "zh-CN", timezone: "Asia/Shanghai" });
+		expect(hostedManifestToRuntimeManifest(parsed).locale).toEqual(parsed.locale);
+	});
+
+	test.each([
+		["missing locale", undefined],
+		["unknown locale key", { language: "en", timezone: "UTC", personality: "warm" }],
+		["malformed language", { language: "zh-cn", timezone: "UTC" }],
+		["unsupported language", { language: "en-US", timezone: "UTC" }],
+		["invalid timezone", { language: "en", timezone: "Mars/Olympus" }],
+	])("rejects hosted manifests with %s", (_name, locale) => {
+		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ locale })).success).toBe(
+			false,
+		);
+	});
+
+	test.each([
+		["missing providers", undefined],
+		["missing selected provider", {}],
+		[
+			"unselected provider",
+			{
+				default: { kind: "openai-compatible" },
+				extra: { kind: "openai-compatible" },
+			},
+		],
+	])("rejects hosted manifests with %s", (_name, providers) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ providers })).success,
+		).toBe(false);
+	});
+
+	test.each([
+		["enabled without agents", { enabled: true, agents: [] }],
+		[
+			"disabled with agents",
+			{ enabled: false, agents: [{ agentType: "openclaw", environmentId: "env-live" }] },
+		],
+		[
+			"duplicate agents",
+			{
+				enabled: true,
+				agents: [
+					{ agentType: "openclaw", environmentId: "env-live" },
+					{ agentType: "openclaw", environmentId: "env-live" },
+				],
+			},
+		],
+		[
+			"environment id with surrounding whitespace",
+			{ enabled: true, agents: [{ agentType: "openclaw", environmentId: " env-live " }] },
+		],
+		[
+			"unsupported agent type",
+			{ enabled: true, agents: [{ agentType: "custom-runtime", environmentId: "env-live" }] },
+		],
+		[
+			"overlong environment id",
+			{ enabled: true, agents: [{ agentType: "openclaw", environmentId: "e".repeat(201) }] },
+		],
+	])("rejects hosted live sync with %s", (_name, liveSync) => {
+		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ liveSync })).success).toBe(
+			false,
+		);
+	});
+
+	test.each([
+		["language", "en"],
+		["timezone", "UTC"],
+		["personality", "warm"],
+	])("rejects the top-level %s compatibility field", (field, value) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ [field]: value })).success,
+		).toBe(false);
+	});
+
+	test.each([
+		["providerIds", hostedRuntimeFixture({ providerIds: ["default"] })],
+		[
+			"primaryModel",
+			hostedRuntimeFixture({
+				primaryModel: { provider_id: "default", model: "gpt-test" },
+			}),
+		],
+		[
+			"primary_model.providerId",
+			hostedRuntimeFixture({
+				primary_model: { providerId: "default", model: "gpt-test" },
+			}),
+		],
+		["string primary_model", hostedRuntimeFixture({ primary_model: "gpt-test" })],
+		[
+			"paths.stateDir",
+			hostedRuntimeFixture({
+				paths: { home: "/home/clawdi", workspace: "/workspace", stateDir: "/state" },
+			}),
+		],
+	])("rejects noncanonical hosted runtime field %s", (_name, runtime) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test("copies canonical runtime provider bindings without backfill", () => {
+		const canonical = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				runtimes: {
+					openclaw: hostedRuntimeFixture({
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+					}),
+				},
+			}),
+		);
+		expect(hostedManifestToRuntimeManifest(canonical).runtimes.openclaw).toMatchObject({
+			provider_ids: ["default"],
+			primary_model: { provider_id: "default", model: "gpt-test" },
+		});
+	});
+
+	test.each([
+		["missing provider_ids", { provider_ids: undefined }],
+		["empty provider_ids", { provider_ids: [] }],
+		["duplicate provider_ids", { provider_ids: ["default", "default"] }],
+		["missing primary_model", { primary_model: undefined }],
+		[
+			"primary model provider outside provider_ids",
+			{
+				provider_ids: ["default"],
+				primary_model: { provider_id: "other", model: "gpt-test" },
+			},
+		],
+	])("rejects hosted runtime with %s", (_name, overrides) => {
+		const runtime = hostedRuntimeFixture(overrides);
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		["missing install", { install: undefined }],
+		["remote install channel", { install: { source: "official", channel: "stable" } }],
+		["remote install args", { install: { source: "official", args: [] } }],
+	])("rejects hosted runtime with %s", (_name, overrides) => {
+		const runtime = hostedRuntimeFixture(overrides);
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test("preserves generic runtime install defaults and provider model projections", () => {
+		const parsed = manifestSchema.parse({
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_generic",
+			environmentId: "env_generic",
+			instanceId: "iid_generic",
+			generation: 1,
+			issuedAt: "2026-07-12T00:00:00.000Z",
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				custom: {
+					enabled: true,
+					updateChannel: "stable",
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://runtime.example.test/install.sh",
+						home: "/home/runtime",
+					},
+				},
+			},
+			projection: { providers: { default: { model: "legacy-model" } } },
+			recovery: {},
+		});
+
+		expect(parsed.runtimes.custom.install?.args).toEqual([]);
+		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
+		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
+	});
+
+	test.each([
+		"system",
+		"system.user",
+		"system.home",
+		"system.workspace",
+		"system.persistentPaths",
+		"runtime.paths",
+		"runtime.paths.home",
+		"runtime.paths.workspace",
+	])("rejects hosted manifests with missing %s", (field) => {
+		const manifest = structuredClone(hostedManifestFixture()) as Record<string, unknown>;
+		const system = manifest.system as Record<string, unknown>;
+		const runtimes = manifest.runtimes as Record<string, Record<string, unknown>>;
+		const runtime = runtimes.openclaw;
+		const paths = runtime.paths as Record<string, unknown>;
+		if (field === "system") delete manifest.system;
+		if (field === "system.user") delete system.user;
+		if (field === "system.home") delete system.home;
+		if (field === "system.workspace") delete system.workspace;
+		if (field === "system.persistentPaths") delete system.persistentPaths;
+		if (field === "runtime.paths") delete runtime.paths;
+		if (field === "runtime.paths.home") delete paths.home;
+		if (field === "runtime.paths.workspace") delete paths.workspace;
+
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test.each([
+		["base_url", { base_url: "https://provider.example.test/v1" }],
+		["api_mode", { api_mode: "openai_chat" }],
+		["runtime_env_name", { runtime_env_name: "OPENAI_API_KEY" }],
+		["api_key_secret_ref", { api_key_secret_ref: "provider.default.apiKey" }],
+	])("rejects noncanonical hosted provider field %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		["empty provider", {}],
+		[
+			"unsupported kind",
+			{
+				kind: "anthropic-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+			},
+		],
+		["kind only", { kind: "openai-compatible" }],
+		[
+			"error status without error",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				status: "error",
+			},
+		],
+		[
+			"error without error status",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
+			},
+		],
+		[
+			"non-not-found error without normal projection",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
+			},
+		],
+		[
+			"provider_not_found without error message",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found" },
+			},
+		],
+		[
+			"provider_secret_unavailable without error message",
+			{
+				kind: "openai-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				status: "error",
+				error: { code: "provider_secret_unavailable" },
+			},
+		],
+		[
+			"empty error message",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "" },
+			},
+		],
+		[
+			"singular model alias",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				model: "gpt-test",
+			},
+		],
+	])("rejects hosted manifests with %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		[
+			"provider_not_found projection",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "provider is missing" },
+			},
+		],
+		[
+			"provider_secret_unavailable projection",
+			{
+				kind: "openai-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				apiMode: "anthropic_messages",
+				models: [{ id: "claude-opus-4-6" }],
+				runtimeEnvName: "ANTHROPIC_API_KEY",
+				apiKeyRequired: true,
+				status: "error",
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
+			},
+		],
+		[
+			"healthy provider projection",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				apiMode: "openai_chat",
+				models: [{ id: "gpt-test" }],
+				apiKeySecretRef: "provider.default.apiKey",
+			},
+		],
+	])("accepts Cloud %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(true);
+	});
+
+	test.each([
+		"not-an-origin",
+		"ftp://app-v2.example.test",
+		"https://app-v2.example.test/path",
+		"https://user@app-v2.example.test",
+	])("rejects invalid OpenClaw Control UI origin %s", (origin) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					system: hostedSystemFixture({
+						openclawControlUiAllowedOrigins: [origin],
+					}),
+				}),
+			).success,
+		).toBe(false);
+	});
+
+	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
+		const paths = tempRuntimePaths();
+		const workspace = join(paths.userHome, "clawdi");
+		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
+		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  cat > '${patchPath}'`,
+				"  exit 0",
+				"fi",
+				"exit 0",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const hosted = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				system: hostedSystemFixture({
+					home: paths.userHome,
+					workspace,
+					persistentPaths: [paths.userHome, workspace],
+					openclawControlUiAllowedOrigins: allowedOrigins,
+				}),
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: { source: "official" },
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						paths: { home: paths.userHome, workspace },
+					},
+				},
+			}),
+		);
+		const normalized = hostedManifestToRuntimeManifest(hosted);
+		expect(normalized.projection?.system).toEqual(hosted.system);
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(normalized, "inline-hosted-control-ui-origins"),
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(patchPath, "utf8"))).toMatchObject({
+			gateway: {
+				controlUi: {
+					allowedOrigins,
+					dangerouslyDisableDeviceAuth: true,
+				},
+			},
+		});
+	});
+
+	test("rejects hosted manifests without an explicit CLI package policy", () => {
+		expect(() =>
+			normalizeManifestPayload({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+					runtime: "openclaw",
+					deploymentId: "hdep_missing_cli_policy",
+					environmentId: "env_missing_cli_policy",
+					instanceId: "hri_missing_cli_policy",
+					generation: 1,
+					issuedAt: "2026-07-11T00:00:00.000Z",
+					locale: TEST_HOSTED_LOCALE,
+					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+					runtimes: { openclaw: { enabled: true } },
+				},
+				secretValues: {},
+			}),
+		).toThrow(/clawdiCli/);
+	});
+
+	test.each([
+		["missing environmentId", {}],
+		["appId fallback", { appId: "app_legacy_identity" }],
+	])("rejects hosted manifests with %s", (_name, identity) => {
+		const manifest = hostedManifestFixture(identity);
+		delete manifest.environmentId;
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test("uses only the hosted environmentId as the runtime environment identity", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				deploymentId: "hdep_distinct_identity",
+				environmentId: "env_canonical_identity",
+			}),
+		);
+
+		expect(hostedManifestToRuntimeManifest(parsed).environmentId).toBe("env_canonical_identity");
+	});
+
+	test("rejects hosted manifests without a minimum CLI protocol floor", () => {
+		const manifest = hostedManifestFixture();
+		delete manifest.minimumCliVersion;
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test.each([
+		["missing cloudApiUrl", {}],
+		[
+			"manifestUrl",
+			{
+				cloudApiUrl: "https://cloud-api.example.test",
+				manifestUrl: "https://cloud-api.example.test/v1/runtime/manifest",
+			},
+		],
+		[
+			"apiUrl",
+			{
+				cloudApiUrl: "https://cloud-api.example.test",
+				apiUrl: "https://cloud-api.example.test",
+			},
+		],
+		["unknown key", { cloudApiUrl: "https://cloud-api.example.test", unknown: true }],
+	])("rejects hosted controlPlane with %s", (_name, controlPlane) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ controlPlane })).success,
+		).toBe(false);
+	});
+
+	test.each([
+		{
+			name: "wrong source",
+			clawdiCli: {
+				source: "npm:other",
+				packageSpec: "clawdi@0.12.10-beta.51",
+				registry: "https://registry.npmjs.org",
+			},
+		},
+		{
+			name: "missing registry",
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.51" },
+		},
+		{
+			name: "non-official registry",
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.51",
+				registry: "https://registry.example.test",
+			},
+		},
+		{
+			name: "dead managed flags",
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.51",
+				registry: "https://registry.npmjs.org",
+				managedConfig: true,
+				userEditableConfig: false,
+			},
+		},
+	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
+		expect(() =>
+			normalizeManifestPayload({
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+					runtime: "openclaw",
+					deploymentId: "hdep_invalid_cli_policy",
+					environmentId: "env_invalid_cli_policy",
+					instanceId: "hri_invalid_cli_policy",
+					generation: 1,
+					issuedAt: "2026-07-11T00:00:00.000Z",
+					locale: TEST_HOSTED_LOCALE,
+					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+					clawdiCli,
+					runtimes: { openclaw: { enabled: true } },
+				},
+				secretValues: {},
+			}),
+		).toThrow();
+	});
+
+	test.each([
+		"clawdi@0.12.10-beta.51",
+		"clawdi@1.2.3-rc-1.2",
+		"clawdi@1.2.3",
+	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec,
+						registry: "https://registry.npmjs.org",
+					},
+				}),
+			).success,
+		).toBe(true);
+	});
+
+	test("enforces the Cloud package spec length limit for remote and fixture Hosted schemas", () => {
+		const atLimit = `clawdi@1.2.3-${"a".repeat(187)}`;
+		const overLimit = `clawdi@1.2.3-${"a".repeat(188)}`;
+		expect(atLimit).toHaveLength(200);
+		expect(overLimit).toHaveLength(201);
+
+		for (const packageSpec of [atLimit, overLimit]) {
+			const manifest = hostedManifestFixture({
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec,
+					registry: "https://registry.npmjs.org",
+				},
+			});
+			const expected = packageSpec === atLimit;
+			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(expected);
+			expect(
+				hostedRuntimeManifestFixtureResponseSchema.safeParse({
+					manifest,
+					secretValues: {},
+				}).success,
+			).toBe(expected);
+		}
+	});
+
+	test.each([
+		"clawdi@agent-v2",
+		"clawdi@latest",
+		"clawdi@beta",
+		"clawdi",
+		"clawdi@candidate",
+		"clawdi@1.2.3+build.1",
+		"clawdi@1.2.3-beta..1",
+		"clawdi@1.2.3-beta.",
+		"clawdi@1.2.3-.beta",
+		"clawdi@1.2.3-01",
+		"clawdi@01.2.3",
+		"./clawdi.tgz",
+		"/tmp/clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.51.tgz",
+		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
+	])("rejects hosted CLI package spec %s", (packageSpec) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec,
+						registry: "https://registry.npmjs.org",
+					},
+				}),
+			).success,
+		).toBe(false);
+	});
+
 	test("normalizes hosted manifest responses into runtime desired state without embedding secrets", () => {
 		const hostedResponse = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
 				environmentId: "env_normalize",
 				instanceId: "hri_normalize",
 				generation: 7,
 				issuedAt: "2026-07-01T00:00:00.000Z",
-				system: {
+				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture({
 					home: "/home/clawdi-test",
 					workspace: "/workspace/clawdi",
-				},
+					persistentPaths: ["/home/clawdi-test", "/workspace/clawdi"],
+				}),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
-					manifestUrl: "https://cloud-api.example.test/v1/runtime/manifest",
+				},
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.12.10-beta.51",
+					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
 					openclaw: {
 						enabled: true,
-						install: { source: "official", channel: "stable" },
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						install: { source: "official" },
 						run: {
 							command: "openclaw",
 							args: [
@@ -177,7 +895,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						kind: "openai-compatible",
 						type: "custom_openai_compatible",
 						baseUrl: "https://api.example.test/v1",
-						model: "gpt-test",
+						models: [{ id: "gpt-test" }],
 						apiMode: "openai_chat",
 						apiKeySecretRef: "secret://providers/default/api-key",
 					},
@@ -229,7 +947,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(normalized.manifest.runtime).toBe("openclaw");
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
-		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBe("stable");
+		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBeUndefined();
 		expect(normalized.manifest.runtimes.openclaw.install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
 		expect(normalized.manifest.runtimes.openclaw.install?.args).toEqual(
 			OFFICIAL_INSTALL_ARGS.openclaw,
@@ -260,40 +978,109 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 	});
 
-	test("infers the hosted runtime when the manifest has one runtime entry", () => {
-		const hostedManifest = hostedRuntimeManifestSchema.parse({
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			deploymentId: "hdep_infer_runtime",
-			environmentId: "env_infer_runtime",
-			instanceId: "hri_infer_runtime",
-			generation: 1,
-			issuedAt: "2026-07-07T00:00:00.000Z",
-			controlPlane: {
-				cloudApiUrl: "https://cloud-api.example.test",
-			},
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					install: { source: "official" },
+	test("rejects a missing explicit runtime even with one runtime entry", () => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse({
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+				deploymentId: "hdep_infer_runtime",
+				environmentId: "env_infer_runtime",
+				instanceId: "hri_infer_runtime",
+				generation: 1,
+				issuedAt: "2026-07-07T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture(),
+				controlPlane: {
+					cloudApiUrl: "https://cloud-api.example.test",
 				},
-			},
-		});
-
-		expect(hostedManifest.runtime).toBe("openclaw");
-		expect(hostedManifestToRuntimeManifest(hostedManifest).runtime).toBe("openclaw");
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.12.10-beta.51",
+					registry: "https://registry.npmjs.org",
+				},
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found", message: "provider is missing" },
+					},
+				},
+				liveSync: { enabled: false, agents: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+				runtimes: {
+					openclaw: hostedRuntimeFixture(),
+				},
+			}).success,
+		).toBe(false);
 	});
 
-	test("strips unknown hosted manifest fields while preserving the known contract", () => {
+	test.each([
+		["top level", (manifest: Record<string, unknown>) => ({ ...manifest, unknown: true })],
+		[
+			"system",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				system: hostedSystemFixture({ unknown: true }),
+			}),
+		],
+		[
+			"control plane",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				controlPlane: {
+					...(manifest.controlPlane as Record<string, unknown>),
+					unknown: true,
+				},
+			}),
+		],
+		[
+			"runtime entry",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				runtimes: {
+					openclaw: {
+						...((manifest.runtimes as Record<string, unknown>).openclaw as Record<string, unknown>),
+						unknown: true,
+					},
+				},
+			}),
+		],
+		[
+			"runtime run settings",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				runtimes: {
+					openclaw: {
+						...((manifest.runtimes as Record<string, unknown>).openclaw as Record<string, unknown>),
+						run: {
+							command: "openclaw",
+							args: ["gateway", "run"],
+							env: {},
+							prependPath: [],
+							unknown: true,
+						},
+					},
+				},
+			}),
+		],
+	])("rejects unknown hosted manifest fields at the %s", (_name, addUnknownField) => {
 		const cleanManifest = {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "hdep_forward_compat",
 			environmentId: "env_forward_compat",
 			instanceId: "hri_forward_compat",
 			generation: 1,
 			issuedAt: "2026-07-01T00:00:00.000Z",
+			locale: TEST_HOSTED_LOCALE,
 			controlPlane: {
 				cloudApiUrl: "https://cloud-api.example.test",
+			},
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.51",
+				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
 				openclaw: {
@@ -308,47 +1095,56 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		};
 
-		const parsed = hostedRuntimeManifestSchema.parse({
-			...cleanManifest,
-			futureTopLevelField: { deployApiCanShipFirst: true },
-			runtimes: {
-				openclaw: {
-					...cleanManifest.runtimes.openclaw,
-					futureRuntimeField: "ignored",
-					run: {
-						...cleanManifest.runtimes.openclaw.run,
-						futureRunField: "ignored",
-					},
-				},
-			},
-		});
-
-		expect(parsed).toEqual(hostedRuntimeManifestSchema.parse(cleanManifest));
-		expect(parsed).not.toHaveProperty("futureTopLevelField");
-		expect(parsed.runtimes.openclaw).not.toHaveProperty("futureRuntimeField");
-		expect(parsed.runtimes.openclaw.run).not.toHaveProperty("futureRunField");
+		expect(hostedRuntimeManifestSchema.safeParse(addUnknownField(cleanManifest)).success).toBe(
+			false,
+		);
 	});
 
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",
 				environmentId: "env_multi",
 				instanceId: "hri_multi",
 				generation: 1,
 				issuedAt: "2026-07-01T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture(),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.12.10-beta.51",
+					registry: "https://registry.npmjs.org",
+				},
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found", message: "provider is missing" },
+					},
+				},
+				liveSync: { enabled: false, agents: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						install: { source: "official" },
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "openclaw", args: ["gateway", "run"] },
 					},
 					hermes: {
 						enabled: true,
+						install: { source: "official" },
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "hermes", args: ["gateway", "run"] },
 					},
 				},

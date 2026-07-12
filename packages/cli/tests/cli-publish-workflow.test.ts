@@ -1,0 +1,131 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const workflow = readFileSync(
+	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
+	"utf8",
+);
+const releaseRunbookDoc = readFileSync(
+	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
+	"utf8",
+);
+const cliDevelopmentDoc = readFileSync(
+	resolve(import.meta.dir, "../../../docs/cli-development.md"),
+	"utf8",
+);
+const publishManifestChecker = readFileSync(
+	resolve(import.meta.dir, "../scripts/check-publish-manifest.mjs"),
+	"utf8",
+);
+const manifestContract = readFileSync(
+	resolve(import.meta.dir, "../src/runtime/manifest-contract.ts"),
+	"utf8",
+);
+const cliPackage = JSON.parse(
+	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
+) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
+
+function expectedNpmTag(version: string): string {
+	return version.includes("-") ? "beta" : "latest";
+}
+
+describe("CLI publish workflow contract", () => {
+	test("keeps the protected OIDC publish fully repository-local", () => {
+		const build = workflow.indexOf("  build-immutable-artifact:");
+		const publish = workflow.indexOf("  publish-immutable-artifact-with-oidc:");
+		const buildJob = workflow.slice(build, publish);
+		const publishJob = workflow.slice(publish);
+
+		expect(build).toBeGreaterThan(-1);
+		expect(publish).toBeGreaterThan(build);
+		expect(buildJob).toContain(
+			`runs-on: \${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}`,
+		);
+		expect(publishJob).toContain("runs-on: ubuntu-latest");
+		expect(publishJob).not.toContain("vars.CI_RUNNER");
+		expect(workflow).toContain(
+			'echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"',
+		);
+		expect(workflow).toContain("needs: build-immutable-artifact");
+		expect(workflow).toContain("environment: npm");
+		expect(workflow).toContain("id-token: write");
+		expect(publishJob).toContain('node-version: "24"');
+		expect(publishJob).toContain("npm install --global npm@11.5.1");
+		expect(publishJob).toContain('test "$(npm --version)" = "11.5.1"');
+		expect(workflow).not.toContain("Clawdi-AI/clawdi-hosted");
+		expect(workflow).not.toContain("uses: Clawdi-AI/");
+		expect(workflow).not.toContain("repository_dispatch");
+		expect(workflow).not.toContain("workflow_run");
+		expect(workflow).not.toContain("repository: Clawdi-AI/");
+	});
+
+	test("builds and publishes the same verified tarball exactly once", () => {
+		const publishCommands = workflow.match(/npm publish /g) ?? [];
+
+		expect(publishCommands).toHaveLength(1);
+		expect(workflow).toContain('echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"');
+		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
+		expect(workflow).not.toContain("publishConfig");
+		expect(workflow).toContain(
+			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
+		);
+		expect(workflow).toContain(
+			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
+		);
+		expect(cliPackage.version).toContain("-");
+		expect(expectedNpmTag(cliPackage.version)).toBe("beta");
+		expect(expectedNpmTag("1.2.3-beta.1")).toBe("beta");
+		expect(expectedNpmTag("1.2.3")).toBe("latest");
+		expect(cliPackage.publishConfig).toEqual({ access: "public" });
+		expect(publishManifestChecker).toContain(
+			'Object.hasOwn(packageJson.publishConfig ?? {}, "tag")',
+		);
+		expect(publishManifestChecker).toContain(
+			"published CLI package must not declare publishConfig.tag",
+		);
+		expect(workflow).toContain("node scripts/check-publish-manifest.mjs");
+		expect(workflow).toContain("CLI_ARTIFACT_NAME: clawdi-cli-release");
+		expect(workflow).toContain(
+			`CLI_TARBALL_FILENAME: \${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}`,
+		);
+		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
+		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
+		expect(workflow).toContain("run: bun run typecheck");
+		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1");
+		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
+		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
+		expect(workflow).toContain("sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256");
+		expect(workflow.match(/npm pack /g) ?? []).toHaveLength(1);
+		expect(workflow.indexOf("npm pack ")).toBeLessThan(workflow.indexOf("npm publish "));
+		expect(workflow).not.toMatch(/npm dist-tag (?:add|rm)/);
+		expect(workflow).not.toContain("npm stage publish");
+		expect(workflow).not.toContain("NPM_TOKEN");
+	});
+
+	test("creates the CLI release only after publishing", () => {
+		expect(workflow.indexOf("npm publish ")).toBeLessThan(
+			workflow.indexOf('release create "$tag"'),
+		);
+		expect(workflow).not.toContain("pull_request:");
+	});
+
+	test("keeps Hosted production semantics exact-version only", () => {
+		for (const surface of [workflow, cliDevelopmentDoc, releaseRunbookDoc, manifestContract]) {
+			expect(surface).not.toMatch(/clawdi@agent-v2(?!-)/);
+		}
+		expect(workflow).toContain("npm install -g clawdi@$VERSION");
+		expect(cliDevelopmentDoc).toMatch(
+			/explicitly supplies the exact\s+`clawdi@<semver>` package spec/,
+		);
+		expect(cliDevelopmentDoc).toContain("fails closed when the exact input is missing");
+		expect(releaseRunbookDoc).toMatch(/supplies the exact\s+`clawdi@<semver>`\s+package\s+spec/);
+		expect(releaseRunbookDoc).toMatch(/fails when the exact spec is\s+missing/);
+		for (const surface of [cliDevelopmentDoc, releaseRunbookDoc]) {
+			expect(surface).toMatch(/never\s+resolves\s+an\s+npm\s+dist-tag/);
+			expect(surface).not.toContain("resolves that candidate");
+		}
+		expect(manifestContract).toContain("must be clawdi@<exact-semver>");
+		expect(workflow).not.toContain("npm view clawdi@agent-v2");
+	});
+});

@@ -451,6 +451,64 @@ describe("runtime manifest services", () => {
 		}
 	});
 
+	test("applies locale config without a systemd user manager when systemd apply is disabled", () => {
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "openclaw-config.log");
+		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		mkdirSync(dirname(openclawCommand), { recursive: true });
+		writeFileSync(
+			openclawCommand,
+			`#!/usr/bin/env bash
+set -euo pipefail
+test "$*" = "config patch --stdin"
+cat > '${logPath}'
+`,
+		);
+		chmodSync(openclawCommand, 0o700);
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_locale_no_systemd",
+			environmentId: "env_locale_no_systemd",
+			instanceId: "hri_locale_no_systemd",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			workspaceRoot: join(paths.userHome, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			locale: { language: "en", timezone: "UTC" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://openclaw.ai/install-cli.sh",
+						home: paths.userHome,
+						args: [],
+					},
+					run: runSettings(openclawCommand, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			recovery: {},
+		};
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "fixture-file",
+				sourcePath: "inline-locale-no-systemd",
+				offline: false,
+			},
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toEqual({
+			agents: { defaults: { userTimezone: "UTC" } },
+		});
+	});
+
 	test("skips hosted drop-ins when official install fails without a base unit", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");

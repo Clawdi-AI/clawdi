@@ -73,13 +73,17 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
-   For the managed `agent-v2` channel, do not treat a successful npm upload as
-   approval. `publishConfig.tag` uploads to the non-production
-   `agent-v2-candidate` tag. Promote the exact tested version to `agent-v2` only
-   after the Hosted stable-envelope paired smoke passes. Until a workflow with
-   the required Hosted smoke and npm promotion credentials exists, automatic
-   promotion is a release blocker/follow-up; do not replace it with
-   cross-repository polling or long-lived token automation.
+   For the managed agent-v2 release line, this repository's release workflow must
+   build, typecheck, run the full CLI suite, and pack one immutable tarball. It
+   installs that tarball, records and verifies its SHA-256, transfers the same
+   artifact to the protected npm job, verifies it again, and publishes it once
+   to `beta` for a prerelease or `latest` for a stable version with
+   trusted-publisher OIDC. Package-level tag overrides are rejected. The build
+   job may use the configured fast runner; the protected publish job must use
+   GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
+   self-hosted or third-party GitHub Actions runners. The CLI workflow does not
+   call workflows in the Hosted repository or depend on Hosted repository
+   settings.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -99,22 +103,30 @@ releases.
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
-   npm view clawdi version
+   CLI_VERSION='<exact-version>'
+   test "$(npm view "clawdi@$CLI_VERSION" version)" = "$CLI_VERSION"
    npm view clawdi dist-tags
    ```
 
-   Agent-v2 releases appear first under `agent-v2-candidate`. After the Hosted
-   stable-envelope paired smoke passes for that exact version, a maintainer
-   with npm package permission promotes it explicitly:
+   Done: the exact version exists from the verified CLI artifact and the
+   version-derived standard channel points to it: `beta` for a prerelease or
+   `latest` for a stable release. The Hosted image repository has a separate
+   release boundary. An operator supplies the exact `clawdi@<semver>` package
+   spec to the Hosted image workflow. That workflow fails when the exact spec is
+   missing, verifies registry integrity, signatures, and provenance, and never
+   resolves an npm dist-tag. It runs the image/CLI pairing smoke before
+   publishing the image and does not call back into this workflow. The `beta`
+   tag is publication metadata, not an operator gate.
 
-   ```bash
-   npm dist-tag add clawdi@<exact-version> agent-v2
-   npm view clawdi dist-tags
-   ```
+   Hosted rollout uses that same exact package spec in the Cloud manifest. The
+   runtime never resolves an npm dist-tag.
 
-   Done: `agent-v2` points to the paired-smoke-approved exact version while
-   `beta` and `latest` are unchanged. Automated promotion remains blocked until
-   a reusable Hosted smoke and npm credential contract exists.
+   Agent deployment v2 is not live. Keep creation and runtime-state
+   reconciliation disabled until the Hosted image contract, CLI version
+   `0.12.10-beta.51`, and the Cloud manifest contract are all deployed. Validate
+   one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
+   enabling v2. Do not add compatibility fields, aliases, or fallback package
+   channels.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has

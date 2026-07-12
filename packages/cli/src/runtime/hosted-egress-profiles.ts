@@ -4,10 +4,6 @@ type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 
 interface HostedRuntimeManifestProjection {
 	egressProfiles?: unknown;
-	controlPlane?: {
-		cloudApiUrl?: string | null;
-		manifestUrl?: string | null;
-	} | null;
 	providers?: unknown;
 }
 

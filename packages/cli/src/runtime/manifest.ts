@@ -38,6 +38,7 @@ import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
 	mergeHermesMcpServer,
+	mergeHermesRuntimeLocale,
 	removeHermesMcpServer,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -125,6 +126,7 @@ export interface RuntimeConvergenceResult {
 		manifestLastGood: string | null;
 		installInventory: string[];
 		projections: string[];
+		managedLocaleFiles: string[];
 		runConfigs: string[];
 		systemdSystemUnitRoot: string;
 		systemdSystemUnits: string[];
@@ -667,7 +669,7 @@ function providerHealthReasons(
 	if (!stringValue(provider.model) && !providerHasModels(provider)) {
 		reasons.push("model_missing");
 	}
-	const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
+	const apiMode = stringValue(provider.apiMode);
 	if (baseUrl && isOpenAiCompatibleMode(apiMode)) {
 		try {
 			const parsed = new URL(baseUrl);
@@ -1147,6 +1149,7 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 		runtime: name,
 		generation: manifest.generation,
 		instanceId: manifest.instanceId,
+		locale: manifest.locale ?? null,
 		managedBy: "clawdi runtime init",
 		target:
 			name === "openclaw"
@@ -1156,6 +1159,76 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 					: "clawdi mcp",
 		projection: projection ?? null,
 	};
+}
+
+const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
+const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
+
+function managedLocaleBlock(locale: NonNullable<RuntimeManifest["locale"]>): string {
+	return [
+		MANAGED_LOCALE_BLOCK_START,
+		"## Clawdi managed locale",
+		"",
+		`Use \`${locale.language}\` as the default response language unless the user explicitly requests another language.`,
+		`Interpret ambiguous dates and times in \`${locale.timezone}\` unless the user specifies another timezone.`,
+		MANAGED_LOCALE_BLOCK_END,
+	].join("\n");
+}
+
+function updateManagedLocaleFile(path: string, block: string): string {
+	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
+	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
+	const hasStart = start !== -1;
+	const hasEnd = end !== -1;
+	if (hasStart !== hasEnd || (hasStart && end < start)) {
+		throw new Error(`managed locale block markers are malformed in ${path}`);
+	}
+	if (
+		hasStart &&
+		(existing.indexOf(MANAGED_LOCALE_BLOCK_START, start + MANAGED_LOCALE_BLOCK_START.length) !==
+			-1 ||
+			existing.indexOf(MANAGED_LOCALE_BLOCK_END, end + MANAGED_LOCALE_BLOCK_END.length) !== -1)
+	) {
+		throw new Error(`managed locale block markers are duplicated in ${path}`);
+	}
+
+	let next: string;
+	if (hasStart && hasEnd) {
+		const suffixStart = end + MANAGED_LOCALE_BLOCK_END.length;
+		next = `${existing.slice(0, start)}${block}${existing.slice(suffixStart)}`;
+	} else {
+		const separator = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+		next = `${existing}${separator}${block}\n`;
+	}
+
+	if (next === existing) return path;
+	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
+	makeRuntimeUserOwned(path);
+	return path;
+}
+
+function applyHostedLocaleProjection(
+	runtime: string,
+	manifest: RuntimeManifest,
+	home: string,
+	workspaceRoot: string,
+): string | null {
+	const locale = manifest.locale;
+	if (!locale) return null;
+	const block = managedLocaleBlock(locale);
+	if (runtime === "openclaw") {
+		return updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), block);
+	}
+	if (runtime === "hermes") {
+		const hermesHome = join(home, ".hermes");
+		makeRuntimeUserPrivateDir(hermesHome);
+		const configPath = join(hermesHome, "config.yaml");
+		mergeHermesRuntimeLocale(configPath, locale.timezone);
+		makeRuntimeUserOwned(configPath);
+		return updateManagedLocaleFile(join(hermesHome, "SOUL.md"), block);
+	}
+	return null;
 }
 
 export function hostedAiProviderCatalog(
@@ -1265,12 +1338,13 @@ function hostedProviderModels(
 	primaryModel: AgentPrimaryModel | null,
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
 	const providerApiMode = hostedProviderApiMode(input);
-	const legacyModel = stringValue(input.model);
+	// Hosted wire rejects singular model; this fallback serves generic provider projections only.
+	const singularModel = stringValue(input.model);
 	if (hostedProviderManagedBy(input) === "clawdi") {
 		if (primaryModel) {
 			return [{ id: primaryModel.model, api_mode: providerApiMode }];
 		}
-		return legacyModel ? [{ id: legacyModel, api_mode: providerApiMode }] : [];
+		return singularModel ? [{ id: singularModel, api_mode: providerApiMode }] : [];
 	}
 
 	const rawModels = Array.isArray(input.models) ? input.models : [];
@@ -1288,8 +1362,8 @@ function hostedProviderModels(
 			};
 		})
 		.filter((model): model is NonNullable<typeof model> => model !== null);
-	if (legacyModel && !models.some((model) => model.id === legacyModel)) {
-		models.unshift({ id: legacyModel, api_mode: providerApiMode });
+	if (singularModel && !models.some((model) => model.id === singularModel)) {
+		models.unshift({ id: singularModel, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
 		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });
@@ -1300,7 +1374,7 @@ function hostedProviderModels(
 }
 
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
-	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
+	const raw = input.apiMode;
 	if (typeof raw === "string" && isAiProviderApiMode(raw)) {
 		return raw;
 	}
@@ -1527,12 +1601,7 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
 
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
-	const raw =
-		typeof input.runtimeEnvName === "string"
-			? input.runtimeEnvName
-			: typeof input.runtime_env_name === "string"
-				? input.runtime_env_name
-				: null;
+	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
 	if (
 		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
@@ -1975,10 +2044,9 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 		const provider = recordValue(raw);
 		if (!provider) continue;
 		if (provider.managed_by === "user") continue;
-		const runtimeEnvName =
-			stringValue(provider.runtimeEnvName) ?? stringValue(provider.runtime_env_name);
+		const runtimeEnvName = stringValue(provider.runtimeEnvName);
 		if (!runtimeEnvName || !CODEX_MANAGED_PROVIDER_ENV_KEYS.has(runtimeEnvName)) continue;
-		const baseUrl = stringValue(provider.baseUrl) ?? stringValue(provider.base_url);
+		const baseUrl = stringValue(provider.baseUrl);
 		if (!baseUrl?.trim()) continue;
 		entries.push({
 			priority: hostedCodexManagedProviderPriority(providerId),
@@ -1987,9 +2055,8 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 				providerId,
 				baseUrl: baseUrl.trim(),
 				model: stringValue(provider.model),
-				apiMode: stringValue(provider.apiMode) ?? stringValue(provider.api_mode),
-				apiKeySecretRef:
-					stringValue(provider.apiKeySecretRef) ?? stringValue(provider.api_key_secret_ref),
+				apiMode: stringValue(provider.apiMode),
+				apiKeySecretRef: stringValue(provider.apiKeySecretRef),
 			},
 		});
 	}
@@ -2821,29 +2888,42 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = process.env[OPENCLAW_GATEWAY_TOKEN_ENV]?.trim();
-	if (allowedOrigins.length === 0 && !gatewayToken) return null;
+	if (allowedOrigins.length === 0 && !gatewayToken && !manifest.locale) return null;
 	return {
-		gateway: {
-			...(gatewayToken
-				? {
-						auth: {
-							mode: "token",
-							token: gatewayToken,
+		...(manifest.locale
+			? {
+					agents: {
+						defaults: {
+							userTimezone: manifest.locale.timezone,
 						},
-					}
-				: {}),
-			...(allowedOrigins.length > 0
-				? {
-						controlUi: {
-							allowedOrigins,
-							// Clawdi's runtime bridge owns browser auth for hosted Control UI
-							// traffic, so OpenClaw's local device-auth prompt would be a second
-							// owner gate behind the already-authenticated edge.
-							dangerouslyDisableDeviceAuth: true,
-						},
-					}
-				: {}),
-		},
+					},
+				}
+			: {}),
+		...(gatewayToken || allowedOrigins.length > 0
+			? {
+					gateway: {
+						...(gatewayToken
+							? {
+									auth: {
+										mode: "token",
+										token: gatewayToken,
+									},
+								}
+							: {}),
+						...(allowedOrigins.length > 0
+							? {
+									controlUi: {
+										allowedOrigins,
+										// Clawdi's runtime bridge owns browser auth for hosted Control UI
+										// traffic, so OpenClaw's local device-auth prompt would be a second
+										// owner gate behind the already-authenticated edge.
+										dangerouslyDisableDeviceAuth: true,
+									},
+								}
+							: {}),
+					},
+				}
+			: {}),
 	};
 }
 
@@ -3304,6 +3384,13 @@ function ensureRuntimeUserManagerReady(runtimeUser: string): void {
 	}
 }
 
+// Only official service installers may invoke systemctl --user. Config,
+// projection, plugin, and installer commands need privilege drop but not a manager.
+function ensureConfiguredRuntimeUserManagerReady(): void {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (runtimeUser) ensureRuntimeUserManagerReady(runtimeUser);
+}
+
 function spawnRuntimeUserCommand(
 	command: string,
 	args: string[],
@@ -3314,7 +3401,6 @@ function spawnRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			return spawnSync("gosu", [runtimeUser, command, ...args], {
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
@@ -3347,7 +3433,6 @@ function runRuntimeUserCommand(
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		ensureRuntimeUserManagerReady(runtimeUser);
 		if (commandExists("gosu")) {
 			execFileSync("gosu", [runtimeUser, command, ...args], {
 				input: stdin,
@@ -3770,6 +3855,7 @@ export function runtimeProgramRevision(
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		egressProfiles: manifest.egressProfiles ?? null,
+		locale: manifest.locale ?? null,
 		projection: manifest.projection ?? null,
 		providerProjectionRevision,
 		runtime: manifest.runtimes[runtime] ?? null,
@@ -3788,6 +3874,7 @@ function runtimeServiceProgramRevision(
 		runtime: runtime,
 		service,
 		settings: manifest.runtimes[runtime]?.services?.[service] ?? null,
+		timezone: manifest.locale?.timezone ?? null,
 	});
 }
 
@@ -4360,6 +4447,7 @@ function installOfficialRuntimeUserService(
 		return `official ${runtimeSystemdProgramName(program)} service installer command is unavailable: ${program.command}`;
 	}
 	try {
+		ensureConfiguredRuntimeUserManagerReady();
 		runRuntimeUserCommand(program.command, args, "", paths.userHome, program.cwd);
 		return null;
 	} catch (error) {
@@ -4381,6 +4469,7 @@ function uninstallOfficialRuntimeUserService(input: {
 		return `official ${input.unitName} uninstaller command is unavailable: ${command}`;
 	}
 	try {
+		ensureConfiguredRuntimeUserManagerReady();
 		runRuntimeUserCommand(
 			command,
 			descriptor.uninstallArgs,
@@ -4488,13 +4577,7 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 	}
 }
 
-function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): string {
-	const controlPlane = manifest.controlPlane;
-	const manifestUrl =
-		"manifestUrl" in controlPlane && typeof controlPlane.manifestUrl === "string"
-			? controlPlane.manifestUrl.trim()
-			: "";
-	if (manifestUrl) return manifestUrl;
+function runtimeManifestUrlEnv(sourcePath: string): string {
 	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
 	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
 }
@@ -4522,7 +4605,7 @@ function writeSystemdUnits(
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
-		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(manifest, sourcePath),
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
@@ -4639,6 +4722,7 @@ function writeSystemdUnits(
 		const runtimeEnvironment = {
 			...commonEnvironment,
 			...program.env,
+			...(manifest.locale ? { TZ: manifest.locale.timezone } : {}),
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
 				manifest,
@@ -4732,6 +4816,7 @@ export function convergeRuntimeManifest(
 	const instanceSemaphores: string[] = [];
 	const installInventory: string[] = [];
 	const projections: string[] = [];
+	const managedLocaleFiles: string[] = [];
 	const runConfigs: string[] = [];
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
@@ -4761,6 +4846,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		controlPlane: manifest.controlPlane,
 		egressEngine: manifest.egressEngine ?? null,
 		auth: {
@@ -4776,6 +4862,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		runtimes: Object.fromEntries(
 			Object.entries(manifest.runtimes).map(([name, runtime]) => [
 				name,
@@ -4794,6 +4881,7 @@ export function convergeRuntimeManifest(
 		environmentId: manifest.environmentId,
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		locale: manifest.locale ?? null,
 		controlPlane: manifest.controlPlane,
 		workspaceRoot,
 	});
@@ -4913,6 +5001,21 @@ export function convergeRuntimeManifest(
 		const projectionPath = join(paths.projectionRoot, `${name}.json`);
 		writeJsonFile(projectionPath, projectionPayload(name, manifest));
 		projections.push(projectionPath);
+		try {
+			const localeFile = applyHostedLocaleProjection(
+				name,
+				manifest,
+				projectionSystemHome(manifest) ?? paths.userHome,
+				workspaceRoot,
+			);
+			if (localeFile) managedLocaleFiles.push(localeFile);
+		} catch (error) {
+			installErrors.push(
+				`runtime ${name} locale projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 		try {
 			const providerProjection = applyHostedAiProviderProjection(
 				name,
@@ -5091,6 +5194,7 @@ export function convergeRuntimeManifest(
 			manifestLastGood,
 			installInventory,
 			projections,
+			managedLocaleFiles,
 			runConfigs,
 			systemdSystemUnitRoot: paths.systemdSystemRoot,
 			systemdSystemUnits: systemdUnits.systemUnits,

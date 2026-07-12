@@ -5,6 +5,9 @@ const forbiddenProtocols = /^(catalog|workspace):/;
 const dependencyFields = ["dependencies", "optionalDependencies", "peerDependencies"];
 
 const problems = [];
+if (Object.hasOwn(packageJson.publishConfig ?? {}, "tag")) {
+	problems.push("published CLI package must not declare publishConfig.tag");
+}
 if (packageJson.dependencies && Object.keys(packageJson.dependencies).length > 0) {
 	problems.push("published bundled CLI package must not declare runtime dependencies");
 }
