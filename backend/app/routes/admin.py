@@ -87,6 +87,11 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
     upsert_clawdi_managed_provider,
 )
+from app.services.sync_events import (
+    queue_environment_runtime_manifest_changed,
+    queue_provider_runtime_manifest_changed,
+    queue_runtime_manifest_changed,
+)
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 logger = logging.getLogger(__name__)
@@ -277,6 +282,12 @@ async def admin_upsert_clawdi_managed_ai_provider(
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    await queue_provider_runtime_manifest_changed(
+        db,
+        target.id,
+        provider.provider_id,
+    )
 
     record_control_plane_audit(
         db,
@@ -631,6 +642,7 @@ async def _admin_delete_environment(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.delete(env)
     await db.commit()
     logger.info("admin_environment_deleted env_id=%s", environment_id)
@@ -681,11 +693,15 @@ async def _admin_upsert_runtime_state(
     db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
-        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+        await db.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
+    # Lock the parent before the optional child row so concurrent first creates
+    # serialize even when there is no HostedRuntimeState row to lock yet.
     state = (
         await db.execute(
             select(HostedRuntimeState)
@@ -695,7 +711,57 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
+    system_state = body.system.model_dump(exclude_none=True, mode="json")
+    live_sync_state = body.live_sync.model_dump(mode="json")
+    recovery_state = body.recovery.model_dump(mode="json")
+    bridge_state = (
+        body.bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.bridge is not None
+        else None
+    )
+    egress_engine_state = (
+        body.egress_engine.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.egress_engine is not None
+        else None
+    )
+    egress_profiles_state = (
+        body.egress_profiles.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+        if body.egress_profiles is not None
+        else None
+    )
+    runtime_state = {
+        name: runtime.model_dump(exclude_none=True, mode="json")
+        for name, runtime in body.runtimes.items()
+    }
     changed_fields = _runtime_state_changed_fields(existing_state, body)
+    if existing_state is not None and body.generation <= existing_state.generation:
+        current_generation = existing_state.generation
+        if body.generation < current_generation:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "stale_generation",
+                    "current_generation": current_generation,
+                },
+            )
+        material_changes = [field for field in changed_fields if field != "generation"]
+        if material_changes:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "generation_conflict",
+                    "current_generation": current_generation,
+                },
+            )
+        await db.commit()
+        return AdminRuntimeStateResponse(
+            environment_id=environment_id,
+            deployment_id=body.deployment_id,
+            instance_id=body.instance_id,
+            generation=body.generation,
+        )
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
@@ -704,22 +770,17 @@ async def _admin_upsert_runtime_state(
     state.app_id = body.app_id
     state.instance_id = body.instance_id
     state.generation = body.generation
-    state.provider_id = body.provider_id
-    state.system = body.system
-    state.control_plane = body.control_plane
-    state.clawdi_cli = body.clawdi_cli
-    state.runtimes = body.runtimes
-    state.bridge = body.bridge
-    state.live_sync = body.live_sync
-    state.recovery = body.recovery
-    if state is not existing_state or body.egress_engine is not None:
-        state.egress_engine = body.egress_engine
-    if state is not existing_state or body.egress_profiles is not None:
-        state.egress_profiles = body.egress_profiles
-    if state is not existing_state or body.mcp is not None:
-        state.mcp = body.mcp
-    if state is not existing_state or body.tools is not None:
-        state.tools = body.tools
+    state.cli_package_spec = body.cli_package_spec
+    state.locale = body.locale.model_dump()
+    state.system = system_state
+    state.runtimes = runtime_state
+    state.bridge = bridge_state
+    state.live_sync = live_sync_state
+    state.recovery = recovery_state
+    state.egress_engine = egress_engine_state
+    state.egress_profiles = egress_profiles_state
+    state.mcp = body.mcp
+    state.tools = body.tools
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -735,14 +796,17 @@ async def _admin_upsert_runtime_state(
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
-            "provider_id": body.provider_id,
-            "enabled_runtimes": _enabled_runtime_names(body.runtimes),
+            "cli_package_spec": body.cli_package_spec,
+            "locale": body.locale.model_dump(),
+            "enabled_runtimes": _enabled_runtime_names(runtime_state),
             "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
             "changed_fields": changed_fields,
         },
     )
+    if changed_fields:
+        queue_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.commit()
     logger.info(
         "admin_runtime_state_upserted environment_id=%s deployment_id=%s generation=%s",
@@ -810,13 +874,14 @@ async def _admin_delete_runtime_state(
                 "app_id": state.app_id,
                 "instance_id": state.instance_id,
                 "generation": state.generation,
-                "provider_id": state.provider_id,
+                "cli_package_spec": state.cli_package_spec,
                 "enabled_runtimes": _enabled_runtime_names(state.runtimes),
                 "has_mcp": state.mcp is not None,
                 "has_tools": state.tools is not None,
             }
         )
         await db.delete(state)
+        queue_runtime_manifest_changed(db, env.user_id, environment_id)
 
     record_control_plane_audit(
         db,
@@ -916,10 +981,9 @@ def _runtime_state_changed_fields(
         "app_id",
         "instance_id",
         "generation",
-        "provider_id",
+        "cli_package_spec",
+        "locale",
         "system",
-        "control_plane",
-        "clawdi_cli",
         "egress_engine",
         "runtimes",
         "bridge",
@@ -932,11 +996,27 @@ def _runtime_state_changed_fields(
     if state is None:
         return fields
     changed: list[str] = []
-    preserve_when_omitted = {"egress_engine", "egress_profiles", "mcp", "tools"}
     for field in fields:
-        body_value = getattr(body, field)
-        if field in preserve_when_omitted and body_value is None:
-            continue
+        if field == "locale":
+            body_value = body.locale.model_dump()
+        elif field == "system":
+            body_value = body.system.model_dump(exclude_none=True, mode="json")
+        elif field == "runtimes":
+            body_value = {
+                name: runtime.model_dump(exclude_none=True, mode="json")
+                for name, runtime in body.runtimes.items()
+            }
+        elif field in {"bridge", "egress_engine", "egress_profiles"}:
+            field_value = getattr(body, field)
+            body_value = (
+                field_value.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+                if field_value is not None
+                else None
+            )
+        elif field in {"live_sync", "recovery"}:
+            body_value = getattr(body, field).model_dump(mode="json")
+        else:
+            body_value = getattr(body, field)
         if getattr(state, field) != body_value:
             changed.append(field)
     return changed

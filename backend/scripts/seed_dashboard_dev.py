@@ -72,6 +72,7 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
+DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -242,16 +243,62 @@ async def _create_hosted_runtime_graph(
                 app_id=DEV_V2_APP_ID,
                 instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
                 generation=3,
-                provider_id=DEV_V2_PROVIDER_ID,
-                system={"status": "running", "seed": "dashboard-dev"},
-                control_plane={
-                    "cloudApiUrl": settings.public_api_url,
-                    "dashboardUrl": settings.web_origin,
+                cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,
+                locale={"language": "en", "timezone": "UTC"},
+                system={
+                    "user": "clawdi",
+                    "home": "/home/clawdi",
+                    "workspace": "/home/clawdi/clawdi",
+                    "persistentPaths": ["/home/clawdi"],
                 },
-                clawdi_cli={"version": "dev"},
-                runtimes={runtime: {"enabled": True, "status": "running"}},
-                live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
-                recovery={"mode": "dev"},
+                runtimes={
+                    runtime: {
+                        "enabled": True,
+                        "provider_ids": [DEV_V2_PROVIDER_ID],
+                        "primary_model": {
+                            "provider_id": DEV_V2_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                        "install": {"source": "official"},
+                        "run": {
+                            "args": (
+                                ["gateway", "run", "--replace"]
+                                if runtime == "hermes"
+                                else ["gateway", "run"]
+                            )
+                        },
+                        "services": {},
+                        "paths": {
+                            "home": "/home/clawdi",
+                            "workspace": "/home/clawdi/clawdi",
+                        },
+                    }
+                },
+                bridge=(
+                    {
+                        "surfaces": [
+                            {
+                                "name": "hermes",
+                                "kind": "control-ui",
+                                "listenPort": 28793,
+                                "upstreamHost": "127.0.0.1",
+                                "upstreamPort": 9119,
+                            }
+                        ]
+                    }
+                    if runtime == "hermes"
+                    else None
+                ),
+                live_sync={
+                    "enabled": True,
+                    "agents": [
+                        {
+                            "agentType": runtime,
+                            "environmentId": str(env.id),
+                        }
+                    ],
+                },
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 egress_profiles={},
                 mcp={"enabled": True},
                 tools={"channels": True, "aiProviders": True},

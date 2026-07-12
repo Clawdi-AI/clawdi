@@ -53,6 +53,7 @@ from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
+from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +94,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
         settings.channel_whatsapp_baileys_sidecars_json
     )
-    await whatsapp_sidecars.start()
+    await start_postgres_listener()
+    try:
+        await whatsapp_sidecars.start()
+    except Exception:
+        await stop_postgres_listener()
+        raise
 
     if settings.memory_embedding_mode.lower() == "local":
 
@@ -120,8 +126,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
         if background:
             await asyncio.gather(*background, return_exceptions=True)
-        await whatsapp_sidecars.stop()
-        await close_composio_client()
+        try:
+            await whatsapp_sidecars.stop()
+        finally:
+            await stop_postgres_listener()
+            await close_composio_client()
 
 
 app = FastAPI(
@@ -234,10 +243,10 @@ async def request_validation_exception_handler(
     )
 
 
-# Every API router is mounted twice: canonically under /v1 (the only
+# API routers are mounted canonically under /v1 (the only
 # form in the OpenAPI schema — we serve on a dedicated API domain, so
-# versioning sits at the root) and under the legacy /api alias kept
-# for clients built before the /v1 migration.
+# versioning sits at the root). Older APIs also retain the legacy /api alias;
+# the unlaunched runtime manifest contract is canonical-only.
 #
 # Note for public_sessions_router: share routes live at
 # /v1/public/sessions/{id}/..., auth is optional (signed-in owners +
@@ -272,7 +281,8 @@ _VERSIONED_ROUTERS = (
 )
 for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")
-    app.include_router(_router, prefix="/api", include_in_schema=False)
+    if _router is not runtime_router:
+        app.include_router(_router, prefix="/api", include_in_schema=False)
 # Scope skill reads predate the Scope -> Project migration and only
 # exist for old binaries; legacy /api alias only.
 app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)

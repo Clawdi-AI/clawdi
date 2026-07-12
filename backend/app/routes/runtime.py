@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,12 +17,25 @@ from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
+from app.schemas.ai_provider import AiProviderModel
+from app.schemas.runtime import (
+    _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
+    HostedEgressEngine,
+    HostedEgressProfiles,
+    HostedRuntimeBridge,
+    HostedRuntimeDesiredState,
+    HostedRuntimeLiveSync,
+    HostedRuntimeLocale,
+    HostedRuntimeName,
+    HostedRuntimeRecovery,
+    HostedRuntimeSystem,
+    validate_clawdi_cli_package_spec,
+    validate_hosted_runtime_bridge,
+)
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.managed_ai_provider import (
-    MANAGED_AI_PROVIDER_ID,
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
-    V1_MANAGED_AI_PROVIDER_ID,
     managed_provider_api_mode,
 )
 from app.services.vault_crypto import decrypt
@@ -31,23 +43,7 @@ from app.services.vault_crypto import decrypt
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 
 
-@dataclass(frozen=True)
-class _RuntimeProviderBinding:
-    provider_ids: tuple[str | None, ...]
-    primary_provider_id: str | None
-    primary_model: str | None
-    explicit_provider_ids: bool
-
-
-@dataclass(frozen=True)
-class _RuntimeProviderManifestBinding:
-    provider_ids: tuple[str, ...]
-    primary_provider_id: str | None
-    primary_model: str | None
-
-
-_SUPPORTED_PROVIDER_RUNTIMES = {"codex", "hermes", "openclaw"}
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.48"
+_SUPPORTED_PROVIDER_RUNTIMES = {"hermes", "openclaw"}
 
 
 @router.get("/manifest")
@@ -94,13 +90,68 @@ async def get_runtime_manifest(
     ).scalar_one_or_none()
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Hosted runtime state not found")
+    try:
+        locale = HostedRuntimeLocale.model_validate(state.locale)
+        system = HostedRuntimeSystem.model_validate(state.system)
+        live_sync = HostedRuntimeLiveSync.model_validate(state.live_sync)
+        recovery = HostedRuntimeRecovery.model_validate(state.recovery)
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime locale, system, live sync, or recovery state "
+            "is invalid or not configured",
+        ) from exc
+    try:
+        bridge = (
+            HostedRuntimeBridge.model_validate(state.bridge) if state.bridge is not None else None
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime bridge state is invalid",
+        ) from exc
+    try:
+        egress_engine = (
+            HostedEgressEngine.model_validate(state.egress_engine)
+            if state.egress_engine is not None
+            else None
+        )
+        egress_profiles = (
+            HostedEgressProfiles.model_validate(state.egress_profiles)
+            if state.egress_profiles is not None
+            else None
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime egress state is invalid",
+        ) from exc
+    try:
+        cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime CLI package spec is invalid or below the minimum version",
+        ) from exc
+    runtime, runtime_state = _validated_runtime_state(state.runtimes)
+    try:
+        validate_hosted_runtime_bridge(runtime, bridge)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime bridge state does not match the selected runtime",
+        ) from exc
 
     (
         providers,
         secret_values,
         provider_version_sources,
-        runtime_provider_bindings,
-    ) = await _provider_projection(db, auth=auth, state=state)
+    ) = await _provider_projection(
+        db,
+        auth=auth,
+        runtime_name=runtime,
+        runtime=runtime_state,
+    )
     issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
@@ -109,24 +160,35 @@ async def get_runtime_manifest(
         "instanceId": state.instance_id,
         "generation": state.generation,
         "issuedAt": issued_at,
-        "system": state.system or _default_system(),
-        "controlPlane": _control_plane(state.control_plane),
-        "clawdiCli": state.clawdi_cli or _default_clawdi_cli(),
-        "runtimes": _runtime_manifest_runtimes(state.runtimes, runtime_provider_bindings),
+        "runtime": runtime,
+        "locale": locale.model_dump(),
+        "system": system.model_dump(exclude_none=True, mode="json"),
+        "controlPlane": _control_plane(),
+        "clawdiCli": {
+            "source": "npm:clawdi",
+            "packageSpec": cli_package_spec,
+            "registry": "https://registry.npmjs.org",
+        },
+        "runtimes": {runtime: runtime_state},
         "providers": providers,
-        "liveSync": state.live_sync or _default_live_sync(env),
-        "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
+        "liveSync": live_sync.model_dump(mode="json"),
+        "recovery": recovery.model_dump(mode="json"),
     }
-    if request.scope["path"] == "/v1/runtime/manifest":
-        manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
-    if state.bridge:
-        manifest["bridge"] = state.bridge
-    if state.app_id:
-        manifest["appId"] = state.app_id
-    if state.egress_engine:
-        manifest["egressEngine"] = state.egress_engine
-    if state.egress_profiles:
-        manifest["egressProfiles"] = state.egress_profiles
+    manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
+    if bridge is not None:
+        manifest["bridge"] = bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+    if egress_engine is not None:
+        manifest["egressEngine"] = egress_engine.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+            mode="json",
+        )
+    if egress_profiles is not None:
+        manifest["egressProfiles"] = egress_profiles.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+            mode="json",
+        )
     if state.mcp:
         manifest["mcp"] = state.mcp
     if state.tools:
@@ -177,222 +239,106 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _default_system() -> dict[str, Any]:
-    return {
-        "user": "clawdi",
-        "home": "/home/clawdi",
-        "workspace": "/home/clawdi/clawdi",
-        "persistentPaths": ["/home/clawdi"],
-    }
-
-
-def _control_plane(value: dict[str, Any] | None) -> dict[str, Any]:
-    if value:
-        return value
+def _control_plane() -> dict[str, str]:
     api_url = settings.public_api_url.rstrip("/")
-    return {
-        "manifestUrl": f"{api_url}/v1/runtime/manifest",
-        "cloudApiUrl": api_url,
-    }
+    return {"cloudApiUrl": api_url}
 
 
-def _default_clawdi_cli() -> dict[str, Any]:
-    return {
-        "source": "npm:clawdi",
-        "packageSpec": "clawdi@latest",
-        "managedConfig": True,
-        "userEditableConfig": False,
-    }
+def _validated_runtime_state(
+    runtimes: dict | None,
+) -> tuple[HostedRuntimeName, dict[str, Any]]:
+    if not isinstance(runtimes, dict) or len(runtimes) != 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "hosted runtime state must select exactly one enabled runtime",
+        )
+    raw_runtime_name, raw_runtime = next(iter(runtimes.items()))
+    if raw_runtime_name not in _SUPPORTED_PROVIDER_RUNTIMES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"unsupported enabled runtime: {raw_runtime_name}",
+        )
+    runtime_name: HostedRuntimeName = "hermes" if raw_runtime_name == "hermes" else "openclaw"
+    try:
+        runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"hosted runtime state for {runtime_name} is invalid",
+        ) from exc
+    return runtime_name, runtime.model_dump(exclude_none=True, mode="json")
 
 
-def _default_live_sync(env: AgentEnvironment) -> dict[str, Any]:
-    return {
-        "enabled": True,
-        "agents": [
-            {
-                "agentType": env.agent_type,
-                "environmentId": str(env.id),
-            }
-        ],
-    }
+def _runtime_provider_binding(runtime: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(runtime["provider_ids"])
 
 
 async def _provider_projection(
     db: AsyncSession,
     *,
     auth: AuthContext,
-    state: HostedRuntimeState,
+    runtime_name: str,
+    runtime: dict[str, Any],
 ) -> tuple[
     dict[str, Any],
     dict[str, str],
     list[Any],
-    dict[str, _RuntimeProviderManifestBinding],
 ]:
-    bindings = _runtime_provider_bindings(state)
+    provider_ids = _runtime_provider_binding(runtime)
     providers: dict[str, Any] = {}
     secret_values: dict[str, str] = {}
     version_sources: list[Any] = []
-    provider_cache: dict[str | None, AiProvider | None] = {}
+    provider_cache: dict[str, AiProvider | None] = {}
     secret_cache: dict[str, tuple[str | None, AiProviderAuthPayload | None]] = {}
-    manifest_bindings: dict[str, _RuntimeProviderManifestBinding] = {}
-
-    for runtime_name, binding in sorted(bindings.items()):
-        resolved_providers: list[AiProvider] = []
-        missing_provider_ids: list[str] = []
-        for provider_id in binding.provider_ids:
-            provider = await _select_provider_for_binding(
+    resolved_providers: list[AiProvider] = []
+    for provider_id in provider_ids:
+        if provider_id not in provider_cache:
+            provider_cache[provider_id] = await _select_provider(
                 db,
                 auth=auth,
                 provider_id=provider_id,
-                allow_default_fallback=not binding.explicit_provider_ids,
-                provider_cache=provider_cache,
             )
-            if provider is None:
-                if provider_id is not None:
-                    missing_provider_ids.append(provider_id)
-                continue
-            if provider.provider_id not in {entry.provider_id for entry in resolved_providers}:
-                resolved_providers.append(provider)
+        provider = provider_cache[provider_id]
+        if provider is None:
+            providers[provider_id] = _unhealthy_provider_manifest_entry(
+                code="provider_not_found",
+                message=f"provider required by {runtime_name} is missing or archived",
+            )
+            continue
+        resolved_providers.append(provider)
 
-        if (
-            not resolved_providers
-            and not missing_provider_ids
-            and not binding.explicit_provider_ids
-        ):
-            provider = await _select_provider_for_binding(
+    for provider in resolved_providers:
+        if provider.provider_id not in secret_cache:
+            secret_cache[provider.provider_id] = await _provider_secret(
                 db,
                 auth=auth,
-                provider_id=None,
-                allow_default_fallback=True,
-                provider_cache=provider_cache,
+                provider=provider,
             )
-            if provider is not None:
-                resolved_providers.append(provider)
-
-        primary_provider = _primary_provider_for_binding(binding, resolved_providers)
-        primary_model = binding.primary_model or _managed_provider_catalog_model(primary_provider)
-        manifest_provider_ids = _manifest_provider_ids(binding, resolved_providers)
-        manifest_primary_provider_id = (
-            primary_provider.provider_id
-            if primary_provider is not None
-            else binding.primary_provider_id
+        secret, payload = secret_cache[provider.provider_id]
+        secret_ref = _provider_secret_ref(provider.provider_id) if secret else None
+        missing_required_secret = _provider_requires_secret(provider) and not secret_ref
+        providers[provider.provider_id] = _provider_manifest_entry(
+            provider,
+            secret_ref=secret_ref,
+            error=(
+                {
+                    "code": "provider_secret_unavailable",
+                    "message": (
+                        "provider requires an API key but no runtime secret value is available"
+                    ),
+                }
+                if missing_required_secret
+                else None
+            ),
         )
-        manifest_bindings[runtime_name] = _RuntimeProviderManifestBinding(
-            provider_ids=manifest_provider_ids,
-            primary_provider_id=manifest_primary_provider_id,
-            primary_model=primary_model,
-        )
+        if secret and secret_ref:
+            secret_values[secret_ref] = secret
+        if provider not in version_sources:
+            version_sources.append(provider)
+        if payload is not None and payload not in version_sources:
+            version_sources.append(payload)
 
-        for missing_provider_id in missing_provider_ids:
-            providers.setdefault(
-                missing_provider_id,
-                _unhealthy_provider_manifest_entry(
-                    provider_id=missing_provider_id,
-                    code="provider_not_found",
-                    message="explicit runtime provider is missing or archived",
-                ),
-            )
-
-        for provider in resolved_providers:
-            if provider.provider_id in providers:
-                continue
-            if provider.provider_id not in secret_cache:
-                secret_cache[provider.provider_id] = await _provider_secret(
-                    db,
-                    auth=auth,
-                    provider=provider,
-                )
-            secret, payload = secret_cache[provider.provider_id]
-            secret_ref = _provider_secret_ref(provider.provider_id) if secret else None
-            missing_required_secret = _provider_requires_secret(provider) and not secret_ref
-            providers[provider.provider_id] = _provider_manifest_entry(
-                provider,
-                secret_ref=secret_ref,
-                error=(
-                    {
-                        "code": "provider_secret_unavailable",
-                        "message": (
-                            "provider requires an API key but no runtime secret value is available"
-                        ),
-                    }
-                    if missing_required_secret
-                    else None
-                ),
-            )
-            if secret and secret_ref:
-                secret_values[secret_ref] = secret
-            if provider not in version_sources:
-                version_sources.append(provider)
-            if payload is not None and payload not in version_sources:
-                version_sources.append(payload)
-
-    return providers, secret_values, version_sources, manifest_bindings
-
-
-def _primary_provider_for_binding(
-    binding: _RuntimeProviderBinding,
-    providers: list[AiProvider],
-) -> AiProvider | None:
-    if binding.primary_provider_id:
-        for provider in providers:
-            if provider.provider_id == binding.primary_provider_id:
-                return provider
-    return providers[0] if providers else None
-
-
-def _manifest_provider_ids(
-    binding: _RuntimeProviderBinding,
-    providers: list[AiProvider],
-) -> tuple[str, ...]:
-    provider_ids = (
-        tuple(provider_id for provider_id in binding.provider_ids if provider_id is not None)
-        if binding.explicit_provider_ids
-        else tuple(provider.provider_id for provider in providers)
-    )
-    if not provider_ids:
-        provider_ids = tuple(provider.provider_id for provider in providers)
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for provider_id in (*provider_ids, *(provider.provider_id for provider in providers)):
-        if provider_id in seen:
-            continue
-        seen.add(provider_id)
-        normalized.append(provider_id)
-    return tuple(normalized)
-
-
-def _managed_provider_catalog_model(provider: AiProvider | None) -> str | None:
-    if provider is None or not _is_clawdi_managed_provider(provider):
-        return None
-    for model in provider.models or []:
-        if not isinstance(model, dict):
-            continue
-        model_id = model.get("id")
-        if isinstance(model_id, str) and model_id.strip():
-            return model_id.strip()
-    return None
-
-
-def _runtime_manifest_runtimes(
-    runtimes: dict | None,
-    bindings: dict[str, _RuntimeProviderManifestBinding],
-) -> dict[str, Any]:
-    manifest_runtimes = deepcopy(runtimes or {})
-    for runtime_name, binding in bindings.items():
-        raw_entry = manifest_runtimes.get(runtime_name)
-        entry = dict(raw_entry) if isinstance(raw_entry, dict) else {}
-        for legacy_key in ("provider_id", "providerId", "model"):
-            entry.pop(legacy_key, None)
-        entry["provider_ids"] = list(binding.provider_ids)
-        if binding.primary_provider_id and binding.primary_model:
-            entry["primary_model"] = {
-                "provider_id": binding.primary_provider_id,
-                "model": binding.primary_model,
-            }
-        else:
-            entry.pop("primary_model", None)
-        manifest_runtimes[runtime_name] = entry
-    return manifest_runtimes
+    return providers, secret_values, version_sources
 
 
 def _provider_manifest_entry(
@@ -416,8 +362,21 @@ def _provider_manifest_entry(
         projection["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
         projection["managed_by"] = provider.managed_by
-    if provider.models:
-        projection["models"] = provider.models
+    if provider.models is not None:
+        try:
+            if not isinstance(provider.models, list):
+                raise ValueError("provider models must be a list")
+            models = [
+                AiProviderModel.model_validate(model).model_dump(exclude_none=True)
+                for model in provider.models
+            ]
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Stored AI provider model metadata is invalid",
+            ) from exc
+        if models:
+            projection["models"] = models
     if runtime_env_name:
         projection["runtimeEnvName"] = runtime_env_name
     if _provider_requires_secret(provider) and not secret_ref:
@@ -435,18 +394,14 @@ def _provider_manifest_entry(
 
 def _unhealthy_provider_manifest_entry(
     *,
-    provider_id: str | None,
     code: str,
     message: str,
 ) -> dict[str, Any]:
-    projection: dict[str, Any] = {
+    return {
         "kind": "openai-compatible",
         "status": "error",
         "error": {"code": code, "message": message},
     }
-    if provider_id:
-        projection["providerId"] = provider_id
-    return projection
 
 
 def _provider_manifest_auth(provider: AiProvider) -> dict[str, str] | None:
@@ -482,150 +437,17 @@ def _is_clawdi_managed_provider(provider: AiProvider) -> bool:
     )
 
 
-def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeProviderBinding]:
-    bindings: dict[str, _RuntimeProviderBinding] = {}
-    for runtime_name, runtime in (state.runtimes or {}).items():
-        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
-            continue
-        runtime_key = str(runtime_name)
-        if runtime_key not in _SUPPORTED_PROVIDER_RUNTIMES:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"unsupported enabled runtime: {runtime_key}",
-            )
-        provider_ids, explicit_provider_ids = _runtime_provider_ids(runtime, state.provider_id)
-        primary_provider_id, primary_model = _runtime_primary_model(runtime)
-        if primary_provider_id and primary_provider_id not in provider_ids:
-            provider_ids = (*provider_ids, primary_provider_id)
-            explicit_provider_ids = True
-        if primary_provider_id is None and len(provider_ids) == 1:
-            primary_provider_id = provider_ids[0]
-        bindings[runtime_key] = _RuntimeProviderBinding(
-            provider_ids=provider_ids,
-            primary_provider_id=primary_provider_id,
-            primary_model=primary_model,
-            explicit_provider_ids=explicit_provider_ids,
-        )
-    if not bindings and state.provider_id:
-        bindings["default"] = _RuntimeProviderBinding(
-            provider_ids=(state.provider_id,),
-            primary_provider_id=state.provider_id,
-            primary_model=None,
-            explicit_provider_ids=False,
-        )
-    return bindings
-
-
-def _runtime_provider_ids(
-    runtime: dict[str, Any],
-    state_provider_id: str | None,
-) -> tuple[tuple[str | None, ...], bool]:
-    raw_provider_ids = runtime.get("provider_ids", runtime.get("providerIds"))
-    if raw_provider_ids is not None:
-        if not isinstance(raw_provider_ids, list) or not raw_provider_ids:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "enabled runtime provider_ids must be a non-empty array",
-            )
-        provider_ids = tuple(_runtime_provider_id(value) for value in raw_provider_ids)
-        return provider_ids, True
-
-    raw_provider_id = runtime.get("provider_id", runtime.get("providerId"))
-    if raw_provider_id is not None:
-        return (_runtime_provider_id(raw_provider_id),), True
-    if state_provider_id is not None:
-        return (_runtime_provider_id(state_provider_id),), False
-    return (None,), False
-
-
-def _runtime_provider_id(value: Any) -> str:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    raise HTTPException(
-        status.HTTP_409_CONFLICT,
-        "runtime state provider id must be a non-empty string",
-    )
-
-
-def _runtime_primary_model(runtime: dict[str, Any]) -> tuple[str | None, str | None]:
-    raw_primary = runtime.get("primary_model", runtime.get("primaryModel"))
-    if isinstance(raw_primary, dict):
-        raw_provider_id = raw_primary.get("provider_id", raw_primary.get("providerId"))
-        raw_model = raw_primary.get("model")
-        provider_id = _runtime_provider_id(raw_provider_id) if raw_provider_id is not None else None
-        model = _runtime_model(raw_model)
-        return provider_id, model
-    if raw_primary is not None:
-        return None, _runtime_model(raw_primary)
-    raw_model = runtime.get("model")
-    if raw_model is not None:
-        return None, _runtime_model(raw_model)
-    return None, None
-
-
-def _runtime_model(value: Any) -> str:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    raise HTTPException(
-        status.HTTP_409_CONFLICT,
-        "enabled runtime provider model must be a non-empty string",
-    )
-
-
-async def _select_provider_for_binding(
-    db: AsyncSession,
-    *,
-    auth: AuthContext,
-    provider_id: str | None,
-    allow_default_fallback: bool,
-    provider_cache: dict[str | None, AiProvider | None],
-) -> AiProvider | None:
-    if provider_id not in provider_cache:
-        provider_cache[provider_id] = await _select_provider(
-            db,
-            auth=auth,
-            provider_id=provider_id,
-        )
-    provider = provider_cache[provider_id]
-    if provider is not None or provider_id is None:
-        return provider
-    if not allow_default_fallback:
-        return None
-    if None not in provider_cache:
-        provider_cache[None] = await _select_provider(
-            db,
-            auth=auth,
-            provider_id=None,
-        )
-    return provider_cache[None]
-
-
 async def _select_provider(
     db: AsyncSession,
     *,
     auth: AuthContext,
-    provider_id: str | None,
+    provider_id: str,
 ) -> AiProvider | None:
     filters = [AiProvider.owner_user_id == auth.user_id, AiProvider.archived_at.is_(None)]
-    if provider_id:
-        result = await db.execute(
-            select(AiProvider).where(*filters, AiProvider.provider_id == provider_id)
-        )
-        return result.scalar_one_or_none()
-
-    for managed_provider_id in (MANAGED_AI_PROVIDER_ID, V1_MANAGED_AI_PROVIDER_ID):
-        result = await db.execute(
-            select(AiProvider).where(
-                *filters,
-                AiProvider.provider_id == managed_provider_id,
-            )
-        )
-        managed = result.scalar_one_or_none()
-        if managed is not None:
-            return managed
-
-    result = await db.execute(select(AiProvider).where(*filters).order_by(AiProvider.provider_id))
-    return result.scalars().first()
+    result = await db.execute(
+        select(AiProvider).where(*filters, AiProvider.provider_id == provider_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _provider_secret(

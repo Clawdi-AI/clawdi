@@ -587,6 +587,55 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        {"id": "gpt-test", "context_window": 0},
+        {"id": "gpt-test", "max_tokens": 0},
+        {"id": "gpt-test", "label": ""},
+        {"id": "gpt-test", "alias": ""},
+        {"id": "gpt-test", "max_tokens": None},
+        {"id": "gpt-test", "unknown": True},
+        {"id": "gpt-test", "capabilities": {"audio": True}},
+        {"id": "gpt-test", "capabilities": {"chat": 1}},
+        {"id": "gpt-test", "capabilities": {"chat": None}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "currency": "USD"}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "cache_write": None}},
+    ],
+    ids=[
+        "zero-context-window",
+        "zero-max-tokens",
+        "empty-label",
+        "empty-alias",
+        "null-model-field",
+        "unknown-model-field",
+        "unknown-capability",
+        "non-bool-capability",
+        "null-capability",
+        "unknown-cost-field",
+        "null-cost-field",
+    ],
+)
+async def test_admin_managed_ai_provider_rejects_models_outside_hosted_wire_contract(
+    admin_client,
+    seed_user,
+    model: dict,
+):
+    response = await admin_client.put(
+        "/v1/admin/ai-providers/clawdi-managed-v2",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-strict-model-test",
+            "models": [model],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     admin_client, db_session, seed_user
 ):
@@ -1015,8 +1064,31 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "deployment_id": "dep-admin-agent-alias",
             "instance_id": "iid-admin-agent-alias",
             "generation": 7,
-            "provider_id": "clawdi-managed",
-            "runtimes": {"codex": {"enabled": True}},
+            "cli_package_spec": "clawdi@0.12.10-beta.51",
+            "locale": {"language": "en", "timezone": "America/Los_Angeles"},
+            "system": {
+                "user": "clawdi",
+                "home": "/home/clawdi",
+                "workspace": "/home/clawdi/clawdi",
+                "persistentPaths": ["/home/clawdi"],
+            },
+            "live_sync": {"enabled": False, "agents": []},
+            "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+            "runtimes": {
+                "openclaw": {
+                    "enabled": True,
+                    "provider_ids": ["clawdi-managed"],
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                    "install": {"source": "official"},
+                    "paths": {
+                        "home": "/home/clawdi",
+                        "workspace": "/home/clawdi/clawdi",
+                    },
+                }
+            },
         },
     )
     assert runtime.status_code == 200, runtime.text

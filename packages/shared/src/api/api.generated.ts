@@ -2652,28 +2652,45 @@ export interface components {
             /** Id */
             id: string;
             /** Label */
-            label?: string | null;
+            label?: string;
             /** Alias */
-            alias?: string | null;
-            /** Api Mode */
-            api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            alias?: string;
+            /**
+             * Api Mode
+             * @enum {string}
+             */
+            api_mode?: "openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content";
             /** Input Modalities */
-            input_modalities?: ("text" | "image" | "video" | "audio")[] | null;
+            input_modalities?: ("text" | "image" | "video" | "audio")[];
             /** Supports Vision */
-            supports_vision?: boolean | null;
+            supports_vision?: boolean;
             /** Supports Tools */
-            supports_tools?: boolean | null;
+            supports_tools?: boolean;
             /** Supports Reasoning */
-            supports_reasoning?: boolean | null;
+            supports_reasoning?: boolean;
             /** Context Window */
-            context_window?: number | null;
+            context_window?: number;
             /** Max Tokens */
-            max_tokens?: number | null;
-            cost?: components["schemas"]["AiProviderModelCost"] | null;
+            max_tokens?: number;
+            /** Cost */
+            cost?: components["schemas"]["AiProviderModelCost"];
             /** Capabilities */
-            capabilities?: {
-                [key: string]: unknown;
-            } | null;
+            capabilities?: components["schemas"]["AiProviderModelCapabilities"];
+        };
+        /** AiProviderModelCapabilities */
+        AiProviderModelCapabilities: {
+            /** Chat */
+            chat?: boolean;
+            /** Responses */
+            responses?: boolean;
+            /** Tools */
+            tools?: boolean;
+            /** Vision */
+            vision?: boolean;
+            /** Embeddings */
+            embeddings?: boolean;
+            /** Image Generation */
+            image_generation?: boolean;
         };
         /** AiProviderModelCost */
         AiProviderModelCost: {
@@ -2682,9 +2699,9 @@ export interface components {
             /** Output */
             output: number;
             /** Cache Read */
-            cache_read?: number | null;
+            cache_read?: number;
             /** Cache Write */
-            cache_write?: number | null;
+            cache_write?: number;
         };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {

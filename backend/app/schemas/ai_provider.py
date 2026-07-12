@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 ProviderType = Literal[
@@ -22,13 +22,26 @@ AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "n
 InputModality = Literal["text", "image", "video", "audio"]
 
 
+def _reject_explicit_nulls(value: Any, fields: frozenset[str]) -> Any:
+    if isinstance(value, dict):
+        null_fields = sorted(field for field in fields if field in value and value[field] is None)
+        if null_fields:
+            raise ValueError(f"fields cannot be null: {', '.join(null_fields)}")
+    return value
+
+
 class AiProviderModelCost(BaseModel):
-    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, strict=True)
 
     input: float = Field(ge=0)
     output: float = Field(ge=0)
-    cache_read: float | None = Field(default=None, ge=0)
-    cache_write: float | None = Field(default=None, ge=0)
+    cache_read: float | SkipJsonSchema[None] = Field(default=None, ge=0)
+    cache_write: float | SkipJsonSchema[None] = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_optional_fields(cls, value: Any) -> Any:
+        return _reject_explicit_nulls(value, frozenset({"cache_read", "cache_write"}))
 
 
 class AiProviderAuth(BaseModel):
@@ -43,21 +56,71 @@ class AiProviderAuth(BaseModel):
     value: SkipJsonSchema[SecretStr | None] = None
 
 
+class AiProviderModelCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, strict=True)
+
+    chat: bool | SkipJsonSchema[None] = None
+    responses: bool | SkipJsonSchema[None] = None
+    tools: bool | SkipJsonSchema[None] = None
+    vision: bool | SkipJsonSchema[None] = None
+    embeddings: bool | SkipJsonSchema[None] = None
+    image_generation: bool | SkipJsonSchema[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_optional_fields(cls, value: Any) -> Any:
+        return _reject_explicit_nulls(
+            value,
+            frozenset(
+                {
+                    "chat",
+                    "responses",
+                    "tools",
+                    "vision",
+                    "embeddings",
+                    "image_generation",
+                }
+            ),
+        )
+
+
 class AiProviderModel(BaseModel):
-    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, strict=True)
 
     id: str = Field(min_length=1, max_length=300)
-    label: str | None = Field(default=None, max_length=300)
-    alias: str | None = Field(default=None, max_length=300)
-    api_mode: ApiMode | None = None
-    input_modalities: list[InputModality] | None = None
-    supports_vision: bool | None = None
-    supports_tools: bool | None = None
-    supports_reasoning: bool | None = None
-    context_window: int | None = Field(default=None, ge=0)
-    max_tokens: int | None = Field(default=None, ge=0)
-    cost: AiProviderModelCost | None = None
-    capabilities: dict[str, Any] | None = None
+    label: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=300)
+    alias: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=300)
+    api_mode: ApiMode | SkipJsonSchema[None] = None
+    input_modalities: list[InputModality] | SkipJsonSchema[None] = None
+    supports_vision: bool | SkipJsonSchema[None] = None
+    supports_tools: bool | SkipJsonSchema[None] = None
+    supports_reasoning: bool | SkipJsonSchema[None] = None
+    context_window: int | SkipJsonSchema[None] = Field(default=None, gt=0)
+    max_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
+    cost: AiProviderModelCost | SkipJsonSchema[None] = None
+    capabilities: AiProviderModelCapabilities | SkipJsonSchema[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_optional_fields(cls, value: Any) -> Any:
+        return _reject_explicit_nulls(
+            value,
+            frozenset(
+                {
+                    "label",
+                    "alias",
+                    "api_mode",
+                    "input_modalities",
+                    "supports_vision",
+                    "supports_tools",
+                    "supports_reasoning",
+                    "context_window",
+                    "max_tokens",
+                    "cost",
+                    "capabilities",
+                }
+            ),
+        )
 
 
 class AiProviderBase(BaseModel):

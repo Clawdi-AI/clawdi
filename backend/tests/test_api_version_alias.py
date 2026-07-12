@@ -24,7 +24,9 @@ def _routes_by_path() -> dict[str, set[str]]:
 
 def test_every_v1_route_has_api_legacy_alias():
     routes = _routes_by_path()
-    v1_paths = [path for path in routes if path.startswith("/v1/")]
+    v1_paths = [
+        path for path in routes if path.startswith("/v1/") and path != "/v1/runtime/manifest"
+    ]
     assert v1_paths, "expected /v1 routes to be mounted"
     missing = [
         path
@@ -47,7 +49,6 @@ def test_every_v1_route_has_api_legacy_alias():
         "/skills",
         "/agents",
         "/environments",
-        "/runtime/manifest",
     ],
 )
 async def test_api_alias_dispatches_to_the_same_handler(path):
@@ -64,6 +65,13 @@ async def test_api_alias_dispatches_to_the_same_handler(path):
     assert legacy.status_code == canonical.status_code
     assert legacy.content == canonical.content
     assert canonical.status_code != 404
+
+
+async def test_runtime_manifest_has_no_api_alias():
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/runtime/manifest")
+    assert response.status_code == 404
 
 
 def test_openapi_schema_only_advertises_v1():

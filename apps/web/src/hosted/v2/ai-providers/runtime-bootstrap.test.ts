@@ -55,13 +55,13 @@ describe("AI provider runtime bootstrap", () => {
 		});
 	});
 
-	test("drops nullable model cost cache fields from the runtime catalog", () => {
+	test("preserves optional model cost cache fields in the runtime catalog", () => {
 		const runtimeProvider = toRuntimeAiProvider({
 			...provider,
 			models: [
 				{
 					id: "gpt-5.1",
-					cost: { input: 5, output: 30, cache_read: null, cache_write: 0 },
+					cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
 				},
 			],
 		});
@@ -69,7 +69,7 @@ describe("AI provider runtime bootstrap", () => {
 		expect(runtimeProvider.models).toEqual([
 			{
 				id: "gpt-5.1",
-				cost: { input: 5, output: 30, cache_write: 0 },
+				cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
 			},
 		]);
 	});

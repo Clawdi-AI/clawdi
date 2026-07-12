@@ -5,33 +5,30 @@ and are used by SaaS batch tooling + ops-side scripts. Kept in a
 separate file so they don't pollute user-facing schemas.
 """
 
-import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+from app.schemas.ai_provider import AiProviderModel
+from app.schemas.runtime import (
+    HostedEgressEngine,
+    HostedEgressProfiles,
+    HostedRuntimeBridge,
+    HostedRuntimeDesiredState,
+    HostedRuntimeLiveSync,
+    HostedRuntimeLocale,
+    HostedRuntimeRecovery,
+    HostedRuntimeSystem,
+    validate_clawdi_cli_package_spec,
+    validate_hosted_runtime_bridge,
+)
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
-AdminAiProviderApiMode = Literal[
-    "openai_chat",
-    "openai_responses",
-    "anthropic_messages",
-    "google_generate_content",
-]
-AdminAiProviderInputModality = Literal["text", "image", "video", "audio"]
-_SUPPORTED_HOSTED_RUNTIMES = {"codex", "hermes", "openclaw"}
-_BRIDGE_SURFACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_BRIDGE_SURFACE_KEYS = {
-    "name",
-    "kind",
-    "listenHost",
-    "listenPort",
-    "upstreamHost",
-    "upstreamPort",
-}
+_SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
 
 
 class AdminEnvironmentCreate(BaseModel):
@@ -110,22 +107,29 @@ class AdminRuntimeStateUpsert(BaseModel):
     app_id: str | None = Field(default=None, min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
-    provider_id: str | None = Field(default=None, min_length=2, max_length=80)
-    system: dict[str, Any] | None = None
-    control_plane: dict[str, Any] | None = None
-    clawdi_cli: dict[str, Any] | None = None
-    egress_engine: dict[str, Any] | None = None
-    runtimes: dict[str, Any] = Field(default_factory=dict)
-    bridge: dict[str, Any] | None = None
-    live_sync: dict[str, Any] | None = None
-    recovery: dict[str, Any] | None = None
-    egress_profiles: dict[str, Any] | None = None
+    cli_package_spec: str = Field(min_length=1, max_length=200)
+    locale: HostedRuntimeLocale
+    system: HostedRuntimeSystem
+    egress_engine: HostedEgressEngine | None = None
+    runtimes: dict[str, HostedRuntimeDesiredState]
+    bridge: HostedRuntimeBridge | None = None
+    live_sync: HostedRuntimeLiveSync
+    recovery: HostedRuntimeRecovery
+    egress_profiles: HostedEgressProfiles | None = None
     mcp: dict[str, Any] | None = None
     tools: dict[str, Any] | None = None
 
+    @field_validator("cli_package_spec")
+    @classmethod
+    def _validate_cli_package_spec(cls, value: str) -> str:
+        return validate_clawdi_cli_package_spec(value)
+
     @field_validator("runtimes")
     @classmethod
-    def _validate_runtimes(cls, value: dict[str, Any]) -> dict[str, Any]:
+    def _validate_runtimes(
+        cls,
+        value: dict[str, HostedRuntimeDesiredState],
+    ) -> dict[str, HostedRuntimeDesiredState]:
         if not value:
             raise ValueError("runtimes cannot be empty")
         if "channels" in value:
@@ -133,45 +137,15 @@ class AdminRuntimeStateUpsert(BaseModel):
         unknown = sorted(set(value) - _SUPPORTED_HOSTED_RUNTIMES)
         if unknown:
             raise ValueError(f"unsupported runtime desired state: {', '.join(unknown)}")
+        if len(value) != 1:
+            raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 
-    @field_validator("control_plane")
-    @classmethod
-    def _validate_control_plane(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None and "apiUrl" in value:
-            raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
-        return value
-
-    @field_validator("bridge")
-    @classmethod
-    def _validate_bridge(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is None:
-            return None
-        surfaces = value.get("surfaces")
-        if set(value) != {"surfaces"} or not isinstance(surfaces, list):
-            raise ValueError("bridge must contain only a surfaces array")
-        for index, surface in enumerate(surfaces):
-            if not isinstance(surface, dict):
-                raise ValueError(f"bridge.surfaces[{index}] must be an object")
-            unknown = sorted(set(surface) - _BRIDGE_SURFACE_KEYS)
-            if unknown:
-                raise ValueError(
-                    f"bridge.surfaces[{index}] has unsupported fields: {', '.join(unknown)}"
-                )
-            name = surface.get("name")
-            if not isinstance(name, str) or not _BRIDGE_SURFACE_NAME_RE.fullmatch(name):
-                raise ValueError(f"bridge.surfaces[{index}].name must be a lowercase surface id")
-            if surface.get("kind") != "control-ui":
-                raise ValueError(f"bridge.surfaces[{index}].kind must be control-ui")
-            for field in ("listenPort", "upstreamPort"):
-                port = surface.get(field)
-                if not isinstance(port, int) or isinstance(port, bool) or port < 1 or port > 65535:
-                    raise ValueError(f"bridge.surfaces[{index}].{field} must be a TCP port")
-            for field in ("listenHost", "upstreamHost"):
-                host = surface.get(field)
-                if host is not None and (not isinstance(host, str) or not host.strip()):
-                    raise ValueError(f"bridge.surfaces[{index}].{field} must be a non-empty string")
-        return value
+    @model_validator(mode="after")
+    def _validate_runtime_bridge(self) -> "AdminRuntimeStateUpsert":
+        runtime = next(iter(self.runtimes))
+        validate_hosted_runtime_bridge(runtime, self.bridge)
+        return self
 
     @field_validator("mcp", "tools")
     @classmethod
@@ -188,30 +162,6 @@ class AdminRuntimeStateResponse(BaseModel):
     generation: int
 
 
-class AdminManagedAiProviderModelCost(BaseModel):
-    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
-
-    input: float = Field(ge=0)
-    output: float = Field(ge=0)
-    cache_read: float | None = Field(default=None, ge=0)
-    cache_write: float | None = Field(default=None, ge=0)
-
-
-class AdminManagedAiProviderModel(BaseModel):
-    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
-
-    id: str = Field(min_length=1, max_length=300)
-    alias: str | None = Field(default=None, max_length=300)
-    api_mode: AdminAiProviderApiMode | None = None
-    input_modalities: list[AdminAiProviderInputModality] | None = None
-    supports_vision: bool | None = None
-    supports_tools: bool | None = None
-    supports_reasoning: bool | None = None
-    context_window: int | None = Field(default=None, ge=0)
-    max_tokens: int | None = Field(default=None, ge=0)
-    cost: AdminManagedAiProviderModelCost | None = None
-
-
 class AdminManagedAiProviderUpsert(BaseModel):
     """Create or rotate the first-party managed AI provider for a user."""
 
@@ -221,7 +171,7 @@ class AdminManagedAiProviderUpsert(BaseModel):
     base_url: str = Field(min_length=1, max_length=1000)
     api_key: SecretStr = Field(min_length=1)
     default_model: str | None = Field(default=None, max_length=300)
-    models: list[AdminManagedAiProviderModel] | None = None
+    models: list[AiProviderModel] | None = None
     label: str | None = Field(default=None, max_length=200)
     capabilities: dict[str, Any] | None = None
 
