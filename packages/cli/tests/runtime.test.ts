@@ -6058,6 +6058,84 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
+	it("reinstalls an exact CLI spec when matching bootstrap status has no version", () => {
+		const desiredVersion = "0.12.10-beta.49";
+		const desiredSpec = `clawdi@${desiredVersion}`;
+		const home = join(root, "home-exact-missing-version", "clawdi");
+		const state = join(root, "state-exact-missing-version");
+		const run = join(root, "run-exact-missing-version");
+		const bin = join(root, "bin-exact-missing-version");
+		const npmLog = join(root, "npm-exact-missing-version.log");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${npmLog}'
+if [ "\${1:-}" = "view" ]; then
+  echo "exact hosted CLI updates must not call npm view" >&2
+  exit 96
+fi
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+test -n "$prefix"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "${desiredVersion}"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, desiredSpec, desiredVersion, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const bootstrapStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		delete bootstrapStatus.version;
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(bootstrapStatus));
+		expect(existsSync(paths.cliManagedBin)).toBe(true);
+
+		try {
+			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
+			const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+
+			expect(result.status).toBe("installed");
+			expect(result.packageSpec).toBe(desiredSpec);
+			expect(result.version).toBe(desiredVersion);
+			expect(result.activeTarget).not.toBe(bootstrapStatus.activeTarget);
+			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
+			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
+			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
+			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
+			const repairedStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(repairedStatus.version).toBe(desiredVersion);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("runtime watch self-heal applies an exact hosted CLI version without npm view", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");

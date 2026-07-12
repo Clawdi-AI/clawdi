@@ -305,7 +305,7 @@ function installedFloatingSpecVersionIsCurrent(
 	registry: string | null,
 ): boolean {
 	const exact = exactNpmPackageVersion(packageSpec);
-	if (exact) return !status.version || status.version === exact;
+	if (exact) return status.version === exact;
 	if (!isFloatingNpmPackageSpec(packageSpec)) return true;
 	if (!status.version) return false;
 	const desiredVersion = desiredNpmPackageVersion(paths, packageSpec, registry);
