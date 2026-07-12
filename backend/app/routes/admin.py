@@ -777,14 +777,10 @@ async def _admin_upsert_runtime_state(
     state.bridge = bridge_state
     state.live_sync = live_sync_state
     state.recovery = recovery_state
-    if state is not existing_state or body.egress_engine is not None:
-        state.egress_engine = egress_engine_state
-    if state is not existing_state or body.egress_profiles is not None:
-        state.egress_profiles = egress_profiles_state
-    if state is not existing_state or body.mcp is not None:
-        state.mcp = body.mcp
-    if state is not existing_state or body.tools is not None:
-        state.tools = body.tools
+    state.egress_engine = egress_engine_state
+    state.egress_profiles = egress_profiles_state
+    state.mcp = body.mcp
+    state.tools = body.tools
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -1000,7 +996,6 @@ def _runtime_state_changed_fields(
     if state is None:
         return fields
     changed: list[str] = []
-    preserve_when_omitted = {"egress_engine", "egress_profiles", "mcp", "tools"}
     for field in fields:
         if field == "locale":
             body_value = body.locale.model_dump()
@@ -1022,8 +1017,6 @@ def _runtime_state_changed_fields(
             body_value = getattr(body, field).model_dump(mode="json")
         else:
             body_value = getattr(body, field)
-        if field in preserve_when_omitted and body_value is None:
-            continue
         if getattr(state, field) != body_value:
             changed.append(field)
     return changed

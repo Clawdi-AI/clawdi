@@ -118,6 +118,7 @@ TEST_HERMES_BRIDGE = {
         }
     ]
 }
+OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "tools")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 
 
@@ -2161,11 +2162,24 @@ async def test_runtime_manifest_generation_advance_changes_etag_and_returns_gene
     assert not_modified.json()["manifest"]["generation"] == 8
 
 
+def _clear_optional_runtime_state(body: dict, clear_mode: str) -> dict:
+    cleared = dict(body)
+    if clear_mode == "omitted":
+        for field in OPTIONAL_RUNTIME_STATE_FIELDS:
+            cleared.pop(field, None)
+        return cleared
+    for field in OPTIONAL_RUNTIME_STATE_FIELDS:
+        cleared[field] = None
+    return cleared
+
+
 @pytest.mark.asyncio
-async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none(
+@pytest.mark.parametrize("clear_mode", ["omitted", "null"])
+async def test_admin_runtime_state_clears_optional_state(
     admin_client,
     db_session,
     seed_user,
+    clear_mode,
 ):
     env = await create_env_with_project(
         db_session,
@@ -2182,19 +2196,60 @@ async def test_admin_runtime_state_preserves_optional_state_when_omitted_as_none
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
     )
-    await _write_runtime_state(
-        admin_client,
-        str(env.id),
-        **{
-            key: value
-            for key, value in {**initial, "generation": 8}.items()
-            if key not in {"egress_engine", "egress_profiles", "mcp", "tools"}
-        },
+    update = _clear_optional_runtime_state({**initial, "generation": 8}, clear_mode)
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=update,
     )
 
+    assert response.status_code == 200, response.text
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
     assert state.generation == 8
+    assert state.egress_engine is None
+    assert state.egress_profiles is None
+    assert state.mcp is None
+    assert state.tools is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clear_mode", ["omitted", "null"])
+async def test_equal_generation_optional_state_clear_is_material_conflict(
+    admin_client,
+    db_session,
+    seed_user,
+    clear_mode,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"state-clear-conflict-{clear_mode}-{uuid4().hex[:8]}",
+        machine_name=f"Runtime state clear conflict {clear_mode}",
+        agent_type="openclaw",
+    )
+    initial = await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        egress_engine=TEST_EGRESS_ENGINE_PIN,
+        egress_profiles=TEST_EGRESS_PROFILES,
+        mcp={"enabled": True},
+        tools={"catalog": "clawdi-default"},
+    )
+    environment_id = env.id
+    candidate = _clear_optional_runtime_state(initial, clear_mode)
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json=candidate,
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": {"code": "generation_conflict", "current_generation": 7}}
+    state = await db_session.get(HostedRuntimeState, environment_id)
+    assert state is not None
+    assert state.generation == 7
     assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
     assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"enabled": True}
