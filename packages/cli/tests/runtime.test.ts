@@ -7231,7 +7231,14 @@ chmod +x "$prefix/bin/clawdi"
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const npmMarker = join(root, "npm-invoked");
+		const previousPath = process.env.PATH;
 		mkdirSync(home, { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(join(bin, "npm"), `#!/usr/bin/env sh\ntouch '${npmMarker}'\nexit 99\n`);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -7251,6 +7258,11 @@ chmod +x "$prefix/bin/clawdi"
 		};
 
 		for (const packageSpec of [
+			"clawdi@01.2.3",
+			"clawdi@1.2.3-01",
+			"clawdi@1.2.3+build.1",
+			"clawdi",
+			"clawdi@latest",
 			"clawdi@npm:evil",
 			"clawdi@https://evil.test/clawdi.tgz",
 			"clawdi@github:evil/clawdi",
@@ -7263,6 +7275,7 @@ chmod +x "$prefix/bin/clawdi"
 				),
 			).toThrow(/packageSpec/);
 		}
+		expect(existsSync(npmMarker)).toBe(false);
 		expect(() =>
 			applyRuntimeCliDesiredState(
 				{
@@ -7276,6 +7289,9 @@ chmod +x "$prefix/bin/clawdi"
 				paths,
 			),
 		).toThrow(/registry/);
+		expect(existsSync(npmMarker)).toBe(false);
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
 	});
 
 	it("rebuilds missing CLI bootstrap status without reinstalling the active package", () => {

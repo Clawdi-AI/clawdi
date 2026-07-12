@@ -14,7 +14,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { chmodBestEffort, writePrivateFileAtomic } from "../lib/private-file";
-import type { RuntimeManifest } from "./manifest-contract";
+import {
+	hostedCliPackageSpecSchema,
+	hostedFixtureCliPackageSpecSchema,
+	type RuntimeManifest,
+} from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
 export interface RuntimeCliUpdateResult {
@@ -219,19 +223,7 @@ function cliRegistry(manifest: RuntimeManifest): string | null {
 }
 
 function validatePackageSpec(packageSpec: string): void {
-	if (
-		/^clawdi@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(
-			packageSpec,
-		)
-	) {
-		return;
-	}
-	if (
-		/^\/usr\/local\/share\/clawdi\/bootstrap\/[^/]+\.tgz$/.test(packageSpec) &&
-		!packageSpec.includes("..")
-	) {
-		return;
-	}
+	if (hostedFixtureCliPackageSpecSchema.safeParse(packageSpec).success) return;
 	throw new Error(
 		`clawdi CLI packageSpec must be clawdi@<exact-semver> or a managed bootstrap tarball: ${packageSpec}`,
 	);
@@ -292,16 +284,8 @@ function recoverCurrentCliInstallFromActiveLink(
 }
 
 function exactNpmPackageVersion(packageSpec: string): string | null {
-	const match = /^clawdi@(.+)$/.exec(packageSpec);
-	if (!match) return null;
-	const specifier = match[1] ?? "";
-	return isExactNpmPackageVersion(specifier) ? specifier : null;
-}
-
-function isExactNpmPackageVersion(value: string): boolean {
-	return /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(
-		value,
-	);
+	if (!hostedCliPackageSpecSchema.safeParse(packageSpec).success) return null;
+	return packageSpec.slice("clawdi@".length);
 }
 
 function installCliPackage(

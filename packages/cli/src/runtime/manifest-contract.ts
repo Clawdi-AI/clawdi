@@ -108,12 +108,12 @@ function isHostedFixtureCliPackageSpec(value: string): boolean {
 	return !basename.includes("..") && /^[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(basename);
 }
 
-const hostedCliPackageSpecSchema = z
+export const hostedCliPackageSpecSchema = z
 	.string()
 	.max(200)
 	.refine(isHostedExactCliPackageSpec, "must be clawdi@<exact-semver>");
 
-const hostedFixtureCliPackageSpecSchema = z
+export const hostedFixtureCliPackageSpecSchema = z
 	.string()
 	.max(200)
 	.refine(
