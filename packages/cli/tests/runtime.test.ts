@@ -6058,6 +6058,78 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
+	it("recovers an exact CLI install when matching bootstrap status has no version", () => {
+		const desiredVersion = "0.12.10-beta.49";
+		const desiredSpec = `clawdi@${desiredVersion}`;
+		const home = join(root, "home-exact-recovery", "clawdi");
+		const state = join(root, "state-exact-recovery");
+		const run = join(root, "run-exact-recovery");
+		const bin = join(root, "bin-exact-recovery");
+		const npmLog = join(root, "npm-exact-recovery.log");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${npmLog}'
+exit 97
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, desiredSpec, desiredVersion, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const exactPrefix = join(paths.cliNpmPrefix, "packages", desiredVersion);
+		const exactTarget = join(exactPrefix, "bin", "clawdi");
+		mkdirSync(dirname(exactTarget), { recursive: true });
+		writeFileSync(
+			exactTarget,
+			`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "${desiredVersion}"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+`,
+		);
+		chmodSync(exactTarget, 0o700);
+		rmSync(paths.cliManagedBin, { force: true });
+		symlinkSync(exactTarget, paths.cliManagedBin);
+		const bootstrapStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		bootstrapStatus.npmPrefix = exactPrefix;
+		bootstrapStatus.activeTarget = exactTarget;
+		delete bootstrapStatus.version;
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(bootstrapStatus));
+
+		try {
+			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
+			const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+
+			expect(result.status).toBe("current");
+			expect(result.packageSpec).toBe(desiredSpec);
+			expect(result.version).toBe(desiredVersion);
+			expect(result.npmPrefix).toBe(exactPrefix);
+			expect(result.activeTarget).toBe(exactTarget);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(exactTarget);
+			expect(existsSync(npmLog)).toBe(false);
+			const repairedStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(repairedStatus.version).toBe(desiredVersion);
+			expect(repairedStatus.npmPrefix).toBe(exactPrefix);
+			expect(repairedStatus.activeTarget).toBe(exactTarget);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("reinstalls an exact CLI spec when matching bootstrap status has no version", () => {
 		const desiredVersion = "0.12.10-beta.49";
 		const desiredSpec = `clawdi@${desiredVersion}`;
@@ -6130,6 +6202,87 @@ chmod +x "$prefix/bin/clawdi"
 			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
 			const repairedStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 			expect(repairedStatus.version).toBe(desiredVersion);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("rejects an exact CLI install that reports a different version without swapping active", () => {
+		const desiredVersion = "0.12.10-beta.49";
+		const actualVersion = "0.12.10-beta.48";
+		const desiredSpec = `clawdi@${desiredVersion}`;
+		const home = join(root, "home-exact-version-mismatch", "clawdi");
+		const state = join(root, "state-exact-version-mismatch");
+		const run = join(root, "run-exact-version-mismatch");
+		const bin = join(root, "bin-exact-version-mismatch");
+		const npmLog = join(root, "npm-exact-version-mismatch.log");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${npmLog}'
+if [ "\${1:-}" = "view" ]; then
+  echo "exact hosted CLI updates must not call npm view" >&2
+  exit 96
+fi
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+test -n "$prefix"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "${actualVersion}"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(
+			state,
+			"clawdi@0.12.10-beta.47",
+			"0.12.10-beta.47",
+			"https://registry.npmjs.org",
+		);
+		const paths = getRuntimePaths();
+		const oldTarget = readlinkSync(paths.cliManagedBin);
+		const oldStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		try {
+			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
+			expect(() => applyRuntimeCliDesiredState(desired.manifest, paths)).toThrow(
+				`npm install ${desiredSpec} reported version ${actualVersion}, expected ${desiredVersion}`,
+			);
+
+			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
+			expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"))).toEqual(oldStatus);
+			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
+			expect(npmCalls).toHaveLength(1);
+			expect(npmCalls[0].startsWith("install ")).toBe(true);
+			expect(npmCalls[0]).toContain(desiredSpec);
+			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
