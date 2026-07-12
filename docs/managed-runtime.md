@@ -16,6 +16,8 @@ Related public docs:
 - Roadmap: [`plans/managed-runtime-roadmap.md`](plans/managed-runtime-roadmap.md)
 - Projection boundary:
   [`plans/runtime-projection-boundary.md`](plans/runtime-projection-boundary.md)
+- Agent v2 cross-repo release operations:
+  [`clawdi-hosted` runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md)
 
 ## Scope
 
