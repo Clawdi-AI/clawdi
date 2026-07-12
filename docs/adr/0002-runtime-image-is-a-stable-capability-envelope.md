@@ -83,11 +83,12 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
   egress startup instead of silently running mitmproxy as root.
 - Hosted image changes that add runtime business logic violate this decision.
 - Coordinated rollout order is: merge and publish exact CLI version
-  `0.12.10-beta.48` under the isolated npm `agent-v2` dist-tag without moving
-  `beta`; configure the v2 deployment contract to use that exact version;
-  merge the Hosted generic-envelope PR; release and promote the generic image; then recreate
-  prelaunch development and canary instances. Do not promote this through the
-  legacy agent image controls; no old-state repair is required.
+  `0.12.10-beta.48` to the standard npm `beta` channel; configure the v2
+  deployment contract to use that exact version; merge the Hosted
+  generic-envelope PR; release and promote the generic image; then recreate
+  prelaunch development and canary instances. The `beta` tag is publication
+  metadata and is not consumed by Hosted. Do not promote this through the legacy
+  agent image controls; no old-state repair is required.
 
 ## Related Documentation
 

@@ -14,16 +14,20 @@ const cliDevelopmentDoc = readFileSync(
 	resolve(import.meta.dir, "../../../docs/cli-development.md"),
 	"utf8",
 );
+const publishManifestChecker = readFileSync(
+	resolve(import.meta.dir, "../scripts/check-publish-manifest.mjs"),
+	"utf8",
+);
 const manifestContract = readFileSync(
 	resolve(import.meta.dir, "../src/runtime/manifest-contract.ts"),
 	"utf8",
 );
 const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
-) as { version: string; publishConfig?: { tag?: string } };
+) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
 
-function expectedNpmTag(pkg: { version: string; publishConfig?: { tag?: string } }): string {
-	return pkg.publishConfig?.tag || (pkg.version.includes("-") ? "beta" : "latest");
+function expectedNpmTag(version: string): string {
+	return version.includes("-") ? "beta" : "latest";
 }
 
 describe("CLI publish workflow contract", () => {
@@ -61,21 +65,26 @@ describe("CLI publish workflow contract", () => {
 
 		expect(publishCommands).toHaveLength(1);
 		expect(workflow).toContain('echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"');
-		expect(workflow).toContain(
-			"p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest')",
-		);
+		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
+		expect(workflow).not.toContain("publishConfig");
 		expect(workflow).toContain(
 			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
 		);
 		expect(workflow).toContain(
 			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
-		expect(expectedNpmTag(cliPackage)).toBe("agent-v2-candidate");
 		expect(cliPackage.version).toContain("-");
-		expect(expectedNpmTag({ version: "1.2.3-beta.1" })).toBe("beta");
-		expect(expectedNpmTag({ version: "1.2.3" })).toBe("latest");
+		expect(expectedNpmTag(cliPackage.version)).toBe("beta");
+		expect(expectedNpmTag("1.2.3-beta.1")).toBe("beta");
+		expect(expectedNpmTag("1.2.3")).toBe("latest");
+		expect(cliPackage.publishConfig).toEqual({ access: "public" });
+		expect(publishManifestChecker).toContain(
+			'Object.hasOwn(packageJson.publishConfig ?? {}, "tag")',
+		);
+		expect(publishManifestChecker).toContain(
+			"published CLI package must not declare publishConfig.tag",
+		);
 		expect(workflow).toContain("node scripts/check-publish-manifest.mjs");
-		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
 		expect(workflow).toContain("CLI_ARTIFACT_NAME: clawdi-cli-release");
 		expect(workflow).toContain(
 			`CLI_TARBALL_FILENAME: \${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}`,
@@ -113,9 +122,7 @@ describe("CLI publish workflow contract", () => {
 		expect(releaseRunbookDoc).toMatch(/supplies the exact\s+`clawdi@<semver>`\s+package\s+spec/);
 		expect(releaseRunbookDoc).toMatch(/fails when the exact spec is\s+missing/);
 		for (const surface of [cliDevelopmentDoc, releaseRunbookDoc]) {
-			expect(surface).toMatch(
-				/never\s+resolves\s+`agent-v2-candidate`\s+or\s+any\s+other\s+npm\s+dist-tag/,
-			);
+			expect(surface).toMatch(/never\s+resolves\s+an\s+npm\s+dist-tag/);
 			expect(surface).not.toContain("resolves that candidate");
 		}
 		expect(manifestContract).toContain("must be clawdi@<exact-semver>");

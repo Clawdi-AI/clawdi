@@ -49,10 +49,10 @@ Package: `clawdi@0.12.10-beta.51`
   identifier rules and the Cloud 200-character limit. Managed bootstrap tgz paths are
   accepted only through strict Hosted test fixtures. Runtime desired state no
   longer resolves floating package tags.
-- Restored `agent-v2-candidate` as the package-level safety default while the
-  release workflow retains metadata override, prerelease `beta`, and stable
-  `latest` tag selection. Hosted runtime updates consume the public exact
-  version from the Cloud manifest and never resolve a dist-tag.
+- Standardized npm publication on `beta` for prereleases and `latest` for
+  stable releases, with no package-level tag override. Hosted runtime updates
+  consume the public exact version from the Cloud manifest and never resolve a
+  dist-tag.
 
 ### Fixed
 
@@ -75,8 +75,8 @@ Package: `clawdi@0.12.10-beta.50`
   can no longer implicitly select `clawdi@latest` or inherit npm registry
   configuration.
 - Made agent-v2 publishing repository-autonomous: build, test, pack, install,
-  and SHA-verify one immutable tarball, then publish that artifact directly to
-  the `agent-v2` channel with npm trusted-publisher OIDC.
+  and SHA-verify one immutable tarball, then publish prereleases to the standard
+  npm `beta` channel with trusted-publisher OIDC.
 
 ## Clawdi CLI v0.12.10-beta.49
 
@@ -86,9 +86,8 @@ Package: `clawdi@0.12.10-beta.49`
 
 ### Changed
 
-- Added managed self-update support for the isolated floating `agent-v2`
-  channel. Agent-v2 builds upload first to `agent-v2-candidate`; the production
-  channel is promoted only after the Hosted stable-envelope paired smoke.
+- Added managed self-update support for beta builds through the standard npm
+  `beta` channel while Hosted rollout remains pinned to an exact CLI version.
 
 ## Clawdi CLI v0.12.10-beta.48
 

@@ -19,8 +19,7 @@
 		"node": ">=22.5"
 	},
 	"publishConfig": {
-		"access": "public",
-		"tag": "agent-v2-candidate"
+		"access": "public"
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",

@@ -77,12 +77,13 @@ releases.
    build, typecheck, run the full CLI suite, and pack one immutable tarball. It
    installs that tarball, records and verifies its SHA-256, transfers the same
    artifact to the protected npm job, verifies it again, and publishes it once
-   to the package-selected npm tag with trusted-publisher OIDC. Current Agent v2
-   package metadata selects `agent-v2-candidate`. The build job may use
-   the configured fast runner; the protected publish job must use GitHub-hosted
-   `ubuntu-latest`, because npm trusted publishing does not support self-hosted
-   or third-party GitHub Actions runners. The CLI workflow does not call
-   workflows in the Hosted repository or depend on Hosted repository settings.
+   to `beta` for a prerelease or `latest` for a stable version with
+   trusted-publisher OIDC. Package-level tag overrides are rejected. The build
+   job may use the configured fast runner; the protected publish job must use
+   GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
+   self-hosted or third-party GitHub Actions runners. The CLI workflow does not
+   call workflows in the Hosted repository or depend on Hosted repository
+   settings.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -107,15 +108,15 @@ releases.
    npm view clawdi dist-tags
    ```
 
-   Done: the exact version exists from the verified CLI artifact while `beta`
-   and `latest` are unchanged. The Hosted image repository has a separate
+   Done: the exact version exists from the verified CLI artifact and the
+   version-derived standard channel points to it: `beta` for a prerelease or
+   `latest` for a stable release. The Hosted image repository has a separate
    release boundary. An operator supplies the exact `clawdi@<semver>` package
    spec to the Hosted image workflow. That workflow fails when the exact spec is
    missing, verifies registry integrity, signatures, and provenance, and never
-   resolves `agent-v2-candidate` or any other npm dist-tag. It runs the image/CLI
-   pairing smoke before publishing the image and does not call back into this
-   workflow. The candidate tag is workflow-internal diagnostic metadata, not an
-   operator gate.
+   resolves an npm dist-tag. It runs the image/CLI pairing smoke before
+   publishing the image and does not call back into this workflow. The `beta`
+   tag is publication metadata, not an operator gate.
 
    Hosted rollout uses that same exact package spec in the Cloud manifest. The
    runtime never resolves an npm dist-tag.

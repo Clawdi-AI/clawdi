@@ -234,26 +234,25 @@ Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
 typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
 the tarball, records and checks its SHA-256, transfers the same artifact to the
 protected npm job, checks it again, and publishes it exactly once to the
-package-selected npm tag with trusted-publisher OIDC. The current package
-metadata selects the non-production `agent-v2-candidate` tag. The
-build/test job may use the configured fast runner, but the protected publish
-job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing does not
-support self-hosted or third-party GitHub Actions runners. The publish job uses
-Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm 11.5.1.
+standard npm channel derived from the package version: prereleases use `beta`
+and stable releases use `latest`. Package-level tag overrides are rejected.
+The build/test job may use the configured fast runner, but the protected
+publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
+does not support self-hosted or third-party GitHub Actions runners. The publish
+job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
+11.5.1.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact
 `clawdi@<semver>` package spec to the separate Hosted image workflow. That
 workflow fails closed when the exact input is missing, verifies registry
-integrity, signatures, and provenance, never resolves `agent-v2-candidate` or
-any other npm dist-tag, and runs its image/CLI pairing smoke before publishing
-the image. The candidate tag is the current package safety default; it is not an
-operator gate or rollout authority. When package metadata does not specify a
-tag, the CLI workflow retains the normal prerelease `beta` and stable `latest`
-fallbacks and does not coordinate with the
-Hosted repository. Cloud-owned Hosted manifests select `clawdi@<exact-semver>`
-only. The runtime installs that exact public version directly and never calls
-`npm view` for Hosted desired state.
+integrity, signatures, and provenance, never resolves an npm dist-tag, and runs
+its image/CLI pairing smoke before publishing the image. The `beta` tag is npm
+publication metadata for prereleases, not an operator gate or rollout
+authority. The CLI workflow does not coordinate with the Hosted repository.
+Cloud-owned Hosted manifests select `clawdi@<exact-semver>` only. The runtime
+installs that exact public version directly and never calls `npm view` for
+Hosted desired state.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
 Keep v2 creation and runtime-state reconciliation disabled until the final
@@ -300,7 +299,7 @@ first version has to be published manually:
 cd packages/cli
 npm login                    # use a maintainer account that owns the org
 bun run build                # produces dist/
-NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest'))")
+NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.version.includes('-') ? 'beta' : 'latest')")
 npm publish --access public --tag "$NPM_TAG"  # plain publish, no --provenance
 ```
 
@@ -319,12 +318,12 @@ onward releases are automatic.
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
 5. Watch the Actions tab; on green,
-   `npm view clawdi@<exact-version> version` reflects the new number while
-   `latest` and `beta` remain unchanged for the current candidate release. The workflow's non-production
-   `agent-v2-candidate` tag is diagnostic metadata, not a release gate.
+   `npm view clawdi@<exact-version> version` reflects the new number. A
+   prerelease updates `beta`; a stable release updates `latest`.
 
 Stop here for this release workflow. Hosted rollout selects the approved exact
-version through its Cloud manifest; no production runtime reads a dist-tag.
+version through its Cloud manifest. The `beta` tag is publication metadata;
+production and Hosted never resolve an npm dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run
 needs a nudge (e.g. npm was transiently unavailable).

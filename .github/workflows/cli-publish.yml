@@ -16,7 +16,7 @@ env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
 
 # This repository builds, verifies, and publishes one immutable artifact.
-# Package metadata may pin a safety tag; otherwise prereleases use beta and stable releases use latest.
+# Prereleases publish to beta; stable releases publish to latest.
 jobs:
   build-immutable-artifact:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
@@ -46,7 +46,7 @@ jobs:
         working-directory: packages/cli
         run: |
           version=$(node -p "require('./package.json').version")
-          npm_tag=$(node -e "const p=require('./package.json'); console.log(p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest'))")
+          npm_tag=$(node -e "const p=require('./package.json'); console.log(p.version.includes('-') ? 'beta' : 'latest')")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"
           echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"
