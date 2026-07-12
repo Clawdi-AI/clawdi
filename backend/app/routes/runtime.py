@@ -17,6 +17,7 @@ from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
+from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
     _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     HostedRuntimeDesiredState,
@@ -313,8 +314,21 @@ def _provider_manifest_entry(
         projection["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
         projection["managed_by"] = provider.managed_by
-    if provider.models:
-        projection["models"] = provider.models
+    if provider.models is not None:
+        try:
+            if not isinstance(provider.models, list):
+                raise ValueError("provider models must be a list")
+            models = [
+                AiProviderModel.model_validate(model).model_dump(exclude_none=True)
+                for model in provider.models
+            ]
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Stored AI provider model metadata is invalid",
+            ) from exc
+        if models:
+            projection["models"] = models
     if runtime_env_name:
         projection["runtimeEnvName"] = runtime_env_name
     if _provider_requires_secret(provider) and not secret_ref:

@@ -100,6 +100,92 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        {"id": "gpt-test", "context_window": 0},
+        {"id": "gpt-test", "max_tokens": 0},
+        {"id": "gpt-test", "label": ""},
+        {"id": "gpt-test", "alias": ""},
+        {"id": "gpt-test", "label": None},
+        {"id": "gpt-test", "unknown": True},
+        {"id": "gpt-test", "capabilities": {"audio": True}},
+        {"id": "gpt-test", "capabilities": {"chat": "yes"}},
+        {"id": "gpt-test", "capabilities": {"chat": None}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "currency": "USD"}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "cache_read": None}},
+    ],
+    ids=[
+        "zero-context-window",
+        "zero-max-tokens",
+        "empty-label",
+        "empty-alias",
+        "null-model-field",
+        "unknown-model-field",
+        "unknown-capability",
+        "non-bool-capability",
+        "null-capability",
+        "unknown-cost-field",
+        "null-cost-field",
+    ],
+)
+async def test_ai_provider_rejects_models_outside_hosted_wire_contract(
+    client: httpx.AsyncClient,
+    model: dict,
+):
+    response = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "strict-model-provider",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+            "models": [model],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_accepts_complete_hosted_model_contract(client: httpx.AsyncClient):
+    model = {
+        "id": "gpt-test",
+        "label": "GPT Test",
+        "alias": "gpt-test-stable",
+        "api_mode": "openai_responses",
+        "input_modalities": ["text", "image", "video", "audio"],
+        "supports_vision": True,
+        "supports_tools": True,
+        "supports_reasoning": False,
+        "context_window": 128000,
+        "max_tokens": 16384,
+        "cost": {"input": 1, "output": 2, "cache_read": 0.1, "cache_write": 0.2},
+        "capabilities": {
+            "chat": True,
+            "responses": True,
+            "tools": True,
+            "vision": True,
+            "embeddings": False,
+            "image_generation": False,
+        },
+    }
+    response = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "complete-model-provider",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+            "models": [model],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == [model]
+
+
+@pytest.mark.asyncio
 async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
     client: httpx.AsyncClient,
     db_session,

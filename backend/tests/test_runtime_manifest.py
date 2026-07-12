@@ -3005,6 +3005,131 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
 
 @pytest.mark.asyncio
+async def test_admin_managed_provider_models_project_exact_hosted_wire_contract(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-full-model-{uuid4().hex[:8]}",
+        machine_name="Runtime Provider Full Model",
+        agent_type="openclaw",
+    )
+    model = {
+        "id": "gpt-5.5",
+        "label": "GPT 5.5",
+        "alias": "gpt-stable",
+        "api_mode": "openai_responses",
+        "input_modalities": ["text", "image", "video", "audio"],
+        "supports_vision": True,
+        "supports_tools": True,
+        "supports_reasoning": False,
+        "context_window": 272000,
+        "max_tokens": 128000,
+        "cost": {"input": 1, "output": 2, "cache_read": 0.1, "cache_write": 0.2},
+        "capabilities": {
+            "chat": True,
+            "responses": True,
+            "tools": True,
+            "vision": True,
+            "embeddings": False,
+            "image_generation": False,
+        },
+    }
+    upsert = await admin_client.put(
+        "/v1/admin/ai-providers/clawdi-managed-v2",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://sub2api.test/v1",
+            "api_key": "sk-complete-provider",
+            "models": [model],
+        },
+    )
+    assert upsert.status_code == 200, upsert.text
+    await _write_runtime_state(admin_client, str(env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    projected_model = response.json()["manifest"]["providers"]["clawdi-managed-v2"]["models"][0]
+    assert projected_model == model
+    assert set(projected_model) == {
+        "id",
+        "label",
+        "alias",
+        "api_mode",
+        "input_modalities",
+        "supports_vision",
+        "supports_tools",
+        "supports_reasoning",
+        "context_window",
+        "max_tokens",
+        "cost",
+        "capabilities",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored_models",
+    [
+        [
+            {
+                "id": "gpt-5.5",
+                "context_window": 0,
+                "capabilities": {"audio": True},
+                "cost": {"input": 1, "output": 2, "currency": "USD"},
+            }
+        ],
+        {},
+    ],
+    ids=["invalid-model-fields", "invalid-top-level-object"],
+)
+async def test_runtime_manifest_rejects_invalid_stored_provider_model_metadata(
+    admin_client,
+    db_session,
+    seed_user,
+    stored_models,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-invalid-stored-model-{uuid4().hex[:8]}",
+        machine_name="Runtime Provider Invalid Stored Model",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        AiProvider(
+            owner_user_id=seed_user.id,
+            provider_id="clawdi-managed-v2",
+            type="custom_openai_compatible",
+            base_url="https://sub2api.test/v1",
+            models=stored_models,
+            api_mode="openai_chat",
+            auth_type="none",
+            managed_by="clawdi",
+            runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+        )
+    )
+    await db_session.commit()
+    await _write_runtime_state(admin_client, str(env.id))
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "Stored AI provider model metadata is invalid"}
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
     admin_client,
     db_session,

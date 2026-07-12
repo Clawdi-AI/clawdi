@@ -642,13 +642,6 @@ responses. Both include `current_generation`. Equal identical state is an
 idempotent `200`, while higher generations apply. Rejected and idempotent writes
 do not create duplicate state, audit events, or manifest invalidation.
 
-Revision `d8f2a1c4b6e9` adds required no-default locale and exact CLI package
-state while removing the obsolete free-form authority columns. Upgrade and
-downgrade both require `hosted_runtime_states` to be empty and fail before DDL
-when that invariant is not met. Because the backend entrypoint migrates before
-serving, the failure exits before the API starts and an automatic restart policy
-repeats it while the invariant remains unsatisfied.
-
 Committed manifest changes emit a signal-only `runtime_manifest_changed` event
 through `/v1/sync/events`. The payload contains only `type` and
 `environment_id`; clients refetch through the public manifest and ETag contract.

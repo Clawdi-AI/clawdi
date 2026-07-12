@@ -587,6 +587,55 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        {"id": "gpt-test", "context_window": 0},
+        {"id": "gpt-test", "max_tokens": 0},
+        {"id": "gpt-test", "label": ""},
+        {"id": "gpt-test", "alias": ""},
+        {"id": "gpt-test", "max_tokens": None},
+        {"id": "gpt-test", "unknown": True},
+        {"id": "gpt-test", "capabilities": {"audio": True}},
+        {"id": "gpt-test", "capabilities": {"chat": 1}},
+        {"id": "gpt-test", "capabilities": {"chat": None}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "currency": "USD"}},
+        {"id": "gpt-test", "cost": {"input": 1, "output": 2, "cache_write": None}},
+    ],
+    ids=[
+        "zero-context-window",
+        "zero-max-tokens",
+        "empty-label",
+        "empty-alias",
+        "null-model-field",
+        "unknown-model-field",
+        "unknown-capability",
+        "non-bool-capability",
+        "null-capability",
+        "unknown-cost-field",
+        "null-cost-field",
+    ],
+)
+async def test_admin_managed_ai_provider_rejects_models_outside_hosted_wire_contract(
+    admin_client,
+    seed_user,
+    model: dict,
+):
+    response = await admin_client.put(
+        "/v1/admin/ai-providers/clawdi-managed-v2",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-strict-model-test",
+            "models": [model],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     admin_client, db_session, seed_user
 ):
