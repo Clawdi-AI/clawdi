@@ -35,6 +35,8 @@ const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
+const TEST_HOSTED_HOME = "/home/clawdi";
+const TEST_HOSTED_WORKSPACE = "/home/clawdi/clawdi";
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-reconcile-test-"));
@@ -99,14 +101,38 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		generation: 1,
 		issuedAt: "2026-07-11T00:00:00.000Z",
 		locale: TEST_HOSTED_LOCALE,
+		system: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
 			packageSpec: "clawdi@agent-v2",
 			registry: "https://registry.npmjs.org",
 		},
-		runtimes: { openclaw: { enabled: true } },
+		runtimes: {
+			openclaw: {
+				enabled: true,
+				provider_ids: ["default"],
+				primary_model: { provider_id: "default", model: "gpt-test" },
+				paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
+			},
+		},
 		...overrides,
+	};
+}
+
+function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	const paths =
+		typeof overrides.paths === "object" &&
+		overrides.paths !== null &&
+		!Array.isArray(overrides.paths)
+			? (overrides.paths as Record<string, unknown>)
+			: {};
+	return {
+		enabled: true,
+		provider_ids: ["default"],
+		primary_model: { provider_id: "default", model: "gpt-test" },
+		...overrides,
+		paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE, ...paths },
 	};
 }
 
@@ -183,28 +209,25 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		["providerIds", { enabled: true, providerIds: ["default"] }],
+		["providerIds", hostedRuntimeFixture({ providerIds: ["default"] })],
 		[
 			"primaryModel",
-			{
-				enabled: true,
+			hostedRuntimeFixture({
 				primaryModel: { provider_id: "default", model: "gpt-test" },
-			},
+			}),
 		],
 		[
 			"primary_model.providerId",
-			{
-				enabled: true,
+			hostedRuntimeFixture({
 				primary_model: { providerId: "default", model: "gpt-test" },
-			},
+			}),
 		],
-		["string primary_model", { enabled: true, primary_model: "gpt-test" }],
+		["string primary_model", hostedRuntimeFixture({ primary_model: "gpt-test" })],
 		[
 			"paths.stateDir",
-			{
-				enabled: true,
+			hostedRuntimeFixture({
 				paths: { home: "/home/clawdi", workspace: "/workspace", stateDir: "/state" },
-			},
+			}),
 		],
 	])("rejects noncanonical hosted runtime field %s", (_name, runtime) => {
 		expect(
@@ -218,11 +241,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		const canonical = hostedRuntimeManifestSchema.parse(
 			hostedManifestFixture({
 				runtimes: {
-					openclaw: {
-						enabled: true,
+					openclaw: hostedRuntimeFixture({
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-					},
+					}),
 				},
 			}),
 		);
@@ -230,20 +252,50 @@ describe("runtime manifest reconciliation invariants", () => {
 			provider_ids: ["default"],
 			primary_model: { provider_id: "default", model: "gpt-test" },
 		});
+	});
 
-		const primaryOnly = hostedRuntimeManifestSchema.parse(
-			hostedManifestFixture({
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						primary_model: { provider_id: "default", model: "gpt-test" },
-					},
-				},
-			}),
-		);
+	test.each([
+		["missing provider_ids", { provider_ids: undefined }],
+		["empty provider_ids", { provider_ids: [] }],
+		["duplicate provider_ids", { provider_ids: ["default", "default"] }],
+		["missing primary_model", { primary_model: undefined }],
+		[
+			"primary model provider outside provider_ids",
+			{
+				provider_ids: ["default"],
+				primary_model: { provider_id: "other", model: "gpt-test" },
+			},
+		],
+	])("rejects hosted runtime with %s", (_name, overrides) => {
+		const runtime = hostedRuntimeFixture(overrides);
 		expect(
-			hostedManifestToRuntimeManifest(primaryOnly).runtimes.openclaw.provider_ids,
-		).toBeUndefined();
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		"system",
+		"system.home",
+		"system.workspace",
+		"runtime.paths",
+		"runtime.paths.home",
+		"runtime.paths.workspace",
+	])("rejects hosted manifests with missing %s", (field) => {
+		const manifest = structuredClone(hostedManifestFixture()) as Record<string, unknown>;
+		const system = manifest.system as Record<string, unknown>;
+		const runtimes = manifest.runtimes as Record<string, Record<string, unknown>>;
+		const runtime = runtimes.openclaw;
+		const paths = runtime.paths as Record<string, unknown>;
+		if (field === "system") delete manifest.system;
+		if (field === "system.home") delete system.home;
+		if (field === "system.workspace") delete system.workspace;
+		if (field === "runtime.paths") delete runtime.paths;
+		if (field === "runtime.paths.home") delete paths.home;
+		if (field === "runtime.paths.workspace") delete paths.workspace;
+
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test.each([
@@ -268,7 +320,11 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse(
 				hostedManifestFixture({
-					system: { openclawControlUiAllowedOrigins: [origin] },
+					system: {
+						home: TEST_HOSTED_HOME,
+						workspace: TEST_HOSTED_WORKSPACE,
+						openclawControlUiAllowedOrigins: [origin],
+					},
 				}),
 			).success,
 		).toBe(false);
@@ -306,6 +362,8 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
 						install: { source: "official" },
 						paths: { home: paths.userHome, workspace },
 					},
@@ -523,6 +581,8 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
 						install: { source: "official", channel: "stable" },
 						run: {
 							command: "openclaw",
@@ -761,6 +821,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				generation: 1,
 				issuedAt: "2026-07-01T00:00:00.000Z",
 				locale: TEST_HOSTED_LOCALE,
+				system: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},
@@ -772,10 +833,16 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "openclaw", args: ["gateway", "run"] },
 					},
 					hermes: {
 						enabled: true,
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "hermes", args: ["gateway", "run"] },
 					},
 				},

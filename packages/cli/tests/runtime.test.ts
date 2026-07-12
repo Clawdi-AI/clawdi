@@ -294,16 +294,25 @@ type HostedRuntimeFixtureEntry = {
 	install?: { source: "official"; channel?: string; args?: string[] };
 	run?: HostedRunFixture;
 	services?: Record<string, HostedRunFixture>;
-	paths?: { home?: string; workspace?: string };
-	provider_ids?: string[];
-	primary_model?: unknown;
+	paths: { home: string; workspace: string };
+	provider_ids: string[];
+	primary_model: { provider_id: string; model: string };
 };
 
 function hostedOpenClawRuntime(
 	overrides: Partial<HostedRuntimeFixtureEntry> = {},
 ): HostedRuntimeFixtureEntry {
+	const home = process.env.HOME ?? "/home/clawdi";
+	const {
+		paths,
+		provider_ids = ["default"],
+		primary_model = { provider_id: provider_ids[0] ?? "default", model: "gpt-test" },
+		...entryOverrides
+	} = overrides;
 	return {
 		enabled: true,
+		provider_ids,
+		primary_model,
 		run: {
 			args: [
 				"gateway",
@@ -319,15 +328,29 @@ function hostedOpenClawRuntime(
 			prependPath: [],
 		},
 		services: {},
-		...overrides,
+		...entryOverrides,
+		paths: {
+			home,
+			workspace: join(home, "clawdi"),
+			...paths,
+		},
 	};
 }
 
 function hostedHermesRuntime(
 	overrides: Partial<HostedRuntimeFixtureEntry> = {},
 ): HostedRuntimeFixtureEntry {
+	const home = process.env.HOME ?? "/home/clawdi";
+	const {
+		paths,
+		provider_ids = ["default"],
+		primary_model = { provider_id: provider_ids[0] ?? "default", model: "gpt-test" },
+		...entryOverrides
+	} = overrides;
 	return {
 		enabled: true,
+		provider_ids,
+		primary_model,
 		run: {
 			args: ["gateway", "run", "--replace"],
 			env: {},
@@ -340,7 +363,12 @@ function hostedHermesRuntime(
 				prependPath: [],
 			},
 		},
-		...overrides,
+		...entryOverrides,
+		paths: {
+			home,
+			workspace: join(home, "clawdi"),
+			...paths,
+		},
 	};
 }
 
@@ -3084,7 +3112,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home },
+					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -3131,7 +3159,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home },
+					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -3140,7 +3168,13 @@ exit 64
 					},
 					runtimes: {
 						openclaw: hostedOpenClawRuntime(),
-						hermes: { enabled: false, install: { source: "official" }, paths: { home } },
+						hermes: {
+							enabled: false,
+							install: { source: "official" },
+							provider_ids: ["default"],
+							primary_model: { provider_id: "default", model: "gpt-test" },
+							paths: { home, workspace: join(home, "clawdi") },
+						},
 					},
 				},
 				secretValues: {},
@@ -3198,7 +3232,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home },
+							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -8151,7 +8185,7 @@ exit 64
 		expect(patchText).toContain('"plugins"');
 	});
 
-	it("uses hosted system workspace when converging run config and systemd units", async () => {
+	it("uses explicit hosted workspaces when converging run config and systemd units", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8187,7 +8221,9 @@ exit 64
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
-								hermes: hostedHermesRuntime(),
+								hermes: hostedHermesRuntime({
+									paths: { home, workspace },
+								}),
 							},
 							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
@@ -8305,7 +8341,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home },
+					system: { home, workspace: join(home, "clawdi") },
 					controlPlane: { apiUrl: "https://api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",

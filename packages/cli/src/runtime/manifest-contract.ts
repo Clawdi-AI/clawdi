@@ -240,23 +240,41 @@ const hostedPrimaryModelSchema = z
 	})
 	.strict();
 
+const hostedProviderIdsSchema = z
+	.array(z.string().min(1))
+	.min(1)
+	.refine((providerIds) => new Set(providerIds).size === providerIds.length, {
+		message: "must contain unique provider ids",
+	});
+
 const hostedRuntimeEntrySchema = z
 	.object({
 		enabled: z.boolean(),
 		install: hostedRuntimeInstallSchema.optional(),
 		run: hostedRuntimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
-		provider_ids: z.array(z.string().min(1)).optional(),
-		primary_model: hostedPrimaryModelSchema.optional(),
+		provider_ids: hostedProviderIdsSchema,
+		primary_model: hostedPrimaryModelSchema,
 		paths: z
 			.object({
-				home: z.string().min(1).optional(),
-				workspace: z.string().min(1).optional(),
+				home: z.string().min(1),
+				workspace: z.string().min(1),
 			})
-			.strict()
-			.optional(),
+			.strict(),
 	})
-	.strict();
+	.strict()
+	.superRefine((runtime, ctx) => {
+		if (
+			runtime.primary_model &&
+			!runtime.provider_ids.includes(runtime.primary_model.provider_id)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "primary model provider must be included in provider_ids",
+				path: ["primary_model", "provider_id"],
+			});
+		}
+	});
 
 const hostedProviderCapabilitiesSchema = z
 	.object({
@@ -357,13 +375,12 @@ export const hostedRuntimeManifestSchema = z
 		system: z
 			.object({
 				user: z.string().min(1).optional(),
-				home: z.string().min(1).optional(),
-				workspace: z.string().min(1).optional(),
+				home: z.string().min(1),
+				workspace: z.string().min(1),
 				persistentPaths: z.array(z.string().min(1)).optional(),
 				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
 			})
-			.strict()
-			.optional(),
+			.strict(),
 		controlPlane: hostedControlPlaneSchema,
 		clawdiCli: hostedCliPayloadPolicySchema,
 		egressEngine: egressEngineSchema.strict().optional(),

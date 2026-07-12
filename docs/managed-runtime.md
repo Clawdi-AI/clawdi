@@ -266,7 +266,7 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
-| `system.home`, `system.workspace` | Runtime HOME and workspace root |
+| `system.home`, `system.workspace` | Required runtime HOME and workspace root; Hosted does not derive defaults |
 | `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
 | `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
@@ -276,9 +276,9 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
-| `runtimes.<name>.provider_ids` | Canonical runtime provider selection |
-| `runtimes.<name>.primary_model.{provider_id,model}` | Canonical runtime primary model selection |
-| `runtimes.<name>.paths.{home,workspace}` | Canonical runtime paths; legacy `stateDir` is rejected |
+| `runtimes.<name>.provider_ids` | Required non-empty unique runtime provider selection |
+| `runtimes.<name>.primary_model.{provider_id,model}` | Required primary model whose provider belongs to `provider_ids` |
+| `runtimes.<name>.paths.{home,workspace}` | Required canonical runtime paths; missing values and legacy `stateDir` are rejected |
 | `providers.<id>.{baseUrl,apiMode,runtimeEnvName,apiKeySecretRef}` | Canonical Hosted provider transport and secret-reference fields |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |

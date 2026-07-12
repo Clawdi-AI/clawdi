@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -548,8 +548,7 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 }
 
 export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
-	const home = hosted.system?.home || "/home/clawdi";
-	const workspaceRoot = hosted.system?.workspace || join(home, "clawdi");
+	const workspaceRoot = hosted.system.workspace;
 	const selectedRuntime = hosted.runtime;
 	const runtime = hosted.runtimes[selectedRuntime];
 	return {
@@ -578,16 +577,16 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 						? {
 								authority: "official" as const,
 								method: "official-installer" as const,
-								url: OFFICIAL_INSTALL_URLS[selectedRuntime] ?? "",
-								home: runtime.paths?.home || home,
-								args: runtime.install?.args ?? OFFICIAL_INSTALL_ARGS[selectedRuntime] ?? [],
+								url: OFFICIAL_INSTALL_URLS[selectedRuntime],
+								home: runtime.paths.home,
+								args: runtime.install.args ?? OFFICIAL_INSTALL_ARGS[selectedRuntime],
 							}
 						: undefined,
-				run: hostedRuntimeRunSettings(runtime.run, runtime.paths?.workspace, workspaceRoot),
+				run: hostedRuntimeRunSettings(runtime.run, runtime.paths.workspace),
 				services: Object.fromEntries(
 					Object.entries(runtime.services ?? {}).map(([service, run]) => [
 						service,
-						hostedRuntimeServiceRunSettings(run, runtime.paths?.workspace, workspaceRoot),
+						hostedRuntimeServiceRunSettings(run, runtime.paths.workspace),
 					]),
 				),
 				...hostedRuntimeProviderBinding(runtime),
@@ -596,7 +595,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		bridge: hosted.bridge,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
-			system: hosted.system ?? null,
+			system: hosted.system,
 			providers: hosted.providers ?? {},
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
@@ -611,22 +610,20 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 }
 
 function hostedRuntimeProviderBinding(runtime: HostedRuntimeManifest["runtimes"][string]): {
-	provider_ids?: string[];
-	primary_model?: { provider_id: string; model: string };
+	provider_ids: string[];
+	primary_model: { provider_id: string; model: string };
 } {
 	return {
-		...(runtime.provider_ids ? { provider_ids: runtime.provider_ids } : {}),
-		...(runtime.primary_model ? { primary_model: runtime.primary_model } : {}),
+		provider_ids: runtime.provider_ids,
+		primary_model: runtime.primary_model,
 	};
 }
 
 function hostedRuntimeRunSettings(
 	run: RuntimeRunSettings | undefined,
-	runtimeWorkspace: string | undefined,
-	workspaceRoot: string,
-): RuntimeRunSettings | undefined {
-	if (!run && !runtimeWorkspace) return undefined;
-	const cwd = run?.cwd ?? runtimeWorkspace ?? workspaceRoot;
+	runtimeWorkspace: string,
+): RuntimeRunSettings {
+	const cwd = run?.cwd ?? runtimeWorkspace;
 	const settings: RuntimeRunSettings = {
 		env: run?.env ?? {},
 		cwd,
@@ -640,17 +637,9 @@ function hostedRuntimeRunSettings(
 
 function hostedRuntimeServiceRunSettings(
 	run: RuntimeRunSettings,
-	runtimeWorkspace: string | undefined,
-	workspaceRoot: string,
+	runtimeWorkspace: string,
 ): RuntimeRunSettings {
-	return (
-		hostedRuntimeRunSettings(run, runtimeWorkspace, workspaceRoot) ?? {
-			args: [],
-			env: {},
-			cwd: runtimeWorkspace ?? workspaceRoot,
-			prependPath: [],
-		}
-	);
+	return hostedRuntimeRunSettings(run, runtimeWorkspace);
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
