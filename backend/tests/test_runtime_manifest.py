@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
 from app.schemas.admin import AdminRuntimeStateUpsert
@@ -89,6 +91,58 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+@asynccontextmanager
+async def _isolated_admin_client(engine) -> AsyncIterator[httpx.AsyncClient]:
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _override_get_session():
+        async with sessionmaker() as session:
+            yield session
+
+    original_admin_key = settings.admin_api_key
+    settings.admin_api_key = _ADMIN_KEY
+    app.dependency_overrides[get_session] = _override_get_session
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+        settings.admin_api_key = original_admin_key
+
+
+async def _concurrent_initial_runtime_state_responses(
+    engine,
+    client: httpx.AsyncClient,
+    environment_id,
+    bodies: tuple[dict, dict],
+) -> list[httpx.Response]:
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as blocker:
+        await blocker.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
+        )
+        requests = [
+            asyncio.create_task(
+                client.put(
+                    f"/v1/admin/environments/{environment_id}/runtime-state",
+                    headers=_AUTH,
+                    json=body,
+                )
+            )
+            for body in bodies
+        ]
+        done, _ = await asyncio.wait(requests, timeout=0.1)
+        both_waited_for_parent_lock = not done
+        await blocker.commit()
+
+    responses = await asyncio.gather(*requests)
+    assert both_waited_for_parent_lock
+    return responses
 
 
 def _runtime_state(
@@ -687,6 +741,117 @@ async def test_concurrent_same_generation_runtime_state_updates_allow_one_winner
             assert state.generation == 8
             assert state.cli_package_spec in candidate_specs
             assert await _runtime_state_audit_count(verify_db, env.id) == audit_count + 1
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_initial_identical_runtime_state_upserts_are_idempotent(
+    db_session,
+    engine,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-concurrent-create-idempotent-{uuid4().hex[:8]}",
+        machine_name="Runtime concurrent initial idempotent",
+        agent_type="openclaw",
+    )
+    body = _runtime_state_body(str(env.id))
+    audit_count = await _runtime_state_audit_count(db_session, env.id)
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        async with _isolated_admin_client(engine) as client:
+            responses = await _concurrent_initial_runtime_state_responses(
+                engine,
+                client,
+                env.id,
+                (body, body),
+            )
+
+        assert [response.status_code for response in responses] == [200, 200]
+        assert responses[0].json() == responses[1].json()
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+        assert queue.empty()
+        assert await _runtime_state_audit_count(db_session, env.id) == audit_count + 1
+        states = (
+            (
+                await db_session.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id == env.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(states) == 1
+        assert states[0].generation == body["generation"]
+        assert states[0].cli_package_spec == body["cli_package_spec"]
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_initial_conflicting_runtime_state_upserts_return_generation_conflict(
+    db_session,
+    engine,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-concurrent-create-conflict-{uuid4().hex[:8]}",
+        machine_name="Runtime concurrent initial conflict",
+        agent_type="openclaw",
+    )
+    body = _runtime_state_body(str(env.id))
+    candidate_specs = (
+        "clawdi@0.12.10-beta.52",
+        "clawdi@0.12.10-beta.53",
+    )
+    audit_count = await _runtime_state_audit_count(db_session, env.id)
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        async with _isolated_admin_client(engine) as client:
+            responses = await _concurrent_initial_runtime_state_responses(
+                engine,
+                client,
+                env.id,
+                tuple(
+                    {**body, "cli_package_spec": cli_package_spec}
+                    for cli_package_spec in candidate_specs
+                ),
+            )
+
+        assert sorted(response.status_code for response in responses) == [200, 409]
+        conflict = next(response for response in responses if response.status_code == 409)
+        assert conflict.json() == {
+            "detail": {
+                "code": "generation_conflict",
+                "current_generation": body["generation"],
+            }
+        }
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+        assert queue.empty()
+        assert await _runtime_state_audit_count(db_session, env.id) == audit_count + 1
+        states = (
+            (
+                await db_session.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id == env.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(states) == 1
+        assert states[0].generation == body["generation"]
+        assert states[0].cli_package_spec in candidate_specs
     finally:
         sync_events.unsubscribe(seed_user.id, queue)
 

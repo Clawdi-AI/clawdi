@@ -693,11 +693,15 @@ async def _admin_upsert_runtime_state(
     db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
-        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
+        await db.execute(
+            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
+    # Lock the parent before the optional child row so concurrent first creates
+    # serialize even when there is no HostedRuntimeState row to lock yet.
     state = (
         await db.execute(
             select(HostedRuntimeState)
