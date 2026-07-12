@@ -71,8 +71,10 @@ describe("CLI publish workflow contract", () => {
 			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
 		expect(expectedNpmTag(cliPackage)).toBe("agent-v2-candidate");
+		expect(cliPackage.version).toContain("-");
 		expect(expectedNpmTag({ version: "1.2.3-beta.1" })).toBe("beta");
 		expect(expectedNpmTag({ version: "1.2.3" })).toBe("latest");
+		expect(workflow).toContain("node scripts/check-publish-manifest.mjs");
 		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
 		expect(workflow).toContain("CLI_ARTIFACT_NAME: clawdi-cli-release");
 		expect(workflow).toContain(

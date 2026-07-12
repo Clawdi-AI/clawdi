@@ -300,7 +300,8 @@ first version has to be published manually:
 cd packages/cli
 npm login                    # use a maintainer account that owns the org
 bun run build                # produces dist/
-npm publish --access public  # plain publish, no --provenance
+NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest'))")
+npm publish --access public --tag "$NPM_TAG"  # plain publish, no --provenance
 ```
 
 The workflow detects this case (`npm view clawdi` returns nothing → falls
