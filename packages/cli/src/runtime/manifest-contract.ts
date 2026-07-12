@@ -121,7 +121,7 @@ const hostedFixtureCliPackageSpecSchema = z
 		"must be clawdi@<exact-semver> or a managed bootstrap tarball",
 	);
 
-const hostedCliPayloadPolicySchema = z
+export const hostedCliPayloadPolicySchema = z
 	.object({
 		source: z.literal("npm:clawdi"),
 		packageSpec: hostedCliPackageSpecSchema,
@@ -129,7 +129,7 @@ const hostedCliPayloadPolicySchema = z
 	})
 	.strict();
 
-const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.safeExtend({
+export const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.safeExtend({
 	packageSpec: hostedFixtureCliPackageSpecSchema,
 });
 

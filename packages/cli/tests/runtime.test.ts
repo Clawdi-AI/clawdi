@@ -1080,6 +1080,11 @@ describe("runtime manifest datasource", () => {
 				generation: 3,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.13.0-test",
+					registry: "https://registry.npmjs.org",
+				},
 				runtimes: { openclaw: { enabled: false } },
 				projection: {
 					providers: {
@@ -1128,6 +1133,11 @@ describe("runtime manifest datasource", () => {
 				generation: 3,
 				issuedAt: "2026-06-06T00:00:00Z",
 				controlPlane: { apiUrl: "https://cloud-api.test" },
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.13.0-test",
+					registry: "https://registry.npmjs.org",
+				},
 				runtimes: { openclaw: { enabled: false } },
 				projection: {
 					providers: {
@@ -1321,6 +1331,48 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
+	for (const packageSpec of ["clawdi@latest", "clawdi"]) {
+		it(`rejects ${packageSpec} from a remote hosted manifest`, async () => {
+			const home = join(root, "home", "clawdi");
+			const state = join(root, "var", "lib", "clawdi");
+			mkdirSync(home, { recursive: true });
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
+			process.env.CLAWDI_AUTH_TOKEN = "auth-token";
+			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+			const { restore } = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () => jsonResponse(hostedCliManifestResponse(home, packageSpec)),
+				},
+			]);
+
+			try {
+				const loaded = await loadRuntimeManifest(getRuntimePaths());
+				expect("errors" in loaded).toBe(true);
+				if (!("errors" in loaded)) throw new Error("expected remote manifest rejection");
+				expect(loaded.errors.join("\n")).toContain("must be clawdi@<exact-semver>");
+			} finally {
+				restore();
+			}
+		});
+	}
+
+	it("rejects CLAWDI_RUNTIME_MANIFEST_PATH without the fixture test gate", async () => {
+		const manifestPath = join(root, "hosted-bootstrap-fixture.json");
+		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }));
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected fixture gate rejection");
+		expect(loaded.errors).toContain(
+			"CLAWDI_RUNTIME_MANIFEST_PATH requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1",
+		);
+	});
+
 	it("accepts a managed bootstrap tarball only from CLAWDI_RUNTIME_MANIFEST_PATH", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1334,6 +1386,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
 		if (!("manifest" in loaded)) {
@@ -1342,6 +1395,46 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.source).toBe("fixture-file");
 		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(packageSpec);
 	});
+
+	it("rejects a generic internal fixture in hosted mode", async () => {
+		const home = join(root, "home", "clawdi");
+		const manifestPath = join(root, "generic-hosted-fixture.json");
+		process.env.HOME = home;
+		writeFileSync(manifestPath, JSON.stringify(genericCliDesiredState("clawdi@1.2.3")));
+		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }));
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected hosted fixture rejection");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.errors.join("\n")).toContain("manifest: Invalid input");
+	});
+
+	for (const packageSpec of ["clawdi@latest", "clawdi"]) {
+		it(`rejects cached hosted state with ${packageSpec} and no hosted marker`, async () => {
+			const home = join(root, "home", "clawdi");
+			const state = join(root, "var", "lib", "clawdi");
+			mkdirSync(join(state, "cache"), { recursive: true });
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
+			writeFileSync(
+				join(state, "cache", "manifest.last-good.json"),
+				JSON.stringify({
+					...genericCliDesiredState(packageSpec),
+					workspaceRoot: join(home, "clawdi"),
+					recovery: { cacheManifest: true, allowOfflineBoot: true },
+				}),
+			);
+
+			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			expect("errors" in loaded).toBe(true);
+			if (!("errors" in loaded)) throw new Error("expected cached manifest rejection");
+			expect(loaded.errors.join("\n")).toContain("must be clawdi@<exact-semver>");
+		});
+	}
 
 	it("recovers hosted bridge token from pid1 env for Hermes runtime bridge exposure", async () => {
 		const home = join(root, "home", "clawdi");
@@ -8716,7 +8809,7 @@ exit 64
 		writeFileSync(futureBin, "#!/bin/sh\nexit 0\n");
 		chmodSync(futureBin, 0o700);
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeFileSync(
@@ -8941,7 +9034,7 @@ exit 64
 		chmodSync(openclawBin, 0o700);
 		chmodSync(hermesBin, 0o700);
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "deploy-key-secret";
@@ -9762,7 +9855,7 @@ exit 64
 		const manifestPath = join(root, "runtime-reset.json");
 		mkdirSync(join(state, "cache"), { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
@@ -9801,7 +9894,7 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const manifestPath = join(root, "runtime-secretref.json");
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeFileSync(
@@ -10040,7 +10133,7 @@ exit 64
 		mkdirSync(join(state, "config", "run"), { recursive: true });
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeFileSync(join(state, "config", "egress", "profiles.json"), "{}\n");
@@ -10086,7 +10179,7 @@ exit 64
 		mkdirSync(home, { recursive: true });
 		mkdirSync(join(state, "cache"), { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const previousManifest = {
@@ -10128,7 +10221,7 @@ exit 64
 		const manifestPath = join(root, "expired-manifest.json");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeFileSync(
@@ -10421,7 +10514,7 @@ exit 64
 		const manifestPath = join(root, "manifest.json");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
@@ -10467,7 +10560,7 @@ exit 64
 		const manifestPath = join(root, "manifest.json");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeFileSync(

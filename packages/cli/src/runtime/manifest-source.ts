@@ -9,6 +9,8 @@ import {
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	type HostedRuntimeManifest,
+	hostedCliPayloadPolicySchema,
+	hostedFixtureCliPayloadPolicySchema,
 	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
 	manifestSchema,
@@ -249,10 +251,33 @@ export function normalizeManifestPayload(value: unknown): {
 	throw internal.error;
 }
 
-function normalizeManifestFixturePayload(value: unknown): {
+function normalizeRemoteManifestPayload(
+	value: unknown,
+	paths: RuntimePaths,
+): { manifest: RuntimeManifest; secretValues?: Record<string, string> } {
+	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
+	const hostedResponse = hostedRuntimeManifestResponseSchema.parse(value);
+	return {
+		manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
+		secretValues: normalizeSecretValues(hostedResponse.secretValues),
+	};
+}
+
+function normalizeManifestFixturePayload(
+	value: unknown,
+	paths: RuntimePaths,
+	explicitSimulation: boolean,
+): {
 	manifest: RuntimeManifest;
 	secretValues?: Record<string, string>;
 } {
+	if (paths.mode === "hosted" && !explicitSimulation) {
+		const hostedResponse = hostedRuntimeManifestFixtureResponseSchema.parse(value);
+		return {
+			manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
+			secretValues: normalizeSecretValues(hostedResponse.secretValues),
+		};
+	}
 	const internal = manifestSchema.safeParse(value);
 	if (internal.success) return { manifest: internal.data };
 
@@ -506,7 +531,7 @@ export async function loadRemoteRuntimeManifest(
 
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = normalizeManifestPayload(fetched.raw);
+		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -682,13 +707,27 @@ function manifestExpiryError(manifest: RuntimeManifest): string | null {
 	return null;
 }
 
-function validateManifestSemantics(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
+function validateManifestSemantics(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	trustDomain: "generic" | "hosted" | "hosted-fixture" = "generic",
+): string[] {
 	const errors: string[] = [];
 	const expiryError = manifestExpiryError(manifest);
 	if (expiryError) errors.push(expiryError);
 	if (!isAbsolute(paths.userHome)) errors.push(`runtime HOME must be absolute: ${paths.userHome}`);
 	if (manifest.workspaceRoot && !isAbsolute(manifest.workspaceRoot)) {
 		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
+	}
+	if (trustDomain !== "generic") {
+		const cliPolicySchema =
+			trustDomain === "hosted-fixture"
+				? hostedFixtureCliPayloadPolicySchema
+				: hostedCliPayloadPolicySchema;
+		const cliPolicy = cliPolicySchema.safeParse(manifest.clawdiCli);
+		if (!cliPolicy.success) {
+			errors.push(...zodErrors(cliPolicy.error).map((error) => `clawdiCli.${error}`));
+		}
 	}
 	if (manifest.runtime) {
 		const runtime = manifest.runtime;
@@ -785,6 +824,17 @@ export async function loadRuntimeManifest(
 	opts: { manifestPath?: string } = {},
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
 	const manifestPath = opts.manifestPath ?? runtimeManifestFixturePath();
+	if (
+		manifestPath &&
+		opts.manifestPath === undefined &&
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1"
+	) {
+		return {
+			mode: "repair",
+			stage: "local",
+			errors: ["CLAWDI_RUNTIME_MANIFEST_PATH requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1"],
+		};
+	}
 	if (!manifestPath) {
 		let fetched: { url: string; raw: unknown; etag?: string };
 		try {
@@ -810,7 +860,7 @@ export async function loadRuntimeManifest(
 
 		let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 		try {
-			normalized = normalizeManifestPayload(fetched.raw);
+			normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
 		} catch (error) {
 			return {
 				mode: "manifest-rejected",
@@ -857,7 +907,7 @@ export async function loadRuntimeManifest(
 	}
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = normalizeManifestFixturePayload(raw);
+		normalized = normalizeManifestFixturePayload(raw, paths, opts.manifestPath !== undefined);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -883,7 +933,13 @@ export async function loadRuntimeManifest(
 		};
 	}
 
-	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
+	return validateLoadedManifest(
+		normalized,
+		paths,
+		"fixture-file",
+		manifestPath,
+		opts.manifestPath !== undefined ? "generic" : undefined,
+	);
 }
 
 function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | RuntimeManifestFailure {
@@ -903,12 +959,13 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				errors: ["cached manifest does not allow offline boot"],
 			};
 		}
-		const expiryError = manifestExpiryError(manifest);
-		if (expiryError) {
+		const trustDomain = paths.mode === "hosted" ? "hosted" : "generic";
+		const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
+		if (semanticErrors.length > 0) {
 			return {
 				mode: "repair",
 				stage: "local",
-				errors: [`cached ${expiryError}`],
+				errors: semanticErrors.map((error) => `cached ${error}`),
 			};
 		}
 		const secretRefs = manifestSecretRefs(manifest);
@@ -1024,10 +1081,18 @@ function validateLoadedManifest(
 	paths: RuntimePaths,
 	source: RuntimeManifestLoad["source"],
 	sourcePath: string,
+	trustDomainOverride?: "generic" | "hosted" | "hosted-fixture",
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	const existing = loadExistingState(paths);
 	const manifest = normalized.manifest;
-	const semanticErrors = validateManifestSemantics(manifest, paths);
+	const trustDomain =
+		trustDomainOverride ??
+		(paths.mode === "hosted"
+			? source === "fixture-file"
+				? "hosted-fixture"
+				: "hosted"
+			: "generic");
+	const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
 			`manifest instanceId ${manifest.instanceId} does not match last-good instanceId ${existing.instanceId}`,

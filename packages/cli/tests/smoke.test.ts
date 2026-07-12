@@ -217,8 +217,16 @@ describe("CLI smoke — src entry", () => {
 
 	it("runtime init performs first-install convergence from a fixture manifest", async () => {
 		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } =
-			await import("node:fs");
+		const {
+			chmodSync,
+			existsSync,
+			mkdirSync,
+			readFileSync,
+			rmSync,
+			statSync,
+			symlinkSync,
+			writeFileSync,
+		} = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-full-${Date.now()}`);
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
@@ -627,6 +635,40 @@ chmod +x "$HOME/.local/bin/hermes"
 			expect(egressProfiles.profiles[0].id).toBe("codex-openai-responses");
 			expect(JSON.stringify(egressProfiles)).toContain("smoke-provider-key");
 			expect(JSON.stringify(egressProfiles)).not.toContain("auth-test-token");
+			const lastGoodPath = join(serviceStateRoot, "cache", "manifest.last-good.json");
+			const cachedLastGood = JSON.parse(readFileSync(lastGoodPath, "utf-8"));
+			writeFileSync(
+				lastGoodPath,
+				JSON.stringify({
+					...cachedLastGood,
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec: "clawdi@0.12.10-beta.51",
+						registry: "https://registry.npmjs.org",
+					},
+				}),
+			);
+			const managedCli = join(serviceStateRoot, "bin", "clawdi");
+			const managedCliTarget = join(serviceStateRoot, "npm", "bin", "clawdi");
+			mkdirSync(dirname(managedCli), { recursive: true });
+			mkdirSync(dirname(managedCliTarget), { recursive: true });
+			mkdirSync(join(serviceStateRoot, "status"), { recursive: true });
+			writeFileSync(managedCliTarget, "#!/usr/bin/env sh\nexit 0\n");
+			chmodSync(managedCliTarget, 0o700);
+			symlinkSync(managedCliTarget, managedCli);
+			writeFileSync(
+				join(serviceStateRoot, "status", "cli-bootstrap.json"),
+				JSON.stringify({
+					schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+					status: "installed",
+					source: "npm",
+					packageSpec: "clawdi@0.12.10-beta.51",
+					registry: "https://registry.npmjs.org",
+					activePath: managedCli,
+					activeTarget: managedCliTarget,
+					version: "0.12.10-beta.51",
+				}),
+			);
 
 			const offline = await runCli(["runtime", "init", "--non-interactive", "--json"], env);
 			expect(offline.code).toBe(0);
