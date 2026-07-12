@@ -123,7 +123,7 @@ export function applyRuntimeCliDesiredState(
 			version: current.version ?? null,
 		});
 	}
-	const recovered = recoverCurrentCliInstallFromActiveLink(paths, packageSpec, registry);
+	const recovered = recoverCurrentCliInstallFromActiveLink(paths, packageSpec);
 	if (recovered) {
 		writeCliBootstrapStatus(paths, {
 			packageSpec,
@@ -260,19 +260,12 @@ function isCurrentCliInstall(
 function recoverCurrentCliInstallFromActiveLink(
 	paths: RuntimePaths,
 	packageSpec: string,
-	registry: string | null,
 ): { npmPrefix: string; activeTarget: string; version: string } | null {
 	const desiredVersion = exactNpmPackageVersion(packageSpec);
 	if (!desiredVersion) return null;
 	const npmPrefix = cliPackagePrefix(paths, desiredVersion);
-	const legacyNpmPrefix = cliPackagePrefixForLegacyHash(paths, packageSpec, registry);
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
-	if (
-		activeTarget !== join(npmPrefix, "bin", "clawdi") &&
-		activeTarget !== join(legacyNpmPrefix, "bin", "clawdi")
-	) {
-		return null;
-	}
+	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
 	const version = smokeCliVersion(activeTarget);
 	if (version !== desiredVersion) return null;
@@ -392,18 +385,6 @@ function cliPackagePrefix(paths: RuntimePaths, version: string): string {
 		throw new Error(`resolved clawdi CLI version contains unsafe path characters: ${version}`);
 	}
 	return join(paths.cliNpmPrefix, "packages", version);
-}
-
-function cliPackagePrefixForLegacyHash(
-	paths: RuntimePaths,
-	packageSpec: string,
-	registry: string | null,
-): string {
-	const hash = createHash("sha256")
-		.update(JSON.stringify({ packageSpec, registry }))
-		.digest("hex")
-		.slice(0, 16);
-	return join(paths.cliNpmPrefix, "packages", hash);
 }
 
 function prefixForActiveTarget(activeTarget: string): string {

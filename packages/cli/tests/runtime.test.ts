@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -337,6 +338,15 @@ function genericCliDesiredState(packageSpec: string): RuntimeManifest {
 		},
 		runtimes: { openclaw: { enabled: true } },
 		recovery: {},
+	};
+}
+
+function cachedHostedCliDesiredState(home: string, packageSpec: string): RuntimeManifest {
+	return {
+		...genericCliDesiredState(packageSpec),
+		workspaceRoot: join(home, "clawdi"),
+		runtimes: { openclaw: { enabled: false } },
+		recovery: { cacheManifest: true, allowOfflineBoot: true },
 	};
 }
 
@@ -1130,6 +1140,65 @@ describe("runtime manifest datasource", () => {
 		});
 	});
 
+	it("reports degraded-offline apply and boot state after remote fetch failure", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		writeFileSync(
+			join(state, "cache", "manifest.last-good.json"),
+			JSON.stringify(cachedHostedCliDesiredState(home, "clawdi@0.13.0-test")),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					throw new Error("control plane unavailable");
+				},
+			},
+		]);
+
+		try {
+			const paths = getRuntimePaths();
+			const loaded = await loadRuntimeManifest(paths);
+			if (!("manifest" in loaded)) {
+				throw new Error(`expected last-good manifest: ${loaded.errors.join("; ")}`);
+			}
+			const convergence = convergeRuntimeManifest(loaded, paths, { cacheLastGood: false });
+			const boot = buildRuntimeBootStatus(
+				{
+					mode: convergence.mode,
+					status: "ok",
+					stage: "final",
+					bootId: "boot-degraded-offline",
+					runtimeMode: "hosted",
+					activeGeneration: convergence.manifest.generation,
+					instanceId: convergence.manifest.instanceId,
+					enabledRuntimes: convergence.enabledRuntimes,
+					errors: [],
+					exitCode: 0,
+					datasource: "RuntimeSource",
+					hostPolicy: { source: "builtin", exists: true, valid: true },
+				},
+				paths,
+			);
+
+			expect(loaded.source).toBe("last-good-cache");
+			expect(loaded.offline).toBe(true);
+			expect(convergence.mode).toBe("degraded-offline");
+			expect(boot.mode).toBe("degraded-offline");
+		} finally {
+			restore();
+		}
+	});
+
 	it("refuses last-good offline boot when cached secret values are missing", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -1464,7 +1533,12 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors.join("\n")).toContain("fixture references secretValues");
 	});
 
-	for (const packageSpec of ["clawdi@latest", "clawdi"]) {
+	for (const packageSpec of [
+		"clawdi@latest",
+		"clawdi@agent-v2",
+		"clawdi@1.2.3+build.1",
+		"clawdi",
+	]) {
 		it(`rejects cached hosted state with ${packageSpec} and no hosted marker`, async () => {
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -1475,11 +1549,7 @@ describe("runtime manifest datasource", () => {
 			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
 			writeFileSync(
 				join(state, "cache", "manifest.last-good.json"),
-				JSON.stringify({
-					...genericCliDesiredState(packageSpec),
-					workspaceRoot: join(home, "clawdi"),
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
-				}),
+				JSON.stringify(cachedHostedCliDesiredState(home, packageSpec)),
 			);
 
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
@@ -6125,9 +6195,10 @@ exit 64
 		}
 	});
 
-	it("reinstalls an exact CLI spec when matching bootstrap status has no version", () => {
+	it("reinstalls an exact CLI spec when the active link uses a legacy hash prefix", () => {
 		const desiredVersion = "0.12.10-beta.49";
 		const desiredSpec = `clawdi@${desiredVersion}`;
+		const registry = "https://registry.npmjs.org";
 		const home = join(root, "home-exact-missing-version", "clawdi");
 		const state = join(root, "state-exact-missing-version");
 		const run = join(root, "run-exact-missing-version");
@@ -6176,21 +6247,46 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		seedCurrentCliInstall(state, desiredSpec, desiredVersion, "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, desiredSpec, desiredVersion, registry);
 		const paths = getRuntimePaths();
+		const legacyHash = createHash("sha256")
+			.update(JSON.stringify({ packageSpec: desiredSpec, registry }))
+			.digest("hex")
+			.slice(0, 16);
+		const legacyPrefix = join(paths.cliNpmPrefix, "packages", legacyHash);
+		const legacyTarget = join(legacyPrefix, "bin", "clawdi");
+		mkdirSync(dirname(legacyTarget), { recursive: true });
+		writeFileSync(
+			legacyTarget,
+			`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "${desiredVersion}"
+  exit 0
+fi
+exit 64
+`,
+		);
+		chmodSync(legacyTarget, 0o700);
+		rmSync(paths.cliManagedBin, { force: true });
+		symlinkSync(legacyTarget, paths.cliManagedBin);
 		const bootstrapStatus = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		bootstrapStatus.npmPrefix = legacyPrefix;
+		bootstrapStatus.activeTarget = legacyTarget;
 		delete bootstrapStatus.version;
 		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(bootstrapStatus));
-		expect(existsSync(paths.cliManagedBin)).toBe(true);
 
 		try {
 			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
 			const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+			const canonicalPrefix = join(paths.cliNpmPrefix, "packages", desiredVersion);
+			const canonicalTarget = join(canonicalPrefix, "bin", "clawdi");
 
 			expect(result.status).toBe("installed");
 			expect(result.packageSpec).toBe(desiredSpec);
 			expect(result.version).toBe(desiredVersion);
-			expect(result.activeTarget).not.toBe(bootstrapStatus.activeTarget);
+			expect(result.npmPrefix).toBe(canonicalPrefix);
+			expect(result.activeTarget).toBe(canonicalTarget);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(canonicalTarget);
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
