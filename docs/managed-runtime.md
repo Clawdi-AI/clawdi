@@ -266,7 +266,7 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
-| `system.home`, `system.workspace` | Required runtime HOME and workspace root; Hosted does not derive defaults |
+| `system.user`, `system.home`, `system.workspace`, `system.persistentPaths` | Required runtime identity and persistent filesystem contract; Hosted does not derive defaults |
 | `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
 | `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
 | `minimumCliVersion` | Required hosted CLI protocol floor |

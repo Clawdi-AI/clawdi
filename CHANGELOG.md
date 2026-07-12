@@ -31,8 +31,8 @@ Package: `clawdi@0.12.10-beta.51`
   deployment fallbacks.
 - Restricted runtime bindings, provider transport fields, runtime paths, and
   OpenClaw Control UI origins to the canonical Hosted wire shape.
-- Required explicit Hosted system and runtime home/workspace paths instead of
-  deriving image-default locations during normalization.
+- Required explicit Hosted system user, home, workspace, persistent paths, and
+  runtime home/workspace paths instead of deriving image-default locations.
 - Required a non-empty unique Hosted runtime provider selection and a structured
   primary model constrained to that selection.
 - Restricted hosted CLI package selection to `clawdi@agent-v2`, exact semver,

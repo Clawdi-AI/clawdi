@@ -374,10 +374,10 @@ export const hostedRuntimeManifestSchema = z
 		locale: runtimeLocaleSchema,
 		system: z
 			.object({
-				user: z.string().min(1).optional(),
+				user: z.string().min(1),
 				home: z.string().min(1),
 				workspace: z.string().min(1),
-				persistentPaths: z.array(z.string().min(1)).optional(),
+				persistentPaths: z.array(z.string().min(1)),
 				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
 			})
 			.strict(),

@@ -38,6 +38,16 @@ const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_WORKSPACE = "/home/clawdi/clawdi";
 
+function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		user: "clawdi",
+		home: TEST_HOSTED_HOME,
+		workspace: TEST_HOSTED_WORKSPACE,
+		persistentPaths: [TEST_HOSTED_HOME, TEST_HOSTED_WORKSPACE],
+		...overrides,
+	};
+}
+
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-reconcile-test-"));
 	tempRoots.push(root);
@@ -101,7 +111,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		generation: 1,
 		issuedAt: "2026-07-11T00:00:00.000Z",
 		locale: TEST_HOSTED_LOCALE,
-		system: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
+		system: hostedSystemFixture(),
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
@@ -277,8 +287,10 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test.each([
 		"system",
+		"system.user",
 		"system.home",
 		"system.workspace",
+		"system.persistentPaths",
 		"runtime.paths",
 		"runtime.paths.home",
 		"runtime.paths.workspace",
@@ -289,8 +301,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		const runtime = runtimes.openclaw;
 		const paths = runtime.paths as Record<string, unknown>;
 		if (field === "system") delete manifest.system;
+		if (field === "system.user") delete system.user;
 		if (field === "system.home") delete system.home;
 		if (field === "system.workspace") delete system.workspace;
+		if (field === "system.persistentPaths") delete system.persistentPaths;
 		if (field === "runtime.paths") delete runtime.paths;
 		if (field === "runtime.paths.home") delete paths.home;
 		if (field === "runtime.paths.workspace") delete paths.workspace;
@@ -320,11 +334,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse(
 				hostedManifestFixture({
-					system: {
-						home: TEST_HOSTED_HOME,
-						workspace: TEST_HOSTED_WORKSPACE,
+					system: hostedSystemFixture({
 						openclawControlUiAllowedOrigins: [origin],
-					},
+					}),
 				}),
 			).success,
 		).toBe(false);
@@ -354,11 +366,12 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		const hosted = hostedRuntimeManifestSchema.parse(
 			hostedManifestFixture({
-				system: {
+				system: hostedSystemFixture({
 					home: paths.userHome,
 					workspace,
+					persistentPaths: [paths.userHome, workspace],
 					openclawControlUiAllowedOrigins: allowedOrigins,
-				},
+				}),
 				runtimes: {
 					openclaw: {
 						enabled: true,
@@ -566,10 +579,11 @@ describe("runtime manifest reconciliation invariants", () => {
 				generation: 7,
 				issuedAt: "2026-07-01T00:00:00.000Z",
 				locale: TEST_HOSTED_LOCALE,
-				system: {
+				system: hostedSystemFixture({
 					home: "/home/clawdi-test",
 					workspace: "/workspace/clawdi",
-				},
+					persistentPaths: ["/home/clawdi-test", "/workspace/clawdi"],
+				}),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},
@@ -705,6 +719,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				generation: 1,
 				issuedAt: "2026-07-07T00:00:00.000Z",
 				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture(),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},
@@ -714,10 +729,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: { source: "official" },
-					},
+					openclaw: hostedRuntimeFixture({ install: { source: "official" } }),
 				},
 			}).success,
 		).toBe(false);
@@ -729,7 +741,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			"system",
 			(manifest: Record<string, unknown>) => ({
 				...manifest,
-				system: { home: "/home/clawdi", unknown: true },
+				system: hostedSystemFixture({ unknown: true }),
 			}),
 		],
 		[
@@ -821,7 +833,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				generation: 1,
 				issuedAt: "2026-07-01T00:00:00.000Z",
 				locale: TEST_HOSTED_LOCALE,
-				system: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
+				system: hostedSystemFixture(),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},

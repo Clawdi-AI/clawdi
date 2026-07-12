@@ -179,6 +179,20 @@ const TEST_HOSTED_LOCALE = {
 };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 
+function hostedSystemFixture(
+	home: string,
+	workspace = join(home, "clawdi"),
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+	return {
+		user: "clawdi",
+		home,
+		workspace,
+		persistentPaths: [home, workspace],
+		...overrides,
+	};
+}
+
 function runtimeWatchLocaleManifest(
 	home: string,
 	generation: number,
@@ -228,7 +242,7 @@ function hostedRuntimeWatchLocalePayload(
 			generation,
 			issuedAt: "2026-07-11T00:00:00Z",
 			locale: { language, timezone },
-			system: { home, workspace: join(home, "clawdi") },
+			system: hostedSystemFixture(home),
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
@@ -1251,7 +1265,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "managed-workspace") },
+							system: hostedSystemFixture(home, join(home, "managed-workspace")),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -1344,7 +1358,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -1441,7 +1455,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -2951,7 +2965,7 @@ exit 0
 					generation: 5,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -3112,7 +3126,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -3159,7 +3173,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -3232,7 +3246,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -3294,7 +3308,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -3327,7 +3341,7 @@ exit 64
 							generation: 2,
 							issuedAt: "2026-06-06T00:01:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -4245,7 +4259,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								generation: 12,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -4389,7 +4403,7 @@ exit 42
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -4467,7 +4481,7 @@ exit 42
 				generation: 22,
 				issuedAt: "2026-06-06T00:00:00Z",
 				locale: TEST_HOSTED_LOCALE,
-				system: { home, workspace: join(home, "clawdi") },
+				system: hostedSystemFixture(home),
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
 					source: "npm:clawdi",
@@ -4748,7 +4762,7 @@ exit 64
 								generation: 18,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -5329,7 +5343,7 @@ chmod +x "$prefix/bin/clawdi"
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -5567,7 +5581,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								generation: 2,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								egressEngine: mitmproxy,
 								clawdiCli: {
@@ -5735,7 +5749,7 @@ chmod +x "$prefix/bin/clawdi"
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -5814,7 +5828,7 @@ exit 97
 					generation: 1,
 					issuedAt: "2026-07-11T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -5930,7 +5944,7 @@ chmod +x "$prefix/bin/clawdi"
 				generation: 30,
 				issuedAt: "2026-07-11T00:00:00Z",
 				locale: TEST_HOSTED_LOCALE,
-				system: { home, workspace: join(home, "clawdi") },
+				system: hostedSystemFixture(home),
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
 					source: "npm:clawdi",
@@ -6135,7 +6149,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								generation: 16,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -6291,7 +6305,7 @@ chmod +x "$prefix/bin/clawdi"
 			generation: 18,
 			issuedAt: "2026-06-06T00:00:00Z",
 			locale: TEST_HOSTED_LOCALE,
-			system: { home, workspace: join(home, "clawdi") },
+			system: hostedSystemFixture(home),
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
@@ -6438,7 +6452,7 @@ chmod +x "$prefix/bin/clawdi"
 								generation: 17,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -6577,7 +6591,7 @@ chmod +x "$prefix/bin/clawdi"
 								minimumCliVersion: "999.0.0",
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -7062,7 +7076,7 @@ exit 64
 								generation: 7,
 								issuedAt: "2026-06-06T00:00:00Z",
 								locale: TEST_HOSTED_LOCALE,
-								system: { home, workspace: join(home, "clawdi") },
+								system: hostedSystemFixture(home),
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
@@ -8213,7 +8227,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace },
+							system: hostedSystemFixture(home, workspace),
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -8341,7 +8355,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { apiUrl: "https://api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -8389,7 +8403,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "system-workspace") },
+					system: hostedSystemFixture(home, join(home, "system-workspace")),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -9395,7 +9409,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {},
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -9450,7 +9464,7 @@ exit 64
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -9730,7 +9744,7 @@ exit 64
 							generation: 9,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: { home, workspace: join(home, "clawdi") },
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -9835,7 +9849,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -9881,7 +9895,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: { home, workspace: join(home, "clawdi") },
+					system: hostedSystemFixture(home),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
