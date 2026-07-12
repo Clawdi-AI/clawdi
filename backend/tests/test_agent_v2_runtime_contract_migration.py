@@ -58,7 +58,9 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
                         clawdi_cli jsonb,
                         control_plane jsonb,
                         provider_id varchar(80),
-                        system jsonb
+                        system jsonb,
+                        live_sync jsonb,
+                        recovery jsonb
                     )
                     """
                 )
@@ -140,6 +142,23 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
             assert required_system_column.column_default is None
             assert required_system_column.data_type == "jsonb"
 
+            for required_column_name in ("live_sync", "recovery"):
+                required_column = sync_conn.execute(
+                    sa.text(
+                        """
+                        SELECT is_nullable, column_default, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                          AND table_name = 'hosted_runtime_states'
+                          AND column_name = :column_name
+                        """
+                    ),
+                    {"schema": schema, "column_name": required_column_name},
+                ).one()
+                assert required_column.is_nullable == "NO"
+                assert required_column.column_default is None
+                assert required_column.data_type == "jsonb"
+
             migration.downgrade()
 
             restored_cli_column = sync_conn.execute(
@@ -207,6 +226,23 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
             assert restored_system_column.column_default is None
             assert restored_system_column.data_type == "jsonb"
 
+            for restored_column_name in ("live_sync", "recovery"):
+                restored_column = sync_conn.execute(
+                    sa.text(
+                        """
+                        SELECT is_nullable, column_default, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                          AND table_name = 'hosted_runtime_states'
+                          AND column_name = :column_name
+                        """
+                    ),
+                    {"schema": schema, "column_name": restored_column_name},
+                ).one()
+                assert restored_column.is_nullable == "YES"
+                assert restored_column.column_default is None
+                assert restored_column.data_type == "jsonb"
+
             removed_locale_column = sync_conn.execute(
                 sa.text(
                     """
@@ -254,7 +290,9 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                         clawdi_cli jsonb,
                         control_plane jsonb,
                         provider_id varchar(80),
-                        system jsonb
+                        system jsonb,
+                        live_sync jsonb,
+                        recovery jsonb
                     )
                     """
                 )
@@ -318,6 +356,8 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                 "control_plane",
                 "provider_id",
                 "system",
+                "live_sync",
+                "recovery",
             }
 
             stored_state = sync_conn.execute(

@@ -128,6 +128,8 @@ async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
                 generation=1,
                 locale={"language": "en", "timezone": "UTC"},
                 system=_TEST_SYSTEM,
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 runtimes={
                     "openclaw": {
                         "enabled": True,

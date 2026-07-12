@@ -217,3 +217,40 @@ class HostedRuntimeLocale(BaseModel):
         except (ValueError, ZoneInfoNotFoundError) as exc:
             raise ValueError("timezone must be a valid IANA timezone") from exc
         return value
+
+
+class HostedRuntimeLiveSyncAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agentType: Literal["openclaw", "hermes", "codex"]
+    environmentId: str = Field(min_length=1, max_length=200)
+
+    @field_validator("environmentId")
+    @classmethod
+    def _validate_environment_id(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("environmentId must not contain surrounding whitespace")
+        return value
+
+
+class HostedRuntimeLiveSync(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    agents: list[HostedRuntimeLiveSyncAgent]
+
+    @model_validator(mode="after")
+    def _validate_agents(self) -> "HostedRuntimeLiveSync":
+        identities = [(agent.agentType, agent.environmentId) for agent in self.agents]
+        if len(set(identities)) != len(identities):
+            raise ValueError("live_sync agents must not contain duplicates")
+        if self.enabled != bool(self.agents):
+            raise ValueError("live_sync.enabled must match whether agents are configured")
+        return self
+
+
+class HostedRuntimeRecovery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cacheManifest: bool
+    allowOfflineBoot: bool

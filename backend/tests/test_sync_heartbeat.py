@@ -419,6 +419,8 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
         generation=1,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
     )
     db_session.add(state)
@@ -453,6 +455,8 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         generation=4,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
@@ -506,6 +510,8 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
         generation=4,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
     )
     db_session.add(state)
@@ -552,6 +558,8 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
         generation=5,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
     )
     db_session.add(state)
@@ -600,6 +608,8 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         generation=6,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
     )
     db_session.add(state)
@@ -693,6 +703,8 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 generation=1,
                 locale=_TEST_LOCALE,
                 system=_TEST_SYSTEM,
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 runtimes=_test_runtimes(),
             ),
             HostedRuntimeState(
@@ -702,6 +714,8 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 generation=1,
                 locale=_TEST_LOCALE,
                 system=_TEST_SYSTEM,
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 runtimes=_test_runtimes(),
             ),
         ]

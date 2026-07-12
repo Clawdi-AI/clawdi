@@ -100,6 +100,8 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
             generation=3,
             locale=_TEST_LOCALE,
             system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
             runtimes={
                 "openclaw": {
                     "enabled": True,

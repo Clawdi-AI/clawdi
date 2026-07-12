@@ -14,7 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from app.schemas.runtime import (
     HostedRuntimeDesiredState,
+    HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeRecovery,
     HostedRuntimeSystem,
 )
 
@@ -121,8 +123,8 @@ class AdminRuntimeStateUpsert(BaseModel):
     egress_engine: dict[str, Any] | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
     bridge: dict[str, Any] | None = None
-    live_sync: dict[str, Any] | None = None
-    recovery: dict[str, Any] | None = None
+    live_sync: HostedRuntimeLiveSync
+    recovery: HostedRuntimeRecovery
     egress_profiles: dict[str, Any] | None = None
     mcp: dict[str, Any] | None = None
     tools: dict[str, Any] | None = None

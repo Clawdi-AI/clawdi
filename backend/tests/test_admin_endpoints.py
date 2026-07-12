@@ -1022,6 +1022,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
                 "workspace": "/home/clawdi/clawdi",
                 "persistentPaths": ["/home/clawdi"],
             },
+            "live_sync": {"enabled": False, "agents": []},
+            "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
             "runtimes": {
                 "openclaw": {
                     "enabled": True,

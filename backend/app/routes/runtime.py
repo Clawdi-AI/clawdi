@@ -19,7 +19,9 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import (
     HostedRuntimeDesiredState,
+    HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeRecovery,
     HostedRuntimeSystem,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
@@ -91,10 +93,13 @@ async def get_runtime_manifest(
     try:
         locale = HostedRuntimeLocale.model_validate(state.locale)
         system = HostedRuntimeSystem.model_validate(state.system)
+        live_sync = HostedRuntimeLiveSync.model_validate(state.live_sync)
+        recovery = HostedRuntimeRecovery.model_validate(state.recovery)
     except ValidationError as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Hosted runtime locale or system state is invalid or not configured",
+            "Hosted runtime locale, system, live sync, or recovery state "
+            "is invalid or not configured",
         ) from exc
     runtime, runtime_state = _validated_runtime_state(state.runtimes)
 
@@ -123,8 +128,8 @@ async def get_runtime_manifest(
         "clawdiCli": _AGENT_V2_CLAWDI_CLI,
         "runtimes": {runtime: runtime_state},
         "providers": providers,
-        "liveSync": state.live_sync or _default_live_sync(env),
-        "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
+        "liveSync": live_sync.model_dump(mode="json"),
+        "recovery": recovery.model_dump(mode="json"),
     }
     manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
     if state.bridge:
@@ -186,18 +191,6 @@ def _as_utc(value: datetime) -> datetime:
 def _control_plane() -> dict[str, str]:
     api_url = settings.public_api_url.rstrip("/")
     return {"cloudApiUrl": api_url}
-
-
-def _default_live_sync(env: AgentEnvironment) -> dict[str, Any]:
-    return {
-        "enabled": True,
-        "agents": [
-            {
-                "agentType": env.agent_type,
-                "environmentId": str(env.id),
-            }
-        ],
-    }
 
 
 def _validated_runtime_state(runtimes: dict | None) -> tuple[str, dict[str, Any]]:

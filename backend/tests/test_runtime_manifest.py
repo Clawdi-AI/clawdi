@@ -45,6 +45,13 @@ TEST_EGRESS_ENGINE_PIN = {
 }
 
 
+def _live_sync(environment_id: str, agent_type: str = "openclaw") -> dict:
+    return {
+        "enabled": True,
+        "agents": [{"agentType": agent_type, "environmentId": environment_id}],
+    }
+
+
 @pytest_asyncio.fixture
 async def admin_client(db_session) -> AsyncIterator[httpx.AsyncClient]:
     async def _override_get_session():
@@ -106,6 +113,8 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
         "locale": TEST_LOCALE,
         "system": TEST_SYSTEM,
         "runtimes": _runtime_state(),
+        "live_sync": _live_sync(environment_id),
+        "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
     }
     body.update(overrides)
     response = await admin_client.put(
@@ -258,7 +267,7 @@ async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
 
 
 @pytest.mark.asyncio
-async def test_agent_type_refresh_invalidates_default_live_sync_manifest(
+async def test_agent_type_refresh_does_not_invalidate_explicit_live_sync_manifest(
     admin_client,
     db_session,
     seed_user,
@@ -292,10 +301,8 @@ async def test_agent_type_refresh_invalidates_default_live_sync_manifest(
         )
 
         assert response.status_code == 200, response.text
-        assert queue.get_nowait() == {
-            "type": "runtime_manifest_changed",
-            "environment_id": str(env.id),
-        }
+        await asyncio.sleep(0)
+        assert queue.empty()
     finally:
         sync_events.unsubscribe(seed_user.id, queue)
 
@@ -621,6 +628,88 @@ async def test_admin_runtime_state_requires_canonical_system(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("missing_field", ["live_sync", "recovery"])
+async def test_admin_runtime_state_requires_live_sync_and_recovery(
+    admin_client,
+    db_session,
+    seed_user,
+    missing_field,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-required-state-{uuid4().hex[:8]}",
+        machine_name="Runtime required state",
+        agent_type="openclaw",
+    )
+    body = {
+        "deployment_id": f"dep_{uuid4().hex}",
+        "instance_id": f"hri_{uuid4().hex}",
+        "generation": 7,
+        "locale": TEST_LOCALE,
+        "system": TEST_SYSTEM,
+        "runtimes": _runtime_state(),
+        "live_sync": _live_sync(str(env.id)),
+        "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+    }
+    del body[missing_field]
+
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("live_sync", "recovery"),
+    [
+        ({"enabled": True, "agents": []}, {"cacheManifest": True, "allowOfflineBoot": True}),
+        (_live_sync("env-placeholder"), {"cacheManifest": True}),
+    ],
+)
+async def test_runtime_manifest_rejects_invalid_stored_live_sync_or_recovery(
+    db_session,
+    seed_user,
+    live_sync,
+    recovery,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-invalid-required-state-{uuid4().hex[:8]}",
+        machine_name="Runtime invalid required state",
+        agent_type="openclaw",
+    )
+    if live_sync.get("agents"):
+        live_sync["agents"][0]["environmentId"] = str(env.id)
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            locale=TEST_LOCALE,
+            system=TEST_SYSTEM,
+            runtimes=_runtime_state(),
+            live_sync=live_sync,
+            recovery=recovery,
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_rejects_invalid_stored_locale(
     db_session,
     seed_user,
@@ -645,6 +734,8 @@ async def test_runtime_manifest_rejects_invalid_stored_locale(
             },
             system=TEST_SYSTEM,
             runtimes=_runtime_state(),
+            live_sync=_live_sync(str(env.id)),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
         )
     )
     await db_session.commit()
@@ -695,6 +786,8 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
             locale=TEST_LOCALE,
             system=system,
             runtimes=runtimes,
+            live_sync=_live_sync(str(env.id)),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
         )
     )
     await db_session.commit()
@@ -1839,6 +1932,8 @@ async def test_runtime_manifest_rejects_state_without_exactly_one_enabled_runtim
             locale=TEST_LOCALE,
             system=TEST_SYSTEM,
             runtimes=runtimes,
+            live_sync=_live_sync(str(env.id)),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
         )
     )
     await db_session.commit()
@@ -1878,8 +1973,8 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
                 "claude_code": next(iter(_runtime_state().values())),
             },
             system=TEST_SYSTEM,
-            live_sync=None,
-            recovery=None,
+            live_sync=_live_sync(str(env.id)),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
             egress_profiles=None,
             mcp=None,
             tools=None,
@@ -1919,6 +2014,8 @@ async def test_runtime_manifest_rejects_codex_selected_runtime_state(
             locale=TEST_LOCALE,
             runtimes={"codex": next(iter(_runtime_state(provider_ids=["openai-codex"]).values()))},
             system=TEST_SYSTEM,
+            live_sync=_live_sync(str(env.id), "codex"),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
         )
     )
     await db_session.commit()

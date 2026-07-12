@@ -259,6 +259,8 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             generation=1,
             locale={"language": "en", "timezone": "UTC"},
             system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
             runtimes={
                 "openclaw": {
                     "enabled": True,

@@ -280,8 +280,6 @@ async def queue_environment_runtime_manifest_changed(
     db: AsyncSession,
     user_id: UUID,
     environment_id: UUID,
-    *,
-    require_default_live_sync: bool = False,
 ) -> bool:
     """Queue an event when an environment currently has runtime desired state."""
     state = (
@@ -292,8 +290,6 @@ async def queue_environment_runtime_manifest_changed(
         )
     ).scalar_one_or_none()
     if state is None:
-        return False
-    if require_default_live_sync and state.live_sync:
         return False
     queue_runtime_manifest_changed(db, user_id, environment_id)
     return True

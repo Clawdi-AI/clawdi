@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
-from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 _AGENT_TYPE_LABELS = {
     "openclaw": "OpenClaw",
@@ -84,7 +83,6 @@ async def register_agent_environment(
                 raise AgentEnvironmentIdConflict(
                     f"environment {environment_id} is owned by another user"
                 )
-            agent_type_changed = existing.agent_type != agent_type
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -96,13 +94,6 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            if agent_type_changed:
-                await queue_environment_runtime_manifest_changed(
-                    db,
-                    user_id,
-                    existing.id,
-                    require_default_live_sync=True,
-                )
             await db.commit()
             return AgentEnvironmentRegistration(env=existing, created=False)
     elif registration_key is not None:
@@ -117,7 +108,6 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
-            agent_type_changed = existing.agent_type != agent_type
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -129,13 +119,6 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            if agent_type_changed:
-                await queue_environment_runtime_manifest_changed(
-                    db,
-                    user_id,
-                    existing.id,
-                    require_default_live_sync=True,
-                )
             await db.commit()
             return AgentEnvironmentRegistration(env=existing, created=False)
 
@@ -189,7 +172,6 @@ async def register_agent_environment(
                 raise AgentEnvironmentIdConflict(
                     f"environment {environment_id} is owned by another user"
                 )
-            agent_type_changed = winner.agent_type != agent_type
             await _refresh_agent_environment(
                 db,
                 winner,
@@ -201,13 +183,6 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
-            if agent_type_changed:
-                await queue_environment_runtime_manifest_changed(
-                    db,
-                    user_id,
-                    winner.id,
-                    require_default_live_sync=True,
-                )
             await db.commit()
             return AgentEnvironmentRegistration(env=winner, created=False)
         if registration_key is None:

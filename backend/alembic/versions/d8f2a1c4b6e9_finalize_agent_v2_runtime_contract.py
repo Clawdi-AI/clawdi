@@ -48,6 +48,18 @@ def upgrade() -> None:
         existing_type=postgresql.JSONB(astext_type=sa.Text()),
         nullable=False,
     )
+    op.alter_column(
+        "hosted_runtime_states",
+        "live_sync",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False,
+    )
+    op.alter_column(
+        "hosted_runtime_states",
+        "recovery",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False,
+    )
     op.drop_column("hosted_runtime_states", "clawdi_cli")
     op.drop_column("hosted_runtime_states", "control_plane")
     op.drop_column("hosted_runtime_states", "provider_id")
@@ -77,6 +89,18 @@ def downgrade() -> None:
     op.alter_column(
         "hosted_runtime_states",
         "system",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=True,
+    )
+    op.alter_column(
+        "hosted_runtime_states",
+        "live_sync",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=True,
+    )
+    op.alter_column(
+        "hosted_runtime_states",
+        "recovery",
         existing_type=postgresql.JSONB(astext_type=sa.Text()),
         nullable=True,
     )

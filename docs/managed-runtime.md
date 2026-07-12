@@ -255,9 +255,9 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It requires strict `runtime`, `locale`, `system`, `controlPlane`, and
-  `runtimes` fields and can include `clawdiCli`, `providers`, `liveSync`,
-  `egressProfiles`, `mcp`, `tools`, and `recovery`.
+  shape. It requires strict `runtime`, `locale`, `system`, `controlPlane`,
+  `clawdiCli`, `runtimes`, `liveSync`, and `recovery` fields. `providers`,
+  `egressProfiles`, `mcp`, and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -283,9 +283,9 @@ Normalization maps hosted fields into the internal shape:
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Runtime-scoped AI provider projections and secret refs |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
-| `liveSync` | Optional daemon sync configuration |
+| `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Cloud does not derive it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
-| `recovery` | Manifest cache and offline-boot behavior |
+| `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
 
 Manifest `runtime`, `runtimes`, and `generation` are part of the remote manifest
 ETag. The CLI applies any non-304 manifest without monotonic generation gating,

@@ -708,6 +708,8 @@ async def _admin_upsert_runtime_state(
     existing_state = state
     previous_generation = state.generation if state is not None else None
     system_state = body.system.model_dump(exclude_none=True, mode="json")
+    live_sync_state = body.live_sync.model_dump(mode="json")
+    recovery_state = body.recovery.model_dump(mode="json")
     runtime_state = {
         name: runtime.model_dump(exclude_none=True, mode="json")
         for name, runtime in body.runtimes.items()
@@ -725,8 +727,8 @@ async def _admin_upsert_runtime_state(
     state.system = system_state
     state.runtimes = runtime_state
     state.bridge = body.bridge
-    state.live_sync = body.live_sync
-    state.recovery = body.recovery
+    state.live_sync = live_sync_state
+    state.recovery = recovery_state
     if state is not existing_state or body.egress_engine is not None:
         state.egress_engine = body.egress_engine
     if state is not existing_state or body.egress_profiles is not None:
@@ -958,6 +960,8 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
+        elif field in {"live_sync", "recovery"}:
+            body_value = getattr(body, field).model_dump(mode="json")
         else:
             body_value = getattr(body, field)
         if field in preserve_when_omitted and body_value is None:
