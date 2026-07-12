@@ -142,6 +142,18 @@ def _is_safe_egress_host(host: str) -> bool:
     return not any(char in "@?#/\\ %" or ord(char) < 0x20 or ord(char) == 0x7F for char in host)
 
 
+def _validate_hosted_egress_engine_url(value: str) -> str:
+    _validate_absolute_url(value)
+    parsed = urlsplit(value)
+    if parsed.scheme != "https":
+        raise ValueError("Hosted egress engine URL must use https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Hosted egress engine URL must not include credentials")
+    if parsed.hostname is None or not _is_safe_egress_host(parsed.hostname.lower()):
+        raise ValueError("Hosted egress engine URL must use a safe hostname")
+    return value
+
+
 class _StrictHostedWireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -164,7 +176,7 @@ class HostedEgressEngine(_StrictHostedWireModel):
     @field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
-        return _validate_absolute_url(value)
+        return _validate_hosted_egress_engine_url(value)
 
 
 class HostedEgressHeaderExistsMatcher(_StrictHostedWireModel):

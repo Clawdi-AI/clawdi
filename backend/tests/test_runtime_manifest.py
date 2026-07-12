@@ -28,7 +28,11 @@ from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
 from app.schemas.admin import AdminRuntimeStateUpsert
-from app.schemas.runtime import HostedRuntimeBridge, validate_clawdi_cli_package_spec
+from app.schemas.runtime import (
+    HostedEgressEngine,
+    HostedRuntimeBridge,
+    validate_clawdi_cli_package_spec,
+)
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.vault_crypto import encrypt
@@ -54,6 +58,13 @@ TEST_EGRESS_ENGINE_PIN = {
     "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
     "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
 }
+TEST_INVALID_EGRESS_ENGINE_URLS = (
+    "https://exa mple.com/a",
+    "https://.example.com/a",
+    "https://user:pass@example.com/a",
+    "http://example.com/a",
+    "https://example.com:bad/a",
+)
 TEST_EGRESS_PROFILES = {
     "profiles": [
         {
@@ -298,6 +309,12 @@ def test_hosted_runtime_bridge_rejects_numeric_coercion(listen_port):
 
     with pytest.raises(ValidationError):
         HostedRuntimeBridge.model_validate(bridge)
+
+
+@pytest.mark.parametrize("url", TEST_INVALID_EGRESS_ENGINE_URLS)
+def test_hosted_egress_engine_rejects_unsupported_urls(url):
+    with pytest.raises(ValidationError):
+        HostedEgressEngine.model_validate({**TEST_EGRESS_ENGINE_PIN, "url": url})
 
 
 @pytest.mark.asyncio
@@ -1529,6 +1546,10 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
     ("field", "value"),
     [
         ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "sha256": "not-a-sha256"}),
+        *[
+            ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "url": url})
+            for url in TEST_INVALID_EGRESS_ENGINE_URLS
+        ],
         (
             "egress_profiles",
             {
@@ -2690,6 +2711,10 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
     [
         ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "sha256": "not-a-sha256"}),
         ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "unexpected": True}),
+        *[
+            ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "url": url})
+            for url in TEST_INVALID_EGRESS_ENGINE_URLS
+        ],
         ("egress_profiles", {**TEST_EGRESS_PROFILES, "unexpected": True}),
         (
             "egress_profiles",
