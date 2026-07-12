@@ -234,7 +234,8 @@ Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
 typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
 the tarball, records and checks its SHA-256, transfers the same artifact to the
 protected npm job, checks it again, and publishes it exactly once to the
-non-production `agent-v2-candidate` tag with trusted-publisher OIDC. The
+package-selected npm tag with trusted-publisher OIDC. The current package
+metadata selects the non-production `agent-v2-candidate` tag. The
 build/test job may use the configured fast runner, but the protected publish
 job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing does not
 support self-hosted or third-party GitHub Actions runners. The publish job uses
@@ -246,9 +247,10 @@ verifies the exact package publication, then explicitly supplies the exact
 workflow fails closed when the exact input is missing, verifies registry
 integrity, signatures, and provenance, never resolves `agent-v2-candidate` or
 any other npm dist-tag, and runs its image/CLI pairing smoke before publishing
-the image. The candidate tag is only a workflow implementation detail that
-avoids moving `latest`; it is not an operator gate or rollout authority. The CLI
-workflow does not modify `latest` or `beta` and does not coordinate with the
+the image. The candidate tag is the current package safety default; it is not an
+operator gate or rollout authority. When package metadata does not specify a
+tag, the CLI workflow retains the normal prerelease `beta` and stable `latest`
+fallbacks and does not coordinate with the
 Hosted repository. Cloud-owned Hosted manifests select `clawdi@<exact-semver>`
 only. The runtime installs that exact public version directly and never calls
 `npm view` for Hosted desired state.
@@ -313,11 +315,11 @@ onward releases are automatic.
 3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
    from GitHub-hosted `ubuntu-latest` with
-   `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2-candidate`.
+   `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
 5. Watch the Actions tab; on green,
    `npm view clawdi@<exact-version> version` reflects the new number while
-   `latest` and `beta` remain unchanged. The workflow's non-production
+   `latest` and `beta` remain unchanged for the current candidate release. The workflow's non-production
    `agent-v2-candidate` tag is diagnostic metadata, not a release gate.
 
 Stop here for this release workflow. Hosted rollout selects the approved exact

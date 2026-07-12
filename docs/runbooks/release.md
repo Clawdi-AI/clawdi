@@ -77,7 +77,8 @@ releases.
    build, typecheck, run the full CLI suite, and pack one immutable tarball. It
    installs that tarball, records and verifies its SHA-256, transfers the same
    artifact to the protected npm job, verifies it again, and publishes it once
-   to `agent-v2-candidate` with npm trusted-publisher OIDC. The build job may use
+   to the package-selected npm tag with trusted-publisher OIDC. Current Agent v2
+   package metadata selects `agent-v2-candidate`. The build job may use
    the configured fast runner; the protected publish job must use GitHub-hosted
    `ubuntu-latest`, because npm trusted publishing does not support self-hosted
    or third-party GitHub Actions runners. The CLI workflow does not call

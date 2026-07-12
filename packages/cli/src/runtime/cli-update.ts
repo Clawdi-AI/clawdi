@@ -80,7 +80,6 @@ export interface RuntimeCliRollbackResult {
 }
 
 const NPM_INSTALL_TIMEOUT_MS = 180_000;
-const NPM_VIEW_TIMEOUT_MS = 30_000;
 const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 const RUNTIME_VERIFY_TIMEOUT_MS = 20_000;
 
@@ -220,17 +219,11 @@ function cliRegistry(manifest: RuntimeManifest): string | null {
 }
 
 function validatePackageSpec(packageSpec: string): void {
-	if (packageSpec === "clawdi") {
-		return;
-	}
 	if (
 		/^clawdi@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(
 			packageSpec,
 		)
 	) {
-		return;
-	}
-	if (/^clawdi@[A-Za-z0-9._-]+$/.test(packageSpec)) {
 		return;
 	}
 	if (
@@ -240,7 +233,7 @@ function validatePackageSpec(packageSpec: string): void {
 		return;
 	}
 	throw new Error(
-		`clawdi CLI packageSpec must be clawdi, clawdi@<version-or-tag>, or a managed bootstrap tarball: ${packageSpec}`,
+		`clawdi CLI packageSpec must be clawdi@<exact-semver> or a managed bootstrap tarball: ${packageSpec}`,
 	);
 }
 
@@ -267,7 +260,8 @@ function isCurrentCliInstall(
 	if ((status.registry ?? null) !== registry) return false;
 	if (status.activePath !== paths.cliManagedBin) return false;
 	if (!status.activeTarget || !isExecutable(status.activeTarget)) return false;
-	if (!installedFloatingSpecVersionIsCurrent(paths, status, packageSpec, registry)) return false;
+	const exactVersion = exactNpmPackageVersion(packageSpec);
+	if (exactVersion && status.version !== exactVersion) return false;
 	return isExecutable(paths.cliManagedBin);
 }
 
@@ -276,7 +270,7 @@ function recoverCurrentCliInstallFromActiveLink(
 	packageSpec: string,
 	registry: string | null,
 ): { npmPrefix: string; activeTarget: string; version: string } | null {
-	const desiredVersion = desiredNpmPackageVersion(paths, packageSpec, registry);
+	const desiredVersion = exactNpmPackageVersion(packageSpec);
 	if (!desiredVersion) return null;
 	const npmPrefix = cliPackagePrefix(paths, desiredVersion);
 	const legacyNpmPrefix = cliPackagePrefixForLegacyHash(paths, packageSpec, registry);
@@ -289,46 +283,12 @@ function recoverCurrentCliInstallFromActiveLink(
 	}
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
 	const version = smokeCliVersion(activeTarget);
-	if (!installedFloatingSpecVersionIsCurrent(paths, { version }, packageSpec, registry))
-		return null;
+	if (version !== desiredVersion) return null;
 	return {
 		npmPrefix: prefixForActiveTarget(activeTarget),
 		activeTarget,
 		version,
 	};
-}
-
-function installedFloatingSpecVersionIsCurrent(
-	paths: RuntimePaths,
-	status: Pick<RuntimeCliBootstrapStatus, "version">,
-	packageSpec: string,
-	registry: string | null,
-): boolean {
-	const exact = exactNpmPackageVersion(packageSpec);
-	if (exact) return status.version === exact;
-	if (!isFloatingNpmPackageSpec(packageSpec)) return true;
-	if (!status.version) return false;
-	const desiredVersion = desiredNpmPackageVersion(paths, packageSpec, registry);
-	return desiredVersion === null || status.version === desiredVersion;
-}
-
-function isFloatingNpmPackageSpec(packageSpec: string): boolean {
-	const match = /^clawdi@(.+)$/.exec(packageSpec);
-	if (!match) return false;
-	const specifier = match[1] ?? "";
-	if (!/^(agent-v2|alpha|beta|canary|next|rc)$/.test(specifier)) return false;
-	return !isExactNpmPackageVersion(specifier);
-}
-
-function desiredNpmPackageVersion(
-	paths: RuntimePaths,
-	packageSpec: string,
-	registry: string | null,
-): string | null {
-	const exact = exactNpmPackageVersion(packageSpec);
-	if (exact) return exact;
-	if (!isFloatingNpmPackageSpec(packageSpec)) return null;
-	return resolveNpmPackageVersion(paths, packageSpec, registry);
 }
 
 function exactNpmPackageVersion(packageSpec: string): string | null {
@@ -342,43 +302,6 @@ function isExactNpmPackageVersion(value: string): boolean {
 	return /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(
 		value,
 	);
-}
-
-function resolveNpmPackageVersion(
-	paths: RuntimePaths,
-	packageSpec: string,
-	registry: string | null,
-): string | null {
-	const result = spawnSync(
-		"npm",
-		[
-			"view",
-			packageSpec,
-			"version",
-			"--json",
-			"--cache",
-			paths.cliNpmCache,
-			...(registry ? ["--registry", registry] : []),
-		],
-		{
-			encoding: "utf8",
-			timeout: NPM_VIEW_TIMEOUT_MS,
-			env: {
-				...process.env,
-				NO_UPDATE_NOTIFIER: "1",
-				NPM_CONFIG_UPDATE_NOTIFIER: "false",
-			},
-		},
-	);
-	if (result.status !== 0) return null;
-	const output = result.stdout.trim();
-	if (!output) return null;
-	try {
-		const parsed = JSON.parse(output) as unknown;
-		return typeof parsed === "string" && parsed.trim() ? parsed.trim() : null;
-	} catch {
-		return output;
-	}
 }
 
 function installCliPackage(
@@ -461,7 +384,7 @@ function cliInstallPlan(
 	packageSpec: string,
 	registry: string | null,
 ): { installPackageSpec: string; npmPrefix: string; version: string } {
-	const version = desiredNpmPackageVersion(paths, packageSpec, registry);
+	const version = exactNpmPackageVersion(packageSpec);
 	if (version) {
 		return {
 			installPackageSpec: `clawdi@${version}`,

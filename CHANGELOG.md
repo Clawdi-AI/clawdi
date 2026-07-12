@@ -47,12 +47,12 @@ Package: `clawdi@0.12.10-beta.51`
 - Restricted remote Hosted CLI package selection to exact
   `clawdi@<semver>` without build metadata, using strict SemVer prerelease
   identifier rules and the Cloud 200-character limit. Managed bootstrap tgz paths are
-  accepted only through `CLAWDI_RUNTIME_MANIFEST_PATH` test fixtures; generic
-  desired state retains floating package support.
-- Restored `agent-v2-candidate` as the repository-local OIDC publication tag.
-  The protected publish job runs on GitHub-hosted `ubuntu-latest` and does not
-  modify `latest` or `beta`. Hosted runtime updates consume the public exact
-  version from the Cloud manifest and never resolve a production dist-tag.
+  accepted only through strict Hosted test fixtures. Runtime desired state no
+  longer resolves floating package tags.
+- Restored `agent-v2-candidate` as the package-level safety default while the
+  release workflow retains metadata override, prerelease `beta`, and stable
+  `latest` tag selection. Hosted runtime updates consume the public exact
+  version from the Cloud manifest and never resolve a dist-tag.
 
 ### Fixed
 

@@ -275,7 +275,22 @@ function hostedRuntimeWatchLocalePayload(
 	};
 }
 
-function hostedCliManifestResponse(home: string, packageSpec: string): unknown {
+function hostedCliManifestResponse(
+	home: string,
+	packageSpec: string,
+	opts: { providerSecretRef?: string } = {},
+): unknown {
+	const provider = opts.providerSecretRef
+		? {
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.test/v1",
+				models: [{ id: "gpt-5" }],
+				apiMode: "openai_responses",
+				managed_by: "clawdi",
+				apiKeySecretRef: opts.providerSecretRef,
+			}
+		: hostedRequiredState().providers.default;
 	return {
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -284,6 +299,7 @@ function hostedCliManifestResponse(home: string, packageSpec: string): unknown {
 			deploymentId: "dep_cli_package_spec",
 			environmentId: "env_cli_package_spec",
 			...hostedRequiredState(),
+			providers: { default: provider },
 			instanceId: "iid_cli_package_spec",
 			generation: 1,
 			issuedAt: "2026-07-12T00:00:00Z",
@@ -1424,6 +1440,28 @@ describe("runtime manifest datasource", () => {
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected strict hosted fixture success");
 		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(packageSpec);
+	});
+
+	it("rejects a strict hosted fixture with secret refs but no inline secret values", async () => {
+		const home = join(root, "home", "clawdi");
+		const manifestPath = join(root, "strict-hosted-missing-secret.json");
+		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
+		process.env.HOME = home;
+		writeFileSync(
+			manifestPath,
+			JSON.stringify(
+				hostedCliManifestResponse(home, packageSpec, {
+					providerSecretRef: "provider.default.apiKey",
+				}),
+			),
+		);
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
+			manifestPath,
+		});
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected missing fixture secret rejection");
+		expect(loaded.errors.join("\n")).toContain("fixture references secretValues");
 	});
 
 	for (const packageSpec of ["clawdi@latest", "clawdi"]) {
@@ -5938,157 +5976,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			restore();
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-		}
-	});
-
-	it("generic runtime CLI update resolves a floating npm tag through the managed npm cache", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const bin = join(root, "bin");
-		const npmLog = join(root, "npm.log");
-		const previousPath = process.env.PATH;
-		mkdirSync(bin, { recursive: true });
-		writeFileSync(
-			join(bin, "npm"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${npmLog}'
-if [ "\${1:-}" = "view" ]; then
-	cache=""
-	while [ "$#" -gt 0 ]; do
-	  if [ "$1" = "--cache" ]; then
-	    cache="$2"
-	    shift 2
-	    continue
-	  fi
-	  shift
-	done
-	if [ -z "$cache" ]; then
-	  echo "missing --cache" >&2
-	  exit 65
-	fi
-	install -d "$cache"
-	touch "$cache/view-proof"
-  echo '"0.12.10-beta.49"'
-  exit 0
-fi
-prefix=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--prefix" ]; then
-    prefix="$2"
-    shift 2
-    continue
-  fi
-  shift
-done
-if [ -z "$prefix" ]; then
-  echo "missing --prefix" >&2
-  exit 64
-fi
-install -d "$prefix/bin"
-cat > "$prefix/bin/clawdi" <<'SH'
-#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then
-  echo "0.12.10-beta.49"
-  exit 0
-fi
-if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
-  echo '{"status":"ok"}'
-  exit 0
-fi
-echo "fake clawdi"
-SH
-chmod +x "$prefix/bin/clawdi"
-`,
-		);
-		chmodSync(join(bin, "npm"), 0o700);
-		process.env.PATH = `${bin}:${previousPath ?? ""}`;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		try {
-			const paths = getRuntimePaths();
-			seedCurrentCliInstall(
-				state,
-				"clawdi@agent-v2",
-				"0.12.10-beta.48",
-				"https://registry.npmjs.org",
-			);
-			const result = applyRuntimeCliDesiredState(genericCliDesiredState("clawdi@agent-v2"), paths);
-
-			expect(result.status).toBe("installed");
-			expect(result.version).toBe("0.12.10-beta.49");
-			expect(readlinkSync(paths.cliManagedBin)).toBe(result.activeTarget);
-			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
-			expect(status.packageSpec).toBe("clawdi@agent-v2");
-			expect(status.version).toBe("0.12.10-beta.49");
-			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
-			const npmViewCalls = npmCalls.filter((call) => call.startsWith("view "));
-			expect(npmViewCalls.length).toBeGreaterThan(0);
-			for (const call of npmViewCalls) {
-				expect(call).toContain(`--cache ${paths.cliNpmCache}`);
-			}
-			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
-			expect(existsSync(join(paths.cliNpmCache, "view-proof"))).toBe(true);
-			expect(existsSync(join(home, ".npm"))).toBe(false);
-		} finally {
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-		}
-	});
-
-	it("keeps a generic floating CLI install current without reinstalling", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const bin = join(root, "bin");
-		const npmLog = join(root, "npm-current.log");
-		const previousPath = process.env.PATH;
-		mkdirSync(bin, { recursive: true });
-		writeFileSync(
-			join(bin, "npm"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${npmLog}'
-if [ "\${1:-}" = "view" ]; then
-  echo '"0.12.10-beta.50"'
-  exit 0
-fi
-echo "unexpected npm install" >&2
-exit 97
-`,
-		);
-		chmodSync(join(bin, "npm"), 0o700);
-		process.env.PATH = `${bin}:${previousPath ?? ""}`;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		seedCurrentCliInstall(
-			state,
-			"clawdi@agent-v2",
-			"0.12.10-beta.50",
-			"https://registry.npmjs.org",
-		);
-
-		try {
-			const result = applyRuntimeCliDesiredState(
-				genericCliDesiredState("clawdi@agent-v2"),
-				getRuntimePaths(),
-			);
-
-			expect(result.status).toBe("current");
-			expect(result.packageSpec).toBe("clawdi@agent-v2");
-			expect(result.registry).toBe("https://registry.npmjs.org");
-			expect(result.version).toBe("0.12.10-beta.50");
-			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
-			expect(npmCalls.some((call) => call.startsWith("view clawdi@agent-v2"))).toBe(true);
-			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(false);
-		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
 		}

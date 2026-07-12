@@ -15,8 +15,8 @@ concurrency:
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
 
-# This repository builds, verifies, and publishes one immutable candidate artifact.
-# It does not modify latest, beta, or a production agent-v2 selection.
+# This repository builds, verifies, and publishes one immutable artifact.
+# Package metadata may pin a safety tag; otherwise prereleases use beta and stable releases use latest.
 jobs:
   build-immutable-artifact:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
@@ -25,6 +25,7 @@ jobs:
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       version: ${{ steps.check.outputs.version }}
+      npm_tag: ${{ steps.check.outputs.npm_tag }}
       cli_tarball_filename: ${{ steps.check.outputs.cli_tarball_filename }}
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +46,9 @@ jobs:
         working-directory: packages/cli
         run: |
           version=$(node -p "require('./package.json').version")
+          npm_tag=$(node -e "const p=require('./package.json'); console.log(p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest'))")
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"
           echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"
           if npm view "clawdi@$version" version >/dev/null 2>&1; then
             echo "clawdi@$version already exists on npm"
@@ -156,15 +159,17 @@ jobs:
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
 
-      - name: Publish immutable tarball to agent-v2-candidate
+      - name: Publish immutable tarball
         env:
           CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
-        run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2-candidate
+          NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
+        run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
+          NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
         run: |
           tag="clawdi-cli-v$VERSION"
           previous=$(git tag --list 'clawdi-cli-v*' --sort=-version:refname | grep -Fxv "$tag" | head -n 1 || true)
@@ -173,9 +178,9 @@ jobs:
 
           \`npm install -g clawdi@$VERSION\`
 
-          Published as the \`agent-v2-candidate\` for exact version
+          Published with npm tag \`$NPM_TAG\` for exact version
           \`clawdi@$VERSION\` from the immutable artifact verified by this
-          repository's release workflow. No production npm dist-tag is changed.
+          repository's release workflow.
 
           This is the release for the published \`packages/cli\` package.
           Clawdi app/backend/web changes are versioned separately as

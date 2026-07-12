@@ -18,6 +18,13 @@ const manifestContract = readFileSync(
 	resolve(import.meta.dir, "../src/runtime/manifest-contract.ts"),
 	"utf8",
 );
+const cliPackage = JSON.parse(
+	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
+) as { version: string; publishConfig?: { tag?: string } };
+
+function expectedNpmTag(pkg: { version: string; publishConfig?: { tag?: string } }): string {
+	return pkg.publishConfig?.tag || (pkg.version.includes("-") ? "beta" : "latest");
+}
 
 describe("CLI publish workflow contract", () => {
 	test("keeps the protected OIDC publish fully repository-local", () => {
@@ -53,9 +60,20 @@ describe("CLI publish workflow contract", () => {
 		const publishCommands = workflow.match(/npm publish /g) ?? [];
 
 		expect(publishCommands).toHaveLength(1);
+		expect(workflow).toContain('echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"');
 		expect(workflow).toContain(
-			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2-candidate',
+			"p.publishConfig?.tag || (p.version.includes('-') ? 'beta' : 'latest')",
 		);
+		expect(workflow).toContain(
+			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
+		);
+		expect(workflow).toContain(
+			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
+		);
+		expect(expectedNpmTag(cliPackage)).toBe("agent-v2-candidate");
+		expect(expectedNpmTag({ version: "1.2.3-beta.1" })).toBe("beta");
+		expect(expectedNpmTag({ version: "1.2.3" })).toBe("latest");
+		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
 		expect(workflow).toContain("CLI_ARTIFACT_NAME: clawdi-cli-release");
 		expect(workflow).toContain(
 			`CLI_TARBALL_FILENAME: \${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}`,
