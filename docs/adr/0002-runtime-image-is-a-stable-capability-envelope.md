@@ -31,68 +31,9 @@ the environment variable containing the manifest bearer credential. The CLI
 validates both selectors and fails closed before datasource access. A hosted
 runtime does not read `host-policy.json` or `runtime-source.json`.
 
-API route versions and agent deployment generations are separate dimensions.
-`/v1/runtime/manifest` is the only agent-v2 runtime manifest URL. The runtime
-router is not exposed through the legacy `/api` alias. Agent deployment v1 does
-not consume the `HostedRuntimeState` manifest surface.
-
-The Hosted rollout writer selects the exact agent-v2 CLI package version as
-`cli_package_spec`. Cloud validates and persists that value, then remains the
-sole authority for its public manifest projection. The value must be
-`clawdi@<exact-semver>`, must not contain build metadata, and must be at least
-the Cloud-owned `0.12.10-beta.51` floor. Cloud fixes manifest source to
-`npm:clawdi` and registry to `https://registry.npmjs.org`; Hosted cannot send
-source or registry authority. The CLI reads the Cloud manifest before its first
-managed install. `minimumCliVersion` uses the same Cloud-owned floor; locale and
-active invalidation do not introduce another version authority.
-
-Every agent-v2 manifest explicitly selects one enabled `openclaw` or `hermes`
-compute runtime in top-level `runtime` and includes only that runtime in
-`runtimes`; Codex remains an add-on/live-sync agent type. Ambiguous, missing, or
-unsupported selection fails closed. The selected runtime is part of the
-manifest ETag. Cloud derives strict `controlPlane: {cloudApiUrl}` from its own
-public API origin, so Hosted cannot supply manifest or API URLs. The public
-manifest does not emit `appId`.
-
-Hosted runtime state requires canonical `system`, runtime `paths.home` and
-`paths.workspace`, a non-empty `provider_ids` pool, structured
-`primary_model: {provider_id, model}`, and
-`install: {source: "official"}`. Installer URLs, channels, and invocation
-arguments are CLI-owned implementation details and are rejected from Cloud
-desired state. Cloud validates strict `install`, `run`, and `services` objects
-before persistence and validates stored JSON again before manifest assembly.
-Provider aliases, single-provider fields, model strings, unknown nested keys,
-and account-provider fallback are not part of agent v2.
-
-Every agent-v2 hosted manifest has a strict top-level `locale` object with
-exactly `language` and `timezone`. `language` must be one of the product's
-supported language codes, and `timezone` must be a valid IANA timezone.
-Personality is not Cloud runtime desired state and is rejected by the admin
-writer. Revision `d8f2a1c4b6e9` adds required `locale` JSONB and
-`cli_package_spec` string columns with no defaults or backfill, makes
-`hosted_runtime_states.system` non-null, and drops the obsolete
-`hosted_runtime_states.clawdi_cli`, `hosted_runtime_states.control_plane`, and
-`hosted_runtime_states.provider_id` columns. Both migration directions
-deliberately fail before DDL if runtime state exists. That failure stops the
-operation and directs operators to the approved resolution or decommission
-procedure; because the backend migrates before serving, automatic restarts
-repeat the failure until operators resolve it. The migration does not prescribe
-direct deletion, repair, backfill, or state preservation.
-
-Runtime-state writes use generation compare-and-swap under the existing row
-lock. Lower generations fail with structured `stale_generation` conflicts;
-equal generations with material differences fail with structured
-`generation_conflict` responses. Both include `current_generation`. Equal and
-identical effective state is idempotent, while higher generations apply.
-
-`GET /v1/sync/events` carries a signal-only
-`runtime_manifest_changed` event containing the environment id, never desired
-configuration. Bound deploy keys receive only their exact environment;
-unbound user keys may receive user-owned environment events and filter again
-client-side. The mutation transaction queues PostgreSQL `NOTIFY`, which is
-released only after commit, and every API process keeps a reconnecting
-`LISTEN` connection. Normal manifest ETag polling remains the missed-event
-fallback.
+Hosted runtime manifests use the single canonical `/v1/runtime/manifest`
+datasource contract. `CLAWDI_RUNTIME_MANIFEST_URL` may carry normal query
+parameters, but its path must end with `/v1/runtime/manifest`.
 
 For transparent egress:
 
@@ -117,6 +58,29 @@ For transparent egress:
 - Bridge credentials and surfaces are excluded from the egress engine child
   environment.
 
+## Cloud Hosted Authority
+
+The Hosted rollout writer selects an exact CLI package spec. Cloud validates
+and persists it, enforces the Cloud-owned `0.12.10-beta.51` minimum, fixes the
+package source and official registry, and owns the public manifest projection.
+Remote Hosted state cannot provide a floating package, installer URL, installer
+args, source, or registry. Bootstrap tgz input is fixture-only, while generic
+non-Hosted desired state keeps its existing package, provider, and installer
+behavior.
+
+Cloud serializes runtime-state create and update by locking the parent
+`AgentEnvironment` before the optional `HostedRuntimeState`, then applies
+generation compare-and-swap. Equal identical state is idempotent; stale or
+equal-conflicting state fails with a structured `409` containing the current
+generation. Committed changes emit signal-only SSE invalidation and remain
+recoverable through manifest ETag polling.
+
+Revision `d8f2a1c4b6e9` requires an empty hosted-runtime-state table in both
+migration directions and fails before DDL otherwise. The backend migrates before
+serving, so an unsatisfied invariant prevents API startup and repeats under an
+automatic restart policy. No cross-repository CI, checkout, artifact exchange,
+dispatch, or organization Actions access is required by this contract.
+
 ## Options Considered
 
 ### Named account owned by the image
@@ -139,15 +103,19 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
 - UID/GID `0`, malformed values, and unavailable privilege-drop tools prevent
   egress startup instead of silently running mitmproxy as root.
 - Hosted image changes that add runtime business logic violate this decision.
-- Coordinated rollout order is: publish and verify an exact CLI version; have
-  the Hosted rollout writer submit that exact `cli_package_spec`; then deploy
-  Cloud and Hosted before launching agent deployment v2. Verify runtime-state
-  writes, `/v1/runtime/manifest`, manifest fetch, sync-event invalidation, and
-  runtime services. No cross-repository workflow, organization Actions access,
-  or legacy agent image controls are required by this contract.
+- The CLI release uses exact version `0.12.10-beta.51` on the isolated npm
+  `agent-v2` dist-tag without moving `beta`. The CLI repository independently
+  builds, tests, packs, installs, and SHA-verifies one tarball before
+  trusted-publisher OIDC publishes that artifact. The Hosted image repository
+  independently resolves the published CLI to an exact npm semver and runs its
+  image/CLI pairing smoke as part of its own image release. Neither repository
+  calls the other repository's Actions workflows. No legacy image controls or
+  old-state repair are part of this contract.
 
 ## Related Documentation
 
 - [Managed runtime architecture](../managed-runtime.md)
 - [Managed runtime CLI plan](../plans/managed-runtime-cli.md)
 - [Managed runtime roadmap](../plans/managed-runtime-roadmap.md)
+- [CLI development and release](../cli-development.md#releasing)
+- [Clawdi release runbook](../runbooks/release.md)

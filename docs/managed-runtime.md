@@ -253,9 +253,11 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It requires strict `runtime`, `locale`, `system`, `controlPlane`,
-  `clawdiCli`, `runtimes`, `providers`, `liveSync`, and `recovery` fields.
-  `egressProfiles`, `mcp`, and `tools` remain explicit optional projections.
+  shape served only from `/v1/runtime/manifest`. It requires explicit `runtime`
+  and `environmentId` fields and rejects unknown fields instead of accepting
+  compatibility payloads. `system`, `controlPlane`, `clawdiCli`, `runtimes`,
+  `providers`, `liveSync`, and `recovery` are required. `egressProfiles`, `mcp`,
+  and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -264,78 +266,75 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
-| `runtime` | The single enabled runtime selected and served by this deployment |
-| `locale.language`, `locale.timezone` | Product-supported agent language and valid IANA timezone |
-| `system.home`, `system.workspace` | Runtime HOME and workspace root |
-| `system.persistentPaths` | Non-empty durable filesystem paths owned by the runtime host |
-| `controlPlane.cloudApiUrl` | Cloud-owned API origin derived from the Cloud service configuration |
-| `clawdiCli.packageSpec` | Cloud-projected exact `clawdi@<semver>` selected by the Hosted rollout writer |
-| `clawdiCli.registry` | System-managed npm registry; agent v2 uses `https://registry.npmjs.org` |
+| `system.user`, `system.home`, `system.workspace`, `system.persistentPaths` | Required runtime identity and persistent filesystem contract; Hosted does not derive defaults |
+| `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
+| `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
+| `minimumCliVersion` | Required hosted CLI protocol floor |
+| `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
+| `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
+| `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.provider_ids` | Required non-empty provider pool; no single-provider aliases or account fallback |
-| `runtimes.<name>.primary_model` | Required structured `{provider_id, model}` selection within that provider pool |
-| `runtimes.<name>.install` | Required `{source: "official"}` selection; installer URL and invocation details remain CLI-owned |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns installer URL and args |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
+| `runtimes.<name>.provider_ids` | Required non-empty unique runtime provider selection |
+| `runtimes.<name>.primary_model.{provider_id,model}` | Required primary model whose provider belongs to `provider_ids` |
+| `runtimes.<name>.paths.{home,workspace}` | Required canonical runtime paths; missing values and legacy `stateDir` are rejected |
+| `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
-| `runtimes.<name>.paths.home`, `runtimes.<name>.paths.workspace` | Required runtime-local home and workspace paths |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids` |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
-| `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Cloud does not derive it from agent metadata |
+| `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
 
-Manifest `runtime`, `runtimes`, and `generation` are part of the remote manifest
-ETag. The CLI applies any non-304 manifest without monotonic generation gating,
-writes `generation` into managed state, sync state, egress bundles, run configs,
-and projections, then caches the fetched manifest as last-good. A runtime
-selection or generation change therefore produces a new ETag so `runtime watch`
-converges immediately.
+Hosted parsing does not accept camel-case runtime binding aliases, snake-case
+provider transport aliases, or string `primary_model` values. Provider model
+catalog fields such as `models[].api_mode` and ownership metadata such as
+`managed_by` remain canonical snake-case wire fields. Singular provider
+`model` is not a Hosted alias; model selection lives in runtime
+`primary_model`, while provider catalogs use `models[]`. Provider error
+projections require `status: "error"` and `error` together, including a
+non-empty `error.message`. A
+`provider_not_found` entry contains `kind` plus that error pair; other error and
+healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
 
-Manifest validation is defensive. Agent v2 requires exactly one enabled
-`openclaw` or `hermes` compute runtime, emits its name in top-level `runtime`,
-and includes only that entry in `runtimes`. Codex remains an add-on/live-sync
-agent type, not a selectable hosted compute runtime. Zero, multiple, disabled,
-or unsupported selections fail closed. Cloud accepts only canonical
-`provider_ids` plus structured `primary_model`; provider aliases, single-value
-bindings, model strings, and account-provider fallback are rejected. Required
-`system`, runtime `paths`, and `install: {source: "official"}` are validated
-before persistence and again before manifest assembly. Installer URLs,
-channels, and invocation arguments are CLI-owned and rejected from Cloud
-desired state. `run` and each `services` entry remain strict contract objects.
+This strict typing claim applies only to the Hosted fields modeled in this
+release. `mcp` and `tools` remain explicit pass-through projections, while
+egress retains its existing separate handling; this pass does not claim a
+complete product schema for any of those surfaces. Further `mcp`, `tools`, and
+egress modeling is separate future schema work. They are not compatibility
+aliases and are not removed or remodeled here. The normalized generic
+`clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
+default install args, and arbitrary provider projection data such as singular
+`model` for non-Hosted inputs.
 
-For agent deployment v2, the Hosted rollout writer selects an exact
-`clawdi@<semver>` as `cli_package_spec`. Cloud validates and persists that
-selection, rejects build metadata and versions below `0.12.10-beta.51`, and
-owns its public manifest projection. Cloud fixes `clawdiCli.source` to
-`npm:clawdi` and `clawdiCli.registry` to the official
-`https://registry.npmjs.org`; Hosted cannot send source or registry authority.
-The CLI reads this Cloud manifest selection before its first managed install.
-`minimumCliVersion` uses the same Cloud-owned `0.12.10-beta.51` protocol floor.
-Cloud also derives `controlPlane.cloudApiUrl` from its own `public_api_url`;
-Hosted runtime-state input cannot provide URL authority.
-`controlPlane` contains only `cloudApiUrl`, and the public manifest does not
-contain `manifestUrl`, `apiUrl`, or `appId`.
+Remote Hosted CLI policy is exact-version only. Values such as npm dist-tags,
+bare package names, build-metadata versions such as `clawdi@1.2.3+build.1`, and
+malformed SemVer prereleases are rejected before normalization. Valid
+prereleases follow SemVer identifier rules, including forms such as `beta.51`
+and `rc-1.2`; empty identifiers and numeric identifiers with leading zeroes are
+invalid. A managed bootstrap tgz
+under `/usr/local/share/clawdi/bootstrap/` is accepted only when the entire
+manifest is loaded from the explicit `CLAWDI_RUNTIME_MANIFEST_PATH` test-fixture
+entry point. Remote fetches cannot use that fixture schema. Generic
+`clawdi.runtimeDesiredState.v1` manifests retain their existing floating package
+support; exact Hosted updates do not call `npm view` and can move to either a
+higher or lower exact version.
 
-Runtime-state writes use generation compare-and-swap under the row lock. A
-lower generation returns `409` with `stale_generation`; an equal generation
-with different material desired state returns `409` with
-`generation_conflict`. Both responses include `current_generation`. An equal
-generation with identical effective state is an idempotent success, while a
-higher generation applies and invalidates the runtime manifest.
+Manifest `generation` is part of the remote manifest ETag. The CLI applies any
+non-304 manifest without monotonic generation gating, writes `generation` into
+managed state, sync state, egress bundles, run configs, and projections, then
+caches the fetched manifest as last-good. A generation-only control-plane bump
+therefore must produce a new ETag so `runtime watch` converges immediately.
 
-`locale` contains exactly `language` and `timezone`; personality is not part of
-Cloud desired state. Revision `d8f2a1c4b6e9` adds the required
-`hosted_runtime_states.locale` JSONB column and the required
-`cli_package_spec` string column without defaults or data backfill, removes the
-obsolete `clawdi_cli`, `control_plane`, and `provider_id` columns, and makes
-`system` non-null. Both upgrade and downgrade lock the table and treat
-non-empty state as a pre-DDL stop condition: operators stop the operation and
-resolve or decommission the state through the approved procedure before
-retrying. Because the backend entrypoint migrates before serving, an automatic
-restart policy will repeat this failure until the condition is resolved.
-Neither direction prescribes direct deletion, backfill, repair, or preservation
-of runtime state.
+Manifest validation is defensive. The selected Hosted runtime must be enabled
+and provide exactly `install: {source: "official"}`. Hosted cannot select an
+installer channel, URL, or arguments; the CLI unconditionally owns the official
+URL and argument vector for the selected runtime. Generic desired-state
+manifests keep their existing optional installer, channel, and argument
+behavior. Unknown generic runtime names require `run.command`; otherwise the
+manifest is rejected so the image does not need to know every future agent.
 
 ## Commands
 
@@ -361,15 +360,6 @@ sidecar` is the single Clawdi support process for optional runtime-local modules
 the bridge module exposes manifest-declared browser surfaces behind hosted access
 controls, and the egress module proxies outbound runtime traffic when explicit
 egress profiles are enabled.
-
-Cloud also emits a signal-only `runtime_manifest_changed` event on the existing
-`/v1/sync/events` SSE plane after a manifest-affecting transaction commits. The
-event contains only `type` and `environment_id`; the CLI always fetches the
-manifest and applies the normal ETag contract. Bound deploy keys are filtered
-to their exact environment, while unbound user keys may receive any owned
-environment and filter again client-side. PostgreSQL LISTEN/NOTIFY carries the
-signal across API workers and replicas. ETag polling remains the reliability
-fallback when an SSE connection or bounded queue drops an event.
 
 The current hosted bridge surfaces are browser-facing runtime UIs. Each surface
 declares its listen address, upstream target, protocol behavior, auth model, and
@@ -397,7 +387,7 @@ the official runtime together cover those responsibilities.
 
 The CLI consumes a desired-state document plus optional secret values. The
 desired state should contain only non-secret configuration such as enabled
-runtimes, locale, command launch settings, channel projections, and provider routing
+runtimes, command launch settings, channel projections, and provider routing
 metadata. Secret values are delivered separately and must not be cached in
 plain text.
 
@@ -623,6 +613,41 @@ fallback for environments that reject custom WebSocket subprotocols.
 - `runtime status --json` and `runtime doctor --json` should surface enough
   state to distinguish manifest fetch failures, manifest rejection, degraded
   offline boot, install failures, and disabled runtimes.
+
+## Cloud Hosted Authority
+
+The exact-only Hosted package, fixture-only bootstrap tgz, strict
+provider/install fields, and preserved generic desired-state behavior described
+above are the CLI boundary. The Hosted rollout writer selects
+`cli_package_spec`; Cloud validates and persists it, requires the exact version
+to be at least the Cloud-owned `0.12.10-beta.51` protocol floor, and owns the
+public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
+`clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
+revalidated on every read and fails closed with `409` when invalid or below the
+floor. There is no default, nullable fallback, floating tag, local path, or
+forward compatibility use of the historical `clawdi_cli` column.
+
+Runtime-state writes use generation compare-and-swap while locking the
+corresponding `AgentEnvironment` before the optional `HostedRuntimeState`.
+Lower generations return structured `stale_generation` conflicts; equal
+generations with material differences return structured `generation_conflict`
+responses. Both include `current_generation`. Equal identical state is an
+idempotent `200`, while higher generations apply. Rejected and idempotent writes
+do not create duplicate state, audit events, or manifest invalidation.
+
+Revision `d8f2a1c4b6e9` adds required no-default locale and exact CLI package
+state while removing the obsolete free-form authority columns. Upgrade and
+downgrade both require `hosted_runtime_states` to be empty and fail before DDL
+when that invariant is not met. Because the backend entrypoint migrates before
+serving, the failure exits before the API starts and an automatic restart policy
+repeats it while the invariant remains unsatisfied.
+
+Committed manifest changes emit a signal-only `runtime_manifest_changed` event
+through `/v1/sync/events`. The payload contains only `type` and
+`environment_id`; clients refetch through the public manifest and ETag contract.
+PostgreSQL LISTEN/NOTIFY carries the signal across API workers, bound deploy keys
+receive only their environment, and ETag polling remains the missed-event
+fallback.
 
 ## Implementation Notes
 
