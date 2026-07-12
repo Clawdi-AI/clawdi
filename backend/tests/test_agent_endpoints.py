@@ -13,6 +13,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 _TEST_SYSTEM = {
     "user": "clawdi",
     "home": "/home/clawdi",
@@ -98,6 +99,7 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
             deployment_id="dep-agent-alias",
             instance_id="iid-agent-alias",
             generation=3,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
             locale=_TEST_LOCALE,
             system=_TEST_SYSTEM,
             live_sync={"enabled": False, "agents": []},
@@ -110,6 +112,7 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
                         "provider_id": "clawdi-managed",
                         "model": "gpt-5.5",
                     },
+                    "install": {"source": "official"},
                     "paths": {
                         "home": "/home/clawdi",
                         "workspace": "/home/clawdi/clawdi",

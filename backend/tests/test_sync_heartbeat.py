@@ -31,6 +31,7 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 _TEST_SYSTEM = {
     "user": "clawdi",
     "home": "/home/clawdi",
@@ -45,6 +46,7 @@ def _test_runtimes(provider_id: str = "clawdi-managed") -> dict:
             "enabled": True,
             "provider_ids": [provider_id],
             "primary_model": {"provider_id": provider_id, "model": "gpt-5.5"},
+            "install": {"source": "official"},
             "paths": {"home": "/home/clawdi", "workspace": "/home/clawdi/clawdi"},
         }
     }
@@ -417,6 +419,7 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
         deployment_id="dep-observed",
         instance_id="iid-observed",
         generation=1,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
@@ -453,6 +456,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         deployment_id="dep-observed-api",
         instance_id="iid-observed-api",
         generation=4,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
@@ -508,6 +512,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
         deployment_id="dep-observed-dedupe",
         instance_id="iid-observed-dedupe",
         generation=4,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
@@ -556,6 +561,7 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
         deployment_id="dep-supervisor-error",
         instance_id="iid-supervisor-error",
         generation=5,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
@@ -606,6 +612,7 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         deployment_id="dep-provider-error",
         instance_id="iid-provider-error",
         generation=6,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
@@ -701,6 +708,7 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 deployment_id="dep-summary-ok",
                 instance_id="iid-summary-ok",
                 generation=1,
+                cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
                 locale=_TEST_LOCALE,
                 system=_TEST_SYSTEM,
                 live_sync={"enabled": False, "agents": []},
@@ -712,6 +720,7 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 deployment_id="dep-summary-error",
                 instance_id="iid-summary-error",
                 generation=1,
+                cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
                 locale=_TEST_LOCALE,
                 system=_TEST_SYSTEM,
                 live_sync={"enabled": False, "agents": []},

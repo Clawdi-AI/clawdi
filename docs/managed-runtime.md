@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-07-02 |
+| Last updated | 2026-07-12 |
 | Owner | CLI runtime layer |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -16,8 +16,6 @@ Related public docs:
 - Roadmap: [`plans/managed-runtime-roadmap.md`](plans/managed-runtime-roadmap.md)
 - Projection boundary:
   [`plans/runtime-projection-boundary.md`](plans/runtime-projection-boundary.md)
-- Agent v2 cross-repo release operations:
-  [`clawdi-hosted` runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md)
 
 ## Scope
 
@@ -271,12 +269,12 @@ Normalization maps hosted fields into the internal shape:
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
 | `system.persistentPaths` | Non-empty durable filesystem paths owned by the runtime host |
 | `controlPlane.cloudApiUrl` | Cloud-owned API origin derived from the Cloud service configuration |
-| `clawdiCli.packageSpec` | System-managed CLI package selection; agent v2 uses the floating `clawdi@agent-v2` channel |
+| `clawdiCli.packageSpec` | Cloud-projected exact `clawdi@<semver>` selected by the Hosted rollout writer |
 | `clawdiCli.registry` | System-managed npm registry; agent v2 uses `https://registry.npmjs.org` |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.provider_ids` | Required non-empty provider pool; no single-provider aliases or account fallback |
 | `runtimes.<name>.primary_model` | Required structured `{provider_id, model}` selection within that provider pool |
-| `runtimes.<name>.install` | Supported official installer input |
+| `runtimes.<name>.install` | Required `{source: "official"}` selection; installer URL and invocation details remain CLI-owned |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `runtimes.<name>.paths.home`, `runtimes.<name>.paths.workspace` | Required runtime-local home and workspace paths |
@@ -301,31 +299,43 @@ agent type, not a selectable hosted compute runtime. Zero, multiple, disabled,
 or unsupported selections fail closed. Cloud accepts only canonical
 `provider_ids` plus structured `primary_model`; provider aliases, single-value
 bindings, model strings, and account-provider fallback are rejected. Required
-`system` and runtime `paths` are validated before persistence and again before
-manifest assembly. `install`, `run`, and each `services` entry are strict
-contract objects, so unknown nested fields never reach the CLI.
+`system`, runtime `paths`, and `install: {source: "official"}` are validated
+before persistence and again before manifest assembly. Installer URLs,
+channels, and invocation arguments are CLI-owned and rejected from Cloud
+desired state. `run` and each `services` entry remain strict contract objects.
 
-For agent deployment v2, Cloud API manifest assembly owns `clawdiCli` and emits
-`npm:clawdi` with `clawdi@agent-v2`, the official
-`https://registry.npmjs.org` registry. Admin desired state and ambient npm
-configuration cannot override that channel or registry. The
-deployment bootstrap environment seeds the CLI before its first manifest; the
-CLI persists the selected channel and registry, then ordinary self-updates
-resolve the ongoing authority emitted by Cloud manifests. `minimumCliVersion`
-is the independent protocol floor, currently `0.12.10-beta.51` for this
-contract. Cloud also derives `controlPlane.cloudApiUrl` from its own
-`public_api_url`; Hosted runtime-state input cannot provide URL authority.
+For agent deployment v2, the Hosted rollout writer selects an exact
+`clawdi@<semver>` as `cli_package_spec`. Cloud validates and persists that
+selection, rejects build metadata and versions below `0.12.10-beta.51`, and
+owns its public manifest projection. Cloud fixes `clawdiCli.source` to
+`npm:clawdi` and `clawdiCli.registry` to the official
+`https://registry.npmjs.org`; Hosted cannot send source or registry authority.
+The CLI reads this Cloud manifest selection before its first managed install.
+`minimumCliVersion` uses the same Cloud-owned `0.12.10-beta.51` protocol floor.
+Cloud also derives `controlPlane.cloudApiUrl` from its own `public_api_url`;
+Hosted runtime-state input cannot provide URL authority.
 `controlPlane` contains only `cloudApiUrl`, and the public manifest does not
 contain `manifestUrl`, `apiUrl`, or `appId`.
 
+Runtime-state writes use generation compare-and-swap under the row lock. A
+lower generation returns `409` with `stale_generation`; an equal generation
+with different material desired state returns `409` with
+`generation_conflict`. Both responses include `current_generation`. An equal
+generation with identical effective state is an idempotent success, while a
+higher generation applies and invalidates the runtime manifest.
+
 `locale` contains exactly `language` and `timezone`; personality is not part of
 Cloud desired state. Revision `d8f2a1c4b6e9` adds the required
-`hosted_runtime_states.locale` column without a default or data backfill and
-removes the obsolete `clawdi_cli`, `control_plane`, and `provider_id` columns.
-It also makes `system` non-null. A non-empty table is a pre-DDL rollout stop
-condition: operators stop rollout and resolve or decommission the state through
-the approved procedure before retrying. The migration does not prescribe
-direct deletion, backfill, repair, or preservation of prelaunch state.
+`hosted_runtime_states.locale` JSONB column and the required
+`cli_package_spec` string column without defaults or data backfill, removes the
+obsolete `clawdi_cli`, `control_plane`, and `provider_id` columns, and makes
+`system` non-null. Both upgrade and downgrade lock the table and treat
+non-empty state as a pre-DDL stop condition: operators stop the operation and
+resolve or decommission the state through the approved procedure before
+retrying. Because the backend entrypoint migrates before serving, an automatic
+restart policy will repeat this failure until the condition is resolved.
+Neither direction prescribes direct deletion, backfill, repair, or preservation
+of runtime state.
 
 ## Commands
 

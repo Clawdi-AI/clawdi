@@ -18,11 +18,13 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import (
+    _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
+    validate_clawdi_cli_package_spec,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.managed_ai_provider import (
@@ -36,14 +38,6 @@ router = APIRouter(prefix="/runtime", tags=["runtime"])
 
 
 _SUPPORTED_PROVIDER_RUNTIMES = {"hermes", "openclaw"}
-# Deployment bootstrap seeds the CLI before its first manifest. Once connected,
-# this manifest is the ongoing channel authority and the CLI persists/resolves it.
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.51"
-_AGENT_V2_CLAWDI_CLI = {
-    "source": "npm:clawdi",
-    "packageSpec": "clawdi@agent-v2",
-    "registry": "https://registry.npmjs.org",
-}
 
 
 @router.get("/manifest")
@@ -101,6 +95,13 @@ async def get_runtime_manifest(
             "Hosted runtime locale, system, live sync, or recovery state "
             "is invalid or not configured",
         ) from exc
+    try:
+        cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Hosted runtime CLI package spec is invalid or below the minimum version",
+        ) from exc
     runtime, runtime_state = _validated_runtime_state(state.runtimes)
 
     (
@@ -125,7 +126,11 @@ async def get_runtime_manifest(
         "locale": locale.model_dump(),
         "system": system.model_dump(exclude_none=True, mode="json"),
         "controlPlane": _control_plane(),
-        "clawdiCli": _AGENT_V2_CLAWDI_CLI,
+        "clawdiCli": {
+            "source": "npm:clawdi",
+            "packageSpec": cli_package_spec,
+            "registry": "https://registry.npmjs.org",
+        },
         "runtimes": {runtime: runtime_state},
         "providers": providers,
         "liveSync": live_sync.model_dump(mode="json"),

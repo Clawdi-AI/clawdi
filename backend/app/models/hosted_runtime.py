@@ -20,6 +20,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     app_id: Mapped[str | None] = mapped_column(String(200))
     instance_id: Mapped[str] = mapped_column(String(200), nullable=False)
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    cli_package_spec: Mapped[str] = mapped_column(String(200), nullable=False)
     locale: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     system: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     egress_engine: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))

@@ -18,6 +18,7 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
+    validate_clawdi_cli_package_spec,
 )
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
@@ -118,6 +119,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     app_id: str | None = Field(default=None, min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
+    cli_package_spec: str = Field(min_length=1, max_length=200)
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
     egress_engine: dict[str, Any] | None = None
@@ -128,6 +130,11 @@ class AdminRuntimeStateUpsert(BaseModel):
     egress_profiles: dict[str, Any] | None = None
     mcp: dict[str, Any] | None = None
     tools: dict[str, Any] | None = None
+
+    @field_validator("cli_package_spec")
+    @classmethod
+    def _validate_cli_package_spec(cls, value: str) -> str:
+        return validate_clawdi_cli_package_spec(value)
 
     @field_validator("runtimes")
     @classmethod

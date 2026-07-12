@@ -73,13 +73,11 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
-   For the managed `agent-v2` channel, do not treat a successful npm upload as
-   approval. `publishConfig.tag` uploads to the non-production
-   `agent-v2-candidate` tag. Promote the exact tested version to `agent-v2` only
-   after the Hosted stable-envelope paired smoke passes. Until a workflow with
-   the required Hosted smoke and npm promotion credentials exists, automatic
-   promotion is a release blocker/follow-up; do not replace it with
-   cross-repository polling or long-lived token automation.
+   For hosted agent v2, release and verify an exact CLI version before the
+   Hosted rollout writer selects it as `cli_package_spec`. Cloud validates and
+   persists the exact selection and projects it in the public runtime manifest;
+   source and registry remain Cloud-owned. Do not replace this contract with
+   floating tags or cross-repository automation.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -103,18 +101,14 @@ releases.
    npm view clawdi dist-tags
    ```
 
-   Agent-v2 releases appear first under `agent-v2-candidate`. After the Hosted
-   stable-envelope paired smoke passes for that exact version, a maintainer
-   with npm package permission promotes it explicitly:
+   For an agent-v2 rollout, verify the exact published version directly:
 
    ```bash
-   npm dist-tag add clawdi@<exact-version> agent-v2
-   npm view clawdi dist-tags
+   npm view clawdi@<exact-version> version
    ```
 
-   Done: `agent-v2` points to the paired-smoke-approved exact version while
-   `beta` and `latest` are unchanged. Automated promotion remains blocked until
-   a reusable Hosted smoke and npm credential contract exists.
+   Done: the exact version exists, the Hosted rollout writer selects the same
+   `clawdi@<exact-version>`, and Cloud returns it from the runtime manifest.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has
@@ -153,6 +147,11 @@ run these checks before traffic is considered healthy:
 4. Check logs for migration errors, 5xx spikes, auth failures, and frontend
    build/runtime errors.
 
+The backend entrypoint runs `alembic upgrade head` before starting the API. A
+migration stop condition exits the process before it can serve traffic, so an
+automatic restart policy will repeat the failure. Pause the rollout and resolve
+the migration condition instead of waiting for the deployment to recover.
+
 ### Connector Post-Deploy Smoke
 
 After a connector change, run a smoke test against the deployed public backend
@@ -175,7 +174,8 @@ The smoke should verify:
 1. Prefer rolling back app/backend/web code to the previous deployment before
    rolling back database migrations.
 2. Only downgrade migrations after checking the specific migration's downgrade
-   keeps data needed by the previous code version.
+   keeps data needed by the previous code version. Revision `d8f2a1c4b6e9`
+   refuses to downgrade while `hosted_runtime_states` is non-empty.
 3. Do not roll back an npm version. Publish a new patch version instead.
 4. If a release has bad notes but the code is fine, edit the GitHub release
    body; do not create a replacement tag.

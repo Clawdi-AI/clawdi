@@ -715,6 +715,34 @@ async def _admin_upsert_runtime_state(
         for name, runtime in body.runtimes.items()
     }
     changed_fields = _runtime_state_changed_fields(existing_state, body)
+    if existing_state is not None and body.generation <= existing_state.generation:
+        current_generation = existing_state.generation
+        if body.generation < current_generation:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "stale_generation",
+                    "current_generation": current_generation,
+                },
+            )
+        material_changes = [field for field in changed_fields if field != "generation"]
+        if material_changes:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "generation_conflict",
+                    "current_generation": current_generation,
+                },
+            )
+        await db.commit()
+        return AdminRuntimeStateResponse(
+            environment_id=environment_id,
+            deployment_id=body.deployment_id,
+            instance_id=body.instance_id,
+            generation=body.generation,
+        )
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
@@ -723,6 +751,7 @@ async def _admin_upsert_runtime_state(
     state.app_id = body.app_id
     state.instance_id = body.instance_id
     state.generation = body.generation
+    state.cli_package_spec = body.cli_package_spec
     state.locale = body.locale.model_dump()
     state.system = system_state
     state.runtimes = runtime_state
@@ -752,6 +781,7 @@ async def _admin_upsert_runtime_state(
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
+            "cli_package_spec": body.cli_package_spec,
             "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(runtime_state),
             "has_bridge": body.bridge is not None,
@@ -829,6 +859,7 @@ async def _admin_delete_runtime_state(
                 "app_id": state.app_id,
                 "instance_id": state.instance_id,
                 "generation": state.generation,
+                "cli_package_spec": state.cli_package_spec,
                 "enabled_runtimes": _enabled_runtime_names(state.runtimes),
                 "has_mcp": state.mcp is not None,
                 "has_tools": state.tools is not None,
@@ -935,6 +966,7 @@ def _runtime_state_changed_fields(
         "app_id",
         "instance_id",
         "generation",
+        "cli_package_spec",
         "locale",
         "system",
         "egress_engine",

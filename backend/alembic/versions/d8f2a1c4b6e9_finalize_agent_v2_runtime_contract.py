@@ -36,6 +36,10 @@ def upgrade() -> None:
 
     op.add_column(
         "hosted_runtime_states",
+        sa.Column("cli_package_spec", sa.String(length=200), nullable=False),
+    )
+    op.add_column(
+        "hosted_runtime_states",
         sa.Column(
             "locale",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -66,6 +70,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    # Keep writers out between the empty-table assertion and transactional DDL.
+    bind.execute(sa.text("LOCK TABLE hosted_runtime_states IN ACCESS EXCLUSIVE MODE"))
+    has_existing_state = bind.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM hosted_runtime_states)")
+    ).scalar_one()
+    if has_existing_state:
+        raise RuntimeError(
+            "Cannot downgrade migration d8f2a1c4b6e9: hosted_runtime_states is not empty. "
+            "Removing the agent v2 runtime contract while state exists is a data-loss stop "
+            "condition. Stop the downgrade and resolve or decommission this state through "
+            "the approved operator procedure before retrying. This downgrade does not "
+            "transform or preserve existing state."
+        )
+
     op.add_column(
         "hosted_runtime_states",
         sa.Column("provider_id", sa.String(length=80), nullable=True),
@@ -104,4 +123,5 @@ def downgrade() -> None:
         existing_type=postgresql.JSONB(astext_type=sa.Text()),
         nullable=True,
     )
+    op.drop_column("hosted_runtime_states", "cli_package_spec")
     op.drop_column("hosted_runtime_states", "locale")

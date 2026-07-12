@@ -20,6 +20,77 @@ HostedRuntimeName = Literal["openclaw", "hermes"]
 
 _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
+_SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+_EXACT_SEMVER_PATTERN = re.compile(
+    rf"^({_SEMVER_CORE_IDENTIFIER})\.({_SEMVER_CORE_IDENTIFIER})\."
+    rf"({_SEMVER_CORE_IDENTIFIER})(?:-({_SEMVER_PRERELEASE_IDENTIFIER}"
+    rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
+)
+_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.51"
+
+
+def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | None:
+    match = _EXACT_SEMVER_PATTERN.fullmatch(value)
+    if match is None:
+        return None
+    major, minor, patch, prerelease = match.groups()
+    return (
+        int(major),
+        int(minor),
+        int(patch),
+        tuple(prerelease.split(".")) if prerelease else (),
+    )
+
+
+def _compare_exact_semver(left: str, right: str) -> int:
+    parsed_left = _parse_exact_semver(left)
+    parsed_right = _parse_exact_semver(right)
+    if parsed_left is None or parsed_right is None:
+        raise ValueError("invalid exact semver comparison")
+    for left_part, right_part in zip(parsed_left[:3], parsed_right[:3], strict=True):
+        if left_part != right_part:
+            return -1 if left_part < right_part else 1
+    left_prerelease = parsed_left[3]
+    right_prerelease = parsed_right[3]
+    if not left_prerelease and not right_prerelease:
+        return 0
+    if not left_prerelease:
+        return 1
+    if not right_prerelease:
+        return -1
+    for index in range(max(len(left_prerelease), len(right_prerelease))):
+        if index >= len(left_prerelease):
+            return -1
+        if index >= len(right_prerelease):
+            return 1
+        left_identifier = left_prerelease[index]
+        right_identifier = right_prerelease[index]
+        if left_identifier == right_identifier:
+            continue
+        left_numeric = re.fullmatch(r"0|[1-9][0-9]*", left_identifier)
+        right_numeric = re.fullmatch(r"0|[1-9][0-9]*", right_identifier)
+        if left_numeric is not None and right_numeric is not None:
+            return -1 if int(left_identifier) < int(right_identifier) else 1
+        if left_numeric is not None:
+            return -1
+        if right_numeric is not None:
+            return 1
+        return -1 if left_identifier < right_identifier else 1
+    return 0
+
+
+def validate_clawdi_cli_package_spec(value: object) -> str:
+    if not isinstance(value, str) or not value.startswith("clawdi@"):
+        raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
+    version = value.removeprefix("clawdi@")
+    if _parse_exact_semver(version) is None:
+        raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
+    if _compare_exact_semver(version, _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION) < 0:
+        raise ValueError(
+            f"cli_package_spec minimum is clawdi@{_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION}"
+        )
+    return value
 
 
 def _validate_http_origin(value: str) -> str:
@@ -85,15 +156,6 @@ class HostedRuntimeInstall(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Literal["official"]
-    channel: str | None = Field(default=None, min_length=1)
-    args: list[str] | None = None
-
-    @field_validator("args")
-    @classmethod
-    def _validate_args(cls, value: list[str] | None) -> list[str] | None:
-        if value is not None and any(not arg for arg in value):
-            raise ValueError("install args must contain non-empty strings")
-        return value
 
 
 class HostedRuntimeRunSettings(BaseModel):
@@ -160,7 +222,7 @@ class HostedRuntimeDesiredState(BaseModel):
     enabled: Literal[True]
     provider_ids: list[str] = Field(min_length=1)
     primary_model: HostedRuntimePrimaryModel
-    install: HostedRuntimeInstall | None = None
+    install: HostedRuntimeInstall
     run: HostedRuntimeRunSettings | None = None
     services: dict[str, HostedRuntimeRunSettings] | None = None
     paths: HostedRuntimePaths

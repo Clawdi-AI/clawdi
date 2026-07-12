@@ -84,6 +84,23 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
             assert column.column_default is None
             assert column.data_type == "jsonb"
 
+            cli_package_spec_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type, character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'cli_package_spec'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert cli_package_spec_column.is_nullable == "NO"
+            assert cli_package_spec_column.column_default is None
+            assert cli_package_spec_column.data_type == "character varying"
+            assert cli_package_spec_column.character_maximum_length == 200
+
             removed_cli_column = sync_conn.execute(
                 sa.text(
                     """
@@ -256,6 +273,20 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
                 {"schema": schema},
             ).scalar_one()
             assert removed_locale_column == 0
+
+            removed_cli_package_spec_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT count(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'cli_package_spec'
+                    """
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert removed_cli_package_spec_column == 0
         finally:
             migration.op = old_op
 
@@ -373,6 +404,144 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
             assert stored_state.control_plane == {"manifestUrl": "https://cloud.test/manifest"}
             assert stored_state.provider_id == "legacy-provider"
             assert stored_state.system == {"home": "/home/legacy"}
+        finally:
+            migration.op = old_op
+
+    sync_url = engine.url.set(drivername="postgresql+psycopg2")
+    sync_engine = create_engine(sync_url)
+    try:
+        with sync_engine.begin() as conn:
+            run_migration(conn)
+    finally:
+        with sync_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        sync_engine.dispose()
+
+
+def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_schema_changes(
+    engine: AsyncEngine,
+) -> None:
+    migration = _load_migration()
+    schema = f"agent_v2_runtime_contract_downgrade_guard_{uuid.uuid4().hex}"
+    environment_id = uuid.uuid4()
+
+    def run_migration(sync_conn: sa.Connection) -> None:
+        old_op = migration.op
+        sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        sync_conn.execute(sa.text(f'SET search_path TO "{schema}"'))
+        try:
+            sync_conn.execute(
+                sa.text(
+                    """
+                    CREATE TABLE hosted_runtime_states (
+                        environment_id uuid PRIMARY KEY,
+                        cli_package_spec varchar(200) NOT NULL,
+                        locale jsonb NOT NULL,
+                        system jsonb NOT NULL,
+                        live_sync jsonb NOT NULL,
+                        recovery jsonb NOT NULL
+                    )
+                    """
+                )
+            )
+            sync_conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO hosted_runtime_states (
+                        environment_id,
+                        cli_package_spec,
+                        locale,
+                        system,
+                        live_sync,
+                        recovery
+                    )
+                    VALUES (
+                        CAST(:environment_id AS uuid),
+                        :cli_package_spec,
+                        CAST(:locale AS jsonb),
+                        CAST(:system AS jsonb),
+                        CAST(:live_sync AS jsonb),
+                        CAST(:recovery AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "environment_id": str(environment_id),
+                    "cli_package_spec": "clawdi@0.12.10-beta.51",
+                    "locale": '{"language":"en","timezone":"UTC"}',
+                    "system": '{"home":"/home/clawdi"}',
+                    "live_sync": '{"enabled":false,"agents":[]}',
+                    "recovery": '{"cacheManifest":true,"allowOfflineBoot":true}',
+                },
+            )
+            migration.op = Operations(MigrationContext.configure(sync_conn))
+
+            columns_before = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT column_name, is_nullable, column_default, data_type,
+                           character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                    ORDER BY ordinal_position
+                    """
+                ),
+                {"schema": schema},
+            ).all()
+            state_before = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT environment_id, cli_package_spec, locale, system, live_sync, recovery
+                    FROM hosted_runtime_states
+                    """
+                )
+            ).one()
+
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    "Cannot downgrade migration d8f2a1c4b6e9.*"
+                    "hosted_runtime_states is not empty.*"
+                    "data-loss stop condition.*"
+                    "approved operator procedure"
+                ),
+            ):
+                migration.downgrade()
+
+            columns_after = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT column_name, is_nullable, column_default, data_type,
+                           character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                    ORDER BY ordinal_position
+                    """
+                ),
+                {"schema": schema},
+            ).all()
+            state_after = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT environment_id, cli_package_spec, locale, system, live_sync, recovery
+                    FROM hosted_runtime_states
+                    """
+                )
+            ).one()
+
+            assert columns_after == columns_before
+            assert state_after == state_before
+            assert state_after.environment_id == environment_id
+            assert state_after.cli_package_spec == "clawdi@0.12.10-beta.51"
+            assert state_after.locale == {"language": "en", "timezone": "UTC"}
+            assert state_after.system == {"home": "/home/clawdi"}
+            assert state_after.live_sync == {"enabled": False, "agents": []}
+            assert state_after.recovery == {
+                "cacheManifest": True,
+                "allowOfflineBoot": True,
+            }
         finally:
             migration.op = old_op
 
