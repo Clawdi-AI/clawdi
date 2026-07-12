@@ -1396,19 +1396,34 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(packageSpec);
 	});
 
-	it("rejects a generic internal fixture in hosted mode", async () => {
+	it("rejects an explicit generic internal fixture in hosted mode", async () => {
 		const home = join(root, "home", "clawdi");
 		const manifestPath = join(root, "generic-hosted-fixture.json");
 		process.env.HOME = home;
 		writeFileSync(manifestPath, JSON.stringify(genericCliDesiredState("clawdi@1.2.3")));
-		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 
-		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }));
+		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
+			manifestPath,
+		});
 		expect("errors" in loaded).toBe(true);
 		if (!("errors" in loaded)) throw new Error("expected hosted fixture rejection");
 		expect(loaded.mode).toBe("manifest-rejected");
 		expect(loaded.errors.join("\n")).toContain("manifest: Invalid input");
+	});
+
+	it("accepts an explicit strict hosted fixture in hosted mode", async () => {
+		const home = join(root, "home", "clawdi");
+		const manifestPath = join(root, "strict-hosted-fixture.json");
+		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
+		process.env.HOME = home;
+		writeFileSync(manifestPath, JSON.stringify(hostedCliManifestResponse(home, packageSpec)));
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
+			manifestPath,
+		});
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected strict hosted fixture success");
+		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(packageSpec);
 	});
 
 	for (const packageSpec of ["clawdi@latest", "clawdi"]) {

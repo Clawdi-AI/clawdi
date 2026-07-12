@@ -86,12 +86,16 @@ describe("CLI publish workflow contract", () => {
 			expect(surface).not.toMatch(/clawdi@agent-v2(?!-)/);
 		}
 		expect(workflow).toContain("npm install -g clawdi@$VERSION");
-		expect(cliDevelopmentDoc).toContain("supplies the exact `clawdi@<semver>` package spec");
+		expect(cliDevelopmentDoc).toMatch(
+			/explicitly supplies the exact\s+`clawdi@<semver>` package spec/,
+		);
 		expect(cliDevelopmentDoc).toContain("fails closed when the exact input is missing");
-		expect(releaseRunbookDoc).toContain("supplies the exact `clawdi@<semver>` package spec");
-		expect(releaseRunbookDoc).toContain("fails when the exact spec is missing");
+		expect(releaseRunbookDoc).toMatch(/supplies the exact\s+`clawdi@<semver>`\s+package\s+spec/);
+		expect(releaseRunbookDoc).toMatch(/fails when the exact spec is\s+missing/);
 		for (const surface of [cliDevelopmentDoc, releaseRunbookDoc]) {
-			expect(surface).toMatch(/never\s+resolves\s+`agent-v2-candidate` or any other npm dist-tag/);
+			expect(surface).toMatch(
+				/never\s+resolves\s+`agent-v2-candidate`\s+or\s+any\s+other\s+npm\s+dist-tag/,
+			);
 			expect(surface).not.toContain("resolves that candidate");
 		}
 		expect(manifestContract).toContain("must be clawdi@<exact-semver>");

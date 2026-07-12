@@ -266,12 +266,11 @@ function normalizeRemoteManifestPayload(
 function normalizeManifestFixturePayload(
 	value: unknown,
 	paths: RuntimePaths,
-	explicitSimulation: boolean,
 ): {
 	manifest: RuntimeManifest;
 	secretValues?: Record<string, string>;
 } {
-	if (paths.mode === "hosted" && !explicitSimulation) {
+	if (paths.mode === "hosted") {
 		const hostedResponse = hostedRuntimeManifestFixtureResponseSchema.parse(value);
 		return {
 			manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
@@ -907,7 +906,7 @@ export async function loadRuntimeManifest(
 	}
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = normalizeManifestFixturePayload(raw, paths, opts.manifestPath !== undefined);
+		normalized = normalizeManifestFixturePayload(raw, paths);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -933,13 +932,7 @@ export async function loadRuntimeManifest(
 		};
 	}
 
-	return validateLoadedManifest(
-		normalized,
-		paths,
-		"fixture-file",
-		manifestPath,
-		opts.manifestPath !== undefined ? "generic" : undefined,
-	);
+	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
 }
 
 function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | RuntimeManifestFailure {
@@ -1081,17 +1074,11 @@ function validateLoadedManifest(
 	paths: RuntimePaths,
 	source: RuntimeManifestLoad["source"],
 	sourcePath: string,
-	trustDomainOverride?: "generic" | "hosted" | "hosted-fixture",
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	const existing = loadExistingState(paths);
 	const manifest = normalized.manifest;
 	const trustDomain =
-		trustDomainOverride ??
-		(paths.mode === "hosted"
-			? source === "fixture-file"
-				? "hosted-fixture"
-				: "hosted"
-			: "generic");
+		paths.mode === "hosted" ? (source === "fixture-file" ? "hosted-fixture" : "hosted") : "generic";
 	const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
