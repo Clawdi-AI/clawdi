@@ -236,6 +236,10 @@ paired smoke, then the protected npm job publishes that exact tarball once to
 the `agent-v2` tag with trusted-publisher OIDC. There is no candidate tag or
 separate dist-tag promotion.
 
+Cross-repository rollout ownership and ordering live in the
+[Hosted agent v2 release runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md).
+This document covers only CLI package mechanics.
+
 The reusable workflow is private at
 `Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main`.
 Before this release workflow can run, the focused smoke-only Hosted PR that
@@ -248,7 +252,7 @@ PAT, GitHub App token, or copied smoke implementation.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
 Keep v2 creation and runtime-state reconciliation disabled until the smoke-only
-workflow, final Hosted capability envelope, this `.51` release, and the Cloud
+workflow, final Hosted capability envelope, `0.12.10-beta.51`, and the Cloud
 manifest contract are all landed and deployed. Then verify a fresh deployment's
 runtime-state write, canonical `/v1/runtime/manifest` fetch, SSE invalidation,
 and runtime services before enabling v2. Do not add legacy fields or aliases.

@@ -34,6 +34,7 @@ import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-reconcile-test-"));
@@ -90,6 +91,7 @@ function baseManifest(
 function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 		runtime: "openclaw",
 		deploymentId: "hdep_locale",
 		environmentId: "env_locale",
@@ -185,6 +187,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			normalizeManifestPayload({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_missing_cli_policy",
 					environmentId: "env_missing_cli_policy",
@@ -198,6 +201,55 @@ describe("runtime manifest reconciliation invariants", () => {
 				secretValues: {},
 			}),
 		).toThrow(/clawdiCli/);
+	});
+
+	test.each([
+		["missing environmentId", {}],
+		["appId fallback", { appId: "app_legacy_identity" }],
+	])("rejects hosted manifests with %s", (_name, identity) => {
+		const manifest = hostedManifestFixture(identity);
+		delete manifest.environmentId;
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test("uses only the hosted environmentId as the runtime environment identity", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				deploymentId: "hdep_distinct_identity",
+				environmentId: "env_canonical_identity",
+			}),
+		);
+
+		expect(hostedManifestToRuntimeManifest(parsed).environmentId).toBe("env_canonical_identity");
+	});
+
+	test("rejects hosted manifests without a minimum CLI protocol floor", () => {
+		const manifest = hostedManifestFixture();
+		delete manifest.minimumCliVersion;
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test.each([
+		["missing cloudApiUrl", {}],
+		[
+			"manifestUrl",
+			{
+				cloudApiUrl: "https://cloud-api.example.test",
+				manifestUrl: "https://cloud-api.example.test/v1/runtime/manifest",
+			},
+		],
+		[
+			"apiUrl",
+			{
+				cloudApiUrl: "https://cloud-api.example.test",
+				apiUrl: "https://cloud-api.example.test",
+			},
+		],
+		["unknown key", { cloudApiUrl: "https://cloud-api.example.test", unknown: true }],
+	])("rejects hosted controlPlane with %s", (_name, controlPlane) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ controlPlane })).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -236,6 +288,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			normalizeManifestPayload({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_invalid_cli_policy",
 					environmentId: "env_invalid_cli_policy",
@@ -252,10 +305,53 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow();
 	});
 
+	test.each([
+		"clawdi@agent-v2",
+		"clawdi@0.12.10-beta.51",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.51.tgz",
+	])("accepts hosted CLI package spec %s", (packageSpec) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec,
+						registry: "https://registry.npmjs.org",
+					},
+				}),
+			).success,
+		).toBe(true);
+	});
+
+	test.each([
+		"clawdi@latest",
+		"clawdi@beta",
+		"clawdi",
+		"clawdi@candidate",
+		"./clawdi.tgz",
+		"/tmp/clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
+	])("rejects hosted CLI package spec %s", (packageSpec) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec,
+						registry: "https://registry.npmjs.org",
+					},
+				}),
+			).success,
+		).toBe(false);
+	});
+
 	test("normalizes hosted manifest responses into runtime desired state without embedding secrets", () => {
 		const hostedResponse = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
 				environmentId: "env_normalize",
@@ -269,7 +365,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
-					manifestUrl: "https://cloud-api.example.test/v1/runtime/manifest",
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
@@ -390,38 +485,88 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 	});
 
-	test("infers the hosted runtime when the manifest has one runtime entry", () => {
-		const hostedManifest = hostedRuntimeManifestSchema.parse({
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			deploymentId: "hdep_infer_runtime",
-			environmentId: "env_infer_runtime",
-			instanceId: "hri_infer_runtime",
-			generation: 1,
-			issuedAt: "2026-07-07T00:00:00.000Z",
-			locale: TEST_HOSTED_LOCALE,
-			controlPlane: {
-				cloudApiUrl: "https://cloud-api.example.test",
-			},
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: "clawdi@agent-v2",
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					install: { source: "official" },
+	test("rejects a missing explicit runtime even with one runtime entry", () => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse({
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+				deploymentId: "hdep_infer_runtime",
+				environmentId: "env_infer_runtime",
+				instanceId: "hri_infer_runtime",
+				generation: 1,
+				issuedAt: "2026-07-07T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
+				controlPlane: {
+					cloudApiUrl: "https://cloud-api.example.test",
 				},
-			},
-		});
-
-		expect(hostedManifest.runtime).toBe("openclaw");
-		expect(hostedManifestToRuntimeManifest(hostedManifest).runtime).toBe("openclaw");
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@agent-v2",
+					registry: "https://registry.npmjs.org",
+				},
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: { source: "official" },
+					},
+				},
+			}).success,
+		).toBe(false);
 	});
 
-	test("strips unknown hosted manifest fields while preserving the known contract", () => {
+	test.each([
+		["top level", (manifest: Record<string, unknown>) => ({ ...manifest, unknown: true })],
+		[
+			"system",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				system: { home: "/home/clawdi", unknown: true },
+			}),
+		],
+		[
+			"control plane",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				controlPlane: {
+					...(manifest.controlPlane as Record<string, unknown>),
+					unknown: true,
+				},
+			}),
+		],
+		[
+			"runtime entry",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				runtimes: {
+					openclaw: {
+						...((manifest.runtimes as Record<string, unknown>).openclaw as Record<string, unknown>),
+						unknown: true,
+					},
+				},
+			}),
+		],
+		[
+			"runtime run settings",
+			(manifest: Record<string, unknown>) => ({
+				...manifest,
+				runtimes: {
+					openclaw: {
+						...((manifest.runtimes as Record<string, unknown>).openclaw as Record<string, unknown>),
+						run: {
+							command: "openclaw",
+							args: ["gateway", "run"],
+							env: {},
+							prependPath: [],
+							unknown: true,
+						},
+					},
+				},
+			}),
+		],
+	])("rejects unknown hosted manifest fields at the %s", (_name, addUnknownField) => {
 		const cleanManifest = {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "hdep_forward_compat",
 			environmentId: "env_forward_compat",
@@ -450,31 +595,16 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		};
 
-		const parsed = hostedRuntimeManifestSchema.parse({
-			...cleanManifest,
-			futureTopLevelField: { deployApiCanShipFirst: true },
-			runtimes: {
-				openclaw: {
-					...cleanManifest.runtimes.openclaw,
-					futureRuntimeField: "ignored",
-					run: {
-						...cleanManifest.runtimes.openclaw.run,
-						futureRunField: "ignored",
-					},
-				},
-			},
-		});
-
-		expect(parsed).toEqual(hostedRuntimeManifestSchema.parse(cleanManifest));
-		expect(parsed).not.toHaveProperty("futureTopLevelField");
-		expect(parsed.runtimes.openclaw).not.toHaveProperty("futureRuntimeField");
-		expect(parsed.runtimes.openclaw.run).not.toHaveProperty("futureRunField");
+		expect(hostedRuntimeManifestSchema.safeParse(addUnknownField(cleanManifest)).success).toBe(
+			false,
+		);
 	});
 
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",
 				environmentId: "env_multi",

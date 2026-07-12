@@ -25,11 +25,19 @@ Package: `clawdi@0.12.10-beta.51`
 - Added immediate hosted runtime manifest convergence from environment-scoped
   SSE notifications while retaining 15-second ETag polling and five-minute
   self-healing when the notification channel is unavailable.
+- Made the hosted manifest fail closed on unknown fields and require explicit
+  `runtime`, `minimumCliVersion`, `controlPlane.cloudApiUrl`, and the canonical
+  `environmentId` identity, without inference, `appId`, datasource, or
+  deployment fallbacks.
+- Restricted hosted CLI package selection to `clawdi@agent-v2`, exact semver,
+  or immutable tarballs under `/usr/local/share/clawdi/bootstrap/`.
 
 ### Fixed
 
 - Kept headless runtime convergence independent of a systemd user manager while
   still requiring the manager for official runtime service installation.
+- Restored SSE subscriptions after authentication failure or terminal task
+  completion while retaining polling as the bounded retry cadence.
 
 ## Clawdi CLI v0.12.10-beta.50
 

@@ -125,7 +125,7 @@ afterAll(() => {
 
 function seedCurrentCliInstall(
 	state: string,
-	packageSpec = "clawdi@latest",
+	packageSpec: string,
 	version = "0.13.0-test",
 	registry: string | null = null,
 ): void {
@@ -177,6 +177,7 @@ const TEST_HOSTED_LOCALE = {
 	language: "en" as const,
 	timezone: "UTC",
 };
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 
 function runtimeWatchLocaleManifest(
 	home: string,
@@ -219,6 +220,7 @@ function hostedRuntimeWatchLocalePayload(
 	return {
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "dep_watch_locale",
 			environmentId: "env_watch_locale",
@@ -1058,10 +1060,10 @@ describe("runtime manifest datasource", () => {
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_test",
 							environmentId: "env_test",
-							appId: "app_test",
 							instanceId: "iid_remote",
 							generation: 3,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -1073,7 +1075,6 @@ describe("runtime manifest datasource", () => {
 								persistentPaths: [home],
 							},
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -1214,17 +1215,16 @@ chmod +x "$HOME/.local/bin/hermes"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_runtime_bridge",
 							environmentId: "env_runtime_bridge",
-							appId: "app_runtime_bridge",
 							instanceId: "iid_runtime_bridge",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "managed-workspace") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -1308,17 +1308,16 @@ chmod +x "$HOME/.local/bin/hermes"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_chat_provider",
 							environmentId: "env_chat_provider",
-							appId: "app_chat_provider",
 							instanceId: "iid_chat_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -1406,17 +1405,16 @@ chmod +x "$HOME/.local/bin/hermes"
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_codex_provider",
 							environmentId: "env_codex_provider",
-							appId: "app_codex_provider",
 							instanceId: "iid_codex_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -2917,6 +2915,7 @@ exit 0
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_hosted_provider_secret",
 					environmentId: "env_hosted_provider_secret",
@@ -3077,6 +3076,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token",
 					environmentId: "env_bridge_token",
@@ -3123,6 +3123,7 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token_explicit",
 					environmentId: "env_bridge_token_explicit",
@@ -3189,8 +3190,10 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_custom_auth",
+							environmentId: "env_custom_auth",
 							instanceId: "iid_custom_auth",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -3249,6 +3252,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
 							environmentId: "env_same_token",
@@ -3258,7 +3262,6 @@ exit 64
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -3282,6 +3285,7 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
 							environmentId: "env_same_token",
@@ -3291,7 +3295,6 @@ exit 64
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -4068,6 +4071,89 @@ exit 0
 		}
 	});
 
+	it.each([
+		"authentication failure",
+		"task completion",
+	])("runtime watch re-subscribes after SSE %s with unchanged connection identity", async (completionMode) => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const abort = new AbortController();
+		const previousLog = console.log;
+		const logs: string[] = [];
+		seedRuntimeWatchLocaleBaseline(home, state, run);
+		console.log = (value?: unknown) => logs.push(String(value));
+		let manifestCalls = 0;
+		let subscriptionCalls = 0;
+		let resolveInitialManifestRequest: (() => void) | null = null;
+		const initialManifestRequest = new Promise<void>((resolveRequest) => {
+			resolveInitialManifestRequest = resolveRequest;
+		});
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					manifestCalls += 1;
+					if (manifestCalls === 1) {
+						resolveInitialManifestRequest?.();
+						return new Response(null, { status: 304 });
+					}
+					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
+						status: 200,
+						headers: {
+							"content-type": "application/json",
+							etag: '"manifest-locale-2"',
+						},
+					});
+				},
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: (request) => {
+					if (request.headers["if-none-match"]) return new Response(null, { status: 304 });
+					setTimeout(() => abort.abort(), 0);
+					return jsonResponse([]);
+				},
+			},
+		]);
+		const timeout = setTimeout(() => abort.abort(), 500);
+
+		try {
+			await runtimeWatch({
+				intervalMs: 60_000,
+				selfHealMs: 300_000,
+				json: true,
+				abort: abort.signal,
+				notificationConsumer: async (options) => {
+					subscriptionCalls += 1;
+					if (subscriptionCalls === 1) {
+						if (completionMode === "authentication failure") options.onAuthFailure?.();
+						return;
+					}
+					await initialManifestRequest;
+					await options.onEvent({
+						type: "runtime_manifest_changed",
+						environment_id: "env_watch_locale",
+					});
+					await new Promise<void>((resolveDone) => {
+						if (options.abort.aborted) return resolveDone();
+						options.abort.addEventListener("abort", () => resolveDone(), { once: true });
+					});
+				},
+			});
+
+			expect(subscriptionCalls).toBe(2);
+			expect(manifestCalls).toBe(2);
+			expect(logs.map((line) => JSON.parse(line).status)).toEqual(["not_modified", "applied"]);
+		} finally {
+			clearTimeout(timeout);
+			restore();
+			console.log = previousLog;
+		}
+	});
+
 	it("runtime watch applies remote changes, tracks systemd unit changes, and saves the new ETag", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -4117,6 +4203,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch",
 								environmentId: "env_watch",
@@ -4260,6 +4347,7 @@ exit 42
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch_systemd_failure",
 								environmentId: "env_watch_systemd_failure",
@@ -4337,6 +4425,7 @@ exit 42
 		const hostedPayload = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "dep_watch_secret",
 				environmentId: "env_watch_secret",
@@ -4617,6 +4706,7 @@ exit 64
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch_recovery",
 								environmentId: "env_watch_recovery",
@@ -5197,6 +5287,7 @@ chmod +x "$prefix/bin/clawdi"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update",
 								environmentId: "env_cli_update",
@@ -5434,6 +5525,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_mitm",
 								environmentId: "env_cli_mitm",
@@ -5601,6 +5693,7 @@ chmod +x "$prefix/bin/clawdi"
 			const result = applyRuntimeCliDesiredState(
 				{
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_floating_cli_tag",
 					environmentId: "env_floating_cli_tag",
@@ -5679,6 +5772,7 @@ exit 97
 			const result = applyRuntimeCliDesiredState(
 				{
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_cli_bootstrap_current",
 					environmentId: "env_cli_bootstrap_current",
@@ -5794,6 +5888,7 @@ chmod +x "$prefix/bin/clawdi"
 		const manifestPayload = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "dep_cli_self_heal",
 				environmentId: "env_cli_self_heal",
@@ -5998,6 +6093,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_converge_failure",
 								environmentId: "env_cli_update_converge_failure",
@@ -6146,13 +6242,14 @@ chmod +x "$prefix/bin/clawdi"
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
-		seedCurrentCliInstall(state, "clawdi@beta", "0.13.4-beta.0");
+		seedCurrentCliInstall(state, "clawdi@0.13.4-beta.0", "0.13.4-beta.0");
 		const paths = getRuntimePaths();
 		const oldTarget = readlinkSync(paths.cliManagedBin);
 		mkdirSync(dirname(paths.manifestEtag), { recursive: true });
 		writeFileSync(paths.manifestEtag, '"etag-cli-rollback"\n');
 		const manifest = {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "dep_cli_rollback",
 			environmentId: "env_cli_rollback",
@@ -6164,7 +6261,7 @@ chmod +x "$prefix/bin/clawdi"
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@beta",
+				packageSpec: "clawdi@0.13.5-beta.0",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -6216,7 +6313,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(upgradeState.pendingUpgrade).toBeNull();
 			expect(upgradeState.badVersions).toContainEqual(
 				expect.objectContaining({
-					packageSpec: "clawdi@beta",
+					packageSpec: "clawdi@0.13.5-beta.0",
 					version: "0.13.5-beta.0",
 				}),
 			);
@@ -6233,7 +6330,7 @@ chmod +x "$prefix/bin/clawdi"
 						controlPlane: { apiUrl: "https://cloud-api.test" },
 						clawdiCli: {
 							source: "npm:clawdi",
-							packageSpec: "clawdi@beta",
+							packageSpec: "clawdi@0.13.5-beta.0",
 							registry: "https://registry.npmjs.org",
 						},
 						runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
@@ -6299,6 +6396,7 @@ chmod +x "$prefix/bin/clawdi"
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_failure",
 								environmentId: "env_cli_update_failure",
@@ -6922,6 +7020,7 @@ exit 64
 						JSON.stringify({
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_init",
 								environmentId: "env_init",
@@ -8072,8 +8171,10 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_workspace",
+							environmentId: "env_workspace",
 							instanceId: "iid_workspace",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -8196,8 +8297,10 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_legacy_api_url",
+					environmentId: "env_legacy_api_url",
 					instanceId: "iid_legacy_api_url",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -8223,7 +8326,7 @@ exit 64
 		expect("errors" in loaded).toBe(true);
 		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
 		expect(loaded.mode).toBe("manifest-rejected");
-		expect(loaded.errors.join("\n")).toContain("hosted runtime controlPlane must use cloudApiUrl");
+		expect(loaded.errors.join("\n")).toContain("apiUrl");
 	});
 
 	it("uses hosted runtime workspace paths even without explicit run settings", async () => {
@@ -8242,8 +8345,10 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_runtime_workspace",
+					environmentId: "env_runtime_workspace",
 					instanceId: "iid_runtime_workspace",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -9227,7 +9332,7 @@ exit 64
 		expect(loaded.errors[0]).toContain("fixture references secretValues");
 	});
 
-	it("derives a safe API origin when manifests only include a source URL", async () => {
+	it("rejects hosted manifests without cloudApiUrl instead of deriving it from the source URL", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9246,16 +9351,16 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_manifest_only",
+							environmentId: "env_manifest_only",
 							instanceId: "iid_manifest_only",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
-							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/desired-state/",
-							},
+							controlPlane: {},
 							clawdiCli: {
 								source: "npm:clawdi",
 								packageSpec: "clawdi@agent-v2",
@@ -9272,9 +9377,10 @@ exit 64
 
 		try {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
-			expect("manifest" in loaded).toBe(true);
-			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://runtime-source.test");
+			expect("errors" in loaded).toBe(true);
+			if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+			expect(loaded.mode).toBe("manifest-rejected");
+			expect(loaded.errors.join("\n")).toContain("cloudApiUrl");
 		} finally {
 			restore();
 		}
@@ -9300,16 +9406,16 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_test",
-							appId: "app_test",
+							environmentId: "env_test",
 							instanceId: "iid_remote",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							egressEngine: mitmproxy,
@@ -9580,16 +9686,16 @@ exit 64
 					jsonResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_sync",
-							appId: "app_sync",
+							environmentId: "env_sync",
 							instanceId: "iid_sync",
 							generation: 9,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
 							system: { home, workspace: join(home, "clawdi") },
 							controlPlane: {
-								manifestUrl: "https://runtime-source.test/v1/runtime/manifest",
 								cloudApiUrl: "https://cloud-api.test",
 							},
 							clawdiCli: {
@@ -9685,9 +9791,10 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_no_secret_ref",
-					appId: "app_no_secret_ref",
+					environmentId: "env_no_secret_ref",
 					instanceId: "iid_no_secret_ref",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -9730,9 +9837,10 @@ exit 64
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_bad_mitm",
-					appId: "app_bad_mitm",
+					environmentId: "env_bad_mitm",
 					instanceId: "iid_bad_mitm",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",

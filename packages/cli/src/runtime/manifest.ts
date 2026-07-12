@@ -1164,19 +1164,18 @@ function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
 const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
 const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
 
-function managedLocaleBlock(manifest: RuntimeManifest): string | null {
-	if (!manifest.locale) return null;
+function managedLocaleBlock(locale: NonNullable<RuntimeManifest["locale"]>): string {
 	return [
 		MANAGED_LOCALE_BLOCK_START,
 		"## Clawdi managed locale",
 		"",
-		`Use \`${manifest.locale.language}\` as the default response language unless the user explicitly requests another language.`,
-		`Interpret ambiguous dates and times in \`${manifest.locale.timezone}\` unless the user specifies another timezone.`,
+		`Use \`${locale.language}\` as the default response language unless the user explicitly requests another language.`,
+		`Interpret ambiguous dates and times in \`${locale.timezone}\` unless the user specifies another timezone.`,
 		MANAGED_LOCALE_BLOCK_END,
 	].join("\n");
 }
 
-function updateManagedLocaleFile(path: string, block: string | null): string | null {
+function updateManagedLocaleFile(path: string, block: string): string {
 	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
 	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
 	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
@@ -1194,23 +1193,19 @@ function updateManagedLocaleFile(path: string, block: string | null): string | n
 		throw new Error(`managed locale block markers are duplicated in ${path}`);
 	}
 
-	let next = existing;
+	let next: string;
 	if (hasStart && hasEnd) {
 		const suffixStart = end + MANAGED_LOCALE_BLOCK_END.length;
-		next = `${existing.slice(0, start)}${block ?? ""}${existing.slice(suffixStart)}`;
-	} else if (block) {
+		next = `${existing.slice(0, start)}${block}${existing.slice(suffixStart)}`;
+	} else {
 		const separator = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
 		next = `${existing}${separator}${block}\n`;
 	}
 
-	if (next === existing) return block ? path : null;
-	if (!block && next.length === 0) {
-		rmSync(path, { force: true });
-		return null;
-	}
+	if (next === existing) return path;
 	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
 	makeRuntimeUserOwned(path);
-	return block ? path : null;
+	return path;
 }
 
 function applyHostedLocaleProjection(
@@ -1219,8 +1214,9 @@ function applyHostedLocaleProjection(
 	home: string,
 	workspaceRoot: string,
 ): string | null {
-	if (!manifest.locale) return null;
-	const block = managedLocaleBlock(manifest);
+	const locale = manifest.locale;
+	if (!locale) return null;
+	const block = managedLocaleBlock(locale);
 	if (runtime === "openclaw") {
 		return updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), block);
 	}
@@ -1228,7 +1224,7 @@ function applyHostedLocaleProjection(
 		const hermesHome = join(home, ".hermes");
 		makeRuntimeUserPrivateDir(hermesHome);
 		const configPath = join(hermesHome, "config.yaml");
-		mergeHermesRuntimeLocale(configPath, manifest.locale.timezone);
+		mergeHermesRuntimeLocale(configPath, locale.timezone);
 		makeRuntimeUserOwned(configPath);
 		return updateManagedLocaleFile(join(hermesHome, "SOUL.md"), block);
 	}
@@ -4587,13 +4583,7 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 	}
 }
 
-function runtimeManifestUrlEnv(manifest: RuntimeManifest, sourcePath: string): string {
-	const controlPlane = manifest.controlPlane;
-	const manifestUrl =
-		"manifestUrl" in controlPlane && typeof controlPlane.manifestUrl === "string"
-			? controlPlane.manifestUrl.trim()
-			: "";
-	if (manifestUrl) return manifestUrl;
+function runtimeManifestUrlEnv(sourcePath: string): string {
 	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
 	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
 }
@@ -4621,7 +4611,7 @@ function writeSystemdUnits(
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
-		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(manifest, sourcePath),
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		[RUNTIME_BRIDGE_SURFACES_ENV]: "",

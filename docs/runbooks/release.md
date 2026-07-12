@@ -76,7 +76,9 @@ releases.
    For the managed `agent-v2` channel, the release workflow must build and pack
    one immutable artifact, pass it through the reusable Hosted paired smoke,
    and publish that exact tarball once to `agent-v2` with npm trusted-publisher
-   OIDC. There is no candidate tag or dist-tag promotion step.
+   OIDC. For `0.12.10-beta.51`, there is no candidate tag or dist-tag promotion
+   step. Cross-repository rollout ownership and ordering live in the
+   [Hosted agent v2 release runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md).
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -108,10 +110,11 @@ releases.
    makes the release gate exercise the image that will actually launch.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
-   reconciliation disabled until the Hosted image contract, this CLI release,
-   and the Cloud manifest contract are all deployed. Validate one fresh
-   deployment end to end through `/v1/runtime/manifest` and SSE before enabling
-   v2. Do not add compatibility fields, aliases, or fallback package channels.
+   reconciliation disabled until the Hosted image contract, CLI version
+   `0.12.10-beta.51`, and the Cloud manifest contract are all deployed. Validate
+   one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
+   enabling v2. Do not add compatibility fields, aliases, or fallback package
+   channels.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has

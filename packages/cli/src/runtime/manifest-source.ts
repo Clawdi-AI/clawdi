@@ -555,7 +555,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
-		environmentId: hosted.environmentId || hosted.appId || hosted.deploymentId,
+		environmentId: hosted.environmentId,
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
 		minimumCliVersion: hosted.minimumCliVersion,
@@ -565,7 +565,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		workspaceRoot,
 		runtime: selectedRuntime,
 		controlPlane: {
-			apiUrl: hostedControlPlaneApiUrl(hosted),
+			apiUrl: hosted.controlPlane.cloudApiUrl,
 		},
 		clawdiCli: { ...hosted.clawdiCli },
 		egressEngine: hosted.egressEngine,
@@ -678,33 +678,6 @@ function hostedRuntimeServiceRunSettings(
 			prependPath: [],
 		}
 	);
-}
-
-function hostedControlPlaneApiUrl(hosted: HostedRuntimeManifest): string {
-	const explicit = hosted.controlPlane.cloudApiUrl;
-	if (explicit) return explicit;
-	const manifestUrl = hosted.controlPlane.manifestUrl;
-	if (!manifestUrl) return new URL(runtimeManifestUrlFromEnvOrSource()).origin;
-	try {
-		return new URL(manifestUrl).origin;
-	} catch {
-		return new URL(runtimeManifestUrlFromEnvOrSource()).origin;
-	}
-}
-
-function runtimeManifestUrlFromEnvOrSource(): string {
-	const explicit = process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim();
-	if (explicit) return explicit;
-	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") {
-		throw new Error("missing CLAWDI_RUNTIME_MANIFEST_URL");
-	}
-	const sourcePath =
-		process.env.CLAWDI_RUNTIME_SOURCE_PATH?.trim() || "/etc/clawdi/runtime-source.json";
-	if (existsSync(sourcePath)) {
-		const parsed = runtimeSourceSchema.safeParse(readJsonFile(sourcePath));
-		if (parsed.success) return parsed.data.url;
-	}
-	return "https://runtime.invalid/manifest";
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {

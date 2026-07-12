@@ -1362,6 +1362,7 @@ interface RuntimeWatchNotificationSubscription {
 	config: RuntimeWatchNotificationConfig;
 	abort: AbortController;
 	task: Promise<void>;
+	settled: boolean;
 }
 
 function sameRuntimeWatchNotificationConfig(
@@ -1407,11 +1408,19 @@ function ensureRuntimeWatchNotificationSubscription(
 		current?.abort.abort();
 		return null;
 	}
-	if (current && sameRuntimeWatchNotificationConfig(current.config, config)) return current;
+	if (current && !current.settled && sameRuntimeWatchNotificationConfig(current.config, config)) {
+		return current;
+	}
 	current?.abort.abort();
 	const abort = new AbortController();
 	const consumer = opts.notificationConsumer ?? consumeSse;
-	const task = consumer({
+	const subscription: RuntimeWatchNotificationSubscription = {
+		config,
+		abort,
+		task: Promise.resolve(),
+		settled: false,
+	};
+	subscription.task = consumer({
 		apiUrl: config.apiUrl,
 		apiKey: config.apiKey,
 		abort: abort.signal,
@@ -1423,15 +1432,17 @@ function ensureRuntimeWatchNotificationSubscription(
 				wakeSignal.signal();
 			}
 		},
-		// Runtime-watch keeps ETag polling alive after auth failure. A new
-		// manifest/token identity is the only condition that creates a new stream.
+		// Runtime-watch keeps ETag polling alive after auth failure. The settled
+		// subscription becomes eligible for replacement on the next watch pass.
 		onAuthFailure: () => {},
+	}).finally(() => {
+		subscription.settled = true;
 	});
-	void task.catch(() => {
+	void subscription.task.catch(() => {
 		// The shared SSE consumer already handles transient reconnects. An
 		// unexpected terminal failure must not take down the polling fallback.
 	});
-	return { config, abort, task };
+	return subscription;
 }
 
 function readFileIfExists(path: string): string | null {

@@ -253,8 +253,11 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It can include `system`, `controlPlane`, `clawdiCli`, `runtimes`,
-  `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and `recovery`.
+  shape served only from `/v1/runtime/manifest`. It requires explicit `runtime`
+  and `environmentId` fields and rejects unknown fields instead of accepting
+  compatibility payloads. It can include `system`, `controlPlane`, `clawdiCli`,
+  `runtimes`, `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and
+  `recovery`.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -264,9 +267,10 @@ Normalization maps hosted fields into the internal shape:
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
-| `controlPlane.manifestUrl`, `controlPlane.cloudApiUrl` | Manifest datasource and API origin |
+| `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
+| `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
-| `clawdiCli.packageSpec` | Required Cloud-owned managed CLI package selection |
+| `clawdiCli.packageSpec` | Required `clawdi@agent-v2`, exact `clawdi@<semver>`, or immutable managed bootstrap tgz |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Supported official installer input |

@@ -80,15 +80,15 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
 - UID/GID `0`, malformed values, and unavailable privilege-drop tools prevent
   egress startup instead of silently running mitmproxy as root.
 - Hosted image changes that add runtime business logic violate this decision.
-- Coordinated rollout order is: merge and publish exact CLI version
-  `0.12.10-beta.48` under the isolated npm `agent-v2` dist-tag without moving
-  `beta`; configure the v2 deployment contract to use that exact version;
-  merge the Hosted generic-envelope PR; release and promote the generic image; then recreate
-  prelaunch development and canary instances. Do not promote this through the
-  legacy agent image controls; no old-state repair is required.
+- The coordinated release uses exact CLI version `0.12.10-beta.51` on the
+  isolated npm `agent-v2` dist-tag without moving `beta`. The Hosted paired
+  smoke must pass the exact tarball before trusted-publisher OIDC publishes it.
+  Follow the cross-repository release runbook linked below; no legacy image
+  controls or old-state repair are part of this contract.
 
 ## Related Documentation
 
 - [Managed runtime architecture](../managed-runtime.md)
 - [Managed runtime CLI plan](../plans/managed-runtime-cli.md)
 - [Managed runtime roadmap](../plans/managed-runtime-roadmap.md)
+- [Agent v2 cross-repository release runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md)
