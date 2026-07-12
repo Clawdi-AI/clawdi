@@ -266,9 +266,11 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
+| `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
+| `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.user`, `system.home`, `system.workspace`, `system.persistentPaths` | Required runtime identity and persistent filesystem contract; Hosted does not derive defaults |
 | `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
-| `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
+| `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
@@ -328,13 +330,18 @@ managed state, sync state, egress bundles, run configs, and projections, then
 caches the fetched manifest as last-good. A generation-only control-plane bump
 therefore must produce a new ETag so `runtime watch` converges immediately.
 
-Manifest validation is defensive. The selected Hosted runtime must be enabled
-and provide exactly `install: {source: "official"}`. Hosted cannot select an
-installer channel, URL, or arguments; the CLI unconditionally owns the official
-URL and argument vector for the selected runtime. Generic desired-state
-manifests keep their existing optional installer, channel, and argument
-behavior. Unknown generic runtime names require `run.command`; otherwise the
-manifest is rejected so the image does not need to know every future agent.
+Manifest validation is defensive. A Hosted manifest selects exactly one enabled
+`openclaw` or `hermes` compute runtime; top-level `runtime` must match the sole
+entry in `runtimes`. Codex remains a live-sync agent type and is not a selectable
+Hosted compute runtime. The selected runtime must provide exactly
+`install: {source: "official"}`. Hosted cannot select an installer channel, URL,
+or arguments; the CLI unconditionally owns the official URL and argument vector
+for the selected runtime. Cloud-owned `controlPlane` contains only
+`cloudApiUrl`; `appId`, `apiUrl`, and `manifestUrl` are not emitted. Generic
+desired-state manifests keep their existing optional installer, channel, and
+argument behavior. Unknown generic runtime names require `run.command`;
+otherwise the manifest is rejected so the image does not need to know every
+future agent.
 
 ## Commands
 
