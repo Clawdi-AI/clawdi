@@ -256,7 +256,7 @@ The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
   shape. It requires strict `runtime`, `locale`, `system`, `controlPlane`,
-  `clawdiCli`, `runtimes`, `liveSync`, and `recovery` fields. `providers`,
+  `clawdiCli`, `runtimes`, `providers`, `liveSync`, and `recovery` fields.
   `egressProfiles`, `mcp`, and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
@@ -281,7 +281,7 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `runtimes.<name>.paths.home`, `runtimes.<name>.paths.workspace` | Required runtime-local home and workspace paths |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
-| `providers` | Runtime-scoped AI provider projections and secret refs |
+| `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids` |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Cloud does not derive it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
