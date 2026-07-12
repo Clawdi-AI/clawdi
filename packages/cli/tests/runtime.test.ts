@@ -181,6 +181,13 @@ const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 
 function hostedRequiredState() {
 	return {
+		providers: {
+			default: {
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "fixture provider unavailable" },
+			},
+		},
 		liveSync: { enabled: false, agents: [] },
 		recovery: { cacheManifest: true, allowOfflineBoot: true },
 	};
@@ -1137,6 +1144,7 @@ describe("runtime manifest datasource", () => {
 								openclaw: hostedOpenClawRuntime({
 									install: { source: "official", channel: "stable" },
 									paths: { home },
+									provider_ids: ["default", "codex"],
 								}),
 							},
 							providers: {
@@ -4287,6 +4295,16 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								},
 								runtimes: {
 									openclaw: hostedOpenClawRuntime(),
+								},
+								providers: {
+									default: {
+										kind: "openai-compatible",
+										type: "custom_openai_compatible",
+										baseUrl: "https://provider.test/v1",
+										model: "gpt-test",
+										apiMode: "openai_chat",
+										status: "ok",
+									},
 								},
 							},
 							secretValues: {},

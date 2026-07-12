@@ -118,6 +118,13 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 			packageSpec: "clawdi@agent-v2",
 			registry: "https://registry.npmjs.org",
 		},
+		providers: {
+			default: {
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "fixture provider unavailable" },
+			},
+		},
 		liveSync: { enabled: false, agents: [] },
 		recovery: { cacheManifest: true, allowOfflineBoot: true },
 		runtimes: {
@@ -208,6 +215,22 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ locale })).success).toBe(
 			false,
 		);
+	});
+
+	test.each([
+		["missing providers", undefined],
+		["missing selected provider", {}],
+		[
+			"unselected provider",
+			{
+				default: { kind: "openai-compatible" },
+				extra: { kind: "openai-compatible" },
+			},
+		],
+	])("rejects hosted manifests with %s", (_name, providers) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ providers })).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -764,6 +787,13 @@ describe("runtime manifest reconciliation invariants", () => {
 					packageSpec: "clawdi@agent-v2",
 					registry: "https://registry.npmjs.org",
 				},
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found" },
+					},
+				},
 				liveSync: { enabled: false, agents: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
@@ -879,6 +909,13 @@ describe("runtime manifest reconciliation invariants", () => {
 					source: "npm:clawdi",
 					packageSpec: "clawdi@agent-v2",
 					registry: "https://registry.npmjs.org",
+				},
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found" },
+					},
 				},
 				liveSync: { enabled: false, agents: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },

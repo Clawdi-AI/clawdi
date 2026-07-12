@@ -596,7 +596,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
 			system: hosted.system,
-			providers: hosted.providers ?? {},
+			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 		},

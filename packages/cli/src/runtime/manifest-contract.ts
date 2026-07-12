@@ -417,7 +417,7 @@ export const hostedRuntimeManifestSchema = z
 		egressEngine: egressEngineSchema.strict().optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 		bridge: hostedRuntimeBridgeSchema.optional(),
-		providers: z.record(z.string().min(1), hostedProviderSchema).optional(),
+		providers: z.record(z.string().min(1), hostedProviderSchema),
 		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: z.unknown().optional(),
@@ -453,6 +453,28 @@ export const hostedRuntimeManifestSchema = z
 				message: "selected runtime must be enabled",
 				path: ["runtimes", manifest.runtime, "enabled"],
 			});
+		}
+		const selectedRuntime = manifest.runtimes[manifest.runtime];
+		if (selectedRuntime) {
+			const providerIds = new Set(selectedRuntime.provider_ids);
+			for (const providerId of providerIds) {
+				if (!Object.hasOwn(manifest.providers, providerId)) {
+					ctx.addIssue({
+						code: "custom",
+						message: "runtime provider must have a matching provider projection",
+						path: ["providers", providerId],
+					});
+				}
+			}
+			for (const providerId of Object.keys(manifest.providers)) {
+				if (!providerIds.has(providerId)) {
+					ctx.addIssue({
+						code: "custom",
+						message: "provider projection must be selected by the runtime",
+						path: ["providers", providerId],
+					});
+				}
+			}
 		}
 		const surfaces = manifest.bridge?.surfaces ?? [];
 		if (manifest.runtime === "openclaw" && surfaces.length > 0) {
