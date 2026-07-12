@@ -271,7 +271,7 @@ Normalization maps hosted fields into the internal shape:
 | `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
-| `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata; remote Hosted manifests never select an npm dist-tag or local path |
+| `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns installer URL and args |
@@ -294,7 +294,8 @@ catalog fields such as `models[].api_mode` and ownership metadata such as
 `managed_by` remain canonical snake-case wire fields. Singular provider
 `model` is not a Hosted alias; model selection lives in runtime
 `primary_model`, while provider catalogs use `models[]`. Provider error
-projections require `status: "error"` and `error` together. A
+projections require `status: "error"` and `error` together, including a
+non-empty `error.message`. A
 `provider_not_found` entry contains `kind` plus that error pair; other error and
 healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
 

@@ -41,11 +41,12 @@ Package: `clawdi@0.12.10-beta.51`
 - Required Hosted provider `kind` to be exactly `openai-compatible`, and
   rejected singular Hosted provider `model` and empty provider objects while
   accepting Cloud's healthy, `provider_not_found`, and
-  `provider_secret_unavailable` projections. Generic runtime desired state
+  `provider_secret_unavailable` projections with required non-empty error
+  messages. Generic runtime desired state
   keeps its existing provider and installer behavior.
 - Restricted remote Hosted CLI package selection to exact
   `clawdi@<semver>` without build metadata, using strict SemVer prerelease
-  identifier rules. Managed bootstrap tgz paths are
+  identifier rules and the Cloud 200-character limit. Managed bootstrap tgz paths are
   accepted only through `CLAWDI_RUNTIME_MANIFEST_PATH` test fixtures; generic
   desired state retains floating package support.
 - Restored `agent-v2-candidate` as the repository-local OIDC publication tag.

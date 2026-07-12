@@ -110,10 +110,12 @@ function isHostedFixtureCliPackageSpec(value: string): boolean {
 
 const hostedCliPackageSpecSchema = z
 	.string()
+	.max(200)
 	.refine(isHostedExactCliPackageSpec, "must be clawdi@<exact-semver>");
 
 const hostedFixtureCliPackageSpecSchema = z
 	.string()
+	.max(200)
 	.refine(
 		isHostedFixtureCliPackageSpec,
 		"must be clawdi@<exact-semver> or a managed bootstrap tarball",
@@ -359,7 +361,7 @@ const hostedProviderSchema = z
 		error: z
 			.object({
 				code: z.string().min(1),
-				message: z.string().min(1).optional(),
+				message: z.string().min(1),
 			})
 			.strict()
 			.optional(),

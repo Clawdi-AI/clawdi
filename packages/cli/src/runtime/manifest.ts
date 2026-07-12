@@ -1338,12 +1338,13 @@ function hostedProviderModels(
 	primaryModel: AgentPrimaryModel | null,
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
 	const providerApiMode = hostedProviderApiMode(input);
-	const legacyModel = stringValue(input.model);
+	// Hosted wire rejects singular model; this fallback serves generic provider projections only.
+	const singularModel = stringValue(input.model);
 	if (hostedProviderManagedBy(input) === "clawdi") {
 		if (primaryModel) {
 			return [{ id: primaryModel.model, api_mode: providerApiMode }];
 		}
-		return legacyModel ? [{ id: legacyModel, api_mode: providerApiMode }] : [];
+		return singularModel ? [{ id: singularModel, api_mode: providerApiMode }] : [];
 	}
 
 	const rawModels = Array.isArray(input.models) ? input.models : [];
@@ -1361,8 +1362,8 @@ function hostedProviderModels(
 			};
 		})
 		.filter((model): model is NonNullable<typeof model> => model !== null);
-	if (legacyModel && !models.some((model) => model.id === legacyModel)) {
-		models.unshift({ id: legacyModel, api_mode: providerApiMode });
+	if (singularModel && !models.some((model) => model.id === singularModel)) {
+		models.unshift({ id: singularModel, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
 		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });

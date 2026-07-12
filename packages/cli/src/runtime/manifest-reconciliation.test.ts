@@ -19,6 +19,7 @@ import {
 	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
+	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
@@ -456,7 +457,10 @@ describe("runtime manifest reconciliation invariants", () => {
 				kind: "openai-compatible",
 				type: "custom_openai_compatible",
 				baseUrl: "https://provider.example.test/v1",
-				error: { code: "provider_secret_unavailable" },
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
 			},
 		],
 		[
@@ -464,7 +468,36 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				kind: "openai-compatible",
 				status: "error",
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
+			},
+		],
+		[
+			"provider_not_found without error message",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found" },
+			},
+		],
+		[
+			"provider_secret_unavailable without error message",
+			{
+				kind: "openai-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				status: "error",
 				error: { code: "provider_secret_unavailable" },
+			},
+		],
+		[
+			"empty error message",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "" },
 			},
 		],
 		[
@@ -504,7 +537,10 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimeEnvName: "ANTHROPIC_API_KEY",
 				apiKeyRequired: true,
 				status: "error",
-				error: { code: "provider_secret_unavailable" },
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
+				},
 			},
 		],
 		[
@@ -744,6 +780,31 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(true);
 	});
 
+	test("enforces the Cloud package spec length limit for remote and fixture Hosted schemas", () => {
+		const atLimit = `clawdi@1.2.3-${"a".repeat(187)}`;
+		const overLimit = `clawdi@1.2.3-${"a".repeat(188)}`;
+		expect(atLimit).toHaveLength(200);
+		expect(overLimit).toHaveLength(201);
+
+		for (const packageSpec of [atLimit, overLimit]) {
+			const manifest = hostedManifestFixture({
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec,
+					registry: "https://registry.npmjs.org",
+				},
+			});
+			const expected = packageSpec === atLimit;
+			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(expected);
+			expect(
+				hostedRuntimeManifestFixtureResponseSchema.safeParse({
+					manifest,
+					secretValues: {},
+				}).success,
+			).toBe(expected);
+		}
+	});
+
 	test.each([
 		"clawdi@agent-v2",
 		"clawdi@latest",
@@ -941,7 +1002,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					default: {
 						kind: "openai-compatible",
 						status: "error",
-						error: { code: "provider_not_found" },
+						error: { code: "provider_not_found", message: "provider is missing" },
 					},
 				},
 				liveSync: { enabled: false, agents: [] },
@@ -1064,7 +1125,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					default: {
 						kind: "openai-compatible",
 						status: "error",
-						error: { code: "provider_not_found" },
+						error: { code: "provider_not_found", message: "provider is missing" },
 					},
 				},
 				liveSync: { enabled: false, agents: [] },
