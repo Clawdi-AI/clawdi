@@ -267,6 +267,7 @@ Normalization maps hosted fields into the internal shape:
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
+| `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
 | `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
@@ -275,6 +276,10 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
+| `runtimes.<name>.provider_ids` | Canonical runtime provider selection |
+| `runtimes.<name>.primary_model.{provider_id,model}` | Canonical runtime primary model selection |
+| `runtimes.<name>.paths.{home,workspace}` | Canonical runtime paths; legacy `stateDir` is rejected |
+| `providers.<id>.{baseUrl,apiMode,runtimeEnvName,apiKeySecretRef}` | Canonical Hosted provider transport and secret-reference fields |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Runtime-scoped AI provider projections and secret refs |
@@ -282,6 +287,11 @@ Normalization maps hosted fields into the internal shape:
 | `liveSync` | Optional daemon sync configuration |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery` | Manifest cache and offline-boot behavior |
+
+Hosted parsing does not accept camel-case runtime binding aliases, snake-case
+provider transport aliases, or string `primary_model` values. Provider model
+catalog fields such as `models[].api_mode` and ownership metadata such as
+`managed_by` remain canonical snake-case wire fields.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, writes `generation` into

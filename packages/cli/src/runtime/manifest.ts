@@ -669,7 +669,7 @@ function providerHealthReasons(
 	if (!stringValue(provider.model) && !providerHasModels(provider)) {
 		reasons.push("model_missing");
 	}
-	const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
+	const apiMode = stringValue(provider.apiMode);
 	if (baseUrl && isOpenAiCompatibleMode(apiMode)) {
 		try {
 			const parsed = new URL(baseUrl);
@@ -1373,7 +1373,7 @@ function hostedProviderModels(
 }
 
 function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
-	const raw = typeof input.apiMode === "string" ? input.apiMode : input.api_mode;
+	const raw = input.apiMode;
 	if (typeof raw === "string" && isAiProviderApiMode(raw)) {
 		return raw;
 	}
@@ -1600,12 +1600,7 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
 
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
-	const raw =
-		typeof input.runtimeEnvName === "string"
-			? input.runtimeEnvName
-			: typeof input.runtime_env_name === "string"
-				? input.runtime_env_name
-				: null;
+	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
 	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
 	if (
 		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
@@ -2048,10 +2043,9 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 		const provider = recordValue(raw);
 		if (!provider) continue;
 		if (provider.managed_by === "user") continue;
-		const runtimeEnvName =
-			stringValue(provider.runtimeEnvName) ?? stringValue(provider.runtime_env_name);
+		const runtimeEnvName = stringValue(provider.runtimeEnvName);
 		if (!runtimeEnvName || !CODEX_MANAGED_PROVIDER_ENV_KEYS.has(runtimeEnvName)) continue;
-		const baseUrl = stringValue(provider.baseUrl) ?? stringValue(provider.base_url);
+		const baseUrl = stringValue(provider.baseUrl);
 		if (!baseUrl?.trim()) continue;
 		entries.push({
 			priority: hostedCodexManagedProviderPriority(providerId),
@@ -2060,9 +2054,8 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 				providerId,
 				baseUrl: baseUrl.trim(),
 				model: stringValue(provider.model),
-				apiMode: stringValue(provider.apiMode) ?? stringValue(provider.api_mode),
-				apiKeySecretRef:
-					stringValue(provider.apiKeySecretRef) ?? stringValue(provider.api_key_secret_ref),
+				apiMode: stringValue(provider.apiMode),
+				apiKeySecretRef: stringValue(provider.apiKeySecretRef),
 			},
 		});
 	}

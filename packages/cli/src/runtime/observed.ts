@@ -224,7 +224,7 @@ function providerReasons(provider: JsonRecord, secretAvailable: boolean | null):
 	} else {
 		try {
 			const parsed = new URL(baseUrl);
-			const apiMode = stringValue(provider.apiMode) ?? stringValue(provider.api_mode);
+			const apiMode = stringValue(provider.apiMode);
 			if (isOpenAiCompatibleMode(apiMode) && (!parsed.pathname || parsed.pathname === "/")) {
 				reasons.push("base_url_path_missing");
 			}

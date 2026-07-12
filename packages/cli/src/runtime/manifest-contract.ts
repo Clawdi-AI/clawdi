@@ -216,6 +216,15 @@ const hostedControlPlaneSchema = z
 
 const hostedRuntimeRunSettingsSchema = runtimeRunSettingsSchema.strict();
 
+const urlOriginSchema = z.string().refine((value) => {
+	try {
+		const url = new URL(value);
+		return (url.protocol === "http:" || url.protocol === "https:") && url.origin === value;
+	} catch {
+		return false;
+	}
+}, "must be an HTTP(S) URL origin");
+
 const hostedRuntimeInstallSchema = z
 	.object({
 		source: z.literal("official"),
@@ -226,8 +235,7 @@ const hostedRuntimeInstallSchema = z
 
 const hostedPrimaryModelSchema = z
 	.object({
-		provider_id: z.string().min(1).optional(),
-		providerId: z.string().min(1).optional(),
+		provider_id: z.string().min(1),
 		model: z.string().min(1),
 	})
 	.strict();
@@ -239,9 +247,7 @@ const hostedRuntimeEntrySchema = z
 		run: hostedRuntimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
 		provider_ids: z.array(z.string().min(1)).optional(),
-		providerIds: z.array(z.string().min(1)).optional(),
-		primary_model: z.union([z.string().min(1), hostedPrimaryModelSchema]).optional(),
-		primaryModel: hostedPrimaryModelSchema.optional(),
+		primary_model: hostedPrimaryModelSchema.optional(),
 		paths: z
 			.object({
 				home: z.string().min(1).optional(),
@@ -304,16 +310,12 @@ const hostedProviderSchema = z
 		kind: z.string().min(1).optional(),
 		type: z.string().min(1).optional(),
 		baseUrl: z.string().url().optional(),
-		base_url: z.string().url().optional(),
 		model: z.string().min(1).optional(),
 		models: z.array(hostedProviderModelSchema).optional(),
 		apiMode: z.string().min(1).optional(),
-		api_mode: z.string().min(1).optional(),
 		managed_by: z.string().min(1).optional(),
 		runtimeEnvName: z.string().min(1).optional(),
-		runtime_env_name: z.string().min(1).optional(),
 		apiKeySecretRef: z.string().min(1).nullable().optional(),
-		api_key_secret_ref: z.string().min(1).nullable().optional(),
 		apiKeyRequired: z.boolean().optional(),
 		status: z.string().min(1).optional(),
 		error: z
@@ -352,15 +354,13 @@ export const hostedRuntimeManifestSchema = z
 		issuedAt: z.string().min(1),
 		expiresAt: z.string().min(1).optional(),
 		locale: runtimeLocaleSchema,
-		language: z.never().optional(),
-		timezone: z.never().optional(),
-		personality: z.never().optional(),
 		system: z
 			.object({
 				user: z.string().min(1).optional(),
 				home: z.string().min(1).optional(),
 				workspace: z.string().min(1).optional(),
 				persistentPaths: z.array(z.string().min(1)).optional(),
+				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
 			})
 			.strict()
 			.optional(),

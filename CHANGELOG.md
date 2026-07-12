@@ -29,6 +29,8 @@ Package: `clawdi@0.12.10-beta.51`
   `runtime`, `minimumCliVersion`, `controlPlane.cloudApiUrl`, and the canonical
   `environmentId` identity, without inference, `appId`, datasource, or
   deployment fallbacks.
+- Restricted runtime bindings, provider transport fields, runtime paths, and
+  OpenClaw Control UI origins to the canonical Hosted wire shape.
 - Restricted hosted CLI package selection to `clawdi@agent-v2`, exact semver,
   or immutable tarballs under `/usr/local/share/clawdi/bootstrap/`.
 

@@ -182,6 +182,155 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
+	test.each([
+		["providerIds", { enabled: true, providerIds: ["default"] }],
+		[
+			"primaryModel",
+			{
+				enabled: true,
+				primaryModel: { provider_id: "default", model: "gpt-test" },
+			},
+		],
+		[
+			"primary_model.providerId",
+			{
+				enabled: true,
+				primary_model: { providerId: "default", model: "gpt-test" },
+			},
+		],
+		["string primary_model", { enabled: true, primary_model: "gpt-test" }],
+		[
+			"paths.stateDir",
+			{
+				enabled: true,
+				paths: { home: "/home/clawdi", workspace: "/workspace", stateDir: "/state" },
+			},
+		],
+	])("rejects noncanonical hosted runtime field %s", (_name, runtime) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test("copies canonical runtime provider bindings without backfill", () => {
+		const canonical = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						provider_ids: ["default"],
+						primary_model: { provider_id: "default", model: "gpt-test" },
+					},
+				},
+			}),
+		);
+		expect(hostedManifestToRuntimeManifest(canonical).runtimes.openclaw).toMatchObject({
+			provider_ids: ["default"],
+			primary_model: { provider_id: "default", model: "gpt-test" },
+		});
+
+		const primaryOnly = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						primary_model: { provider_id: "default", model: "gpt-test" },
+					},
+				},
+			}),
+		);
+		expect(
+			hostedManifestToRuntimeManifest(primaryOnly).runtimes.openclaw.provider_ids,
+		).toBeUndefined();
+	});
+
+	test.each([
+		["base_url", { base_url: "https://provider.example.test/v1" }],
+		["api_mode", { api_mode: "openai_chat" }],
+		["runtime_env_name", { runtime_env_name: "OPENAI_API_KEY" }],
+		["api_key_secret_ref", { api_key_secret_ref: "provider.default.apiKey" }],
+	])("rejects noncanonical hosted provider field %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		"not-an-origin",
+		"ftp://app-v2.example.test",
+		"https://app-v2.example.test/path",
+		"https://user@app-v2.example.test",
+	])("rejects invalid OpenClaw Control UI origin %s", (origin) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({
+					system: { openclawControlUiAllowedOrigins: [origin] },
+				}),
+			).success,
+		).toBe(false);
+	});
+
+	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
+		const paths = tempRuntimePaths();
+		const workspace = join(paths.userHome, "clawdi");
+		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
+		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  cat > '${patchPath}'`,
+				"  exit 0",
+				"fi",
+				"exit 0",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const hosted = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				system: {
+					home: paths.userHome,
+					workspace,
+					openclawControlUiAllowedOrigins: allowedOrigins,
+				},
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: { source: "official" },
+						paths: { home: paths.userHome, workspace },
+					},
+				},
+			}),
+		);
+		const normalized = hostedManifestToRuntimeManifest(hosted);
+		expect(normalized.projection?.system).toEqual(hosted.system);
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(normalized, "inline-hosted-control-ui-origins"),
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(patchPath, "utf8"))).toMatchObject({
+			gateway: {
+				controlUi: {
+					allowedOrigins,
+					dangerouslyDisableDeviceAuth: true,
+				},
+			},
+		});
+	});
+
 	test("rejects hosted manifests without an explicit CLI package policy", () => {
 		expect(() =>
 			normalizeManifestPayload({

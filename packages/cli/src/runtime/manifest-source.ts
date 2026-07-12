@@ -614,36 +614,9 @@ function hostedRuntimeProviderBinding(runtime: HostedRuntimeManifest["runtimes"]
 	provider_ids?: string[];
 	primary_model?: { provider_id: string; model: string };
 } {
-	const providerIds = runtime.provider_ids ?? runtime.providerIds;
-	const primary = runtime.primary_model ?? runtime.primaryModel;
-	const primaryRecord =
-		typeof primary === "object" && primary !== null && !Array.isArray(primary)
-			? (primary as Record<string, unknown>)
-			: null;
-	const primaryProviderId =
-		typeof primaryRecord?.provider_id === "string"
-			? primaryRecord.provider_id
-			: typeof primaryRecord?.providerId === "string"
-				? primaryRecord.providerId
-				: undefined;
-	const primaryModel =
-		typeof primaryRecord?.model === "string"
-			? primaryRecord.model
-			: typeof primary === "string"
-				? primary
-				: undefined;
-	const normalizedProviderIds = providerIds?.filter((id) => id.trim().length > 0);
-	const fallbackProviderIds =
-		primaryProviderId && !normalizedProviderIds?.includes(primaryProviderId)
-			? [...(normalizedProviderIds ?? []), primaryProviderId]
-			: normalizedProviderIds;
 	return {
-		...(fallbackProviderIds && fallbackProviderIds.length > 0
-			? { provider_ids: fallbackProviderIds }
-			: {}),
-		...(primaryProviderId && primaryModel
-			? { primary_model: { provider_id: primaryProviderId, model: primaryModel } }
-			: {}),
+		...(runtime.provider_ids ? { provider_ids: runtime.provider_ids } : {}),
+		...(runtime.primary_model ? { primary_model: runtime.primary_model } : {}),
 	};
 }
 
