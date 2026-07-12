@@ -353,12 +353,43 @@ const hostedRuntimeBridgeSchema = z
 	})
 	.strict();
 
-const hostedLiveSyncSchema = z
-	.object({
-		enabled: z.boolean().optional(),
-		agents: z.array(liveSyncAgentSchema.strict()).default([]),
+const hostedLiveSyncAgentSchema = liveSyncAgentSchema
+	.extend({
+		agentType: z.enum(["openclaw", "hermes", "codex"]),
+		environmentId: z
+			.string()
+			.min(1)
+			.max(200)
+			.refine((value) => value === value.trim(), "must not contain surrounding whitespace"),
 	})
 	.strict();
+
+const hostedLiveSyncSchema = z
+	.object({
+		enabled: z.boolean(),
+		agents: z.array(hostedLiveSyncAgentSchema),
+	})
+	.strict()
+	.superRefine((liveSync, ctx) => {
+		const identities = liveSync.agents.map(
+			(agent) => `${agent.agentType}\u0000${agent.environmentId}`,
+		);
+		if (new Set(identities).size !== identities.length) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["agents"],
+				message: "must not contain duplicate agent identities",
+			});
+		}
+		const hasAgents = liveSync.agents.length > 0;
+		if (liveSync.enabled !== hasAgents) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["enabled"],
+				message: "must match whether agents are configured",
+			});
+		}
+	});
 
 export const hostedRuntimeManifestSchema = z
 	.object({
@@ -387,17 +418,16 @@ export const hostedRuntimeManifestSchema = z
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 		bridge: hostedRuntimeBridgeSchema.optional(),
 		providers: z.record(z.string().min(1), hostedProviderSchema).optional(),
-		liveSync: hostedLiveSyncSchema.optional(),
+		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: z.unknown().optional(),
 		tools: z.unknown().optional(),
 		recovery: z
 			.object({
-				cacheManifest: z.boolean().optional(),
-				allowOfflineBoot: z.boolean().optional(),
+				cacheManifest: z.boolean(),
+				allowOfflineBoot: z.boolean(),
 			})
-			.strict()
-			.optional(),
+			.strict(),
 	})
 	.strict()
 	.superRefine((manifest, ctx) => {

@@ -118,6 +118,8 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 			packageSpec: "clawdi@agent-v2",
 			registry: "https://registry.npmjs.org",
 		},
+		liveSync: { enabled: false, agents: [] },
+		recovery: { cacheManifest: true, allowOfflineBoot: true },
 		runtimes: {
 			openclaw: {
 				enabled: true,
@@ -204,6 +206,40 @@ describe("runtime manifest reconciliation invariants", () => {
 		["invalid timezone", { language: "en", timezone: "Mars/Olympus" }],
 	])("rejects hosted manifests with %s", (_name, locale) => {
 		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ locale })).success).toBe(
+			false,
+		);
+	});
+
+	test.each([
+		["enabled without agents", { enabled: true, agents: [] }],
+		[
+			"disabled with agents",
+			{ enabled: false, agents: [{ agentType: "openclaw", environmentId: "env-live" }] },
+		],
+		[
+			"duplicate agents",
+			{
+				enabled: true,
+				agents: [
+					{ agentType: "openclaw", environmentId: "env-live" },
+					{ agentType: "openclaw", environmentId: "env-live" },
+				],
+			},
+		],
+		[
+			"environment id with surrounding whitespace",
+			{ enabled: true, agents: [{ agentType: "openclaw", environmentId: " env-live " }] },
+		],
+		[
+			"unsupported agent type",
+			{ enabled: true, agents: [{ agentType: "custom-runtime", environmentId: "env-live" }] },
+		],
+		[
+			"overlong environment id",
+			{ enabled: true, agents: [{ agentType: "openclaw", environmentId: "e".repeat(201) }] },
+		],
+	])("rejects hosted live sync with %s", (_name, liveSync) => {
+		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ liveSync })).success).toBe(
 			false,
 		);
 	});
@@ -728,6 +764,8 @@ describe("runtime manifest reconciliation invariants", () => {
 					packageSpec: "clawdi@agent-v2",
 					registry: "https://registry.npmjs.org",
 				},
+				liveSync: { enabled: false, agents: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
 					openclaw: hostedRuntimeFixture({ install: { source: "official" } }),
 				},
@@ -842,6 +880,8 @@ describe("runtime manifest reconciliation invariants", () => {
 					packageSpec: "clawdi@agent-v2",
 					registry: "https://registry.npmjs.org",
 				},
+				liveSync: { enabled: false, agents: [] },
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
 					openclaw: {
 						enabled: true,

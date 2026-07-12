@@ -179,6 +179,13 @@ const TEST_HOSTED_LOCALE = {
 };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
 
+function hostedRequiredState() {
+	return {
+		liveSync: { enabled: false, agents: [] },
+		recovery: { cacheManifest: true, allowOfflineBoot: true },
+	};
+}
+
 function hostedSystemFixture(
 	home: string,
 	workspace = join(home, "clawdi"),
@@ -238,6 +245,7 @@ function hostedRuntimeWatchLocalePayload(
 			runtime: "openclaw",
 			deploymentId: "dep_watch_locale",
 			environmentId: "env_watch_locale",
+			...hostedRequiredState(),
 			instanceId: "iid_watch_locale",
 			generation,
 			issuedAt: "2026-07-11T00:00:00Z",
@@ -1106,6 +1114,7 @@ describe("runtime manifest datasource", () => {
 							runtime: "openclaw",
 							deploymentId: "dep_test",
 							environmentId: "env_test",
+							...hostedRequiredState(),
 							instanceId: "iid_remote",
 							generation: 3,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -1261,6 +1270,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							runtime: "hermes",
 							deploymentId: "dep_runtime_bridge",
 							environmentId: "env_runtime_bridge",
+							...hostedRequiredState(),
 							instanceId: "iid_runtime_bridge",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -1354,6 +1364,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							runtime: "openclaw",
 							deploymentId: "dep_chat_provider",
 							environmentId: "env_chat_provider",
+							...hostedRequiredState(),
 							instanceId: "iid_chat_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
@@ -1451,6 +1462,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							runtime: "openclaw",
 							deploymentId: "dep_codex_provider",
 							environmentId: "env_codex_provider",
+							...hostedRequiredState(),
 							instanceId: "iid_codex_provider",
 							generation: 1,
 							issuedAt: "2026-06-22T00:00:00Z",
@@ -2961,6 +2973,7 @@ exit 0
 					runtime: "openclaw",
 					deploymentId: "dep_hosted_provider_secret",
 					environmentId: "env_hosted_provider_secret",
+					...hostedRequiredState(),
 					instanceId: "iid_hosted_provider_secret",
 					generation: 5,
 					issuedAt: "2026-06-15T00:00:00Z",
@@ -3122,6 +3135,7 @@ exit 64
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token",
 					environmentId: "env_bridge_token",
+					...hostedRequiredState(),
 					instanceId: "iid_bridge_token",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
@@ -3169,6 +3183,7 @@ exit 64
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token_explicit",
 					environmentId: "env_bridge_token_explicit",
+					...hostedRequiredState(),
 					instanceId: "iid_bridge_token_explicit",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
@@ -3242,6 +3257,7 @@ exit 64
 							runtime: "hermes",
 							deploymentId: "dep_custom_auth",
 							environmentId: "env_custom_auth",
+							...hostedRequiredState(),
 							instanceId: "iid_custom_auth",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -3304,6 +3320,7 @@ exit 64
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
 							environmentId: "env_same_token",
+							...hostedRequiredState(),
 							instanceId: "iid_same_token",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -3337,6 +3354,7 @@ exit 64
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
 							environmentId: "env_same_token",
+							...hostedRequiredState(),
 							instanceId: "iid_same_token",
 							generation: 2,
 							issuedAt: "2026-06-06T00:01:00Z",
@@ -4255,6 +4273,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								runtime: "openclaw",
 								deploymentId: "dep_watch",
 								environmentId: "env_watch",
+								...hostedRequiredState(),
 								instanceId: "iid_watch",
 								generation: 12,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -4399,6 +4418,7 @@ exit 42
 								runtime: "openclaw",
 								deploymentId: "dep_watch_systemd_failure",
 								environmentId: "env_watch_systemd_failure",
+								...hostedRequiredState(),
 								instanceId: "iid_watch_systemd_failure",
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -4477,6 +4497,7 @@ exit 42
 				runtime: "openclaw",
 				deploymentId: "dep_watch_secret",
 				environmentId: "env_watch_secret",
+				...hostedRequiredState(),
 				instanceId: "iid_watch_secret",
 				generation: 22,
 				issuedAt: "2026-06-06T00:00:00Z",
@@ -4758,6 +4779,7 @@ exit 64
 								runtime: "openclaw",
 								deploymentId: "dep_watch_recovery",
 								environmentId: "env_watch_recovery",
+								...hostedRequiredState(),
 								instanceId: "iid_watch_recovery",
 								generation: 18,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -5339,6 +5361,7 @@ chmod +x "$prefix/bin/clawdi"
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update",
 								environmentId: "env_cli_update",
+								...hostedRequiredState(),
 								instanceId: "iid_cli_update",
 								generation: 13,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -5577,6 +5600,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								runtime: "openclaw",
 								deploymentId: "dep_cli_mitm",
 								environmentId: "env_cli_mitm",
+								...hostedRequiredState(),
 								instanceId: "iid_cli_mitm",
 								generation: 2,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -5745,6 +5769,7 @@ chmod +x "$prefix/bin/clawdi"
 					runtime: "openclaw",
 					deploymentId: "dep_floating_cli_tag",
 					environmentId: "env_floating_cli_tag",
+					...hostedRequiredState(),
 					instanceId: "iid_floating_cli_tag",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -5824,6 +5849,7 @@ exit 97
 					runtime: "openclaw",
 					deploymentId: "dep_cli_bootstrap_current",
 					environmentId: "env_cli_bootstrap_current",
+					...hostedRequiredState(),
 					instanceId: "iid_cli_bootstrap_current",
 					generation: 1,
 					issuedAt: "2026-07-11T00:00:00Z",
@@ -5940,6 +5966,7 @@ chmod +x "$prefix/bin/clawdi"
 				runtime: "openclaw",
 				deploymentId: "dep_cli_self_heal",
 				environmentId: "env_cli_self_heal",
+				...hostedRequiredState(),
 				instanceId: "iid_cli_self_heal",
 				generation: 30,
 				issuedAt: "2026-07-11T00:00:00Z",
@@ -6145,6 +6172,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_converge_failure",
 								environmentId: "env_cli_update_converge_failure",
+								...hostedRequiredState(),
 								instanceId: "iid_cli_update_converge_failure",
 								generation: 16,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -6301,6 +6329,7 @@ chmod +x "$prefix/bin/clawdi"
 			runtime: "openclaw",
 			deploymentId: "dep_cli_rollback",
 			environmentId: "env_cli_rollback",
+			...hostedRequiredState(),
 			instanceId: "iid_cli_rollback",
 			generation: 18,
 			issuedAt: "2026-06-06T00:00:00Z",
@@ -6448,6 +6477,7 @@ chmod +x "$prefix/bin/clawdi"
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_failure",
 								environmentId: "env_cli_update_failure",
+								...hostedRequiredState(),
 								instanceId: "iid_cli_update_failure",
 								generation: 17,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -6586,6 +6616,7 @@ chmod +x "$prefix/bin/clawdi"
 								runtime: "openclaw",
 								deploymentId: "dep_min_cli",
 								environmentId: "env_min_cli",
+								...hostedRequiredState(),
 								instanceId: "iid_min_cli",
 								generation: 19,
 								minimumCliVersion: "999.0.0",
@@ -7072,6 +7103,7 @@ exit 64
 								runtime: "openclaw",
 								deploymentId: "dep_init",
 								environmentId: "env_init",
+								...hostedRequiredState(),
 								instanceId: "iid_init",
 								generation: 7,
 								issuedAt: "2026-06-06T00:00:00Z",
@@ -8223,6 +8255,7 @@ exit 64
 							runtime: "hermes",
 							deploymentId: "dep_workspace",
 							environmentId: "env_workspace",
+							...hostedRequiredState(),
 							instanceId: "iid_workspace",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -8351,6 +8384,7 @@ exit 64
 					runtime: "hermes",
 					deploymentId: "dep_legacy_api_url",
 					environmentId: "env_legacy_api_url",
+					...hostedRequiredState(),
 					instanceId: "iid_legacy_api_url",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -8379,6 +8413,29 @@ exit 64
 		expect(loaded.errors.join("\n")).toContain("apiUrl");
 	});
 
+	it.each([
+		"liveSync",
+		"recovery",
+	] as const)("rejects hosted manifests without required %s state", async (field) => {
+		const home = join(root, "home", "clawdi");
+		const manifestPath = join(root, `hosted-missing-${field}.json`);
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const payload = hostedRuntimeWatchLocalePayload(home, 1) as {
+			manifest: Record<string, unknown>;
+		};
+		delete payload.manifest[field];
+		writeFileSync(manifestPath, JSON.stringify(payload));
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
+
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.errors.join("\n")).toContain(`manifest.${field}`);
+	});
+
 	it("uses hosted runtime workspace paths even without explicit run settings", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -8399,6 +8456,7 @@ exit 64
 					runtime: "hermes",
 					deploymentId: "dep_runtime_workspace",
 					environmentId: "env_runtime_workspace",
+					...hostedRequiredState(),
 					instanceId: "iid_runtime_workspace",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -9405,6 +9463,7 @@ exit 64
 							runtime: "openclaw",
 							deploymentId: "dep_manifest_only",
 							environmentId: "env_manifest_only",
+							...hostedRequiredState(),
 							instanceId: "iid_manifest_only",
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -9460,6 +9519,7 @@ exit 64
 							runtime: "openclaw",
 							deploymentId: "dep_test",
 							environmentId: "env_test",
+							...hostedRequiredState(),
 							instanceId: "iid_remote",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -9740,6 +9800,7 @@ exit 64
 							runtime: "openclaw",
 							deploymentId: "dep_sync",
 							environmentId: "env_sync",
+							...hostedRequiredState(),
 							instanceId: "iid_sync",
 							generation: 9,
 							issuedAt: "2026-06-06T00:00:00Z",
@@ -9845,6 +9906,7 @@ exit 64
 					runtime: "openclaw",
 					deploymentId: "dep_no_secret_ref",
 					environmentId: "env_no_secret_ref",
+					...hostedRequiredState(),
 					instanceId: "iid_no_secret_ref",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
@@ -9891,6 +9953,7 @@ exit 64
 					runtime: "hermes",
 					deploymentId: "dep_bad_mitm",
 					environmentId: "env_bad_mitm",
+					...hostedRequiredState(),
 					instanceId: "iid_bad_mitm",
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",

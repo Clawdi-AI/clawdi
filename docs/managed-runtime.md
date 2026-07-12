@@ -255,9 +255,9 @@ The CLI accepts two related shapes:
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
   shape served only from `/v1/runtime/manifest`. It requires explicit `runtime`
   and `environmentId` fields and rejects unknown fields instead of accepting
-  compatibility payloads. It can include `system`, `controlPlane`, `clawdiCli`,
-  `runtimes`, `providers`, `liveSync`, `egressProfiles`, `mcp`, `tools`, and
-  `recovery`.
+  compatibility payloads. `system`, `controlPlane`, `clawdiCli`, `runtimes`,
+  `liveSync`, and `recovery` are required. `providers`, `egressProfiles`, `mcp`,
+  and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -284,9 +284,9 @@ Normalization maps hosted fields into the internal shape:
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Runtime-scoped AI provider projections and secret refs |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
-| `liveSync` | Optional daemon sync configuration |
+| `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
-| `recovery` | Manifest cache and offline-boot behavior |
+| `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
 
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model

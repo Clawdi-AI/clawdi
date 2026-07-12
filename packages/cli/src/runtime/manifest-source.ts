@@ -603,8 +603,8 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		liveSync: hosted.liveSync,
 		egressProfiles: hostedManifestEgressProfiles(hosted),
 		recovery: {
-			cacheManifest: hosted.recovery?.cacheManifest ?? true,
-			allowOfflineBoot: hosted.recovery?.allowOfflineBoot ?? true,
+			cacheManifest: hosted.recovery.cacheManifest,
+			allowOfflineBoot: hosted.recovery.allowOfflineBoot,
 		},
 	};
 }
