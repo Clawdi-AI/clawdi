@@ -71,7 +71,7 @@ describe("CLI publish workflow contract", () => {
 			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
 		);
 		expect(workflow).toContain(
-			'npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
+			'npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
 		expect(cliPackage.version).toContain("-");
 		expect(expectedNpmTag(cliPackage.version)).toBe("beta");
