@@ -47,15 +47,22 @@ ongoing authority. `minimumCliVersion` is a separate protocol floor, set to
 floor; locale and active invalidation do not introduce a second version
 authority.
 
+Every agent-v2 manifest explicitly selects one enabled, supported runtime in
+top-level `runtime` and includes only that runtime in `runtimes`; ambiguous or
+missing selection fails closed. The selected runtime is part of the manifest
+ETag. Cloud derives strict `controlPlane: {cloudApiUrl}` from its own public API
+origin, so Hosted cannot supply manifest or API URLs. The public manifest does
+not emit `appId`.
+
 Every agent-v2 hosted manifest has a strict top-level `locale` object with
 exactly `language` and `timezone`. `language` must be one of the product's
 supported language codes, and `timezone` must be a valid IANA timezone.
 Personality is not Cloud runtime desired state and is rejected by the admin
 writer. Revision `d8f2a1c4b6e9` adds a required JSONB column with no default or
-backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` column. The
-migration deliberately fails if obsolete experiment rows still exist; operators
-must remove those rows before rollout instead of preserving a nullable protocol
-state.
+backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` and
+`hosted_runtime_states.control_plane` columns. The migration deliberately fails
+if obsolete experiment rows still exist; operators must remove those rows
+before rollout instead of preserving nullable protocol state.
 
 `GET /v1/sync/events` carries a signal-only
 `runtime_manifest_changed` event containing the environment id, never desired

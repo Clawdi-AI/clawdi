@@ -245,10 +245,6 @@ async def _create_hosted_runtime_graph(
                 provider_id=DEV_V2_PROVIDER_ID,
                 locale={"language": "en", "timezone": "UTC"},
                 system={"status": "running", "seed": "dashboard-dev"},
-                control_plane={
-                    "cloudApiUrl": settings.public_api_url,
-                    "dashboardUrl": settings.web_origin,
-                },
                 runtimes={runtime: {"enabled": True, "status": "running"}},
                 live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
                 recovery={"mode": "dev"},

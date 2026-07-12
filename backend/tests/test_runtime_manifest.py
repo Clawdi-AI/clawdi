@@ -79,7 +79,6 @@ async def _write_runtime_state(admin_client: httpx.AsyncClient, environment_id: 
                 "install": {"source": "official", "channel": "stable"},
                 "run": {"args": ["gateway", "run"]},
             },
-            "hermes": {"enabled": False},
         },
     }
     body.update(overrides)
@@ -120,6 +119,8 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
     assert manifest["minimumCliVersion"] == "0.12.10-beta.51"
+    assert manifest["runtime"] == "openclaw"
+    assert set(manifest["runtimes"]) == {"openclaw"}
     assert manifest["locale"] == TEST_LOCALE
     assert set(manifest["locale"]) == {"language", "timezone"}
     assert "personality" not in manifest
@@ -132,10 +133,13 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert manifest["environmentId"] == str(env.id)
     assert manifest["instanceId"] == expected["instance_id"]
     assert manifest["generation"] == expected["generation"]
+    assert manifest["controlPlane"] == {
+        "cloudApiUrl": settings.public_api_url.rstrip("/"),
+    }
     assert manifest["liveSync"]["agents"] == [
         {"agentType": "openclaw", "environmentId": str(env.id)}
     ]
-    assert "apiUrl" not in manifest["controlPlane"]
+    assert "appId" not in manifest
     assert "channels" not in manifest
     assert payload["secretValues"] == {}
 
@@ -150,6 +154,46 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["etag"] == etag
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
+
+
+@pytest.mark.asyncio
+async def test_runtime_selection_changes_manifest_and_etag(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-selection-{uuid4().hex[:8]}",
+        machine_name="Runtime selection",
+        agent_type="openclaw",
+    )
+    body = await _write_runtime_state(admin_client, str(env.id))
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        first = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+    assert first.status_code == 200, first.text
+
+    body["runtimes"] = {"hermes": {"enabled": True}}
+    updated = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+    assert updated.status_code == 200, updated.text
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        second = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert second.status_code == 200, second.text
+    assert first.json()["manifest"]["runtime"] == "openclaw"
+    assert second.json()["manifest"]["runtime"] == "hermes"
+    assert set(second.json()["manifest"]["runtimes"]) == {"hermes"}
+    assert second.headers["etag"] != first.headers["etag"]
 
 
 @pytest.mark.asyncio
@@ -874,7 +918,7 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_projects_per_runtime_provider_bindings(
+async def test_runtime_manifest_projects_selected_runtime_provider_pool(
     admin_client,
     db_session,
     seed_user,
@@ -947,14 +991,6 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
                     "model": "gpt-5.5",
                 },
             },
-            "hermes": {
-                "enabled": True,
-                "provider_ids": ["openai-managed", "anthropic-managed"],
-                "primary_model": {
-                    "provider_id": "anthropic-managed",
-                    "model": "claude-opus-4-6",
-                },
-            },
         },
     )
 
@@ -992,14 +1028,6 @@ async def test_runtime_manifest_projects_per_runtime_provider_bindings(
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "openai-managed",
         "model": "gpt-5.5",
-    }
-    assert payload["manifest"]["runtimes"]["hermes"]["provider_ids"] == [
-        "openai-managed",
-        "anthropic-managed",
-    ]
-    assert payload["manifest"]["runtimes"]["hermes"]["primary_model"] == {
-        "provider_id": "anthropic-managed",
-        "model": "claude-opus-4-6",
     }
     assert payload["secretValues"] == {
         "provider.anthropic-managed.apiKey": "sk-hermes-provider",
@@ -1075,13 +1103,11 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         runtimes={
             "openclaw": {
                 "enabled": True,
-                "provider_id": "anthropic-byok",
-                "model": "claude-opus-4-6",
-            },
-            "hermes": {
-                "enabled": True,
-                "provider_id": "gemini-byok",
-                "model": "gemini-2.5-pro",
+                "provider_ids": ["anthropic-byok", "gemini-byok"],
+                "primary_model": {
+                    "provider_id": "anthropic-byok",
+                    "model": "claude-opus-4-6",
+                },
             },
         },
     )
@@ -1115,10 +1141,10 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         "provider_id": "anthropic-byok",
         "model": "claude-opus-4-6",
     }
-    assert payload["manifest"]["runtimes"]["hermes"]["primary_model"] == {
-        "provider_id": "gemini-byok",
-        "model": "gemini-2.5-pro",
-    }
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
+        "anthropic-byok",
+        "gemini-byok",
+    ]
     assert payload["secretValues"] == {
         "provider.gemini-byok.apiKey": "sk-gemini-provider",
         "provider.anthropic-byok.apiKey": "sk-anthropic-provider",
@@ -1162,7 +1188,6 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
                 "provider_id": "missing-key-provider",
                 "model": "claude-opus-4-6",
             },
-            "hermes": {"enabled": False},
         },
     )
 
@@ -1258,7 +1283,6 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 "enabled": True,
                 "provider_id": "deleted-custom-provider",
             },
-            "hermes": {"enabled": False},
         },
     )
 
@@ -1344,7 +1368,6 @@ async def test_runtime_manifest_keeps_default_archived_provider_fallback(
         provider_id="deleted-default-provider",
         runtimes={
             "openclaw": {"enabled": True},
-            "hermes": {"enabled": False},
         },
     )
 
@@ -1566,6 +1589,50 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "runtimes",
+    [
+        {},
+        {"openclaw": {"enabled": False}},
+        {
+            "openclaw": {"enabled": True},
+            "hermes": {"enabled": False},
+        },
+        {
+            "openclaw": {"enabled": True},
+            "hermes": {"enabled": True},
+        },
+    ],
+)
+async def test_admin_runtime_state_requires_exactly_one_enabled_runtime(
+    admin_client,
+    db_session,
+    seed_user,
+    runtimes,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-selection-{uuid4().hex[:8]}",
+        machine_name="Runtime selection invalid",
+        agent_type="openclaw",
+    )
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": f"dep_{uuid4().hex}",
+            "instance_id": f"hri_{uuid4().hex}",
+            "generation": 7,
+            "locale": TEST_LOCALE,
+            "runtimes": runtimes,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_admin_runtime_state_rejects_unknown_runtime_names(
     admin_client,
     db_session,
@@ -1602,6 +1669,53 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "runtimes",
+    [
+        {},
+        {"openclaw": {"enabled": False}},
+        {
+            "openclaw": {"enabled": True},
+            "hermes": {"enabled": True},
+        },
+    ],
+)
+async def test_runtime_manifest_rejects_state_without_exactly_one_enabled_runtime(
+    db_session,
+    seed_user,
+    runtimes,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"manifest-runtime-selection-{uuid4().hex[:8]}",
+        machine_name="Manifest runtime selection invalid",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            locale=TEST_LOCALE,
+            runtimes=runtimes,
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "detail": "hosted runtime state must select exactly one enabled runtime"
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
     db_session,
     seed_user,
@@ -1627,7 +1741,6 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
                 "openclaw": {"enabled": False},
             },
             system=None,
-            control_plane=None,
             live_sync=None,
             recovery=None,
             egress_profiles=None,
@@ -1692,7 +1805,6 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
                     "openclaw": {"enabled": False},
                 },
                 system=None,
-                control_plane=None,
                 live_sync=None,
                 recovery=None,
                 egress_profiles=None,
@@ -1711,6 +1823,8 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
 
     assert response.status_code == 200, response.text
     payload = response.json()
+    assert payload["manifest"]["runtime"] == "codex"
+    assert set(payload["manifest"]["runtimes"]) == {"codex"}
     assert payload["manifest"]["providers"]["openai-codex"] == {
         "kind": "openai-compatible",
         "type": "openai",
@@ -1731,10 +1845,20 @@ async def test_runtime_manifest_allows_codex_enabled_runtime_state(
 
 
 @pytest.mark.asyncio
-async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
+@pytest.mark.parametrize(
+    "control_plane",
+    [
+        {"cloudApiUrl": "https://cloud-api.test"},
+        {"manifestUrl": "https://cloud-api.test/v1/runtime/manifest"},
+        {"apiUrl": "https://cloud-api.test"},
+        {"unknown": "https://cloud-api.test"},
+    ],
+)
+async def test_admin_runtime_state_rejects_hosted_control_plane_authority(
     admin_client,
     db_session,
     seed_user,
+    control_plane,
 ):
     env = await create_env_with_project(
         db_session,
@@ -1750,11 +1874,7 @@ async def test_admin_runtime_state_rejects_legacy_control_plane_api_url(
         "generation": 7,
         "provider_id": "clawdi-managed",
         "locale": TEST_LOCALE,
-        "control_plane": {
-            "manifestUrl": "https://cloud-api.test/api/runtime/manifest",
-            "apiUrl": "https://api.clawdi.test",
-            "cloudApiUrl": "https://cloud-api.test",
-        },
+        "control_plane": control_plane,
         "runtimes": {"openclaw": {"enabled": True}},
     }
 
@@ -2109,7 +2229,6 @@ async def test_runtime_manifest_uses_runtime_model_when_provider_default_is_miss
                 "provider_id": "custom-openai",
                 "model": "gpt-5.5",
             },
-            "hermes": {"enabled": False},
         },
     )
 
@@ -2173,7 +2292,6 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
                 "provider_id": "openai-codex",
                 "model": "gpt-5.5",
             },
-            "hermes": {"enabled": False},
         },
     )
 

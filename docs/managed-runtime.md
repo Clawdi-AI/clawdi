@@ -255,9 +255,9 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It includes strict `locale` and can include `system`, `controlPlane`,
-  `clawdiCli`, `runtimes`, `providers`, `liveSync`, `egressProfiles`, `mcp`,
-  `tools`, and `recovery`.
+  shape. It requires strict `runtime`, `locale`, and `controlPlane` fields and
+  can include `system`, `clawdiCli`, `runtimes`, `providers`, `liveSync`,
+  `egressProfiles`, `mcp`, `tools`, and `recovery`.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 
@@ -266,9 +266,10 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
+| `runtime` | The single enabled runtime selected and served by this deployment |
 | `locale.language`, `locale.timezone` | Product-supported agent language and valid IANA timezone |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
-| `controlPlane.manifestUrl`, `controlPlane.cloudApiUrl` | Manifest datasource and API origin |
+| `controlPlane.cloudApiUrl` | Cloud-owned API origin derived from the Cloud service configuration |
 | `clawdiCli.packageSpec` | System-managed CLI package selection; agent v2 uses the floating `clawdi@agent-v2` channel |
 | `clawdiCli.registry` | System-managed npm registry; agent v2 uses `https://registry.npmjs.org` |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
@@ -282,16 +283,18 @@ Normalization maps hosted fields into the internal shape:
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery` | Manifest cache and offline-boot behavior |
 
-Manifest `generation` is part of the remote manifest ETag. The CLI applies any
-non-304 manifest without monotonic generation gating, writes `generation` into
-managed state, sync state, egress bundles, run configs, and projections, then
-caches the fetched manifest as last-good. A generation-only control-plane bump
-therefore must produce a new ETag so `runtime watch` converges immediately.
+Manifest `runtime`, `runtimes`, and `generation` are part of the remote manifest
+ETag. The CLI applies any non-304 manifest without monotonic generation gating,
+writes `generation` into managed state, sync state, egress bundles, run configs,
+and projections, then caches the fetched manifest as last-good. A runtime
+selection or generation change therefore produces a new ETag so `runtime watch`
+converges immediately.
 
-Manifest validation is defensive. Enabled built-in runtimes must use the
-expected official installer metadata unless they provide an explicit run
-command. Unknown runtime names require `run.command`; otherwise the manifest is
-rejected so the image does not need to know every future agent.
+Manifest validation is defensive. Agent v2 requires exactly one enabled,
+supported runtime, emits its name in top-level `runtime`, and includes only that
+entry in `runtimes`. Zero, multiple, disabled, or unsupported selections fail
+closed. The selected built-in runtime must use the expected official installer
+metadata unless it provides an explicit run command.
 
 For agent deployment v2, Cloud API manifest assembly owns `clawdiCli` and emits
 `npm:clawdi` with `clawdi@agent-v2`, the official
@@ -301,14 +304,17 @@ deployment bootstrap environment seeds the CLI before its first manifest; the
 CLI persists the selected channel and registry, then ordinary self-updates
 resolve the ongoing authority emitted by Cloud manifests. `minimumCliVersion`
 is the independent protocol floor, currently `0.12.10-beta.51` for this
-contract.
+contract. Cloud also derives `controlPlane.cloudApiUrl` from its own
+`public_api_url`; Hosted runtime-state input cannot provide URL authority.
+`controlPlane` contains only `cloudApiUrl`, and the public manifest does not
+contain `manifestUrl`, `apiUrl`, or `appId`.
 
 `locale` contains exactly `language` and `timezone`; personality is not part of
 Cloud desired state. Revision `d8f2a1c4b6e9` adds the required
 `hosted_runtime_states.locale` column without a default or data backfill and
-removes the obsolete `clawdi_cli` column. Existing experiment rows must be
-removed before rollout; the database never admits a partial runtime-state row
-without locale.
+removes the obsolete `clawdi_cli` and `control_plane` columns. Existing
+experiment rows must be removed before rollout; the database never admits a
+partial runtime-state row without locale.
 
 ## Commands
 

@@ -115,7 +115,6 @@ class AdminRuntimeStateUpsert(BaseModel):
     provider_id: str | None = Field(default=None, min_length=2, max_length=80)
     locale: HostedRuntimeLocale
     system: dict[str, Any] | None = None
-    control_plane: dict[str, Any] | None = None
     egress_engine: dict[str, Any] | None = None
     runtimes: dict[str, Any] = Field(default_factory=dict)
     bridge: dict[str, Any] | None = None
@@ -135,13 +134,11 @@ class AdminRuntimeStateUpsert(BaseModel):
         unknown = sorted(set(value) - _SUPPORTED_HOSTED_RUNTIMES)
         if unknown:
             raise ValueError(f"unsupported runtime desired state: {', '.join(unknown)}")
-        return value
-
-    @field_validator("control_plane")
-    @classmethod
-    def _validate_control_plane(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None and "apiUrl" in value:
-            raise ValueError("hosted runtime controlPlane must use cloudApiUrl")
+        if len(value) != 1:
+            raise ValueError("runtimes must contain exactly one enabled runtime")
+        runtime = next(iter(value.values()))
+        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
+            raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 
     @field_validator("bridge")

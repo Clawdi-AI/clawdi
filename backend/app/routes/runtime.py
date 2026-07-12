@@ -110,6 +110,7 @@ async def get_runtime_manifest(
             status.HTTP_409_CONFLICT,
             "Hosted runtime locale is invalid or not configured",
         ) from exc
+    runtime = _selected_runtime(state.runtimes)
 
     (
         providers,
@@ -125,11 +126,16 @@ async def get_runtime_manifest(
         "instanceId": state.instance_id,
         "generation": state.generation,
         "issuedAt": issued_at,
+        "runtime": runtime,
         "locale": locale.model_dump(),
         "system": state.system or _default_system(),
-        "controlPlane": _control_plane(state.control_plane),
+        "controlPlane": _control_plane(),
         "clawdiCli": _AGENT_V2_CLAWDI_CLI,
-        "runtimes": _runtime_manifest_runtimes(state.runtimes, runtime_provider_bindings),
+        "runtimes": _runtime_manifest_runtimes(
+            state.runtimes,
+            runtime_provider_bindings,
+            runtime,
+        ),
         "providers": providers,
         "liveSync": state.live_sync or _default_live_sync(env),
         "recovery": state.recovery or {"cacheManifest": True, "allowOfflineBoot": True},
@@ -137,8 +143,6 @@ async def get_runtime_manifest(
     manifest["minimumCliVersion"] = _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION
     if state.bridge:
         manifest["bridge"] = state.bridge
-    if state.app_id:
-        manifest["appId"] = state.app_id
     if state.egress_engine:
         manifest["egressEngine"] = state.egress_engine
     if state.egress_profiles:
@@ -202,14 +206,9 @@ def _default_system() -> dict[str, Any]:
     }
 
 
-def _control_plane(value: dict[str, Any] | None) -> dict[str, Any]:
-    if value:
-        return value
+def _control_plane() -> dict[str, str]:
     api_url = settings.public_api_url.rstrip("/")
-    return {
-        "manifestUrl": f"{api_url}/v1/runtime/manifest",
-        "cloudApiUrl": api_url,
-    }
+    return {"cloudApiUrl": api_url}
 
 
 def _default_live_sync(env: AgentEnvironment) -> dict[str, Any]:
@@ -383,11 +382,12 @@ def _managed_provider_catalog_model(provider: AiProvider | None) -> str | None:
 def _runtime_manifest_runtimes(
     runtimes: dict | None,
     bindings: dict[str, _RuntimeProviderManifestBinding],
+    runtime_name: str,
 ) -> dict[str, Any]:
-    manifest_runtimes = deepcopy(runtimes or {})
-    for runtime_name, binding in bindings.items():
-        raw_entry = manifest_runtimes.get(runtime_name)
-        entry = dict(raw_entry) if isinstance(raw_entry, dict) else {}
+    raw_entry = (runtimes or {}).get(runtime_name)
+    entry = deepcopy(raw_entry) if isinstance(raw_entry, dict) else {}
+    binding = bindings.get(runtime_name)
+    if binding is not None:
         for legacy_key in ("provider_id", "providerId", "model"):
             entry.pop(legacy_key, None)
         entry["provider_ids"] = list(binding.provider_ids)
@@ -398,8 +398,7 @@ def _runtime_manifest_runtimes(
             }
         else:
             entry.pop("primary_model", None)
-        manifest_runtimes[runtime_name] = entry
-    return manifest_runtimes
+    return {runtime_name: entry}
 
 
 def _provider_manifest_entry(
@@ -513,14 +512,27 @@ def _runtime_provider_bindings(state: HostedRuntimeState) -> dict[str, _RuntimeP
             primary_model=primary_model,
             explicit_provider_ids=explicit_provider_ids,
         )
-    if not bindings and state.provider_id:
-        bindings["default"] = _RuntimeProviderBinding(
-            provider_ids=(state.provider_id,),
-            primary_provider_id=state.provider_id,
-            primary_model=None,
-            explicit_provider_ids=False,
-        )
     return bindings
+
+
+def _selected_runtime(runtimes: dict | None) -> str:
+    enabled: list[str] = []
+    for runtime_name, runtime in (runtimes or {}).items():
+        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
+            continue
+        runtime_key = str(runtime_name)
+        if runtime_key not in _SUPPORTED_PROVIDER_RUNTIMES:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"unsupported enabled runtime: {runtime_key}",
+            )
+        enabled.append(runtime_key)
+    if len(enabled) != 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "hosted runtime state must select exactly one enabled runtime",
+        )
+    return enabled[0]
 
 
 def _runtime_provider_ids(

@@ -14,19 +14,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "d8f2a1c4b6e9"
-MIGRATION_FILENAME = f"{REVISION}_add_hosted_runtime_locale.py"
+MIGRATION_FILENAME = f"{REVISION}_finalize_agent_v2_runtime_contract.py"
 
 
 def _load_migration():
     migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("hosted_runtime_locale_migration", migration_path)
+    spec = importlib.util.spec_from_file_location(
+        "agent_v2_runtime_contract_migration",
+        migration_path,
+    )
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
     return migration
 
 
-def test_hosted_runtime_locale_migration_is_single_head() -> None:
+def test_agent_v2_runtime_contract_migration_is_single_head() -> None:
     backend_dir = Path(__file__).parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
@@ -36,11 +39,11 @@ def test_hosted_runtime_locale_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "c4e8f1a2b3d5"
 
 
-def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
+def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
-    schema = f"hosted_runtime_locale_migration_{uuid.uuid4().hex}"
+    schema = f"agent_v2_runtime_contract_migration_{uuid.uuid4().hex}"
 
     def run_migration(sync_conn: sa.Connection) -> None:
         old_op = migration.op
@@ -52,7 +55,8 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
                     """
                     CREATE TABLE hosted_runtime_states (
                         environment_id uuid PRIMARY KEY,
-                        clawdi_cli jsonb
+                        clawdi_cli jsonb,
+                        control_plane jsonb
                     )
                     """
                 )
@@ -90,6 +94,20 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
             ).scalar_one()
             assert removed_cli_column == 0
 
+            removed_control_plane_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT count(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'control_plane'
+                    """
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert removed_control_plane_column == 0
+
             migration.downgrade()
 
             restored_cli_column = sync_conn.execute(
@@ -107,6 +125,22 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
             assert restored_cli_column.is_nullable == "YES"
             assert restored_cli_column.column_default is None
             assert restored_cli_column.data_type == "jsonb"
+
+            restored_control_plane_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'control_plane'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert restored_control_plane_column.is_nullable == "YES"
+            assert restored_control_plane_column.column_default is None
+            assert restored_control_plane_column.data_type == "jsonb"
 
             removed_locale_column = sync_conn.execute(
                 sa.text(
@@ -135,11 +169,11 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
         sync_engine.dispose()
 
 
-def test_hosted_runtime_locale_migration_rejects_existing_state_before_schema_changes(
+def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schema_changes(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
-    schema = f"hosted_runtime_locale_migration_guard_{uuid.uuid4().hex}"
+    schema = f"agent_v2_runtime_contract_migration_guard_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
 
     def run_migration(sync_conn: sa.Connection) -> None:
@@ -152,7 +186,8 @@ def test_hosted_runtime_locale_migration_rejects_existing_state_before_schema_ch
                     """
                     CREATE TABLE hosted_runtime_states (
                         environment_id uuid PRIMARY KEY,
-                        clawdi_cli jsonb
+                        clawdi_cli jsonb,
+                        control_plane jsonb
                     )
                     """
                 )
@@ -160,11 +195,23 @@ def test_hosted_runtime_locale_migration_rejects_existing_state_before_schema_ch
             sync_conn.execute(
                 sa.text(
                     """
-                    INSERT INTO hosted_runtime_states (environment_id, clawdi_cli)
-                    VALUES (CAST(:environment_id AS uuid), CAST(:clawdi_cli AS jsonb))
+                    INSERT INTO hosted_runtime_states (
+                        environment_id,
+                        clawdi_cli,
+                        control_plane
+                    )
+                    VALUES (
+                        CAST(:environment_id AS uuid),
+                        CAST(:clawdi_cli AS jsonb),
+                        CAST(:control_plane AS jsonb)
+                    )
                     """
                 ),
-                {"environment_id": str(environment_id), "clawdi_cli": '{"channel":"beta"}'},
+                {
+                    "environment_id": str(environment_id),
+                    "clawdi_cli": '{"channel":"beta"}',
+                    "control_plane": '{"manifestUrl":"https://cloud.test/manifest"}',
+                },
             )
             migration.op = Operations(MigrationContext.configure(sync_conn))
 
@@ -192,18 +239,19 @@ def test_hosted_runtime_locale_migration_rejects_existing_state_before_schema_ch
                     {"schema": schema},
                 )
             }
-            assert columns == {"environment_id", "clawdi_cli"}
+            assert columns == {"environment_id", "clawdi_cli", "control_plane"}
 
             stored_state = sync_conn.execute(
                 sa.text(
                     """
-                    SELECT environment_id, clawdi_cli
+                    SELECT environment_id, clawdi_cli, control_plane
                     FROM hosted_runtime_states
                     """
                 )
             ).one()
             assert stored_state.environment_id == environment_id
             assert stored_state.clawdi_cli == {"channel": "beta"}
+            assert stored_state.control_plane == {"manifestUrl": "https://cloud.test/manifest"}
         finally:
             migration.op = old_op
 

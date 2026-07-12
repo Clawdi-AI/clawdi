@@ -719,7 +719,6 @@ async def _admin_upsert_runtime_state(
     state.provider_id = body.provider_id
     state.locale = body.locale.model_dump()
     state.system = body.system
-    state.control_plane = body.control_plane
     state.runtimes = body.runtimes
     state.bridge = body.bridge
     state.live_sync = body.live_sync
@@ -935,7 +934,6 @@ def _runtime_state_changed_fields(
         "provider_id",
         "locale",
         "system",
-        "control_plane",
         "egress_engine",
         "runtimes",
         "bridge",

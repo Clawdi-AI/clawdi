@@ -1,4 +1,4 @@
-"""add hosted runtime locale
+"""finalize agent v2 runtime contract
 
 Revision ID: d8f2a1c4b6e9
 Revises: c4e8f1a2b3d5
@@ -42,9 +42,18 @@ def upgrade() -> None:
         ),
     )
     op.drop_column("hosted_runtime_states", "clawdi_cli")
+    op.drop_column("hosted_runtime_states", "control_plane")
 
 
 def downgrade() -> None:
+    op.add_column(
+        "hosted_runtime_states",
+        sa.Column(
+            "control_plane",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
+    )
     op.add_column(
         "hosted_runtime_states",
         sa.Column(
