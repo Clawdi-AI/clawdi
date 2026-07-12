@@ -13,6 +13,12 @@ from app.models.hosted_runtime import HostedRuntimeState
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
+_TEST_SYSTEM = {
+    "user": "clawdi",
+    "home": "/home/clawdi",
+    "workspace": "/home/clawdi/clawdi",
+    "persistentPaths": ["/home/clawdi"],
+}
 
 
 def _agent_body(machine_id: str) -> dict[str, str]:
@@ -92,9 +98,22 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
             deployment_id="dep-agent-alias",
             instance_id="iid-agent-alias",
             generation=3,
-            provider_id="clawdi-managed",
             locale=_TEST_LOCALE,
-            runtimes={"codex": {"enabled": True}},
+            system=_TEST_SYSTEM,
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "provider_ids": ["clawdi-managed"],
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                    "paths": {
+                        "home": "/home/clawdi",
+                        "workspace": "/home/clawdi/clawdi",
+                    },
+                }
+            },
         )
     )
     await db_session.commit()

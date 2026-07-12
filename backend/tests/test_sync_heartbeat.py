@@ -31,6 +31,23 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
+_TEST_SYSTEM = {
+    "user": "clawdi",
+    "home": "/home/clawdi",
+    "workspace": "/home/clawdi/clawdi",
+    "persistentPaths": ["/home/clawdi"],
+}
+
+
+def _test_runtimes(provider_id: str = "clawdi-managed") -> dict:
+    return {
+        "openclaw": {
+            "enabled": True,
+            "provider_ids": [provider_id],
+            "primary_model": {"provider_id": provider_id, "model": "gpt-5.5"},
+            "paths": {"home": "/home/clawdi", "workspace": "/home/clawdi/clawdi"},
+        }
+    }
 
 
 async def _create_env(client: httpx.AsyncClient) -> str:
@@ -401,7 +418,8 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_observed(
         instance_id="iid-observed",
         generation=1,
         locale=_TEST_LOCALE,
-        runtimes={"openclaw": {"enabled": True}},
+        system=_TEST_SYSTEM,
+        runtimes=_test_runtimes(),
     )
     db_session.add(state)
     await db_session.commit()
@@ -433,12 +451,9 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         deployment_id="dep-observed-api",
         instance_id="iid-observed-api",
         generation=4,
-        provider_id="clawdi-managed",
         locale=_TEST_LOCALE,
-        runtimes={
-            "openclaw": {"enabled": True},
-            "hermes": {"enabled": False},
-        },
+        system=_TEST_SYSTEM,
+        runtimes=_test_runtimes(),
         mcp={"enabled": True},
         tools={"catalog": "clawdi-default"},
     )
@@ -489,9 +504,9 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
         deployment_id="dep-observed-dedupe",
         instance_id="iid-observed-dedupe",
         generation=4,
-        provider_id="clawdi-managed",
         locale=_TEST_LOCALE,
-        runtimes={"openclaw": {"enabled": True}},
+        system=_TEST_SYSTEM,
+        runtimes=_test_runtimes(),
     )
     db_session.add(state)
     await db_session.commit()
@@ -536,7 +551,8 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
         instance_id="iid-supervisor-error",
         generation=5,
         locale=_TEST_LOCALE,
-        runtimes={"openclaw": {"enabled": True}},
+        system=_TEST_SYSTEM,
+        runtimes=_test_runtimes(),
     )
     db_session.add(state)
     await db_session.commit()
@@ -582,9 +598,9 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         deployment_id="dep-provider-error",
         instance_id="iid-provider-error",
         generation=6,
-        provider_id="clawdi-managed",
         locale=_TEST_LOCALE,
-        runtimes={"openclaw": {"enabled": True}},
+        system=_TEST_SYSTEM,
+        runtimes=_test_runtimes(),
     )
     db_session.add(state)
     await db_session.commit()
@@ -594,11 +610,11 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
         "reportedAt": datetime.now(UTC).isoformat(),
         "status": "ok",
         "providers": {
-            "default": {
+            "clawdi-managed": {
                 "status": "error",
                 "baseUrl": "https://sub2api.test/v1",
                 "model": "gpt-5.5",
-                "apiKeySecretRef": "provider.default.apiKey",
+                "apiKeySecretRef": "provider.clawdi-managed.apiKey",
                 "secretAvailable": False,
                 "reasons": ["secret_missing"],
             }
@@ -617,14 +633,14 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
     assert "provider_error" in payload["health"]["reasons"]
     assert payload["provider_health"] == [
         {
-            "provider_id": "default",
+            "provider_id": "clawdi-managed",
             "status": "error",
             "reasons": ["provider_secret_missing", "secret_missing"],
             "desired": {
-                "state_provider_id": "clawdi-managed",
-                "default_binding": True,
+                "selected": True,
+                "primary": True,
             },
-            "observed": observed["providers"]["default"],
+            "observed": observed["providers"]["clawdi-managed"],
         }
     ]
 
@@ -676,16 +692,17 @@ async def test_runtime_observed_summary_counts_health_by_environment(
                 instance_id="iid-summary-ok",
                 generation=1,
                 locale=_TEST_LOCALE,
-                runtimes={"openclaw": {"enabled": True}},
+                system=_TEST_SYSTEM,
+                runtimes=_test_runtimes(),
             ),
             HostedRuntimeState(
                 environment_id=uuid.UUID(error_env_id),
                 deployment_id="dep-summary-error",
                 instance_id="iid-summary-error",
                 generation=1,
-                provider_id="clawdi-managed",
                 locale=_TEST_LOCALE,
-                runtimes={"openclaw": {"enabled": True}},
+                system=_TEST_SYSTEM,
+                runtimes=_test_runtimes(),
             ),
         ]
     )

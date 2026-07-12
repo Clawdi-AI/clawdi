@@ -66,6 +66,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
+from pydantic import ValidationError
 from sqlalchemy import event, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import make_url
@@ -76,6 +77,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.user import User
+from app.schemas.runtime import HostedRuntimeDesiredState
 
 log = logging.getLogger(__name__)
 
@@ -302,12 +304,7 @@ async def queue_provider_runtime_manifest_changed(
     user_id: UUID,
     provider_id: str,
 ) -> list[UUID]:
-    """Queue invalidations for hosted environments that may use a provider.
-
-    Explicit provider bindings are matched exactly. Legacy/implicit bindings
-    are conservatively included because runtime provider selection can fall
-    back to the account default when the preferred provider is unavailable.
-    """
+    """Queue invalidations for hosted environments bound to a provider."""
     states = (
         (
             await db.execute(
@@ -332,42 +329,17 @@ async def queue_provider_runtime_manifest_changed(
 
 
 def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str) -> bool:
-    enabled_runtimes = [
-        runtime
-        for runtime in (state.runtimes or {}).values()
-        if isinstance(runtime, dict) and runtime.get("enabled") is True
-    ]
-    if not enabled_runtimes:
-        # The legacy state-level provider binding uses default fallback if the
-        # named provider is missing, so any account provider can become active.
-        return state.provider_id is not None
-
-    for runtime in enabled_runtimes:
-        explicit_ids = _explicit_runtime_provider_ids(runtime)
-        if explicit_ids:
-            if provider_id in explicit_ids:
-                return True
-            continue
-        # No explicit per-runtime provider list: provider selection uses the
-        # state-level id or the account default/fallback catalog.
-        return True
-    return False
-
-
-def _explicit_runtime_provider_ids(runtime: dict[str, Any]) -> set[str]:
-    provider_ids: set[str] = set()
-    raw_provider_ids = runtime.get("provider_ids", runtime.get("providerIds"))
-    if isinstance(raw_provider_ids, list):
-        provider_ids.update(value for value in raw_provider_ids if isinstance(value, str))
-    raw_provider_id = runtime.get("provider_id", runtime.get("providerId"))
-    if isinstance(raw_provider_id, str):
-        provider_ids.add(raw_provider_id)
-    raw_primary = runtime.get("primary_model", runtime.get("primaryModel"))
-    if isinstance(raw_primary, dict):
-        raw_primary_provider = raw_primary.get("provider_id", raw_primary.get("providerId"))
-        if isinstance(raw_primary_provider, str):
-            provider_ids.add(raw_primary_provider)
-    return provider_ids
+    runtimes = state.runtimes
+    if not isinstance(runtimes, dict) or len(runtimes) != 1:
+        return False
+    runtime_name, raw_runtime = next(iter(runtimes.items()))
+    if runtime_name not in {"hermes", "openclaw"}:
+        return False
+    try:
+        runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
+    except ValidationError:
+        return False
+    return provider_id in runtime.provider_ids
 
 
 async def bump_skills_revision(

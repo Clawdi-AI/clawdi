@@ -242,10 +242,36 @@ async def _create_hosted_runtime_graph(
                 app_id=DEV_V2_APP_ID,
                 instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
                 generation=3,
-                provider_id=DEV_V2_PROVIDER_ID,
                 locale={"language": "en", "timezone": "UTC"},
-                system={"status": "running", "seed": "dashboard-dev"},
-                runtimes={runtime: {"enabled": True, "status": "running"}},
+                system={
+                    "user": "clawdi",
+                    "home": "/home/clawdi",
+                    "workspace": "/home/clawdi/clawdi",
+                    "persistentPaths": ["/home/clawdi"],
+                },
+                runtimes={
+                    runtime: {
+                        "enabled": True,
+                        "provider_ids": [DEV_V2_PROVIDER_ID],
+                        "primary_model": {
+                            "provider_id": DEV_V2_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                        "install": {"source": "official", "channel": "stable"},
+                        "run": {
+                            "args": (
+                                ["gateway", "run", "--replace"]
+                                if runtime == "hermes"
+                                else ["gateway", "run"]
+                            )
+                        },
+                        "services": {},
+                        "paths": {
+                            "home": "/home/clawdi",
+                            "workspace": "/home/clawdi/clawdi",
+                        },
+                    }
+                },
                 live_sync={"enabled": True, "lastSyncAt": (now - timedelta(minutes=3)).isoformat()},
                 recovery={"mode": "dev"},
                 egress_profiles={},

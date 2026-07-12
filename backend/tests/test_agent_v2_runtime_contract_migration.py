@@ -56,7 +56,9 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
                     CREATE TABLE hosted_runtime_states (
                         environment_id uuid PRIMARY KEY,
                         clawdi_cli jsonb,
-                        control_plane jsonb
+                        control_plane jsonb,
+                        provider_id varchar(80),
+                        system jsonb
                     )
                     """
                 )
@@ -108,6 +110,36 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
             ).scalar_one()
             assert removed_control_plane_column == 0
 
+            removed_provider_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT count(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'provider_id'
+                    """
+                ),
+                {"schema": schema},
+            ).scalar_one()
+            assert removed_provider_column == 0
+
+            required_system_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'system'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert required_system_column.is_nullable == "NO"
+            assert required_system_column.column_default is None
+            assert required_system_column.data_type == "jsonb"
+
             migration.downgrade()
 
             restored_cli_column = sync_conn.execute(
@@ -141,6 +173,39 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
             assert restored_control_plane_column.is_nullable == "YES"
             assert restored_control_plane_column.column_default is None
             assert restored_control_plane_column.data_type == "jsonb"
+
+            restored_provider_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type, character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'provider_id'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert restored_provider_column.is_nullable == "YES"
+            assert restored_provider_column.column_default is None
+            assert restored_provider_column.data_type == "character varying"
+            assert restored_provider_column.character_maximum_length == 80
+
+            restored_system_column = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT is_nullable, column_default, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                      AND table_name = 'hosted_runtime_states'
+                      AND column_name = 'system'
+                    """
+                ),
+                {"schema": schema},
+            ).one()
+            assert restored_system_column.is_nullable == "YES"
+            assert restored_system_column.column_default is None
+            assert restored_system_column.data_type == "jsonb"
 
             removed_locale_column = sync_conn.execute(
                 sa.text(
@@ -187,7 +252,9 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                     CREATE TABLE hosted_runtime_states (
                         environment_id uuid PRIMARY KEY,
                         clawdi_cli jsonb,
-                        control_plane jsonb
+                        control_plane jsonb,
+                        provider_id varchar(80),
+                        system jsonb
                     )
                     """
                 )
@@ -198,12 +265,16 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                     INSERT INTO hosted_runtime_states (
                         environment_id,
                         clawdi_cli,
-                        control_plane
+                        control_plane,
+                        provider_id,
+                        system
                     )
                     VALUES (
                         CAST(:environment_id AS uuid),
                         CAST(:clawdi_cli AS jsonb),
-                        CAST(:control_plane AS jsonb)
+                        CAST(:control_plane AS jsonb),
+                        :provider_id,
+                        CAST(:system AS jsonb)
                     )
                     """
                 ),
@@ -211,6 +282,8 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                     "environment_id": str(environment_id),
                     "clawdi_cli": '{"channel":"beta"}',
                     "control_plane": '{"manifestUrl":"https://cloud.test/manifest"}',
+                    "provider_id": "legacy-provider",
+                    "system": '{"home":"/home/legacy"}',
                 },
             )
             migration.op = Operations(MigrationContext.configure(sync_conn))
@@ -220,7 +293,7 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                 match=(
                     "hosted_runtime_states is not empty.*"
                     "rollout stop condition.*"
-                    "Remove all rows from hosted_runtime_states"
+                    "approved operator procedure"
                 ),
             ):
                 migration.upgrade()
@@ -239,12 +312,18 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
                     {"schema": schema},
                 )
             }
-            assert columns == {"environment_id", "clawdi_cli", "control_plane"}
+            assert columns == {
+                "environment_id",
+                "clawdi_cli",
+                "control_plane",
+                "provider_id",
+                "system",
+            }
 
             stored_state = sync_conn.execute(
                 sa.text(
                     """
-                    SELECT environment_id, clawdi_cli, control_plane
+                    SELECT environment_id, clawdi_cli, control_plane, provider_id, system
                     FROM hosted_runtime_states
                     """
                 )
@@ -252,6 +331,8 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
             assert stored_state.environment_id == environment_id
             assert stored_state.clawdi_cli == {"channel": "beta"}
             assert stored_state.control_plane == {"manifestUrl": "https://cloud.test/manifest"}
+            assert stored_state.provider_id == "legacy-provider"
+            assert stored_state.system == {"home": "/home/legacy"}
         finally:
             migration.op = old_op
 

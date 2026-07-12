@@ -29,8 +29,9 @@ def upgrade() -> None:
         raise RuntimeError(
             "Cannot apply migration d8f2a1c4b6e9: hosted_runtime_states is not empty. "
             "Agent deployment v2 has not launched, so existing hosted runtime state "
-            "is a rollout stop condition. Remove all rows from hosted_runtime_states "
-            "before retrying; this migration does not backfill or preserve them."
+            "is a rollout stop condition. Stop the rollout and resolve or decommission "
+            "this state through the approved operator procedure before retrying. This "
+            "migration does not backfill or preserve existing state."
         )
 
     op.add_column(
@@ -41,11 +42,22 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
+    op.alter_column(
+        "hosted_runtime_states",
+        "system",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False,
+    )
     op.drop_column("hosted_runtime_states", "clawdi_cli")
     op.drop_column("hosted_runtime_states", "control_plane")
+    op.drop_column("hosted_runtime_states", "provider_id")
 
 
 def downgrade() -> None:
+    op.add_column(
+        "hosted_runtime_states",
+        sa.Column("provider_id", sa.String(length=80), nullable=True),
+    )
     op.add_column(
         "hosted_runtime_states",
         sa.Column(
@@ -61,5 +73,11 @@ def downgrade() -> None:
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
         ),
+    )
+    op.alter_column(
+        "hosted_runtime_states",
+        "system",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=True,
     )
     op.drop_column("hosted_runtime_states", "locale")

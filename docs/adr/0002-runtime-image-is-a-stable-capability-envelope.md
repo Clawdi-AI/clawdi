@@ -47,22 +47,32 @@ ongoing authority. `minimumCliVersion` is a separate protocol floor, set to
 floor; locale and active invalidation do not introduce a second version
 authority.
 
-Every agent-v2 manifest explicitly selects one enabled, supported runtime in
-top-level `runtime` and includes only that runtime in `runtimes`; ambiguous or
-missing selection fails closed. The selected runtime is part of the manifest
-ETag. Cloud derives strict `controlPlane: {cloudApiUrl}` from its own public API
-origin, so Hosted cannot supply manifest or API URLs. The public manifest does
-not emit `appId`.
+Every agent-v2 manifest explicitly selects one enabled `openclaw` or `hermes`
+compute runtime in top-level `runtime` and includes only that runtime in
+`runtimes`; Codex remains an add-on/live-sync agent type. Ambiguous, missing, or
+unsupported selection fails closed. The selected runtime is part of the
+manifest ETag. Cloud derives strict `controlPlane: {cloudApiUrl}` from its own
+public API origin, so Hosted cannot supply manifest or API URLs. The public
+manifest does not emit `appId`.
+
+Hosted runtime state requires canonical `system`, runtime `paths.home` and
+`paths.workspace`, a non-empty `provider_ids` pool, and structured
+`primary_model: {provider_id, model}`. Cloud validates strict `install`, `run`,
+and `services` objects before persistence and validates stored JSON again before
+manifest assembly. Provider aliases, single-provider fields, model strings,
+unknown nested keys, and account-provider fallback are not part of agent v2.
 
 Every agent-v2 hosted manifest has a strict top-level `locale` object with
 exactly `language` and `timezone`. `language` must be one of the product's
 supported language codes, and `timezone` must be a valid IANA timezone.
 Personality is not Cloud runtime desired state and is rejected by the admin
 writer. Revision `d8f2a1c4b6e9` adds a required JSONB column with no default or
-backfill and drops the obsolete `hosted_runtime_states.clawdi_cli` and
-`hosted_runtime_states.control_plane` columns. The migration deliberately fails
-if obsolete experiment rows still exist; operators must remove those rows
-before rollout instead of preserving nullable protocol state.
+backfill, makes `hosted_runtime_states.system` non-null, and drops the obsolete
+`hosted_runtime_states.clawdi_cli`, `hosted_runtime_states.control_plane`, and
+`hosted_runtime_states.provider_id` columns. The migration deliberately fails
+before DDL if prelaunch state exists. That failure stops rollout and directs
+operators to the approved resolution or decommission procedure; it does not
+prescribe direct deletion, repair, backfill, or state preservation.
 
 `GET /v1/sync/events` carries a signal-only
 `runtime_manifest_changed` event containing the environment id, never desired

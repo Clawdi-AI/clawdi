@@ -12,7 +12,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from app.schemas.runtime import HostedRuntimeLocale
+from app.schemas.runtime import (
+    HostedRuntimeDesiredState,
+    HostedRuntimeLocale,
+    HostedRuntimeSystem,
+)
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 AdminChannelVisibility = Literal["private", "public"]
@@ -24,7 +28,7 @@ AdminAiProviderApiMode = Literal[
     "google_generate_content",
 ]
 AdminAiProviderInputModality = Literal["text", "image", "video", "audio"]
-_SUPPORTED_HOSTED_RUNTIMES = {"codex", "hermes", "openclaw"}
+_SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
 _BRIDGE_SURFACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _BRIDGE_SURFACE_KEYS = {
     "name",
@@ -112,11 +116,10 @@ class AdminRuntimeStateUpsert(BaseModel):
     app_id: str | None = Field(default=None, min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
-    provider_id: str | None = Field(default=None, min_length=2, max_length=80)
     locale: HostedRuntimeLocale
-    system: dict[str, Any] | None = None
+    system: HostedRuntimeSystem
     egress_engine: dict[str, Any] | None = None
-    runtimes: dict[str, Any] = Field(default_factory=dict)
+    runtimes: dict[str, HostedRuntimeDesiredState]
     bridge: dict[str, Any] | None = None
     live_sync: dict[str, Any] | None = None
     recovery: dict[str, Any] | None = None
@@ -126,7 +129,10 @@ class AdminRuntimeStateUpsert(BaseModel):
 
     @field_validator("runtimes")
     @classmethod
-    def _validate_runtimes(cls, value: dict[str, Any]) -> dict[str, Any]:
+    def _validate_runtimes(
+        cls,
+        value: dict[str, HostedRuntimeDesiredState],
+    ) -> dict[str, HostedRuntimeDesiredState]:
         if not value:
             raise ValueError("runtimes cannot be empty")
         if "channels" in value:
@@ -135,9 +141,6 @@ class AdminRuntimeStateUpsert(BaseModel):
         if unknown:
             raise ValueError(f"unsupported runtime desired state: {', '.join(unknown)}")
         if len(value) != 1:
-            raise ValueError("runtimes must contain exactly one enabled runtime")
-        runtime = next(iter(value.values()))
-        if not isinstance(runtime, dict) or runtime.get("enabled") is not True:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 

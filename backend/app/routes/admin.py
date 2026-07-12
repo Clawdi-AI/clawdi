@@ -707,6 +707,11 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
+    system_state = body.system.model_dump(exclude_none=True, mode="json")
+    runtime_state = {
+        name: runtime.model_dump(exclude_none=True, mode="json")
+        for name, runtime in body.runtimes.items()
+    }
     changed_fields = _runtime_state_changed_fields(existing_state, body)
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
@@ -716,10 +721,9 @@ async def _admin_upsert_runtime_state(
     state.app_id = body.app_id
     state.instance_id = body.instance_id
     state.generation = body.generation
-    state.provider_id = body.provider_id
     state.locale = body.locale.model_dump()
-    state.system = body.system
-    state.runtimes = body.runtimes
+    state.system = system_state
+    state.runtimes = runtime_state
     state.bridge = body.bridge
     state.live_sync = body.live_sync
     state.recovery = body.recovery
@@ -746,9 +750,8 @@ async def _admin_upsert_runtime_state(
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
-            "provider_id": body.provider_id,
             "locale": body.locale.model_dump(),
-            "enabled_runtimes": _enabled_runtime_names(body.runtimes),
+            "enabled_runtimes": _enabled_runtime_names(runtime_state),
             "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
@@ -824,7 +827,6 @@ async def _admin_delete_runtime_state(
                 "app_id": state.app_id,
                 "instance_id": state.instance_id,
                 "generation": state.generation,
-                "provider_id": state.provider_id,
                 "enabled_runtimes": _enabled_runtime_names(state.runtimes),
                 "has_mcp": state.mcp is not None,
                 "has_tools": state.tools is not None,
@@ -931,7 +933,6 @@ def _runtime_state_changed_fields(
         "app_id",
         "instance_id",
         "generation",
-        "provider_id",
         "locale",
         "system",
         "egress_engine",
@@ -948,7 +949,17 @@ def _runtime_state_changed_fields(
     changed: list[str] = []
     preserve_when_omitted = {"egress_engine", "egress_profiles", "mcp", "tools"}
     for field in fields:
-        body_value = body.locale.model_dump() if field == "locale" else getattr(body, field)
+        if field == "locale":
+            body_value = body.locale.model_dump()
+        elif field == "system":
+            body_value = body.system.model_dump(exclude_none=True, mode="json")
+        elif field == "runtimes":
+            body_value = {
+                name: runtime.model_dump(exclude_none=True, mode="json")
+                for name, runtime in body.runtimes.items()
+            }
+        else:
+            body_value = getattr(body, field)
         if field in preserve_when_omitted and body_value is None:
             continue
         if getattr(state, field) != body_value:

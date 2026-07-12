@@ -1015,9 +1015,27 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "deployment_id": "dep-admin-agent-alias",
             "instance_id": "iid-admin-agent-alias",
             "generation": 7,
-            "provider_id": "clawdi-managed",
             "locale": {"language": "en", "timezone": "America/Los_Angeles"},
-            "runtimes": {"codex": {"enabled": True}},
+            "system": {
+                "user": "clawdi",
+                "home": "/home/clawdi",
+                "workspace": "/home/clawdi/clawdi",
+                "persistentPaths": ["/home/clawdi"],
+            },
+            "runtimes": {
+                "openclaw": {
+                    "enabled": True,
+                    "provider_ids": ["clawdi-managed"],
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                    "paths": {
+                        "home": "/home/clawdi",
+                        "workspace": "/home/clawdi/clawdi",
+                    },
+                }
+            },
         },
     )
     assert runtime.status_code == 200, runtime.text

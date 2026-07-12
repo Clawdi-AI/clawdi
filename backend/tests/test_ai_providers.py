@@ -14,6 +14,13 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.services import sync_events
 from tests.conftest import create_env_with_project
 
+_TEST_SYSTEM = {
+    "user": "clawdi",
+    "home": "/home/clawdi",
+    "workspace": "/home/clawdi/clawdi",
+    "persistentPaths": ["/home/clawdi"],
+}
+
 
 def _test_jwt(account_id: str = "account-123") -> str:
     def encode(value: dict) -> str:
@@ -120,10 +127,16 @@ async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
                 instance_id=f"hri-{provider_id}",
                 generation=1,
                 locale={"language": "en", "timezone": "UTC"},
+                system=_TEST_SYSTEM,
                 runtimes={
                     "openclaw": {
                         "enabled": True,
                         "provider_ids": [provider_id],
+                        "primary_model": {"provider_id": provider_id, "model": "test-model"},
+                        "paths": {
+                            "home": "/home/clawdi",
+                            "workspace": "/home/clawdi/clawdi",
+                        },
                     }
                 },
             )

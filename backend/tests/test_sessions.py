@@ -11,6 +11,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_TEST_SYSTEM = {
+    "user": "clawdi",
+    "home": "/home/clawdi",
+    "workspace": "/home/clawdi/clawdi",
+    "persistentPaths": ["/home/clawdi"],
+}
+
 
 async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
     r = await client.post(
@@ -251,7 +258,21 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             instance_id="instance-test",
             generation=1,
             locale={"language": "en", "timezone": "UTC"},
-            runtimes={"openclaw": {"enabled": True}},
+            system=_TEST_SYSTEM,
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "provider_ids": ["clawdi-managed"],
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                    "paths": {
+                        "home": "/home/clawdi",
+                        "workspace": "/home/clawdi/clawdi",
+                    },
+                }
+            },
         )
     )
     await db_session.commit()

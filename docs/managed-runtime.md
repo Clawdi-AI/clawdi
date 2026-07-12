@@ -255,8 +255,8 @@ OpenClaw port directly.
 The CLI accepts two related shapes:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape. It requires strict `runtime`, `locale`, and `controlPlane` fields and
-  can include `system`, `clawdiCli`, `runtimes`, `providers`, `liveSync`,
+  shape. It requires strict `runtime`, `locale`, `system`, `controlPlane`, and
+  `runtimes` fields and can include `clawdiCli`, `providers`, `liveSync`,
   `egressProfiles`, `mcp`, `tools`, and `recovery`.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
@@ -269,13 +269,17 @@ Normalization maps hosted fields into the internal shape:
 | `runtime` | The single enabled runtime selected and served by this deployment |
 | `locale.language`, `locale.timezone` | Product-supported agent language and valid IANA timezone |
 | `system.home`, `system.workspace` | Runtime HOME and workspace root |
+| `system.persistentPaths` | Non-empty durable filesystem paths owned by the runtime host |
 | `controlPlane.cloudApiUrl` | Cloud-owned API origin derived from the Cloud service configuration |
 | `clawdiCli.packageSpec` | System-managed CLI package selection; agent v2 uses the floating `clawdi@agent-v2` channel |
 | `clawdiCli.registry` | System-managed npm registry; agent v2 uses `https://registry.npmjs.org` |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
+| `runtimes.<name>.provider_ids` | Required non-empty provider pool; no single-provider aliases or account fallback |
+| `runtimes.<name>.primary_model` | Required structured `{provider_id, model}` selection within that provider pool |
 | `runtimes.<name>.install` | Supported official installer input |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
+| `runtimes.<name>.paths.home`, `runtimes.<name>.paths.workspace` | Required runtime-local home and workspace paths |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Runtime-scoped AI provider projections and secret refs |
 | `mcp`, `tools` | Runtime MCP/tool projection input |
@@ -290,11 +294,16 @@ and projections, then caches the fetched manifest as last-good. A runtime
 selection or generation change therefore produces a new ETag so `runtime watch`
 converges immediately.
 
-Manifest validation is defensive. Agent v2 requires exactly one enabled,
-supported runtime, emits its name in top-level `runtime`, and includes only that
-entry in `runtimes`. Zero, multiple, disabled, or unsupported selections fail
-closed. The selected built-in runtime must use the expected official installer
-metadata unless it provides an explicit run command.
+Manifest validation is defensive. Agent v2 requires exactly one enabled
+`openclaw` or `hermes` compute runtime, emits its name in top-level `runtime`,
+and includes only that entry in `runtimes`. Codex remains an add-on/live-sync
+agent type, not a selectable hosted compute runtime. Zero, multiple, disabled,
+or unsupported selections fail closed. Cloud accepts only canonical
+`provider_ids` plus structured `primary_model`; provider aliases, single-value
+bindings, model strings, and account-provider fallback are rejected. Required
+`system` and runtime `paths` are validated before persistence and again before
+manifest assembly. `install`, `run`, and each `services` entry are strict
+contract objects, so unknown nested fields never reach the CLI.
 
 For agent deployment v2, Cloud API manifest assembly owns `clawdiCli` and emits
 `npm:clawdi` with `clawdi@agent-v2`, the official
@@ -312,9 +321,11 @@ contain `manifestUrl`, `apiUrl`, or `appId`.
 `locale` contains exactly `language` and `timezone`; personality is not part of
 Cloud desired state. Revision `d8f2a1c4b6e9` adds the required
 `hosted_runtime_states.locale` column without a default or data backfill and
-removes the obsolete `clawdi_cli` and `control_plane` columns. Existing
-experiment rows must be removed before rollout; the database never admits a
-partial runtime-state row without locale.
+removes the obsolete `clawdi_cli`, `control_plane`, and `provider_id` columns.
+It also makes `system` non-null. A non-empty table is a pre-DDL rollout stop
+condition: operators stop rollout and resolve or decommission the state through
+the approved procedure before retrying. The migration does not prescribe
+direct deletion, backfill, repair, or preservation of prelaunch state.
 
 ## Commands
 

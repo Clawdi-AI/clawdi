@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +36,7 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
+from app.schemas.runtime import HostedRuntimeDesiredState
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
@@ -900,11 +901,12 @@ async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
 def _runtime_observed_desired(
     state: HostedRuntimeState,
 ) -> RuntimeObservedDesiredResponse:
+    provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     return RuntimeObservedDesiredResponse(
         deployment_id=state.deployment_id,
         instance_id=state.instance_id,
         generation=state.generation,
-        provider_id=state.provider_id,
+        provider_id=primary_provider_id or (provider_ids[0] if provider_ids else None),
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
         has_tools=state.tools is not None,
@@ -989,6 +991,7 @@ def _runtime_observed_provider_health(
     if not isinstance(raw_providers, dict):
         return []
 
+    provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
     for provider_key in sorted(str(key) for key in raw_providers):
         observed = raw_providers.get(provider_key)
@@ -999,13 +1002,28 @@ def _runtime_observed_provider_health(
                 status=_runtime_observed_provider_status(observed_payload),
                 reasons=_runtime_observed_provider_reasons(observed_payload),
                 desired={
-                    "state_provider_id": state.provider_id,
-                    "default_binding": provider_key == "default",
+                    "selected": provider_key in provider_ids,
+                    "primary": provider_key == primary_provider_id,
                 },
                 observed=observed_payload,
             )
         )
     return provider_health
+
+
+def _runtime_desired_provider_binding(
+    runtimes: dict | None,
+) -> tuple[list[str], str | None]:
+    if not isinstance(runtimes, dict) or len(runtimes) != 1:
+        return [], None
+    runtime_name, raw_runtime = next(iter(runtimes.items()))
+    if runtime_name not in {"hermes", "openclaw"}:
+        return [], None
+    try:
+        runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
+    except ValidationError:
+        return [], None
+    return runtime.provider_ids, runtime.primary_model.provider_id
 
 
 def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
