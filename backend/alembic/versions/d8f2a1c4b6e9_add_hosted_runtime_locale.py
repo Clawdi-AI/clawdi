@@ -19,6 +19,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    # Keep writers out between the empty-table assertion and transactional DDL.
+    bind.execute(sa.text("LOCK TABLE hosted_runtime_states IN ACCESS EXCLUSIVE MODE"))
+    has_existing_state = bind.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM hosted_runtime_states)")
+    ).scalar_one()
+    if has_existing_state:
+        raise RuntimeError(
+            "Cannot apply migration d8f2a1c4b6e9: hosted_runtime_states is not empty. "
+            "Agent deployment v2 has not launched, so existing hosted runtime state "
+            "is a rollout stop condition. Remove all rows from hosted_runtime_states "
+            "before retrying; this migration does not backfill or preserve them."
+        )
+
     op.add_column(
         "hosted_runtime_states",
         sa.Column(

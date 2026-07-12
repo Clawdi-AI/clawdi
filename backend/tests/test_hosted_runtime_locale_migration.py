@@ -4,6 +4,7 @@ import importlib.util
 import uuid
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -120,6 +121,89 @@ def test_hosted_runtime_locale_migration_contracts_cli_and_adds_required_locale(
                 {"schema": schema},
             ).scalar_one()
             assert removed_locale_column == 0
+        finally:
+            migration.op = old_op
+
+    sync_url = engine.url.set(drivername="postgresql+psycopg2")
+    sync_engine = create_engine(sync_url)
+    try:
+        with sync_engine.begin() as conn:
+            run_migration(conn)
+    finally:
+        with sync_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        sync_engine.dispose()
+
+
+def test_hosted_runtime_locale_migration_rejects_existing_state_before_schema_changes(
+    engine: AsyncEngine,
+) -> None:
+    migration = _load_migration()
+    schema = f"hosted_runtime_locale_migration_guard_{uuid.uuid4().hex}"
+    environment_id = uuid.uuid4()
+
+    def run_migration(sync_conn: sa.Connection) -> None:
+        old_op = migration.op
+        sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        sync_conn.execute(sa.text(f'SET search_path TO "{schema}"'))
+        try:
+            sync_conn.execute(
+                sa.text(
+                    """
+                    CREATE TABLE hosted_runtime_states (
+                        environment_id uuid PRIMARY KEY,
+                        clawdi_cli jsonb
+                    )
+                    """
+                )
+            )
+            sync_conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO hosted_runtime_states (environment_id, clawdi_cli)
+                    VALUES (CAST(:environment_id AS uuid), CAST(:clawdi_cli AS jsonb))
+                    """
+                ),
+                {"environment_id": str(environment_id), "clawdi_cli": '{"channel":"beta"}'},
+            )
+            migration.op = Operations(MigrationContext.configure(sync_conn))
+
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    "hosted_runtime_states is not empty.*"
+                    "rollout stop condition.*"
+                    "Remove all rows from hosted_runtime_states"
+                ),
+            ):
+                migration.upgrade()
+
+            columns = {
+                row.column_name
+                for row in sync_conn.execute(
+                    sa.text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                          AND table_name = 'hosted_runtime_states'
+                        """
+                    ),
+                    {"schema": schema},
+                )
+            }
+            assert columns == {"environment_id", "clawdi_cli"}
+
+            stored_state = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT environment_id, clawdi_cli
+                    FROM hosted_runtime_states
+                    """
+                )
+            ).one()
+            assert stored_state.environment_id == environment_id
+            assert stored_state.clawdi_cli == {"channel": "beta"}
         finally:
             migration.op = old_op
 
