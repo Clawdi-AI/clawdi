@@ -143,7 +143,7 @@ def _is_safe_egress_host(host: str) -> bool:
 
 
 class _StrictHostedWireModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     @model_validator(mode="before")
     @classmethod

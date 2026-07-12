@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from httpx import ASGITransport
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -27,7 +28,7 @@ from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
 from app.schemas.admin import AdminRuntimeStateUpsert
-from app.schemas.runtime import validate_clawdi_cli_package_spec
+from app.schemas.runtime import HostedRuntimeBridge, validate_clawdi_cli_package_spec
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.vault_crypto import encrypt
@@ -282,6 +283,21 @@ def test_cli_package_spec_semver_contract_vectors(cli_package_spec, accepted):
         return
     with pytest.raises(ValueError):
         validate_clawdi_cli_package_spec(cli_package_spec)
+
+
+@pytest.mark.parametrize("listen_port", [True, "28789"])
+def test_hosted_runtime_bridge_rejects_numeric_coercion(listen_port):
+    bridge = {
+        "surfaces": [
+            {
+                **TEST_OPENCLAW_BRIDGE["surfaces"][0],
+                "listenPort": listen_port,
+            }
+        ]
+    }
+
+    with pytest.raises(ValidationError):
+        HostedRuntimeBridge.model_validate(bridge)
 
 
 @pytest.mark.asyncio
@@ -1530,6 +1546,28 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
                 "profiles": [
                     {
                         **TEST_EGRESS_PROFILES["profiles"][0],
+                        "priority": True,
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "priority": "100",
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
                         "owner": None,
                     }
                 ]
@@ -1635,6 +1673,52 @@ async def test_runtime_manifest_rejects_stored_runtime_bridge_mismatch(
     assert response.json() == {
         "detail": "Hosted runtime bridge state does not match the selected runtime"
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_rejects_stored_bridge_scalar_coercion(
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-stored-bridge-coercion-{uuid4().hex[:8]}",
+        machine_name="Runtime stored bridge coercion",
+        agent_type="openclaw",
+    )
+    bridge = {
+        "surfaces": [
+            {
+                **TEST_OPENCLAW_BRIDGE["surfaces"][0],
+                "listenPort": "28789",
+            }
+        ]
+    }
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+            locale=TEST_LOCALE,
+            system=TEST_SYSTEM,
+            runtimes=_runtime_state(),
+            bridge=bridge,
+            live_sync=_live_sync(str(env.id)),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "Hosted runtime bridge state is invalid"}
 
 
 @pytest.mark.asyncio
@@ -2624,6 +2708,39 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
                 "profiles": [
                     {
                         **TEST_EGRESS_PROFILES["profiles"][0],
+                        "priority": True,
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "priority": "100",
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
+                        "enabled": "true",
+                    }
+                ]
+            },
+        ),
+        (
+            "egress_profiles",
+            {
+                "profiles": [
+                    {
+                        **TEST_EGRESS_PROFILES["profiles"][0],
                         "owner": None,
                     }
                 ]
@@ -2748,6 +2865,14 @@ async def test_admin_runtime_state_rejects_runtime_bridge_mismatch(
                     "listenPort": 28789,
                     "upstreamPort": 18789,
                     "token": "must-not-be-here",
+                }
+            ]
+        },
+        {
+            "surfaces": [
+                {
+                    **TEST_OPENCLAW_BRIDGE["surfaces"][0],
+                    "listenPort": "28789",
                 }
             ]
         },
