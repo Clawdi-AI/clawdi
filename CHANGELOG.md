@@ -35,8 +35,23 @@ Package: `clawdi@0.12.10-beta.51`
   runtime home/workspace paths instead of deriving image-default locations.
 - Required a non-empty unique Hosted runtime provider selection and a structured
   primary model constrained to that selection.
-- Restricted hosted CLI package selection to `clawdi@agent-v2`, exact semver,
-  or immutable tarballs under `/usr/local/share/clawdi/bootstrap/`.
+- Required the selected Hosted runtime to include exactly
+  `install: {source: "official"}` while the CLI remains the sole owner of the
+  official installer URL and argument vector.
+- Required Hosted provider `kind` to be exactly `openai-compatible`, and
+  rejected singular Hosted provider `model` and empty provider objects while
+  accepting Cloud's healthy, `provider_not_found`, and
+  `provider_secret_unavailable` projections. Generic runtime desired state
+  keeps its existing provider and installer behavior.
+- Restricted remote Hosted CLI package selection to exact
+  `clawdi@<semver>` without build metadata, using strict SemVer prerelease
+  identifier rules. Managed bootstrap tgz paths are
+  accepted only through `CLAWDI_RUNTIME_MANIFEST_PATH` test fixtures; generic
+  desired state retains floating package support.
+- Restored `agent-v2-candidate` as the repository-local OIDC publication tag.
+  The protected publish job runs on GitHub-hosted `ubuntu-latest` and does not
+  modify `latest` or `beta`. Hosted runtime updates consume the public exact
+  version from the Cloud manifest and never resolve a production dist-tag.
 
 ### Fixed
 

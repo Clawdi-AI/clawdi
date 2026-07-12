@@ -20,6 +20,7 @@ import {
 } from "./manifest";
 import {
 	hostedRuntimeManifestSchema,
+	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
@@ -115,7 +116,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@agent-v2",
+			packageSpec: "clawdi@0.12.10-beta.51",
 			registry: "https://registry.npmjs.org",
 		},
 		providers: {
@@ -130,6 +131,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		runtimes: {
 			openclaw: {
 				enabled: true,
+				install: { source: "official" },
 				provider_ids: ["default"],
 				primary_model: { provider_id: "default", model: "gpt-test" },
 				paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
@@ -148,6 +150,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 			: {};
 	return {
 		enabled: true,
+		install: { source: "official" },
 		provider_ids: ["default"],
 		primary_model: { provider_id: "default", model: "gpt-test" },
 		...overrides,
@@ -345,6 +348,49 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
+		["missing install", { install: undefined }],
+		["remote install channel", { install: { source: "official", channel: "stable" } }],
+		["remote install args", { install: { source: "official", args: [] } }],
+	])("rejects hosted runtime with %s", (_name, overrides) => {
+		const runtime = hostedRuntimeFixture(overrides);
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test("preserves generic runtime install defaults and provider model projections", () => {
+		const parsed = manifestSchema.parse({
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_generic",
+			environmentId: "env_generic",
+			instanceId: "iid_generic",
+			generation: 1,
+			issuedAt: "2026-07-12T00:00:00.000Z",
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				custom: {
+					enabled: true,
+					updateChannel: "stable",
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: "https://runtime.example.test/install.sh",
+						home: "/home/runtime",
+					},
+				},
+			},
+			projection: { providers: { default: { model: "legacy-model" } } },
+			recovery: {},
+		});
+
+		expect(parsed.runtimes.custom.install?.args).toEqual([]);
+		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
+		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
+	});
+
+	test.each([
 		"system",
 		"system.user",
 		"system.home",
@@ -382,6 +428,102 @@ describe("runtime manifest reconciliation invariants", () => {
 				hostedManifestFixture({ providers: { default: provider } }),
 			).success,
 		).toBe(false);
+	});
+
+	test.each([
+		["empty provider", {}],
+		[
+			"unsupported kind",
+			{
+				kind: "anthropic-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+			},
+		],
+		["kind only", { kind: "openai-compatible" }],
+		[
+			"error status without error",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				status: "error",
+			},
+		],
+		[
+			"error without error status",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				error: { code: "provider_secret_unavailable" },
+			},
+		],
+		[
+			"non-not-found error without normal projection",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_secret_unavailable" },
+			},
+		],
+		[
+			"singular model alias",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				model: "gpt-test",
+			},
+		],
+	])("rejects hosted manifests with %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		[
+			"provider_not_found projection",
+			{
+				kind: "openai-compatible",
+				status: "error",
+				error: { code: "provider_not_found", message: "provider is missing" },
+			},
+		],
+		[
+			"provider_secret_unavailable projection",
+			{
+				kind: "openai-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				apiMode: "anthropic_messages",
+				models: [{ id: "claude-opus-4-6" }],
+				runtimeEnvName: "ANTHROPIC_API_KEY",
+				apiKeyRequired: true,
+				status: "error",
+				error: { code: "provider_secret_unavailable" },
+			},
+		],
+		[
+			"healthy provider projection",
+			{
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				baseUrl: "https://provider.example.test/v1",
+				apiMode: "openai_chat",
+				models: [{ id: "gpt-test" }],
+				apiKeySecretRef: "provider.default.apiKey",
+			},
+		],
+	])("accepts Cloud %s", (_name, provider) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: { default: provider } }),
+			).success,
+		).toBe(true);
 	});
 
 	test.each([
@@ -434,9 +576,9 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						install: { source: "official" },
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						install: { source: "official" },
 						paths: { home: paths.userHome, workspace },
 					},
 				},
@@ -536,19 +678,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "wrong source",
 			clawdiCli: {
 				source: "npm:other",
-				packageSpec: "clawdi@agent-v2",
+				packageSpec: "clawdi@0.12.10-beta.51",
 				registry: "https://registry.npmjs.org",
 			},
 		},
 		{
 			name: "missing registry",
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@agent-v2" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.51" },
 		},
 		{
 			name: "non-official registry",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@agent-v2",
+				packageSpec: "clawdi@0.12.10-beta.51",
 				registry: "https://registry.example.test",
 			},
 		},
@@ -556,7 +698,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "dead managed flags",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@agent-v2",
+				packageSpec: "clawdi@0.12.10-beta.51",
 				registry: "https://registry.npmjs.org",
 				managedConfig: true,
 				userEditableConfig: false,
@@ -585,10 +727,10 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"clawdi@agent-v2",
 		"clawdi@0.12.10-beta.51",
-		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.51.tgz",
-	])("accepts hosted CLI package spec %s", (packageSpec) => {
+		"clawdi@1.2.3-rc-1.2",
+		"clawdi@1.2.3",
+	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse(
 				hostedManifestFixture({
@@ -603,12 +745,20 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
+		"clawdi@agent-v2",
 		"clawdi@latest",
 		"clawdi@beta",
 		"clawdi",
 		"clawdi@candidate",
+		"clawdi@1.2.3+build.1",
+		"clawdi@1.2.3-beta..1",
+		"clawdi@1.2.3-beta.",
+		"clawdi@1.2.3-.beta",
+		"clawdi@1.2.3-01",
+		"clawdi@01.2.3",
 		"./clawdi.tgz",
 		"/tmp/clawdi.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.51.tgz",
 		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
@@ -648,7 +798,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@agent-v2",
+					packageSpec: "clawdi@0.12.10-beta.51",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
@@ -656,7 +806,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						enabled: true,
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						install: { source: "official", channel: "stable" },
+						install: { source: "official" },
 						run: {
 							command: "openclaw",
 							args: [
@@ -684,7 +834,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						kind: "openai-compatible",
 						type: "custom_openai_compatible",
 						baseUrl: "https://api.example.test/v1",
-						model: "gpt-test",
+						models: [{ id: "gpt-test" }],
 						apiMode: "openai_chat",
 						apiKeySecretRef: "secret://providers/default/api-key",
 					},
@@ -736,7 +886,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(normalized.manifest.runtime).toBe("openclaw");
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
-		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBe("stable");
+		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBeUndefined();
 		expect(normalized.manifest.runtimes.openclaw.install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
 		expect(normalized.manifest.runtimes.openclaw.install?.args).toEqual(
 			OFFICIAL_INSTALL_ARGS.openclaw,
@@ -784,7 +934,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@agent-v2",
+					packageSpec: "clawdi@0.12.10-beta.51",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -797,7 +947,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				liveSync: { enabled: false, agents: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
-					openclaw: hostedRuntimeFixture({ install: { source: "official" } }),
+					openclaw: hostedRuntimeFixture(),
 				},
 			}).success,
 		).toBe(false);
@@ -868,7 +1018,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@agent-v2",
+				packageSpec: "clawdi@0.12.10-beta.51",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -907,7 +1057,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@agent-v2",
+					packageSpec: "clawdi@0.12.10-beta.51",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -922,6 +1072,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						install: { source: "official" },
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
@@ -929,6 +1080,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					},
 					hermes: {
 						enabled: true,
+						install: { source: "official" },
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },

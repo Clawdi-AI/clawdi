@@ -15,8 +15,8 @@ concurrency:
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
 
-# This repository builds, verifies, and publishes one immutable release artifact.
-# There is intentionally no candidate upload or later dist-tag mutation.
+# This repository builds, verifies, and publishes one immutable candidate artifact.
+# It does not modify latest, beta, or a production agent-v2 selection.
 jobs:
   build-immutable-artifact:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
@@ -111,7 +111,8 @@ jobs:
   publish-immutable-artifact-with-oidc:
     if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
     needs: build-immutable-artifact
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    # npm trusted publishing supports GitHub-hosted runners, not self-hosted runners.
+    runs-on: ubuntu-latest
     environment: npm
     permissions:
       contents: write
@@ -125,6 +126,12 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Verify trusted publishing toolchain
+        run: |
+          npm install --global npm@11.5.1
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(1)'
+          test "$(npm --version)" = "11.5.1"
 
       - name: Download immutable CLI release artifact
         uses: actions/download-artifact@v4
@@ -149,10 +156,10 @@ jobs:
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
 
-      - name: Publish immutable tarball to agent-v2
+      - name: Publish immutable tarball to agent-v2-candidate
         env:
           CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
-        run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2
+        run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2-candidate
 
       - name: Create GitHub release
         env:
@@ -164,10 +171,11 @@ jobs:
           notes=$(cat <<EOF
           ## Package
 
-          \`npm install -g clawdi@agent-v2\`
+          \`npm install -g clawdi@$VERSION\`
 
-          Published as \`clawdi@$VERSION\` from the immutable artifact verified
-          by this repository's release workflow.
+          Published as the \`agent-v2-candidate\` for exact version
+          \`clawdi@$VERSION\` from the immutable artifact verified by this
+          repository's release workflow. No production npm dist-tag is changed.
 
           This is the release for the published \`packages/cli\` package.
           Clawdi app/backend/web changes are versioned separately as

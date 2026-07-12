@@ -271,15 +271,15 @@ Normalization maps hosted fields into the internal shape:
 | `controlPlane.cloudApiUrl` | Required API origin; manifest datasource selection stays out of band |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
-| `clawdiCli.packageSpec` | Required `clawdi@agent-v2`, exact `clawdi@<semver>`, or immutable managed bootstrap tgz |
+| `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Supported official installer input |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns installer URL and args |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
 | `runtimes.<name>.provider_ids` | Required non-empty unique runtime provider selection |
 | `runtimes.<name>.primary_model.{provider_id,model}` | Required primary model whose provider belongs to `provider_ids` |
 | `runtimes.<name>.paths.{home,workspace}` | Required canonical runtime paths; missing values and legacy `stateDir` are rejected |
-| `providers.<id>.{baseUrl,apiMode,runtimeEnvName,apiKeySecretRef}` | Canonical Hosted provider transport and secret-reference fields |
+| `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids` |
@@ -291,7 +291,35 @@ Normalization maps hosted fields into the internal shape:
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model
 catalog fields such as `models[].api_mode` and ownership metadata such as
-`managed_by` remain canonical snake-case wire fields.
+`managed_by` remain canonical snake-case wire fields. Singular provider
+`model` is not a Hosted alias; model selection lives in runtime
+`primary_model`, while provider catalogs use `models[]`. Provider error
+projections require `status: "error"` and `error` together. A
+`provider_not_found` entry contains `kind` plus that error pair; other error and
+healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
+
+This strict typing claim applies only to the Hosted fields modeled in this
+release. `mcp` and `tools` remain explicit pass-through projections, while
+egress retains its existing separate handling; this pass does not claim a
+complete product schema for any of those surfaces. Further `mcp`, `tools`, and
+egress modeling is separate future schema work. They are not compatibility
+aliases and are not removed or remodeled here. The normalized generic
+`clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
+default install args, and arbitrary provider projection data such as singular
+`model` for non-Hosted inputs.
+
+Remote Hosted CLI policy is exact-version only. Values such as npm dist-tags,
+bare package names, build-metadata versions such as `clawdi@1.2.3+build.1`, and
+malformed SemVer prereleases are rejected before normalization. Valid
+prereleases follow SemVer identifier rules, including forms such as `beta.51`
+and `rc-1.2`; empty identifiers and numeric identifiers with leading zeroes are
+invalid. A managed bootstrap tgz
+under `/usr/local/share/clawdi/bootstrap/` is accepted only when the entire
+manifest is loaded from the explicit `CLAWDI_RUNTIME_MANIFEST_PATH` test-fixture
+entry point. Remote fetches cannot use that fixture schema. Generic
+`clawdi.runtimeDesiredState.v1` manifests retain their existing floating package
+support; exact Hosted updates do not call `npm view` and can move to either a
+higher or lower exact version.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, writes `generation` into
@@ -299,10 +327,13 @@ managed state, sync state, egress bundles, run configs, and projections, then
 caches the fetched manifest as last-good. A generation-only control-plane bump
 therefore must produce a new ETag so `runtime watch` converges immediately.
 
-Manifest validation is defensive. Enabled built-in runtimes must use the
-expected official installer metadata unless they provide an explicit run
-command. Unknown runtime names require `run.command`; otherwise the manifest is
-rejected so the image does not need to know every future agent.
+Manifest validation is defensive. The selected Hosted runtime must be enabled
+and provide exactly `install: {source: "official"}`. Hosted cannot select an
+installer channel, URL, or arguments; the CLI unconditionally owns the official
+URL and argument vector for the selected runtime. Generic desired-state
+manifests keep their existing optional installer, channel, and argument
+behavior. Unknown generic runtime names require `run.command`; otherwise the
+manifest is rejected so the image does not need to know every future agent.
 
 ## Commands
 

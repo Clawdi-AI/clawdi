@@ -83,10 +83,26 @@ const cliPayloadPolicySchema = z.object({
 
 const HOSTED_BOOTSTRAP_PACKAGE_ROOT = "/usr/local/share/clawdi/bootstrap/";
 
-function isHostedCliPackageSpec(value: string): boolean {
-	if (value === "clawdi@agent-v2") return true;
+function isHostedExactCliPackageSpec(value: string): boolean {
 	const npmVersion = /^clawdi@(.+)$/.exec(value)?.[1];
-	if (npmVersion && isValidSemver(npmVersion)) return true;
+	return npmVersion !== undefined && isHostedExactSemver(npmVersion);
+}
+
+function isHostedExactSemver(value: string): boolean {
+	const match =
+		/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(
+			value,
+		);
+	if (!match) return false;
+	const prerelease = match[4];
+	if (!prerelease) return true;
+	return prerelease
+		.split(".")
+		.every((identifier) => !/^\d+$/.test(identifier) || /^(0|[1-9]\d*)$/.test(identifier));
+}
+
+function isHostedFixtureCliPackageSpec(value: string): boolean {
+	if (isHostedExactCliPackageSpec(value)) return true;
 	if (!value.startsWith(HOSTED_BOOTSTRAP_PACKAGE_ROOT)) return false;
 	const basename = value.slice(HOSTED_BOOTSTRAP_PACKAGE_ROOT.length);
 	return !basename.includes("..") && /^[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(basename);
@@ -94,19 +110,26 @@ function isHostedCliPackageSpec(value: string): boolean {
 
 const hostedCliPackageSpecSchema = z
 	.string()
+	.refine(isHostedExactCliPackageSpec, "must be clawdi@<exact-semver>");
+
+const hostedFixtureCliPackageSpecSchema = z
+	.string()
 	.refine(
-		isHostedCliPackageSpec,
-		"must be clawdi@agent-v2, clawdi@<exact-semver>, or a managed bootstrap tarball",
+		isHostedFixtureCliPackageSpec,
+		"must be clawdi@<exact-semver> or a managed bootstrap tarball",
 	);
 
 const hostedCliPayloadPolicySchema = z
 	.object({
-		// The image env seeds pre-manifest bootstrap only; Cloud owns every hosted update after that.
 		source: z.literal("npm:clawdi"),
 		packageSpec: hostedCliPackageSpecSchema,
 		registry: z.literal("https://registry.npmjs.org"),
 	})
 	.strict();
+
+const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.safeExtend({
+	packageSpec: hostedFixtureCliPackageSpecSchema,
+});
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 
@@ -228,8 +251,6 @@ const urlOriginSchema = z.string().refine((value) => {
 const hostedRuntimeInstallSchema = z
 	.object({
 		source: z.literal("official"),
-		channel: z.string().min(1).optional(),
-		args: z.array(z.string()).optional(),
 	})
 	.strict();
 
@@ -250,7 +271,7 @@ const hostedProviderIdsSchema = z
 const hostedRuntimeEntrySchema = z
 	.object({
 		enabled: z.boolean(),
-		install: hostedRuntimeInstallSchema.optional(),
+		install: hostedRuntimeInstallSchema,
 		run: hostedRuntimeRunSettingsSchema.optional(),
 		services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
 		provider_ids: hostedProviderIdsSchema,
@@ -325,17 +346,16 @@ const hostedProviderAuthSchema = z
 
 const hostedProviderSchema = z
 	.object({
-		kind: z.string().min(1).optional(),
+		kind: z.literal("openai-compatible"),
 		type: z.string().min(1).optional(),
 		baseUrl: z.string().url().optional(),
-		model: z.string().min(1).optional(),
 		models: z.array(hostedProviderModelSchema).optional(),
 		apiMode: z.string().min(1).optional(),
 		managed_by: z.string().min(1).optional(),
 		runtimeEnvName: z.string().min(1).optional(),
 		apiKeySecretRef: z.string().min(1).nullable().optional(),
 		apiKeyRequired: z.boolean().optional(),
-		status: z.string().min(1).optional(),
+		status: z.literal("error").optional(),
 		error: z
 			.object({
 				code: z.string().min(1),
@@ -345,7 +365,28 @@ const hostedProviderSchema = z
 			.optional(),
 		auth: hostedProviderAuthSchema.optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((provider, ctx) => {
+		const hasErrorStatus = provider.status === "error";
+		const hasError = provider.error !== undefined;
+		if (hasErrorStatus !== hasError) {
+			ctx.addIssue({
+				code: "custom",
+				message: "provider status:error and error must be supplied together",
+				path: hasErrorStatus ? ["error"] : ["status"],
+			});
+		}
+
+		const isProviderNotFound = hasErrorStatus && provider.error?.code === "provider_not_found";
+		const hasNormalProjection = provider.type !== undefined && provider.baseUrl !== undefined;
+		if (!isProviderNotFound && !hasNormalProjection) {
+			ctx.addIssue({
+				code: "custom",
+				message: "provider must include type and baseUrl unless it is a provider_not_found error",
+				path: [],
+			});
+		}
+	});
 
 const hostedRuntimeBridgeSchema = z
 	.object({
@@ -523,6 +564,17 @@ export const hostedRuntimeManifestSchema = z
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,
+		secretValues: z.record(z.string().min(1), z.string()).default({}),
+	})
+	.strict();
+
+const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestSchema.safeExtend({
+	clawdiCli: hostedFixtureCliPayloadPolicySchema,
+});
+
+export const hostedRuntimeManifestFixtureResponseSchema = z
+	.object({
+		manifest: hostedRuntimeManifestFixtureSchema,
 		secretValues: z.record(z.string().min(1), z.string()).default({}),
 	})
 	.strict();

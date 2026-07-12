@@ -73,13 +73,15 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
-   For the managed `agent-v2` channel, this repository's release workflow must
+   For the managed agent-v2 release line, this repository's release workflow must
    build, typecheck, run the full CLI suite, and pack one immutable tarball. It
    installs that tarball, records and verifies its SHA-256, transfers the same
    artifact to the protected npm job, verifies it again, and publishes it once
-   to `agent-v2` with npm trusted-publisher OIDC. There is no candidate tag or
-   dist-tag promotion step. The CLI workflow does not call workflows in the
-   Hosted repository or depend on Hosted repository settings.
+   to `agent-v2-candidate` with npm trusted-publisher OIDC. The build job may use
+   the configured fast runner; the protected publish job must use GitHub-hosted
+   `ubuntu-latest`, because npm trusted publishing does not support self-hosted
+   or third-party GitHub Actions runners. The CLI workflow does not call
+   workflows in the Hosted repository or depend on Hosted repository settings.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -103,12 +105,15 @@ releases.
    npm view clawdi dist-tags
    ```
 
-   Done: `agent-v2` points directly to the exact version published from the
-   verified CLI artifact while `beta` and `latest` are unchanged. The Hosted
-   image repository has a separate release boundary: its own release resolves
-   the published CLI to an exact npm semver and runs the image/CLI pairing smoke
-   before publishing that image. Hosted image validation does not gate or call
-   back into the CLI publish workflow.
+   Done: `agent-v2-candidate` points to the exact version published from the
+   verified CLI artifact while `beta` and `latest` are unchanged.
+   The Hosted image repository has a separate release boundary: its own release
+   resolves that candidate to an exact npm semver and runs the image/CLI pairing
+   smoke before publishing the image. It does not call back into this workflow.
+
+   Hosted rollout uses the Cloud manifest's exact `clawdi@<semver>` package
+   selection. The runtime does not resolve a production npm dist-tag. Verify the
+   exact package version directly before rollout.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version

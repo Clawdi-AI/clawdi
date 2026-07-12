@@ -9,6 +9,7 @@ import {
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	type HostedRuntimeManifest,
+	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
@@ -235,6 +236,27 @@ export function normalizeManifestPayload(value: unknown): {
 	if (internal.success) return { manifest: internal.data };
 
 	const hostedResponse = hostedRuntimeManifestResponseSchema.safeParse(value);
+	if (hostedResponse.success) {
+		return {
+			manifest: hostedManifestToRuntimeManifest(hostedResponse.data.manifest),
+			secretValues: normalizeSecretValues(hostedResponse.data.secretValues),
+		};
+	}
+	if (looksLikeHostedManifestResponse(value)) {
+		throw hostedResponse.error;
+	}
+
+	throw internal.error;
+}
+
+function normalizeManifestFixturePayload(value: unknown): {
+	manifest: RuntimeManifest;
+	secretValues?: Record<string, string>;
+} {
+	const internal = manifestSchema.safeParse(value);
+	if (internal.success) return { manifest: internal.data };
+
+	const hostedResponse = hostedRuntimeManifestFixtureResponseSchema.safeParse(value);
 	if (hostedResponse.success) {
 		return {
 			manifest: hostedManifestToRuntimeManifest(hostedResponse.data.manifest),
@@ -571,17 +593,13 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,
-				updateChannel: runtime.install?.channel,
-				install:
-					runtime.enabled && runtime.install && OFFICIAL_INSTALL_URLS[selectedRuntime]
-						? {
-								authority: "official" as const,
-								method: "official-installer" as const,
-								url: OFFICIAL_INSTALL_URLS[selectedRuntime],
-								home: runtime.paths.home,
-								args: runtime.install.args ?? OFFICIAL_INSTALL_ARGS[selectedRuntime],
-							}
-						: undefined,
+				install: {
+					authority: "official" as const,
+					method: "official-installer" as const,
+					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
+					home: runtime.paths.home,
+					args: OFFICIAL_INSTALL_ARGS[selectedRuntime],
+				},
 				run: hostedRuntimeRunSettings(runtime.run, runtime.paths.workspace),
 				services: Object.fromEntries(
 					Object.entries(runtime.services ?? {}).map(([service, run]) => [
@@ -839,7 +857,7 @@ export async function loadRuntimeManifest(
 	}
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = normalizeManifestPayload(raw);
+		normalized = normalizeManifestFixturePayload(raw);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",

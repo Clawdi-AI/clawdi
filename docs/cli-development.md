@@ -234,13 +234,20 @@ Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
 typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
 the tarball, records and checks its SHA-256, transfers the same artifact to the
 protected npm job, checks it again, and publishes it exactly once to the
-`agent-v2` tag with trusted-publisher OIDC. There is no candidate tag or
-separate dist-tag promotion.
+non-production `agent-v2-candidate` tag with trusted-publisher OIDC. The
+build/test job may use the configured fast runner, but the protected publish
+job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing does not
+support self-hosted or third-party GitHub Actions runners. The publish job uses
+Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm 11.5.1.
 
 The CLI workflow neither calls nor checks out the Hosted repository. The Hosted
 image repository owns a separate release: it resolves the published CLI package
 to an exact npm semver and runs its image/CLI pairing smoke before publishing
-the image. That independent image release is not a gate for npm publication.
+the image. This workflow stops after making the exact candidate version public;
+it does not modify `latest` or `beta` and does not coordinate with the Hosted
+repository. Cloud-owned Hosted manifests select `clawdi@<exact-semver>` only.
+The runtime installs that exact public version directly and never resolves an
+npm dist-tag or calls `npm view` for Hosted desired state.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
 Keep v2 creation and runtime-state reconciliation disabled until the final
@@ -301,10 +308,16 @@ onward releases are automatic.
 2. Merge to `main`.
 3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
-   with `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2`.
+   from GitHub-hosted `ubuntu-latest` with
+   `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2-candidate`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
-5. Watch the Actions tab; on green, `npm view clawdi@agent-v2 version` will
-   reflect the new number within ~60s while `latest` and `beta` stay unchanged.
+5. Watch the Actions tab; on green,
+   `npm view clawdi@agent-v2-candidate version` and
+   `npm view clawdi@<exact-version> version` reflect the new number while
+   `latest` and `beta` remain unchanged.
+
+Stop here for this release workflow. Hosted rollout selects the approved exact
+version through its Cloud manifest; no production runtime reads a dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run
 needs a nudge (e.g. npm was transiently unavailable).
@@ -339,3 +352,8 @@ this one-time on npmjs.com:
 2. Select GitHub Actions, enter `Clawdi-AI/clawdi`, workflow
    `cli-publish.yml`, environment `npm`
 3. Save. Subsequent pushes to `main` with a version bump auto-publish.
+
+The OIDC publish job must remain on a GitHub-hosted runner. Do not replace its
+`ubuntu-latest` runner with `vars.CI_RUNNER`, Blacksmith, or another self-hosted
+runner. OIDC is used only to publish the non-production candidate in this
+workflow; production selection is outside this PR.

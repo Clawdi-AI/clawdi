@@ -38,6 +38,7 @@ import {
 import {
 	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
+	normalizeManifestPayload,
 	type RuntimeChannelsLoad,
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
@@ -225,7 +226,7 @@ function runtimeWatchLocaleManifest(
 		controlPlane: { apiUrl: "https://cloud-api.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@agent-v2",
+			packageSpec: "clawdi@0.13.0-test",
 			registry: "https://registry.npmjs.org",
 		},
 		runtimes: {
@@ -261,24 +262,84 @@ function hostedRuntimeWatchLocalePayload(
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@agent-v2",
+				packageSpec: "clawdi@0.13.0-test",
 				registry: "https://registry.npmjs.org",
 			},
-			runtimes: { openclaw: hostedOpenClawRuntime() },
+			runtimes: {
+				openclaw: hostedOpenClawRuntime({
+					paths: { home, workspace: join(home, "clawdi") },
+				}),
+			},
 		},
 		secretValues: {},
 	};
 }
 
+function hostedCliManifestResponse(home: string, packageSpec: string): unknown {
+	return {
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+			runtime: "openclaw",
+			deploymentId: "dep_cli_package_spec",
+			environmentId: "env_cli_package_spec",
+			...hostedRequiredState(),
+			instanceId: "iid_cli_package_spec",
+			generation: 1,
+			issuedAt: "2026-07-12T00:00:00Z",
+			locale: TEST_HOSTED_LOCALE,
+			system: hostedSystemFixture(home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec,
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: {
+				openclaw: hostedOpenClawRuntime({
+					paths: { home, workspace: join(home, "clawdi") },
+				}),
+			},
+		},
+		secretValues: {},
+	};
+}
+
+function genericCliDesiredState(packageSpec: string): RuntimeManifest {
+	return {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "dep_generic_cli_update",
+		environmentId: "env_generic_cli_update",
+		instanceId: "iid_generic_cli_update",
+		generation: 1,
+		issuedAt: "2026-07-12T00:00:00Z",
+		controlPlane: { apiUrl: "https://cloud-api.test" },
+		clawdiCli: {
+			source: "npm:clawdi",
+			packageSpec,
+			registry: "https://registry.npmjs.org",
+		},
+		runtimes: { openclaw: { enabled: true } },
+		recovery: {},
+	};
+}
+
+function seedOpenClawBinary(home: string): void {
+	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+	mkdirSync(dirname(openclawBin), { recursive: true });
+	writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
+	chmodSync(openclawBin, 0o700);
+}
+
 function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string): RuntimePaths {
 	mkdirSync(join(run, "secrets"), { recursive: true });
-	mkdirSync(home, { recursive: true });
+	seedOpenClawBinary(home);
 	process.env.HOME = home;
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
 	process.env.CLAWDI_RUN_DIR = run;
 	process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-	seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+	seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 	const paths = getRuntimePaths();
 	convergeRuntimeManifest(
@@ -320,7 +381,7 @@ type HostedRunFixture = {
 
 type HostedRuntimeFixtureEntry = {
 	enabled: boolean;
-	install?: { source: "official"; channel?: string; args?: string[] };
+	install: { source: "official" };
 	run?: HostedRunFixture;
 	services?: Record<string, HostedRunFixture>;
 	paths: { home: string; workspace: string };
@@ -340,6 +401,7 @@ function hostedOpenClawRuntime(
 	} = overrides;
 	return {
 		enabled: true,
+		install: { source: "official" },
 		provider_ids,
 		primary_model,
 		run: {
@@ -378,6 +440,7 @@ function hostedHermesRuntime(
 	} = overrides;
 	return {
 		enabled: true,
+		install: { source: "official" },
 		provider_ids,
 		primary_model,
 		run: {
@@ -1137,12 +1200,11 @@ describe("runtime manifest datasource", () => {
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
 								openclaw: hostedOpenClawRuntime({
-									install: { source: "official", channel: "stable" },
 									paths: { home },
 									provider_ids: ["default", "codex"],
 								}),
@@ -1150,8 +1212,9 @@ describe("runtime manifest datasource", () => {
 							providers: {
 								default: {
 									kind: "openai-compatible",
+									type: "custom_openai_compatible",
 									baseUrl: "https://sub2api.test/v1",
-									model: "gpt-5.5",
+									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
 									apiKeySecretRef: "provider.default.apiKey",
@@ -1160,7 +1223,7 @@ describe("runtime manifest datasource", () => {
 									kind: "openai-compatible",
 									type: "openai",
 									baseUrl: "https://api.openai.com/v1",
-									model: "gpt-5.5",
+									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_responses",
 									auth: {
 										type: "agent_profile",
@@ -1192,7 +1255,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
-			expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@agent-v2");
+			expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@0.13.0-test");
 			expect(loaded.manifest.projection?.mcp).toEqual({
 				enabled: true,
 				profile: "clawdi-default",
@@ -1224,6 +1287,60 @@ describe("runtime manifest datasource", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("rejects a managed bootstrap tarball from a remote hosted manifest", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => jsonResponse(hostedCliManifestResponse(home, packageSpec)),
+			},
+		]);
+
+		try {
+			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			expect("errors" in loaded).toBe(true);
+			if (!("errors" in loaded)) throw new Error("expected remote manifest rejection");
+			expect(loaded.mode).toBe("manifest-rejected");
+			expect(loaded.stage).toBe("network");
+			expect(loaded.errors.join("\n")).toContain("must be clawdi@<exact-semver>");
+		} finally {
+			restore();
+		}
+	});
+
+	it("accepts a managed bootstrap tarball only from CLAWDI_RUNTIME_MANIFEST_PATH", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "hosted-bootstrap-fixture.json");
+		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
+		mkdirSync(home, { recursive: true });
+		writeFileSync(manifestPath, JSON.stringify(hostedCliManifestResponse(home, packageSpec)));
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
+
+		const loaded = await loadRuntimeManifest(getRuntimePaths());
+		if (!("manifest" in loaded)) {
+			throw new Error(`expected fixture manifest load: ${loaded.errors.join("; ")}`);
+		}
+		expect(loaded.source).toBe("fixture-file");
+		expect(loaded.manifest.clawdiCli?.packageSpec).toBe(packageSpec);
 	});
 
 	it("recovers hosted bridge token from pid1 env for Hermes runtime bridge exposure", async () => {
@@ -1289,12 +1406,11 @@ chmod +x "$HOME/.local/bin/hermes"
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
 								hermes: hostedHermesRuntime({
-									install: { source: "official", channel: "stable" },
 									paths: { home },
 								}),
 							},
@@ -1304,8 +1420,9 @@ chmod +x "$HOME/.local/bin/hermes"
 							providers: {
 								default: {
 									kind: "openai-compatible",
+									type: "custom_openai_compatible",
 									baseUrl: "https://ai-gateway.test/v1",
-									model: "gpt-5.5",
+									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -1383,7 +1500,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
@@ -1392,8 +1509,9 @@ chmod +x "$HOME/.local/bin/hermes"
 							providers: {
 								default: {
 									kind: "openai-compatible",
+									type: "custom_openai_compatible",
 									baseUrl: "https://ai-gateway.example.test/v1",
-									model: "gpt-5.4-mini",
+									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -1414,7 +1532,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			expect(loaded.manifest.projection?.providers.default).toMatchObject({
 				baseUrl: "https://ai-gateway.example.test/v1",
-				model: "gpt-5.4-mini",
+				models: [{ id: "gpt-5.4-mini" }],
 				apiMode: "openai_chat",
 				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 			});
@@ -1481,7 +1599,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
@@ -1490,8 +1608,9 @@ chmod +x "$HOME/.local/bin/hermes"
 							providers: {
 								default: {
 									kind: "openai-compatible",
+									type: "custom_openai_compatible",
 									baseUrl: "https://ai-gateway.example.test/v1",
-									model: "gpt-5.4-mini",
+									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_responses",
 									managed_by: "clawdi",
 									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -2990,27 +3109,34 @@ exit 0
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
-						openclaw: hostedOpenClawRuntime(),
+						openclaw: hostedOpenClawRuntime({
+							provider_ids: ["clawdi-managed-v2"],
+							primary_model: {
+								provider_id: "clawdi-managed-v2",
+								model: "gpt-5.5",
+							},
+						}),
 					},
 					providers: {
-						default: {
+						"clawdi-managed-v2": {
 							kind: "openai-compatible",
+							type: "custom_openai_compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
-							model: "gpt-5.5",
-							apiMode: "openai_responses",
+							models: [{ id: "gpt-5.5" }],
+							apiMode: "openai_chat",
 							managed_by: "clawdi",
 							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
-							apiKeySecretRef: "provider.default.apiKey",
+							apiKeySecretRef: "provider.clawdi-managed-v2.apiKey",
 						},
 					},
 					recovery: { cacheManifest: true, allowOfflineBoot: true },
 				},
 				secretValues: {
-					"provider.default.apiKey": "sk-runtime-provider",
+					"provider.clawdi-managed-v2.apiKey": "sk-runtime-provider",
 				},
 			}),
 		);
@@ -3037,13 +3163,13 @@ exit 0
 		const paths = getRuntimePaths();
 		expectEgressProfileBundleUsesSecretRef(
 			convergence.outputs.egressProfileBundle,
-			"secret://provider.default.apiKey",
+			"secret://provider.clawdi-managed-v2.apiKey",
 			"sk-runtime-provider",
 		);
 		expectMitmSecretFileIsSidecarOnly(
 			paths,
 			convergence.outputs.egressSecretFile,
-			"secret://provider.default.apiKey",
+			"secret://provider.clawdi-managed-v2.apiKey",
 			"sk-runtime-provider",
 		);
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
@@ -3152,7 +3278,7 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
@@ -3200,7 +3326,7 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
@@ -3274,7 +3400,7 @@ exit 64
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: { hermes: hostedHermesRuntime() },
@@ -3300,7 +3426,10 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const wrongSourcePath = join(root, "wrong-runtime-source.json");
-		mkdirSync(home, { recursive: true });
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(openclawBin, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3339,7 +3468,7 @@ exit 64
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -3373,7 +3502,7 @@ exit 64
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -4239,7 +4368,7 @@ exit 0
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
@@ -4257,7 +4386,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -4290,7 +4419,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: "clawdi@agent-v2",
+									packageSpec: "clawdi@0.13.0-test",
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: {
@@ -4301,13 +4430,14 @@ printf 'ActiveState=active\\nSubState=running\\n'
 										kind: "openai-compatible",
 										type: "custom_openai_compatible",
 										baseUrl: "https://provider.test/v1",
-										model: "gpt-test",
+										models: [{ id: "gpt-test" }],
 										apiMode: "openai_chat",
-										status: "ok",
+										apiKeySecretRef: "provider.default.apiKey",
+										apiKeyRequired: true,
 									},
 								},
 							},
-							secretValues: {},
+							secretValues: { "provider.default.apiKey": "sk-provider-watch" },
 						}),
 						{
 							status: 200,
@@ -4392,7 +4522,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
@@ -4412,7 +4542,7 @@ exit 42
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -4445,7 +4575,7 @@ exit 42
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: "clawdi@agent-v2",
+									packageSpec: "clawdi@0.13.0-test",
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: {
@@ -4524,12 +4654,11 @@ exit 42
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@agent-v2",
+					packageSpec: "clawdi@0.13.0-test",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
 					openclaw: hostedOpenClawRuntime({
-						install: { source: "official", channel: "stable" },
 						paths: { home },
 						provider_ids: ["clawdi-managed-v2"],
 						primary_model: {
@@ -4541,8 +4670,9 @@ exit 42
 				providers: {
 					"clawdi-managed-v2": {
 						kind: "openai-compatible",
+						type: "custom_openai_compatible",
 						baseUrl: "https://sub2api.test/v1",
-						model: "gpt-5.5",
+						models: [{ id: "gpt-5.5" }],
 						apiMode: "openai_chat",
 						managed_by: "clawdi",
 						runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
@@ -4614,7 +4744,7 @@ exit 64
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -4738,7 +4868,7 @@ exit 64
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -4754,7 +4884,7 @@ exit 64
 				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
 			}),
 		);
-		seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
@@ -4806,7 +4936,7 @@ exit 64
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: "clawdi@agent-v2",
+									packageSpec: "clawdi@0.13.0-test",
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -5310,7 +5440,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(
 			join(bin, "npm"),
 			`#!/usr/bin/env bash
@@ -5473,7 +5603,7 @@ chmod +x "$prefix/bin/clawdi"
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(
 			join(bin, "npm"),
 			`#!/usr/bin/env bash
@@ -5566,10 +5696,10 @@ printf 'ActiveState=active\\nSubState=running\\n'
 						providers: {
 							default: {
 								kind: "openai-compatible",
+								type: "custom_openai_compatible",
 								baseUrl: "https://ai-gateway.example.test/v1",
-								model: "gpt-5.5",
+								models: [{ id: "gpt-5.5" }],
 								apiMode: "openai_responses",
-								managed_by: "clawdi",
 								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
@@ -5637,10 +5767,10 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								providers: {
 									default: {
 										kind: "openai-compatible",
+										type: "custom_openai_compatible",
 										baseUrl: "https://ai-gateway.example.test/v1",
-										model: "gpt-5.5",
+										models: [{ id: "gpt-5.5" }],
 										apiMode: "openai_responses",
-										managed_by: "clawdi",
 										runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
 										apiKeySecretRef: "provider.default.apiKey",
 									},
@@ -5705,7 +5835,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		}
 	});
 
-	it("runtime CLI update resolves the floating agent-v2 npm tag through the managed npm cache", () => {
+	it("generic runtime CLI update resolves a floating npm tag through the managed npm cache", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5780,29 +5910,7 @@ chmod +x "$prefix/bin/clawdi"
 				"0.12.10-beta.48",
 				"https://registry.npmjs.org",
 			);
-			const result = applyRuntimeCliDesiredState(
-				{
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
-					runtime: "openclaw",
-					deploymentId: "dep_floating_cli_tag",
-					environmentId: "env_floating_cli_tag",
-					...hostedRequiredState(),
-					instanceId: "iid_floating_cli_tag",
-					generation: 1,
-					issuedAt: "2026-06-06T00:00:00Z",
-					locale: TEST_HOSTED_LOCALE,
-					system: hostedSystemFixture(home),
-					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-					clawdiCli: {
-						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
-						registry: "https://registry.npmjs.org",
-					},
-					runtimes: { openclaw: hostedOpenClawRuntime() },
-				},
-				paths,
-			);
+			const result = applyRuntimeCliDesiredState(genericCliDesiredState("clawdi@agent-v2"), paths);
 
 			expect(result.status).toBe("installed");
 			expect(result.version).toBe("0.12.10-beta.49");
@@ -5825,7 +5933,7 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("keeps an official agent-v2 bootstrap install current without reinstalling", () => {
+	it("keeps a generic floating CLI install current without reinstalling", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5861,26 +5969,7 @@ exit 97
 
 		try {
 			const result = applyRuntimeCliDesiredState(
-				{
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
-					runtime: "openclaw",
-					deploymentId: "dep_cli_bootstrap_current",
-					environmentId: "env_cli_bootstrap_current",
-					...hostedRequiredState(),
-					instanceId: "iid_cli_bootstrap_current",
-					generation: 1,
-					issuedAt: "2026-07-11T00:00:00Z",
-					locale: TEST_HOSTED_LOCALE,
-					system: hostedSystemFixture(home),
-					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-					clawdiCli: {
-						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
-						registry: "https://registry.npmjs.org",
-					},
-					runtimes: { openclaw: hostedOpenClawRuntime() },
-				},
+				genericCliDesiredState("clawdi@agent-v2"),
 				getRuntimePaths(),
 			);
 
@@ -5897,28 +5986,25 @@ exit 97
 		}
 	});
 
-	it("runtime watch self-heal re-resolves agent-v2 when manifest ETags stay unchanged", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const sourcePath = join(root, "runtime-source.json");
-		const bin = join(root, "bin");
-		const npmLog = join(root, "npm-self-heal.log");
-		const previousExitCode = process.exitCode;
-		const previousLog = console.log;
+	it.each([
+		["upgrades", "0.12.10-beta.48", "0.12.10-beta.49"],
+		["downgrades", "0.12.10-beta.50", "0.12.10-beta.49"],
+	])("hosted exact CLI desired state %s without npm view", (_name, currentVersion, desiredVersion) => {
+		const home = join(root, `home-${currentVersion}`, "clawdi");
+		const state = join(root, `state-${currentVersion}`);
+		const run = join(root, `run-${currentVersion}`);
+		const bin = join(root, `bin-${currentVersion}`);
+		const npmLog = join(root, `npm-exact-${currentVersion}.log`);
 		const previousPath = process.env.PATH;
-		const logs: string[] = [];
-		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
 		writeFileSync(
 			join(bin, "npm"),
 			`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> '${npmLog}'
 if [ "\${1:-}" = "view" ]; then
-  echo '"0.12.10-beta.50"'
-  exit 0
+  echo "exact hosted CLI updates must not call npm view" >&2
+  exit 96
 fi
 prefix=""
 while [ "$#" -gt 0 ]; do
@@ -5934,7 +6020,82 @@ install -d "$prefix/bin"
 cat > "$prefix/bin/clawdi" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
-  echo "0.12.10-beta.50"
+  echo "${desiredVersion}"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const currentSpec = `clawdi@${currentVersion}`;
+		const desiredSpec = `clawdi@${desiredVersion}`;
+		seedCurrentCliInstall(state, currentSpec, currentVersion, "https://registry.npmjs.org");
+
+		try {
+			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
+			const result = applyRuntimeCliDesiredState(desired.manifest, getRuntimePaths());
+
+			expect(result.status).toBe("installed");
+			expect(result.packageSpec).toBe(desiredSpec);
+			expect(result.version).toBe(desiredVersion);
+			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
+			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
+			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("runtime watch self-heal applies an exact hosted CLI version without npm view", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const bin = join(root, "bin");
+		const npmLog = join(root, "npm-self-heal.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const previousPath = process.env.PATH;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		seedOpenClawBinary(home);
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${npmLog}'
+	if [ "\${1:-}" = "view" ]; then
+	  echo "exact hosted CLI updates must not call npm view" >&2
+	  exit 96
+fi
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+test -n "$prefix"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+	if [ "\${1:-}" = "--version" ]; then
+	  echo "0.13.0-test"
   exit 0
 fi
 if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
@@ -5970,7 +6131,7 @@ chmod +x "$prefix/bin/clawdi"
 		const paths = getRuntimePaths();
 		seedCurrentCliInstall(
 			state,
-			"clawdi@agent-v2",
+			"clawdi@0.12.10-beta.49",
 			"0.12.10-beta.49",
 			"https://registry.npmjs.org",
 		);
@@ -5993,7 +6154,7 @@ chmod +x "$prefix/bin/clawdi"
 				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@agent-v2",
+					packageSpec: "clawdi@0.13.0-test",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: { openclaw: hostedOpenClawRuntime() },
@@ -6072,13 +6233,13 @@ chmod +x "$prefix/bin/clawdi"
 			expect(events[1].cliUpdate).toEqual(
 				expect.objectContaining({
 					status: "installed",
-					packageSpec: "clawdi@agent-v2",
-					version: "0.12.10-beta.50",
+					packageSpec: "clawdi@0.13.0-test",
+					version: "0.13.0-test",
 				}),
 			);
 			expect(events[1].selfReexec).toBe(true);
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
-			expect(npmCalls.some((call) => call.startsWith("view clawdi@agent-v2"))).toBe(true);
+			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
 		} finally {
 			if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -6204,7 +6365,6 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 								},
 								runtimes: {
 									openclaw: hostedOpenClawRuntime({
-										install: { source: "official", channel: "stable" },
 										paths: { home },
 									}),
 								},
@@ -6361,7 +6521,6 @@ chmod +x "$prefix/bin/clawdi"
 			},
 			runtimes: {
 				openclaw: hostedOpenClawRuntime({
-					install: { source: "official", channel: "stable" },
 					paths: { home },
 				}),
 			},
@@ -6459,7 +6618,7 @@ chmod +x "$prefix/bin/clawdi"
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(join(bin, "npm"), "#!/usr/bin/env bash\necho npm down >&2\nexit 42\n");
 		chmodSync(join(bin, "npm"), 0o700);
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
@@ -7107,7 +7266,7 @@ exit 64
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
-		seedCurrentCliInstall(state, "clawdi@agent-v2", "0.13.0-test", "https://registry.npmjs.org");
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -7130,13 +7289,11 @@ exit 64
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: "clawdi@agent-v2",
+									packageSpec: "clawdi@0.13.0-test",
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: {
-									openclaw: hostedOpenClawRuntime({
-										install: { source: "official", args: [] },
-									}),
+									openclaw: hostedOpenClawRuntime(),
 								},
 							},
 							secretValues: {},
@@ -8254,7 +8411,7 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "custom-workspace");
-		mkdirSync(home, { recursive: true });
+		writeHermesVersionBinary(home, "0.18.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -8282,7 +8439,7 @@ exit 64
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
@@ -8411,7 +8568,7 @@ exit 64
 					controlPlane: { apiUrl: "https://api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
@@ -8460,7 +8617,7 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const runtimeWorkspace = join(home, "hermes-workspace");
 		const manifestPath = join(root, "runtime-workspace.json");
-		mkdirSync(home, { recursive: true });
+		writeHermesVersionBinary(home, "0.18.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -8483,7 +8640,7 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
@@ -9490,7 +9647,7 @@ exit 64
 							controlPlane: {},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
@@ -9517,7 +9674,7 @@ exit 64
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -9549,24 +9706,33 @@ exit 64
 							egressEngine: mitmproxy,
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
-								openclaw: hostedOpenClawRuntime(),
+								openclaw: hostedOpenClawRuntime({
+									provider_ids: ["clawdi-managed-v2"],
+									primary_model: {
+										provider_id: "clawdi-managed-v2",
+										model: "gpt-test",
+									},
+								}),
 							},
 							providers: {
-								default: {
+								"clawdi-managed-v2": {
 									kind: "openai-compatible",
+									type: "custom_openai_compatible",
 									baseUrl: "https://sub2api.test/v1",
+									models: [{ id: "gpt-test" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									apiKeySecretRef: "provider.default.apiKey",
+									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									apiKeySecretRef: "provider.clawdi-managed-v2.apiKey",
 								},
 							},
 						},
 						secretValues: {
-							"provider.default.apiKey": "sk-runtime",
+							"provider.clawdi-managed-v2.apiKey": "sk-runtime",
 						},
 					}),
 			},
@@ -9579,16 +9745,17 @@ exit 64
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 			expect(convergence.mode).toBe("normal");
+			expect(convergence.installErrors).toEqual([]);
 			const paths = getRuntimePaths();
 			expectEgressProfileBundleUsesSecretRef(
 				convergence.outputs.egressProfileBundle,
-				"secret://provider.default.apiKey",
+				"secret://provider.clawdi-managed-v2.apiKey",
 				"sk-runtime",
 			);
 			expectMitmSecretFileIsSidecarOnly(
 				paths,
 				convergence.outputs.egressSecretFile,
-				"secret://provider.default.apiKey",
+				"secret://provider.clawdi-managed-v2.apiKey",
 				"sk-runtime",
 			);
 			expectExistingFileNotToContain(join(run, "secrets", "runtime-secrets.json"), "sk-runtime");
@@ -9615,15 +9782,16 @@ exit 64
 			const providerHealth = JSON.parse(
 				readFileSync(join(state, "status", "provider-health.json"), "utf-8"),
 			);
-			expect(providerHealth.providers.default).toEqual({
-				status: "error",
+			expect(providerHealth.providers["clawdi-managed-v2"]).toEqual({
+				status: "ok",
 				configured: true,
 				kind: "openai-compatible",
 				baseUrl: "https://sub2api.test/v1",
 				model: null,
-				apiKeySecretRef: "provider.default.apiKey",
+				models: [{ id: "gpt-test" }],
+				apiKeySecretRef: "provider.clawdi-managed-v2.apiKey",
 				secretAvailable: true,
-				reasons: ["model_missing"],
+				reasons: [],
 			});
 			expect(JSON.stringify(providerHealth)).not.toContain("sk-runtime");
 		} finally {
@@ -9799,7 +9967,7 @@ exit 64
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
+		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -9829,7 +9997,7 @@ exit 64
 							},
 							clawdiCli: {
 								source: "npm:clawdi",
-								packageSpec: "clawdi@agent-v2",
+								packageSpec: "clawdi@0.13.0-test",
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
@@ -9933,14 +10101,18 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
 						openclaw: hostedOpenClawRuntime(),
 					},
 					providers: {
-						default: { kind: "openai-compatible", baseUrl: "https://sub2api.test/v1" },
+						default: {
+							kind: "openai-compatible",
+							type: "custom_openai_compatible",
+							baseUrl: "https://sub2api.test/v1",
+						},
 					},
 				},
 				secretValues: {},
@@ -9980,7 +10152,7 @@ exit 64
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@agent-v2",
+						packageSpec: "clawdi@0.13.0-test",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {

@@ -446,6 +446,12 @@ function installCliPackage(
 		throw new Error(`npm install completed but clawdi bin is missing: ${activeTarget}`);
 	}
 	const version = smokeCliVersion(activeTarget);
+	const exactVersion = exactNpmPackageVersion(packageSpec);
+	if (exactVersion && version !== exactVersion) {
+		throw new Error(
+			`npm install ${installPlan.installPackageSpec} reported version ${version}, expected ${exactVersion}`,
+		);
+	}
 	verifyCliRuntime(activeTarget);
 	return { npmPrefix, activeTarget, version };
 }
