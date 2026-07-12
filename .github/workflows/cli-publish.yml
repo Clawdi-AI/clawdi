@@ -28,7 +28,7 @@ jobs:
       npm_tag: ${{ steps.check.outputs.npm_tag }}
       cli_tarball_filename: ${{ steps.check.outputs.cli_tarball_filename }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload immutable CLI release artifact
         if: steps.check.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.CLI_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/clawdi-cli-release/
@@ -121,7 +121,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -137,7 +137,7 @@ jobs:
           test "$(npm --version)" = "11.5.1"
 
       - name: Download immutable CLI release artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.CLI_ARTIFACT_NAME }}
           path: release
