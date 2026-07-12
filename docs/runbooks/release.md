@@ -73,12 +73,13 @@ releases.
 6. If the PR touches the CLI package and should publish, bump
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
-   For the managed `agent-v2` channel, the release workflow must build and pack
-   one immutable artifact, pass it through the reusable Hosted paired smoke,
-   and publish that exact tarball once to `agent-v2` with npm trusted-publisher
-   OIDC. For `0.12.10-beta.51`, there is no candidate tag or dist-tag promotion
-   step. Cross-repository rollout ownership and ordering live in the
-   [Hosted agent v2 release runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md).
+   For the managed `agent-v2` channel, this repository's release workflow must
+   build, typecheck, run the full CLI suite, and pack one immutable tarball. It
+   installs that tarball, records and verifies its SHA-256, transfers the same
+   artifact to the protected npm job, verifies it again, and publishes it once
+   to `agent-v2` with npm trusted-publisher OIDC. There is no candidate tag or
+   dist-tag promotion step. The CLI workflow does not call workflows in the
+   Hosted repository or depend on Hosted repository settings.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -102,12 +103,12 @@ releases.
    npm view clawdi dist-tags
    ```
 
-   Done: `agent-v2` points directly to the paired-smoke-approved exact version
-   while `beta` and `latest` are unchanged. Before release, merge the focused
-   reusable-workflow PR, set the private Hosted repository Actions access to
-   `organization`, and land the final capability envelope on Hosted `main`.
-   The reusable workflow checks out its own exact Hosted source, so this order
-   makes the release gate exercise the image that will actually launch.
+   Done: `agent-v2` points directly to the exact version published from the
+   verified CLI artifact while `beta` and `latest` are unchanged. The Hosted
+   image repository has a separate release boundary: its own release resolves
+   the published CLI to an exact npm semver and runs the image/CLI pairing smoke
+   before publishing that image. Hosted image validation does not gate or call
+   back into the CLI publish workflow.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version

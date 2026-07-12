@@ -230,32 +230,24 @@ version bump. A merge with no version change is a no-op — the workflow
 diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
-Managed agent-v2 releases build, test, and pack one immutable tarball. The
-release workflow passes that artifact through the mandatory reusable Hosted
-paired smoke, then the protected npm job publishes that exact tarball once to
-the `agent-v2` tag with trusted-publisher OIDC. There is no candidate tag or
+Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
+typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
+the tarball, records and checks its SHA-256, transfers the same artifact to the
+protected npm job, checks it again, and publishes it exactly once to the
+`agent-v2` tag with trusted-publisher OIDC. There is no candidate tag or
 separate dist-tag promotion.
 
-Cross-repository rollout ownership and ordering live in the
-[Hosted agent v2 release runbook](https://github.com/Clawdi-AI/clawdi-hosted/blob/main/docs/v2/ops/2026-07-12-agent-v2-cross-repo-release-runbook.md).
-This document covers only CLI package mechanics.
-
-The reusable workflow is private at
-`Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main`.
-Before this release workflow can run, the focused smoke-only Hosted PR that
-adds the reusable workflow must be merged to Hosted `main`, and the Hosted
-repository Actions access must be `organization` so organization repositories
-can call it. The final capability-envelope change must then be on Hosted
-`main` before this CLI release runs, because the reusable workflow checks out
-its own exact Hosted source. Do not bypass that cross-repository gate with a
-PAT, GitHub App token, or copied smoke implementation.
+The CLI workflow neither calls nor checks out the Hosted repository. The Hosted
+image repository owns a separate release: it resolves the published CLI package
+to an exact npm semver and runs its image/CLI pairing smoke before publishing
+the image. That independent image release is not a gate for npm publication.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
-Keep v2 creation and runtime-state reconciliation disabled until the smoke-only
-workflow, final Hosted capability envelope, `0.12.10-beta.51`, and the Cloud
-manifest contract are all landed and deployed. Then verify a fresh deployment's
-runtime-state write, canonical `/v1/runtime/manifest` fetch, SSE invalidation,
-and runtime services before enabling v2. Do not add legacy fields or aliases.
+Keep v2 creation and runtime-state reconciliation disabled until the final
+Hosted capability envelope, exact CLI release, and Cloud manifest contract are
+all deployed. Then verify a fresh deployment's runtime-state write, canonical
+`/v1/runtime/manifest` fetch, SSE invalidation, and runtime services before
+enabling v2. Do not add legacy fields or aliases.
 
 The monorepo has two GitHub Release lines:
 
@@ -307,9 +299,9 @@ onward releases are automatic.
 
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
-3. The workflow builds, tests, and packs one artifact, runs the mandatory
-   Hosted paired smoke, then publishes the same tarball with
-   `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2`.
+3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
+   one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
+   with `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
 5. Watch the Actions tab; on green, `npm view clawdi version` will
    reflect the new number within ~60s.

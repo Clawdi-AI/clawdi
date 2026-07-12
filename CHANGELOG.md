@@ -58,9 +58,9 @@ Package: `clawdi@0.12.10-beta.50`
   the strict `clawdiCli` source, package spec, and official npm registry; they
   can no longer implicitly select `clawdi@latest` or inherit npm registry
   configuration.
-- Made agent-v2 publishing contingent on the reusable Hosted paired smoke and
-  publish the exact tested tarball directly to the `agent-v2` channel with npm
-  trusted-publisher OIDC.
+- Made agent-v2 publishing repository-autonomous: build, test, pack, install,
+  and SHA-verify one immutable tarball, then publish that artifact directly to
+  the `agent-v2` channel with npm trusted-publisher OIDC.
 
 ## Clawdi CLI v0.12.10-beta.49
 

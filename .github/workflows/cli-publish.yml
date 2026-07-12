@@ -15,7 +15,7 @@ concurrency:
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
 
-# This one artifact is the release identity: Hosted smokes it, then npm publishes it once.
+# This repository builds, verifies, and publishes one immutable release artifact.
 # There is intentionally no candidate upload or later dist-tag mutation.
 jobs:
   build-immutable-artifact:
@@ -92,6 +92,8 @@ jobs:
           printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"
           cp dist-release/clawdi-cli-linux-x64.tar.gz "$release_dir/"
           cp dist-release/clawdi-cli-linux-x64.tar.gz.sha256 "$release_dir/"
+          (cd "$release_dir" && sha256sum --check "$tarball.sha256")
+          (cd "$release_dir" && sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256)
           cd "$install_dir"
           npm init -y >/dev/null
           npm install "$tarball_path" --ignore-scripts --no-audit --no-fund
@@ -106,26 +108,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  hosted-paired-smoke:
+  publish-immutable-artifact-with-oidc:
     if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
     needs: build-immutable-artifact
-    permissions:
-      contents: read
-      actions: read
-    uses: Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main
-    with:
-      cli_artifact_name: clawdi-cli-release
-      cli_tarball_filename: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
-
-  publish-paired-artifact-with-oidc:
-    if: needs['build-immutable-artifact'].outputs.should_publish == 'true'
-    needs: [build-immutable-artifact, hosted-paired-smoke]
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     environment: npm
     permissions:
       contents: write
       id-token: write
-      actions: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -136,7 +126,7 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Download paired-smoked CLI release artifact
+      - name: Download immutable CLI release artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.CLI_ARTIFACT_NAME }}
@@ -159,7 +149,7 @@ jobs:
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
 
-      - name: Publish paired-smoked tarball to agent-v2
+      - name: Publish immutable tarball to agent-v2
         env:
           CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
         run: npm publish "release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag agent-v2
@@ -176,7 +166,8 @@ jobs:
 
           \`npm install -g clawdi@agent-v2\`
 
-          Published as \`clawdi@$VERSION\` after the mandatory Hosted paired smoke.
+          Published as \`clawdi@$VERSION\` from the immutable artifact verified
+          by this repository's release workflow.
 
           This is the release for the published \`packages/cli\` package.
           Clawdi app/backend/web changes are versioned separately as

@@ -8,30 +8,26 @@ const workflow = readFileSync(
 );
 
 describe("CLI publish workflow contract", () => {
-	test("gates the protected OIDC publish on the reusable Hosted paired smoke", () => {
+	test("keeps the protected OIDC publish fully repository-local", () => {
 		const build = workflow.indexOf("  build-immutable-artifact:");
-		const smoke = workflow.indexOf("  hosted-paired-smoke:");
-		const publish = workflow.indexOf("  publish-paired-artifact-with-oidc:");
+		const publish = workflow.indexOf("  publish-immutable-artifact-with-oidc:");
 
 		expect(build).toBeGreaterThan(-1);
-		expect(smoke).toBeGreaterThan(build);
-		expect(publish).toBeGreaterThan(smoke);
-		expect(workflow).toContain(
-			"uses: Clawdi-AI/clawdi-hosted/.github/workflows/hosted-runtime-paired-smoke.yml@main",
-		);
-		expect(workflow).toContain("cli_artifact_name: clawdi-cli-release");
+		expect(publish).toBeGreaterThan(build);
 		expect(workflow).toContain(
 			'echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"',
 		);
-		expect(workflow).toContain(
-			`cli_tarball_filename: \${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}`,
-		);
-		expect(workflow).toContain("needs: [build-immutable-artifact, hosted-paired-smoke]");
+		expect(workflow).toContain("needs: build-immutable-artifact");
 		expect(workflow).toContain("environment: npm");
 		expect(workflow).toContain("id-token: write");
+		expect(workflow).not.toContain("Clawdi-AI/clawdi-hosted");
+		expect(workflow).not.toContain("uses: Clawdi-AI/");
+		expect(workflow).not.toContain("repository_dispatch");
+		expect(workflow).not.toContain("workflow_run");
+		expect(workflow).not.toContain("repository: Clawdi-AI/");
 	});
 
-	test("publishes the paired-smoked tarball exactly once to agent-v2", () => {
+	test("builds and publishes the same verified tarball exactly once", () => {
 		const publishCommands = workflow.match(/npm publish /g) ?? [];
 
 		expect(publishCommands).toHaveLength(1);
@@ -44,14 +40,22 @@ describe("CLI publish workflow contract", () => {
 		);
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
+		expect(workflow).toContain("run: bun run typecheck");
+		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1");
+		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
+		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
+		expect(workflow).toContain("sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256");
 		expect(workflow.match(/npm pack /g) ?? []).toHaveLength(1);
-		expect(workflow.indexOf("npm pack ")).toBeLessThan(workflow.indexOf("  hosted-paired-smoke:"));
+		expect(workflow.indexOf("npm pack ")).toBeLessThan(workflow.indexOf("npm publish "));
 		expect(workflow).not.toContain("agent-v2-candidate");
 		expect(workflow).not.toContain("npm dist-tag");
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
-	test("keeps ordinary pull request CI repo-local", () => {
+	test("creates the CLI release only after publishing", () => {
+		expect(workflow.indexOf("npm publish ")).toBeLessThan(
+			workflow.indexOf('release create "$tag"'),
+		);
 		expect(workflow).not.toContain("pull_request:");
 	});
 });
