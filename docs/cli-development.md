@@ -303,8 +303,8 @@ onward releases are automatic.
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
    with `npm publish <tarball> --access public --provenance --ignore-scripts --tag agent-v2`.
 4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
-5. Watch the Actions tab; on green, `npm view clawdi version` will
-   reflect the new number within ~60s.
+5. Watch the Actions tab; on green, `npm view clawdi@agent-v2 version` will
+   reflect the new number within ~60s while `latest` and `beta` stay unchanged.
 
 A manual run is available under `workflow_dispatch` if the auto-run
 needs a nudge (e.g. npm was transiently unavailable).
