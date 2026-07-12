@@ -6,8 +6,8 @@ const workflow = readFileSync(
 	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
 	"utf8",
 );
-const managedRuntimeDoc = readFileSync(
-	resolve(import.meta.dir, "../../../docs/managed-runtime.md"),
+const releaseRunbookDoc = readFileSync(
+	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
 	"utf8",
 );
 const cliDevelopmentDoc = readFileSync(
@@ -82,12 +82,19 @@ describe("CLI publish workflow contract", () => {
 	});
 
 	test("keeps Hosted production semantics exact-version only", () => {
-		for (const surface of [workflow, managedRuntimeDoc, cliDevelopmentDoc, manifestContract]) {
+		for (const surface of [workflow, cliDevelopmentDoc, releaseRunbookDoc, manifestContract]) {
 			expect(surface).not.toMatch(/clawdi@agent-v2(?!-)/);
 		}
 		expect(workflow).toContain("npm install -g clawdi@$VERSION");
-		expect(managedRuntimeDoc).toContain("exact `clawdi@<semver>` without build metadata");
-		expect(managedRuntimeDoc).toContain("Remote fetches cannot use that fixture schema");
+		expect(cliDevelopmentDoc).toContain("supplies the exact `clawdi@<semver>` package spec");
+		expect(cliDevelopmentDoc).toContain("fails closed when the exact input is missing");
+		expect(releaseRunbookDoc).toContain("supplies the exact `clawdi@<semver>` package spec");
+		expect(releaseRunbookDoc).toContain("fails when the exact spec is missing");
+		for (const surface of [cliDevelopmentDoc, releaseRunbookDoc]) {
+			expect(surface).toMatch(/never\s+resolves\s+`agent-v2-candidate` or any other npm dist-tag/);
+			expect(surface).not.toContain("resolves that candidate");
+		}
+		expect(manifestContract).toContain("must be clawdi@<exact-semver>");
 		expect(workflow).not.toContain("npm view clawdi@agent-v2");
 	});
 });

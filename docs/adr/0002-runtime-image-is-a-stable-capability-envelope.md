@@ -31,9 +31,11 @@ the environment variable containing the manifest bearer credential. The CLI
 validates both selectors and fails closed before datasource access. A hosted
 runtime does not read `host-policy.json` or `runtime-source.json`.
 
-Hosted runtime manifests use the single canonical `/v1/runtime/manifest`
-datasource contract. `CLAWDI_RUNTIME_MANIFEST_URL` may carry normal query
-parameters, but its path must end with `/v1/runtime/manifest`.
+API route versions and agent deployment generations are separate dimensions.
+Agent deployment v2 uses the canonical `/v1/runtime/manifest` route, including
+historical backend `app/v1` rows with `profile=hosted-runtime`. Actual agent
+deployment v1 keeps the legacy `/api/runtime/manifest` alias and does not
+receive the agent-v2 minimum-CLI protocol gate.
 
 For transparent egress:
 
@@ -80,19 +82,15 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
 - UID/GID `0`, malformed values, and unavailable privilege-drop tools prevent
   egress startup instead of silently running mitmproxy as root.
 - Hosted image changes that add runtime business logic violate this decision.
-- The CLI release uses exact version `0.12.10-beta.51` on the isolated npm
-  `agent-v2` dist-tag without moving `beta`. The CLI repository independently
-  builds, tests, packs, installs, and SHA-verifies one tarball before
-  trusted-publisher OIDC publishes that artifact. The Hosted image repository
-  independently resolves the published CLI to an exact npm semver and runs its
-  image/CLI pairing smoke as part of its own image release. Neither repository
-  calls the other repository's Actions workflows. No legacy image controls or
-  old-state repair are part of this contract.
+- Coordinated rollout order is: merge and publish exact CLI version
+  `0.12.10-beta.48` under the isolated npm `agent-v2` dist-tag without moving
+  `beta`; configure the v2 deployment contract to use that exact version;
+  merge the Hosted generic-envelope PR; release and promote the generic image; then recreate
+  prelaunch development and canary instances. Do not promote this through the
+  legacy agent image controls; no old-state repair is required.
 
 ## Related Documentation
 
 - [Managed runtime architecture](../managed-runtime.md)
 - [Managed runtime CLI plan](../plans/managed-runtime-cli.md)
 - [Managed runtime roadmap](../plans/managed-runtime-roadmap.md)
-- [CLI development and release](../cli-development.md#releasing)
-- [Clawdi release runbook](../runbooks/release.md)

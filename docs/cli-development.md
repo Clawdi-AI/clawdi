@@ -240,14 +240,16 @@ job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing does not
 support self-hosted or third-party GitHub Actions runners. The publish job uses
 Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm 11.5.1.
 
-The CLI workflow neither calls nor checks out the Hosted repository. The Hosted
-image repository owns a separate release: it resolves the published CLI package
-to an exact npm semver and runs its image/CLI pairing smoke before publishing
-the image. This workflow stops after making the exact candidate version public;
-it does not modify `latest` or `beta` and does not coordinate with the Hosted
-repository. Cloud-owned Hosted manifests select `clawdi@<exact-semver>` only.
-The runtime installs that exact public version directly and never resolves an
-npm dist-tag or calls `npm view` for Hosted desired state.
+The CLI workflow neither calls nor checks out the Hosted repository. An operator
+verifies the candidate tag and exact package publication, then explicitly
+supplies the exact `clawdi@<semver>` package spec to the separate Hosted image
+workflow. That workflow fails closed when the exact input is missing, never
+resolves `agent-v2-candidate` or any other npm dist-tag, and runs its image/CLI
+pairing smoke before publishing the image. The CLI workflow stops after making
+the exact candidate version public; it does not modify `latest` or `beta` and
+does not coordinate with the Hosted repository. Cloud-owned Hosted manifests
+select `clawdi@<exact-semver>` only. The runtime installs that exact public
+version directly and never calls `npm view` for Hosted desired state.
 
 Agent deployment v2 is not live, so there is no rolling compatibility window.
 Keep v2 creation and runtime-state reconciliation disabled until the final

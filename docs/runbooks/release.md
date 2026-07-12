@@ -107,13 +107,15 @@ releases.
 
    Done: `agent-v2-candidate` points to the exact version published from the
    verified CLI artifact while `beta` and `latest` are unchanged.
-   The Hosted image repository has a separate release boundary: its own release
-   resolves that candidate to an exact npm semver and runs the image/CLI pairing
-   smoke before publishing the image. It does not call back into this workflow.
+   The Hosted image repository has a separate release boundary. An operator
+   verifies the candidate tag and exact package publication, then explicitly
+   supplies the exact `clawdi@<semver>` package spec to the Hosted image workflow.
+   That workflow fails when the exact spec is missing and never resolves
+   `agent-v2-candidate` or any other npm dist-tag. It runs the image/CLI pairing
+   smoke before publishing the image and does not call back into this workflow.
 
-   Hosted rollout uses the Cloud manifest's exact `clawdi@<semver>` package
-   selection. The runtime does not resolve a production npm dist-tag. Verify the
-   exact package version directly before rollout.
+   Hosted rollout uses that same exact package spec in the Cloud manifest. The
+   runtime never resolves an npm dist-tag.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version
