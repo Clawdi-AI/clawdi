@@ -1275,7 +1275,10 @@ export function runtimeAppliedContentIdentity(
 ): RuntimeAppliedContentIdentity {
 	return {
 		sourcePath: load.sourcePath,
-		sha256: runtimeContentSha256(load.manifest),
+		sha256: runtimeContentSha256({
+			manifest: load.manifest,
+			secretValues: load.secretValues ?? {},
+		}),
 	};
 }
 
@@ -1834,13 +1837,14 @@ async function runtimeInitLocked(
 		let applyResult: RuntimeApplyResult;
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
+			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence) =>
 					commitRuntimeAppliedState({
 						load: convergenceLoad,
 						paths,
-						etag: loaded.etag ?? `local:${runtimeContentSha256(convergenceLoad.manifest)}`,
-						sourceRevision: loaded.sourceRevision ?? runtimeContentSha256(convergenceLoad.manifest),
+						etag: loaded.etag ?? `"sha256:${contentRevision}"`,
+						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
 					}),
 				manifestIdentity: {

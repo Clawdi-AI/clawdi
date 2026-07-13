@@ -1113,8 +1113,8 @@ describe("runtime applied content identity", () => {
 			offline: false,
 		});
 
-		expect(runtimeAppliedContentIdentity(load("sk-one"), null).manifest.sha256).not.toBe(
-			runtimeAppliedContentIdentity(load("sk-two"), null).manifest.sha256,
+		expect(runtimeAppliedContentIdentity(load("sk-one")).sha256).not.toBe(
+			runtimeAppliedContentIdentity(load("sk-two")).sha256,
 		);
 	});
 });
