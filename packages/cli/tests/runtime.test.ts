@@ -10414,7 +10414,44 @@ exit 64
 		expect(siblingRuntimeRev).toBe(baseRev);
 	});
 
-	it("uses applied state, not last-good cache, for the live runtime instance identity", async () => {
+	it("uses legacy last-good as the instance guard before the first applied-state", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const manifestPath = join(root, "runtime-legacy-instance-mismatch.json");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "local";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		const legacyManifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_legacy_guard",
+			environmentId: "env_legacy_guard",
+			instanceId: "iid_legacy_guard",
+			generation: 17,
+			issuedAt: "2026-06-06T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(paths.manifestLastGood, JSON.stringify(legacyManifest));
+		writeFileSync(
+			manifestPath,
+			JSON.stringify({ ...legacyManifest, instanceId: "iid_other", generation: 18 }),
+		);
+
+		const loaded = await loadRuntimeManifest(paths, { manifestPath });
+
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest rejection");
+		expect(loaded.errors.join("\n")).toContain("iid_legacy_guard");
+		expect(loaded.activeGeneration).toBe(17);
+		expect(existsSync(paths.appliedState)).toBe(false);
+	});
+
+	it("uses applied state, not conflicting last-good, for the live runtime instance identity", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
