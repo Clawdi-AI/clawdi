@@ -871,7 +871,11 @@ function writeTestRuntimeAppliedState(
 	const sourceRevision =
 		input.sourceRevision ??
 		load.sourceRevision ??
-		runtimeContentSha256(load.sourceManifest ?? load.manifest);
+		runtimeContentSha256({
+			manifest: load.sourceManifest ?? load.manifest,
+			channelBindings: load.channelBindings ?? [],
+			secretValues: load.secretValues ?? {},
+		});
 	const selectedRuntime = load.manifest.runtime;
 	const providerIds = selectedRuntime
 		? [...new Set(load.manifest.runtimes[selectedRuntime]?.provider_ids ?? [])].sort()
@@ -886,7 +890,10 @@ function writeTestRuntimeAppliedState(
 			generation: load.manifest.generation,
 			contentIdentity: {
 				sourcePath: load.sourcePath,
-				sha256: runtimeContentSha256(load.sourceManifest ?? load.manifest),
+				sha256: runtimeContentSha256({
+					manifest: load.manifest,
+					secretValues: load.secretValues ?? {},
+				}),
 			},
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
