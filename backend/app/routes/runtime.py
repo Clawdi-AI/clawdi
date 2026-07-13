@@ -148,7 +148,7 @@ async def get_runtime_manifest(
         runtime_name=runtime,
         runtime=runtime_state,
     )
-    issued_at = _as_utc(state.created_at).isoformat()
+    issued_at = _runtime_manifest_issued_at(state)
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
         "deploymentId": state.deployment_id,
@@ -190,18 +190,16 @@ async def get_runtime_manifest(
     if state.tools:
         manifest["tools"] = state.tools
     payload = {"manifest": manifest, "secretValues": secret_values}
-    # `generation` is the desired config generation and remains part of the
-    # ETag. `issuedAt` is only an issuance timestamp: changing it without a
-    # config change must not wake runtime watch or imply new desired config.
-    etag_payload = {
-        "manifest": {key: value for key, value in manifest.items() if key != "issuedAt"},
-        "secretValues": secret_values,
-    }
-    etag = strong_json_etag(etag_payload)
+    etag = strong_json_etag(payload)
     headers = {"ETag": etag, "Cache-Control": "no-store"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)
+
+
+def _runtime_manifest_issued_at(state: HostedRuntimeState) -> str:
+    value = state.updated_at if isinstance(state.updated_at, datetime) else state.created_at
+    return _as_utc(value).isoformat()
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -250,10 +248,7 @@ async def _provider_projection(
     auth: AuthContext,
     runtime_name: str,
     runtime: dict[str, Any],
-) -> tuple[
-    dict[str, Any],
-    dict[str, str],
-]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     provider_ids = _runtime_provider_binding(runtime)
     providers: dict[str, Any] = {}
     secret_values: dict[str, str] = {}

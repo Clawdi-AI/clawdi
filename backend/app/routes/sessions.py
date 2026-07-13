@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, JsonValue, ValidationError, field_validator
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -1269,10 +1269,10 @@ def _bounded_runtime_observed(value: object) -> object:
 
 
 def _runtime_observed_comparison_value(
-    value: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if value is None:
-        return None
+    value: JsonValue,
+) -> JsonValue:
+    if not isinstance(value, dict):
+        return value
     return {key: item for key, item in value.items() if key != "reportedAt"}
 
 
@@ -1299,6 +1299,20 @@ def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
         "observed_manifest_etag": value.manifest.etag,
         "diagnostics": _runtime_observed_diagnostics(value),
     }
+
+
+def _runtime_observation_changed(
+    observation: HostedRuntimeConfigObservation | None,
+    values: dict[str, Any],
+) -> bool:
+    if observation is None:
+        return True
+    return (
+        observation.observed_config_generation != values["observed_config_generation"]
+        or observation.observed_manifest_etag != values["observed_manifest_etag"]
+        or _runtime_observed_comparison_value(observation.diagnostics)
+        != _runtime_observed_comparison_value(values["diagnostics"])
+    )
 
 
 @router.post("/agents/{agent_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
@@ -1360,8 +1374,10 @@ async def sync_heartbeat(
     runtime_observed = body.runtime_observed
     hosted_state = None
     observation = None
+    runtime_observed_values = None
     observed_changed = False
     if runtime_observed is not None:
+        runtime_observed_values = _runtime_observed_columns(runtime_observed)
         row = (
             await db.execute(
                 select(HostedRuntimeState, HostedRuntimeConfigObservation)
@@ -1375,9 +1391,7 @@ async def sync_heartbeat(
         ).first()
         if row is not None:
             hosted_state, observation = row
-            observed_changed = _runtime_observed_comparison_value(
-                observation.diagnostics if observation is not None else None
-            ) != _runtime_observed_comparison_value(_runtime_observed_diagnostics(runtime_observed))
+            observed_changed = _runtime_observation_changed(observation, runtime_observed_values)
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
@@ -1416,11 +1430,10 @@ async def sync_heartbeat(
     # rollout — it has done its job once an actual heartbeat arrives.
     if not env.sync_enabled:
         env.sync_enabled = True
-    if hosted_state is not None and runtime_observed is not None:
-        values = _runtime_observed_columns(runtime_observed)
+    if hosted_state is not None and runtime_observed_values is not None:
         insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
             environment_id=agent_id,
-            **values,
+            **runtime_observed_values,
         )
         await db.execute(
             insert_observation.on_conflict_do_update(

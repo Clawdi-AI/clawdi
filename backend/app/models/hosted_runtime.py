@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pydantic import JsonValue
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -53,4 +54,4 @@ class HostedRuntimeConfigObservation(Base, TimestampMixin):
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     observed_config_generation: Mapped[int | None] = mapped_column(Integer)
     observed_manifest_etag: Mapped[str | None] = mapped_column(String(1024))
-    diagnostics: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    diagnostics: Mapped[JsonValue] = mapped_column(JSONB(none_as_null=True), nullable=False)

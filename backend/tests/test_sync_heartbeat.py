@@ -651,6 +651,18 @@ async def test_runtime_observed_health_uses_typed_config_generation(
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
+    observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
+    assert observation is not None
+    diagnostics = observation.diagnostics
+    assert isinstance(diagnostics, dict)
+    watch = diagnostics["watch"]
+    assert isinstance(watch, dict)
+    observation.diagnostics = {
+        **diagnostics,
+        "watch": {**watch, "generation": 5},
+    }
+    await db_session.commit()
+
     response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -658,6 +670,59 @@ async def test_runtime_observed_health_uses_typed_config_generation(
     assert payload["observed"]["observed_config_generation"] == 4
     assert payload["health"]["status"] == "unknown"
     assert "config_generation_mismatch" in payload["health"]["reasons"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "legacy_diagnostics",
+    ["legacy-scalar", ["legacy-list", {"preserved": True}]],
+    ids=["scalar", "list"],
+)
+async def test_sync_heartbeat_repairs_migrated_non_object_diagnostics(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    legacy_diagnostics,
+):
+    env_id = await _create_env(client)
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=uuid.UUID(env_id),
+            deployment_id="dep-legacy-json-value",
+            instance_id="iid-legacy-json-value",
+            generation=4,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+            locale=_TEST_LOCALE,
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes=_test_runtimes(),
+        )
+    )
+    await db_session.commit()
+    db_session.add(
+        HostedRuntimeConfigObservation(
+            environment_id=uuid.UUID(env_id),
+            observed_at=None,
+            observed_config_generation=None,
+            observed_manifest_etag=None,
+            diagnostics=legacy_diagnostics,
+        )
+    )
+    await db_session.commit()
+
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={"runtime_observed": _runtime_observed(watch_generation=4)},
+    )
+
+    assert heartbeat.status_code == 204, heartbeat.text
+    observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
+    assert observation is not None
+    await db_session.refresh(observation)
+    assert observation.observed_config_generation == 4
+    assert observation.observed_manifest_etag == '"manifest-etag"'
+    assert isinstance(observation.diagnostics, dict)
+    assert observation.diagnostics["schemaVersion"] == "clawdi.hostedRuntimeObserved.v1"
 
 
 @pytest.mark.asyncio

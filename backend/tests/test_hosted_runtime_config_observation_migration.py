@@ -5,6 +5,7 @@ import json
 import uuid
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -39,19 +40,28 @@ def test_hosted_runtime_config_observation_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
 
 
+@pytest.mark.parametrize(
+    "legacy_diagnostics",
+    [
+        {
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+            "reportedAt": "2026-07-13T00:00:00Z",
+            "status": "ok",
+            "legacyDiagnostic": {"preserved": True},
+        },
+        "legacy-scalar",
+        ["legacy-list", {"preserved": True}],
+    ],
+    ids=["object", "scalar", "list"],
+)
 def test_hosted_runtime_config_observation_migration_preserves_diagnostics_and_compute_state(
     engine: AsyncEngine,
+    legacy_diagnostics,
 ) -> None:
     migration = _load_migration()
     schema = f"hosted_runtime_observation_migration_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     empty_environment_id = uuid.uuid4()
-    legacy_diagnostics = {
-        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
-        "reportedAt": "2026-07-13T00:00:00Z",
-        "status": "ok",
-        "legacyDiagnostic": {"preserved": True},
-    }
 
     def run_migration(sync_conn: sa.Connection) -> None:
         old_op = migration.op

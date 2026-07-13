@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -27,6 +28,7 @@ from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRunt
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
+from app.routes.runtime import _runtime_manifest_issued_at
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -35,6 +37,7 @@ from app.schemas.runtime import (
 )
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
+from app.services.http_cache import strong_json_etag
 from app.services.vault_crypto import encrypt
 from scripts.seed_dashboard_dev import _create_hosted_runtime_graph, _seed_ai_provider
 from tests.conftest import create_env_with_project
@@ -120,6 +123,13 @@ TEST_HERMES_BRIDGE = {
 }
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "tools")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+
+
+def test_runtime_manifest_issued_at_falls_back_to_desired_created_at() -> None:
+    created_at = datetime(2026, 7, 13, 1, 2, 3, tzinfo=UTC)
+    state = SimpleNamespace(updated_at=None, created_at=created_at)
+
+    assert _runtime_manifest_issued_at(state) == created_at.isoformat()
 
 
 def _live_sync(environment_id: str, agent_type: str = "openclaw") -> dict:
@@ -599,6 +609,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert "appId" not in manifest
     assert "channels" not in manifest
     assert payload["secretValues"] == {}
+    assert etag == strong_json_etag(payload)
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         not_modified = await client.get(
@@ -1963,7 +1974,7 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_etag_excludes_issued_at_but_keeps_config_generation(
+async def test_runtime_manifest_etag_hashes_issued_at_and_keeps_config_generation(
     admin_client,
     db_session,
     seed_user,
@@ -2001,9 +2012,79 @@ async def test_runtime_manifest_etag_excludes_issued_at_but_keeps_config_generat
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["manifest"]["issuedAt"] != initial_issued_at
     assert refreshed.json()["manifest"]["generation"] == expected["generation"]
-    assert refreshed.headers["etag"] == initial_etag
-    assert not_modified.status_code == 304
-    assert not_modified.headers["etag"] == initial_etag
+    assert refreshed.headers["etag"] == strong_json_etag(refreshed.json())
+    assert refreshed.headers["etag"] != initial_etag
+    assert not_modified.status_code == 200, not_modified.text
+    assert not_modified.headers["etag"] == refreshed.headers["etag"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_provider_label_is_not_projected_but_projected_fields_change_etag(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-provider-etag-{uuid4().hex[:8]}",
+        machine_name="Runtime provider ETag",
+        agent_type="openclaw",
+    )
+    provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id="custom-provider-etag",
+        type="custom_openai_compatible",
+        label="Original label",
+        base_url="https://provider-a.test/v1",
+        api_mode="openai_responses",
+        auth_type="none",
+        managed_by="user",
+    )
+    db_session.add(provider)
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        runtimes=_runtime_state(
+            provider_ids=[provider.provider_id],
+            primary_model={"provider_id": provider.provider_id, "model": "gpt-5.5"},
+        ),
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get("/v1/runtime/manifest")
+    assert initial.status_code == 200, initial.text
+    initial_etag = initial.headers["etag"]
+    initial_issued_at = initial.json()["manifest"]["issuedAt"]
+
+    provider.label = "Renamed label"
+    await db_session.commit()
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        label_only = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": initial_etag},
+        )
+    assert label_only.status_code == 304
+    assert label_only.headers["etag"] == initial_etag
+
+    provider.base_url = "https://provider-b.test/v1"
+    await db_session.commit()
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        projected_change = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": initial_etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert projected_change.status_code == 200, projected_change.text
+    assert projected_change.headers["etag"] == strong_json_etag(projected_change.json())
+    assert projected_change.headers["etag"] != initial_etag
+    assert projected_change.json()["manifest"]["issuedAt"] == initial_issued_at
+    assert projected_change.json()["manifest"]["providers"][provider.provider_id]["baseUrl"] == (
+        "https://provider-b.test/v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -3750,6 +3831,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
     assert response.status_code == 200, response.text
     payload = response.json()
+    issued_at = payload["manifest"]["issuedAt"]
     assert payload["manifest"]["providers"]["clawdi-managed-v2"] == {
         "kind": "openai-compatible",
         "type": "custom_openai_compatible",
@@ -3812,6 +3894,8 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
     assert rotated.status_code == 200, rotated.text
     assert rotated.headers["etag"] != etag
+    assert rotated.headers["etag"] == strong_json_etag(rotated.json())
+    assert rotated.json()["manifest"]["issuedAt"] == issued_at
     assert rotated.json()["secretValues"] == {
         "provider.clawdi-managed-v2.apiKey": "sk-rotated-provider"
     }
