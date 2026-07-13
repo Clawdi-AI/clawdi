@@ -323,6 +323,59 @@ async def test_ai_provider_accepts_catalog_derived_known_provider_bodies(
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_api_key_profile_round_trips_without_falling_back_to_default(
+    client: httpx.AsyncClient,
+):
+    provider = {
+        "provider_id": "managed-profile",
+        "type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_mode": "openai_responses",
+        "auth": {
+            "type": "api_key",
+            "source": "managed",
+            "profile": "work_team",
+        },
+    }
+
+    created = await client.post("/v1/ai-providers", json=provider)
+    assert created.status_code == 200, created.text
+    assert created.json()["auth"] == provider["auth"]
+
+    fetched = await client.get("/v1/ai-providers/managed-profile")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["auth"] == provider["auth"]
+
+    patched = await client.patch(
+        "/v1/ai-providers/managed-profile",
+        json={"label": "Managed profile"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["auth"] == provider["auth"]
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_rejects_invalid_api_key_profile(client: httpx.AsyncClient):
+    response = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "managed-profile",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {
+                "type": "api_key",
+                "source": "managed",
+                "profile": "../work-team",
+            },
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert "api_key auth has invalid profile" in response.text
+
+
+@pytest.mark.asyncio
 async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.AsyncClient):
     invalid_mode = await client.post(
         "/v1/ai-providers",

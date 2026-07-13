@@ -848,6 +848,7 @@ def _to_auth(provider: AiProvider) -> AiProviderAuth:
         return AiProviderAuth(
             type="api_key",
             source=source,
+            profile=metadata.get("profile"),
             ref=provider.auth_ref if source != "managed" else None,
         )
     if provider.auth_type == "oauth_profile":
@@ -992,6 +993,8 @@ def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
     elif auth.type == "api_key":
         if auth.source not in {"env", "vault", "managed"}:
             errors.append("api_key auth requires source env, vault, or managed")
+        if auth.profile is not None and not _is_profile_id(auth.profile):
+            errors.append("api_key auth has invalid profile")
         if auth.source == "env" and (not auth.ref or not _is_env_ref(auth.ref)):
             errors.append("api_key env auth requires env: ref")
         if auth.source == "vault" and (not auth.ref or not auth.ref.startswith("clawdi://")):
