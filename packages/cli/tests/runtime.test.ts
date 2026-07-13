@@ -47,9 +47,9 @@ import {
 } from "../src/runtime/manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
 	normalizeManifestPayload,
+	type RuntimeBundleChannelBinding,
 	type RuntimeChannelsLoad,
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
@@ -62,7 +62,7 @@ import {
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
-import { jsonResponse, mockFetch } from "./commands/helpers";
+import { mockFetch } from "./commands/helpers";
 
 const ENV_KEYS = [
 	"HOME",
@@ -251,12 +251,56 @@ function runtimeWatchLocaleManifest(
 	};
 }
 
+interface HostedRuntimeResponseFixture {
+	manifest: Record<string, unknown>;
+	secretValues?: Record<string, string>;
+	channelBindings?: RuntimeBundleChannelBinding[];
+}
+
+function hostedRuntimeBundleResponse(
+	payload: HostedRuntimeResponseFixture,
+	options: { etag?: string; sourceRevision?: string } = {},
+): Response {
+	const channelBindings = payload.channelBindings ?? [];
+	const secretValues = payload.secretValues ?? {};
+	const sourceRevision =
+		options.sourceRevision ??
+		runtimeContentSha256({
+			manifest: payload.manifest,
+			channelBindings,
+			secretValues,
+		});
+	if (!/^[a-f0-9]{64}$/.test(sourceRevision)) {
+		throw new Error("hosted runtime bundle fixture sourceRevision must be 64 hex characters");
+	}
+	const etag = options.etag ?? `"sha256:${sourceRevision}"`;
+	if (!/^"[^"]+"$/.test(etag)) {
+		throw new Error("hosted runtime bundle fixture ETag must be a strong quoted validator");
+	}
+	return new Response(
+		JSON.stringify({
+			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceRevision,
+			manifest: payload.manifest,
+			channelBindings,
+			secretValues,
+		}),
+		{
+			status: 200,
+			headers: {
+				"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+				etag,
+			},
+		},
+	);
+}
+
 function hostedRuntimeWatchLocalePayload(
 	home: string,
 	generation: number,
 	language: "en" | "fr" = "fr",
 	timezone = "Europe/Paris",
-): unknown {
+): HostedRuntimeResponseFixture {
 	return {
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -290,7 +334,7 @@ function hostedCliManifestResponse(
 	home: string,
 	packageSpec: string,
 	opts: { providerSecretRef?: string } = {},
-): unknown {
+): HostedRuntimeResponseFixture {
 	const provider = opts.providerSecretRef
 		? {
 				kind: "openai-compatible",
@@ -386,17 +430,8 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 		secretValues: {},
 	};
 	const convergence = convergeRuntimeManifest(load, paths);
-	writeFileSync(paths.manifestEtag, '"manifest-locale-1"\n');
-	writeFileSync(paths.channelsEtag, '"channels-locale-1"\n');
 	writeTestRuntimeAppliedState(paths, load, convergence, {
-		manifestEtag: '"manifest-locale-1"',
-		channelsEtag: '"channels-locale-1"',
-		channels: {
-			channels: [],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"channels-locale-1"',
-		},
+		etag: '"manifest-locale-1"',
 	});
 	return paths;
 }
@@ -829,32 +864,31 @@ function writeTestRuntimeAppliedState(
 	load: RuntimeManifestLoad,
 	convergence: RuntimeConvergenceResult,
 	input: {
-		manifestEtag?: string | null;
-		channelsEtag?: string | null;
-		channels?: RuntimeChannelsLoad | null;
+		etag?: string;
+		sourceRevision?: string;
 	} = {},
 ): void {
+	const sourceRevision =
+		input.sourceRevision ??
+		load.sourceRevision ??
+		runtimeContentSha256(load.sourceManifest ?? load.manifest);
+	const selectedRuntime = load.manifest.runtime;
+	const providerIds = selectedRuntime
+		? [...new Set(load.manifest.runtimes[selectedRuntime]?.provider_ids ?? [])].sort()
+		: [];
 	writeRuntimeAppliedState(
 		{
-			schemaVersion: "clawdi.runtimeAppliedState.v1",
+			schemaVersion: "clawdi.runtimeAppliedState.v2",
 			appliedAt: new Date().toISOString(),
 			instanceId: load.manifest.instanceId,
-			observedManifestEtag: input.manifestEtag ?? null,
-			observedChannelsEtag: input.channelsEtag ?? null,
-			observedConfigGeneration: load.manifest.generation,
+			etag: input.etag ?? load.etag ?? `"sha256:${sourceRevision}"`,
+			sourceRevision,
+			generation: load.manifest.generation,
 			contentIdentity: {
-				manifest: {
-					source: load.source,
-					sourcePath: load.sourcePath,
-					sha256: runtimeContentSha256(load.sourceManifest ?? load.manifest),
-				},
-				channels: input.channels
-					? {
-							sourcePath: input.channels.sourcePath,
-							sha256: runtimeContentSha256(input.channels.channels),
-						}
-					: null,
+				sourcePath: load.sourcePath,
+				sha256: runtimeContentSha256(load.sourceManifest ?? load.manifest),
 			},
+			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
 		},
 		paths,
@@ -1355,7 +1389,7 @@ describe("runtime manifest datasource", () => {
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -1483,7 +1517,7 @@ describe("runtime manifest datasource", () => {
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: () => jsonResponse(hostedCliManifestResponse(home, packageSpec)),
+				response: () => hostedRuntimeBundleResponse(hostedCliManifestResponse(home, packageSpec)),
 			},
 		]);
 
@@ -1514,7 +1548,7 @@ describe("runtime manifest datasource", () => {
 				{
 					method: "GET",
 					path: "/v1/runtime/manifest",
-					response: () => jsonResponse(hostedCliManifestResponse(home, packageSpec)),
+					response: () => hostedRuntimeBundleResponse(hostedCliManifestResponse(home, packageSpec)),
 				},
 			]);
 
@@ -1687,7 +1721,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -1782,7 +1816,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -1881,7 +1915,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -2563,7 +2597,7 @@ exit 0
 			const first = convergeRuntimeManifest(firstLoad, paths);
 			expect(first.installErrors).toEqual([]);
 			writeTestRuntimeAppliedState(paths, firstLoad, first, {
-				manifestEtag: `"${providerCase.id}-1"`,
+				etag: `"${providerCase.id}-1"`,
 			});
 
 			const second = convergeRuntimeManifest(
@@ -3791,7 +3825,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -3857,7 +3891,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -3891,7 +3925,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -4010,100 +4044,6 @@ exit 64
 		}
 	});
 
-	it("loads runtime channels from the cloud-api origin with ETag support", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const sourcePath = join(root, "runtime-source.json");
-		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL =
-			"https://runtime.test/prefix/v1/runtime/manifest?environment_id=env_runtime";
-		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		writeFileSync(
-			sourcePath,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeSource.v1",
-				type: "http",
-				url: "https://runtime.test/prefix/v1/runtime/manifest?environment_id=env_runtime",
-				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
-			}),
-		);
-		const { captured, restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/prefix/v1/channels",
-				response: () =>
-					new Response(
-						JSON.stringify([
-							{
-								id: "acct-telegram-1",
-								provider: "telegram",
-								name: "Runtime Telegram",
-								status: "active",
-								visibility: "private",
-								runtime_links: [
-									{
-										id: "link-telegram-1",
-										account_id: "acct-telegram-1",
-										agent_id: "env_runtime",
-										status: "active",
-										agent_token: "agent-token-runtime",
-									},
-								],
-							},
-							{
-								id: "acct-imessage-legacy",
-								provider: "imessage",
-								name: "Legacy iMessage",
-								status: "active",
-								visibility: "private",
-								runtime_links: [
-									{
-										id: "link-imessage-legacy",
-										account_id: "acct-imessage-legacy",
-										agent_id: "env_runtime",
-										status: "active",
-										agent_token: "legacy-imessage-token",
-									},
-								],
-							},
-						]),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"channels-etag-1"',
-							},
-						},
-					),
-			},
-		]);
-
-		try {
-			const loaded = await loadRemoteRuntimeChannels(getRuntimePaths(), {
-				ifNoneMatch: '"channels-etag-0"',
-			});
-
-			expect("channels" in loaded).toBe(true);
-			if (!("channels" in loaded)) throw new Error("expected channels load success");
-			expect(loaded.etag).toBe('"channels-etag-1"');
-			expect(loaded.channels).toHaveLength(1);
-			expect(loaded.channels[0]?.provider).toBe("telegram");
-			expect(loaded.channels[0]?.runtime_links[0]?.agent_token).toBe("agent-token-runtime");
-			expect(captured).toHaveLength(1);
-			expect(captured[0].path).toBe("/prefix/v1/channels?environment_id=env_runtime");
-			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
-			expect(captured[0].headers["if-none-match"]).toBe('"channels-etag-0"');
-		} finally {
-			restore();
-		}
-	});
-
 	it("projects an empty runtime channel list as an empty projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
@@ -4138,7 +4078,7 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
-	it("keeps deploy manifest secretValues provider-only when channel links are projected", () => {
+	it("merges channel secrets into source-level secretValues during pure projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -4220,33 +4160,31 @@ exit 64
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
 
-		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
-		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("channels/");
+		expect(projected.secretValues).toMatchObject({
+			"provider.default.apiKey": "sk-provider",
+			"secret://channels/telegram/clawdi_accttelegram/agent-token": "telegram-agent-token",
+			"secret://channels/discord/clawdi_acctdiscord1/agent-token": "discord-agent-token",
+			"secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token": "whatsapp-agent-token",
+		});
 		expect(projected.sourceManifest).toEqual(loaded.manifest);
 		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
 		expect(
-			projected.localSecretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
+			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
 		).toBe("telegram-agent-token");
 		expect(
-			projected.localSecretValues?.[
-				"secret://channels/telegram/clawdi_accttelegram/placeholder-token"
-			],
+			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/placeholder-token"],
 		).toMatch(/^999999999:[a-f0-9]{32}$/);
 		expect(
-			projected.localSecretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
+			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
 		).toBe("discord-agent-token");
 		expect(
-			projected.localSecretValues?.[
-				"secret://channels/discord/clawdi_acctdiscord1/placeholder-token"
-			],
+			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],
 		).toMatch(/^clawdi_[a-f0-9]{32}$/);
 		expect(
-			projected.localSecretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
+			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
 		).toBe("whatsapp-agent-token");
 		expect(
-			projected.localSecretValues?.[
-				"secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"
-			],
+			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"],
 		).toMatch(/^clawdi_[a-f0-9]{32}$/);
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
@@ -4339,7 +4277,7 @@ exit 64
 		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-agent-token");
 		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
 	});
 
@@ -4551,27 +4489,10 @@ exit 0
 							headers: { etag: '"manifest-locale-1"' },
 						});
 					}
-					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"manifest-locale-2"',
-						},
+					setTimeout(() => abort.abort(), 25);
+					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+						etag: '"manifest-locale-2"',
 					});
-				},
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: (request) => {
-					if (request.headers["if-none-match"]) {
-						return new Response(null, {
-							status: 304,
-							headers: { etag: '"channels-locale-1"' },
-						});
-					}
-					setTimeout(() => abort.abort(), 0);
-					return jsonResponse([]);
 				},
 			},
 		]);
@@ -4619,8 +4540,8 @@ exit 0
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
-			const observed = readHostedRuntimeObserved(getRuntimePaths());
-			expect(expectRecord(observed?.watch, "runtime watch observed status").generation).toBe(2);
+			const watchStatus = JSON.parse(readFileSync(getRuntimePaths().runtimeWatchStatus, "utf-8"));
+			expect(watchStatus.event.generation).toBe(2);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -4644,22 +4565,10 @@ exit 0
 				response: () => {
 					manifestCalls += 1;
 					if (manifestCalls === 1) return new Response(null, { status: 304 });
-					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"manifest-locale-2"',
-						},
-					});
-				},
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: (request) => {
-					if (request.headers["if-none-match"]) return new Response(null, { status: 304 });
 					setTimeout(() => abort.abort(), 0);
-					return jsonResponse([]);
+					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+						etag: '"manifest-locale-2"',
+					});
 				},
 			},
 		]);
@@ -4711,22 +4620,10 @@ exit 0
 						resolveInitialManifestRequest?.();
 						return new Response(null, { status: 304 });
 					}
-					return new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, 2)), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"manifest-locale-2"',
-						},
-					});
-				},
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: (request) => {
-					if (request.headers["if-none-match"]) return new Response(null, { status: 304 });
 					setTimeout(() => abort.abort(), 0);
-					return jsonResponse([]);
+					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+						etag: '"manifest-locale-2"',
+					});
 				},
 			},
 		]);
@@ -4928,7 +4825,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const logs: string[] = [];
 		let generation = 30;
 		let manifestEtag = '"manifest-generation-30"';
-		let channelsFullEtag = '"channels-generation-stable"';
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		seedOpenClawBinary(home);
 		process.env.HOME = home;
@@ -4955,35 +4851,17 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, generation)), {
-						status: 200,
-						headers: { "content-type": "application/json", etag: manifestEtag },
+					hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, generation), {
+						etag: manifestEtag,
 					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: (request) =>
-					request.headers["if-none-match"]
-						? new Response(null, {
-								status: 304,
-								headers: { etag: '"channels-generation-stable"' },
-							})
-						: new Response(JSON.stringify([]), {
-								status: 200,
-								headers: {
-									"content-type": "application/json",
-									etag: channelsFullEtag,
-								},
-							}),
 			},
 		]);
 
 		try {
 			await runtimeWatch({ once: true, json: true });
 			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
-				observedManifestEtag: '"manifest-generation-30"',
-				observedConfigGeneration: 30,
+				etag: '"manifest-generation-30"',
+				generation: 30,
 			});
 
 			generation = 31;
@@ -4996,29 +4874,11 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(31);
 			expect(event.etag).toBe('"manifest-generation-31"');
-			expect(event.channelsEtag).toBe('"channels-generation-stable"');
 			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
-				observedManifestEtag: '"manifest-generation-31"',
-				observedChannelsEtag: '"channels-generation-stable"',
-				observedConfigGeneration: 31,
+				etag: '"manifest-generation-31"',
+				generation: 31,
 			});
-
-			channelsFullEtag = '"channels-generation-effective"';
-			process.exitCode = undefined;
-			await runtimeWatch({ once: true, json: true });
-
-			const channelsRaceEvent = JSON.parse(logs.at(-1) ?? "{}");
-			expect(channelsRaceEvent.status).toBe("applied");
-			expect(channelsRaceEvent.etag).toBe('"manifest-generation-31"');
-			expect(channelsRaceEvent.channelsEtag).toBe('"channels-generation-effective"');
-			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
-				observedManifestEtag: '"manifest-generation-31"',
-				observedChannelsEtag: '"channels-generation-effective"',
-				observedConfigGeneration: 31,
-			});
-			expect(
-				watchFetch.captured.filter((request) => request.path.startsWith("/v1/channels")),
-			).toHaveLength(5);
+			expect(watchFetch.captured).toHaveLength(2);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
@@ -5026,7 +4886,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		}
 	});
 
-	it("runtime watch does not advance last-good or ETags when systemd apply fails", async () => {
+	it("runtime watch does not advance last-good or applied authority when systemd apply fails", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5071,27 +4931,19 @@ exit 42
 		}
 		const rollbackContents = new Map(rollbackFixtures.map((path) => [path, readFileSync(path)]));
 		writeFileSync(paths.manifestLastGood, '{"generation":12}\n');
-		writeFileSync(paths.manifestEtag, '"etag-watch-previous"\n');
-		writeFileSync(paths.channelsEtag, '"channels-etag-previous"\n');
 		writeRuntimeAppliedState(
 			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_watch_systemd_failure",
-				observedManifestEtag: '"etag-watch-previous"',
-				observedChannelsEtag: '"channels-etag-previous"',
-				observedConfigGeneration: 12,
+				etag: '"etag-watch-previous"',
+				sourceRevision: "a".repeat(64),
+				generation: 12,
 				contentIdentity: {
-					manifest: {
-						source: "remote-datasource",
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					channels: {
-						sourcePath: "https://runtime.test/v1/channels",
-						sha256: "b".repeat(64),
-					},
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
 				},
+				providerIds: ["previous"],
 				projectedProviderIds: { openclaw: ["previous"] },
 			},
 			paths,
@@ -5117,8 +4969,8 @@ exit 42
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -5142,27 +4994,9 @@ exit 42
 								},
 							},
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"etag-watch-systemd-failure"',
-							},
 						},
+						{ etag: '"etag-watch-systemd-failure"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"channels-etag-systemd-failure"',
-						},
-					}),
 			},
 		]);
 
@@ -5176,8 +5010,6 @@ exit 42
 			expect(event.activeGeneration).toBe(12);
 			expect(event.rejectedGeneration).toBe(13);
 			expect(event.instanceId).toBe("iid_watch_systemd_failure");
-			expect(readFileSync(paths.manifestEtag, "utf-8")).toBe('"etag-watch-previous"\n');
-			expect(readFileSync(paths.channelsEtag, "utf-8")).toBe('"channels-etag-previous"\n');
 			expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toEqual({
 				generation: 12,
 			});
@@ -5470,7 +5302,6 @@ exit 64
 			logs.length = 0;
 			const { restore } = mockFetch([
 				{ method: "GET", path: "/v1/runtime/manifest", response: manifestResponse },
-				{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
 			]);
 			try {
 				await runtimeWatch({ once: true, json: true });
@@ -5488,13 +5319,20 @@ exit 64
 			}, "error");
 			await runOnce(() => new Response("upstream unavailable", { status: 503 }), "error");
 			await runOnce(
-				() => new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+				() =>
+					new Response("{", {
+						status: 200,
+						headers: {
+							"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+							etag: '"malformed-bundle"',
+						},
+					}),
 				"error",
 			);
 			const recovered = await runOnce(
 				() =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -5516,19 +5354,15 @@ exit 64
 								runtimes: { openclaw: hostedOpenClawRuntime() },
 							},
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: { "content-type": "application/json", etag: '"etag-recovered"' },
 						},
+						{ etag: '"etag-recovered"' },
 					),
 				"applied",
 			);
 
 			expect(recovered.generation).toBe(18);
-			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
-				'"etag-recovered"\n',
-			);
+			expect(readRuntimeAppliedState(getRuntimePaths())?.etag).toBe('"etag-recovered"');
+			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
@@ -5569,7 +5403,6 @@ exit 64
 				path: "/v1/runtime/manifest",
 				response: () => new Response("revoked", { status: 401 }),
 			},
-			{ method: "GET", path: "/v1/channels", response: () => jsonResponse([]) },
 		]);
 
 		try {
@@ -5905,6 +5738,23 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			),
 			paths,
 		);
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: "2026-07-13T06:00:00.000Z",
+				instanceId: "iid-provider-observed",
+				etag: '"provider-observed"',
+				sourceRevision: "a".repeat(64),
+				generation: 9,
+				contentIdentity: {
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
+				},
+				providerIds: ["default"],
+				projectedProviderIds: {},
+			},
+			paths,
+		);
 
 		const observed = readHostedRuntimeObserved(paths);
 
@@ -6075,8 +5925,8 @@ chmod +x "$prefix/bin/clawdi"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -6100,27 +5950,9 @@ chmod +x "$prefix/bin/clawdi"
 								},
 							},
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"etag-cli-update-13"',
-							},
 						},
+						{ etag: '"etag-cli-update-13"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"channels-cli-update-1"',
-						},
-					}),
 			},
 		]);
 
@@ -6131,7 +5963,7 @@ chmod +x "$prefix/bin/clawdi"
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(2);
+			expect(captured).toHaveLength(1);
 			const active = join(state, "bin", "clawdi");
 			const sharedPrefixTarget = join(state, "npm", "bin", "clawdi");
 			const activeTarget = readlinkSync(active);
@@ -6314,8 +6146,8 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -6353,27 +6185,9 @@ printf 'ActiveState=active\\nSubState=running\\n'
 							secretValues: {
 								"provider.default.apiKey": "sk-after-upgrade",
 							},
-						}),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"etag-cli-egress-2"',
-							},
 						},
+						{ etag: '"etag-cli-egress-2"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"channels-cli-egress-1"',
-						},
-					}),
 			},
 		]);
 
@@ -6815,9 +6629,6 @@ chmod +x "$prefix/bin/clawdi"
 			"0.12.10-beta.49",
 			"https://registry.npmjs.org",
 		);
-		mkdirSync(dirname(paths.manifestEtag), { recursive: true });
-		writeFileSync(paths.manifestEtag, '"manifest-self-heal"\n');
-		writeFileSync(paths.channelsEtag, '"channels-self-heal"\n');
 		const manifestPayload = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
@@ -6843,23 +6654,17 @@ chmod +x "$prefix/bin/clawdi"
 		};
 		writeRuntimeAppliedState(
 			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_cli_self_heal",
-				observedManifestEtag: '"manifest-self-heal"',
-				observedChannelsEtag: '"channels-self-heal"',
-				observedConfigGeneration: 30,
+				etag: '"manifest-self-heal"',
+				sourceRevision: "a".repeat(64),
+				generation: 30,
 				contentIdentity: {
-					manifest: {
-						source: "remote-datasource",
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					channels: {
-						sourcePath: "https://runtime.test/v1/channels",
-						sha256: "b".repeat(64),
-					},
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
 				},
+				providerIds: ["default"],
 				projectedProviderIds: {},
 			},
 			paths,
@@ -6874,29 +6679,8 @@ chmod +x "$prefix/bin/clawdi"
 								status: 304,
 								headers: { etag: '"manifest-self-heal"' },
 							})
-						: new Response(JSON.stringify(manifestPayload), {
-								status: 200,
-								headers: {
-									"content-type": "application/json",
-									etag: '"manifest-self-heal"',
-								},
-							}),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: (request) =>
-					request.headers["if-none-match"]
-						? new Response(null, {
-								status: 304,
-								headers: { etag: '"channels-self-heal"' },
-							})
-						: new Response(JSON.stringify([]), {
-								status: 200,
-								headers: {
-									"content-type": "application/json",
-									etag: '"channels-self-heal"',
-								},
+						: hostedRuntimeBundleResponse(manifestPayload, {
+								etag: '"manifest-self-heal"',
 							}),
 			},
 		]);
@@ -6920,17 +6704,13 @@ chmod +x "$prefix/bin/clawdi"
 			]);
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(4);
+			expect(captured).toHaveLength(2);
 			expect(captured.map((request) => request.path)).toEqual([
 				"/v1/runtime/manifest",
-				"/v1/channels",
 				"/v1/runtime/manifest",
-				"/v1/channels",
 			]);
 			expect(captured[0].headers["if-none-match"]).toBe('"manifest-self-heal"');
-			expect(captured[1].headers["if-none-match"]).toBe('"channels-self-heal"');
-			expect(captured[2].headers["if-none-match"]).toBeUndefined();
-			expect(captured[3].headers["if-none-match"]).toBeUndefined();
+			expect(captured[1].headers["if-none-match"]).toBeUndefined();
 			const events = logs.map((line) => JSON.parse(line));
 			expect(events.map((event) => event.status)).toEqual(["not_modified", "applied"]);
 			expect(events[1].cliUpdate).toEqual(
@@ -7046,8 +6826,8 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -7072,36 +6852,24 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 									}),
 								},
 							},
-							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: { "content-type": "application/json", etag: '"etag-projection-failed"' },
-						},
-					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					jsonResponse([
-						{
-							id: "acct-telegram-failure",
-							provider: "telegram",
-							name: "Telegram",
-							status: "active",
-							visibility: "private",
-							runtime_links: [
+							channelBindings: [
 								{
-									id: "link-telegram-failure",
-									account_id: "acct-telegram-failure",
-									agent_id: "env_cli_update_converge_failure",
-									status: "active",
-									agent_token: "telegram-agent-token-failure",
+									provider: "telegram",
+									accountKey: "clawdi_accttelegram",
+									agentTokenSecretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
+									placeholderTokenSecretRef:
+										"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
 								},
 							],
+							secretValues: {
+								"secret://channels/telegram/clawdi_accttelegram/agent-token":
+									"telegram-agent-token-failure",
+								"secret://channels/telegram/clawdi_accttelegram/placeholder-token":
+									"999999999:00000000000000000000000000000000",
+							},
 						},
-					]),
+						{ etag: '"etag-projection-failed"' },
+					),
 			},
 		]);
 
@@ -7202,8 +6970,6 @@ chmod +x "$prefix/bin/clawdi"
 		seedCurrentCliInstall(state, "clawdi@0.13.4-beta.0", "0.13.4-beta.0");
 		const paths = getRuntimePaths();
 		const oldTarget = readlinkSync(paths.cliManagedBin);
-		mkdirSync(dirname(paths.manifestEtag), { recursive: true });
-		writeFileSync(paths.manifestEtag, '"etag-cli-rollback"\n');
 		const manifest = {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -7230,20 +6996,17 @@ chmod +x "$prefix/bin/clawdi"
 		};
 		writeRuntimeAppliedState(
 			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_cli_rollback",
-				observedManifestEtag: '"etag-cli-rollback"',
-				observedChannelsEtag: null,
-				observedConfigGeneration: 18,
+				etag: '"etag-cli-rollback"',
+				sourceRevision: "a".repeat(64),
+				generation: 18,
 				contentIdentity: {
-					manifest: {
-						source: "remote-datasource",
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					channels: null,
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
 				},
+				providerIds: ["default"],
 				projectedProviderIds: {},
 			},
 			paths,
@@ -7253,25 +7016,13 @@ chmod +x "$prefix/bin/clawdi"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest,
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: { "content-type": "application/json", etag: '"etag-cli-rollback"' },
 						},
+						{ etag: '"etag-cli-rollback"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: { "content-type": "application/json", etag: '"channels-cli-rollback"' },
-					}),
 			},
 		]);
 
@@ -7369,8 +7120,8 @@ chmod +x "$prefix/bin/clawdi"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -7394,21 +7145,9 @@ chmod +x "$prefix/bin/clawdi"
 								},
 							},
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: { "content-type": "application/json", etag: '"etag-cli-failed"' },
 						},
+						{ etag: '"etag-cli-failed"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: { "content-type": "application/json", etag: '"channels-cli-failed"' },
-					}),
 			},
 		]);
 
@@ -7512,8 +7251,8 @@ chmod +x "$prefix/bin/clawdi"
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								runtime: "openclaw",
@@ -7535,21 +7274,9 @@ chmod +x "$prefix/bin/clawdi"
 								runtimes: { openclaw: hostedOpenClawRuntime() },
 							},
 							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: { "content-type": "application/json", etag: '"etag-min-cli"' },
 						},
+						{ etag: '"etag-min-cli"' },
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: { "content-type": "application/json", etag: '"channels-min-cli"' },
-					}),
 			},
 		]);
 
@@ -8014,8 +7741,8 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					new Response(
-						JSON.stringify({
+					hostedRuntimeBundleResponse(
+						{
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -8038,63 +7765,33 @@ exit 64
 									openclaw: hostedOpenClawRuntime(),
 								},
 							},
-							secretValues: {},
-						}),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"manifest-etag-init-7"',
+							channelBindings: [
+								{
+									provider: "telegram",
+									accountKey: "clawdi_accttelegram",
+									agentTokenSecretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
+									placeholderTokenSecretRef:
+										"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
+								},
+								{
+									provider: "discord",
+									accountKey: "clawdi_acctdiscord1",
+									agentTokenSecretRef: "secret://channels/discord/clawdi_acctdiscord1/agent-token",
+									placeholderTokenSecretRef:
+										"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
+								},
+							],
+							secretValues: {
+								"secret://channels/telegram/clawdi_accttelegram/agent-token": "agent-token-init",
+								"secret://channels/telegram/clawdi_accttelegram/placeholder-token":
+									"999999999:00000000000000000000000000000000",
+								"secret://channels/discord/clawdi_acctdiscord1/agent-token":
+									"discord-agent-token-init",
+								"secret://channels/discord/clawdi_acctdiscord1/placeholder-token":
+									"clawdi_00000000000000000000000000000000",
 							},
 						},
-					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(
-						JSON.stringify([
-							{
-								id: "acct-telegram-1",
-								provider: "telegram",
-								name: "Runtime Telegram",
-								status: "active",
-								visibility: "private",
-								runtime_links: [
-									{
-										id: "link-telegram-1",
-										account_id: "acct-telegram-1",
-										agent_id: "env_init",
-										status: "active",
-										agent_token: "agent-token-init",
-									},
-								],
-							},
-							{
-								id: "acct-discord-1",
-								provider: "discord",
-								name: "Runtime Discord",
-								status: "active",
-								visibility: "private",
-								runtime_links: [
-									{
-										id: "link-discord-1",
-										account_id: "acct-discord-1",
-										agent_id: "env_init",
-										status: "active",
-										agent_token: "discord-agent-token-init",
-									},
-								],
-							},
-						]),
-						{
-							status: 200,
-							headers: {
-								"content-type": "application/json",
-								etag: '"channels-etag-init-1"',
-							},
-						},
+						{ etag: '"manifest-etag-init-7"' },
 					),
 			},
 		]);
@@ -8103,17 +7800,14 @@ exit 64
 			await runtimeInit({ nonInteractive: true, json: true });
 
 			expect(process.exitCode).toBe(0);
-			expect(captured).toHaveLength(2);
-			expect(captured.map((request) => request.path)).toEqual([
-				"/v1/runtime/manifest",
-				"/v1/channels",
-			]);
-			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
-				'"manifest-etag-init-7"\n',
-			);
-			expect(readFileSync(join(state, "cache", "channels.etag"), "utf-8")).toBe(
-				'"channels-etag-init-1"\n',
-			);
+			expect(captured).toHaveLength(1);
+			expect(captured[0].path).toBe("/v1/runtime/manifest");
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				etag: '"manifest-etag-init-7"',
+				generation: 7,
+			});
+			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
+			expect(existsSync(join(state, "cache", "channels.etag"))).toBe(false);
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
@@ -8154,10 +7848,18 @@ exit 64
 				join(state, "cache", "manifest.last-good.json"),
 				"utf-8",
 			);
-			expect(cachedManifestText).not.toContain('"channels"');
+			expect(cachedManifestText).toContain('"channels"');
 			expect(cachedManifestText).not.toContain("agent-token-init");
 			expect(cachedManifestText).not.toContain("discord-agent-token-init");
-			expect(existsSync(join(state, "cache", "runtime-secrets.last-good.json"))).toBe(false);
+			const cachedSecretsText = readFileSync(
+				join(state, "cache", "runtime-secrets.last-good.json"),
+				"utf-8",
+			);
+			expect(cachedSecretsText).toContain("placeholder-token");
+			expect(cachedSecretsText).toContain("999999999:");
+			expect(cachedSecretsText).toContain("clawdi_");
+			expect(cachedSecretsText).not.toContain("agent-token-init");
+			expect(cachedSecretsText).not.toContain("discord-agent-token-init");
 			const profileBundle = readFileSync(join(state, "config", "egress", "profiles.json"), "utf-8");
 			expect(profileBundle).toContain("clawdi-native-channels");
 			expect(profileBundle).toContain("/v1/channels/telegram");
@@ -9350,7 +9052,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -10254,23 +9956,17 @@ exit 64
 		}
 		writeRuntimeAppliedState(
 			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: previousManifest.instanceId,
-				observedManifestEtag: '"manifest-generation-1"',
-				observedChannelsEtag: '"channels-generation-1"',
-				observedConfigGeneration: 1,
+				etag: '"manifest-generation-1"',
+				sourceRevision: "a".repeat(64),
+				generation: 1,
 				contentIdentity: {
-					manifest: {
-						source: "remote-datasource",
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					channels: {
-						sourcePath: "https://runtime.test/v1/channels",
-						sha256: "b".repeat(64),
-					},
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
 				},
+				providerIds: [],
 				projectedProviderIds: { openclaw: ["generation-1-provider"] },
 			},
 			paths,
@@ -10565,20 +10261,17 @@ exit 64
 		);
 		writeRuntimeAppliedState(
 			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: desiredManifest.instanceId,
-				observedManifestEtag: null,
-				observedChannelsEtag: null,
-				observedConfigGeneration: 42,
+				etag: '"generation-reset-previous"',
+				sourceRevision: "a".repeat(64),
+				generation: 42,
 				contentIdentity: {
-					manifest: {
-						source: "fixture-file",
-						sourcePath: "test://generation-reset-previous",
-						sha256: "a".repeat(64),
-					},
-					channels: null,
+					sourcePath: "test://generation-reset-previous",
+					sha256: "b".repeat(64),
 				},
+				providerIds: [],
 				projectedProviderIds: {},
 			},
 			paths,
@@ -10660,7 +10353,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -10716,7 +10409,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -11008,7 +10701,7 @@ exit 64
 				method: "GET",
 				path: "/v1/runtime/manifest",
 				response: () =>
-					jsonResponse({
+					hostedRuntimeBundleResponse({
 						manifest: {
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
