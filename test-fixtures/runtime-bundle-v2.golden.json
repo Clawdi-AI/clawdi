@@ -1,0 +1,75 @@
+{
+	"channelBindings": [
+		{
+			"accountKey": "clawdi_500000000000",
+			"agentTokenSecretRef": "secret://channels/telegram/clawdi_500000000000/agent-token",
+			"placeholderTokenSecretRef": "secret://channels/telegram/clawdi_500000000000/placeholder-token",
+			"provider": "telegram"
+		}
+	],
+	"manifest": {
+		"clawdiCli": {
+			"packageSpec": "clawdi@0.12.10-beta.51",
+			"registry": "https://registry.npmjs.org",
+			"source": "npm:clawdi"
+		},
+		"controlPlane": { "cloudApiUrl": "https://cloud.test" },
+		"deploymentId": "dep_test",
+		"environmentId": "20000000-0000-0000-0000-000000000002",
+		"generation": 7,
+		"instanceId": "hri_test",
+		"issuedAt": "2026-07-13T00:00:00+00:00",
+		"liveSync": {
+			"agents": [
+				{
+					"agentType": "openclaw",
+					"environmentId": "20000000-0000-0000-0000-000000000002"
+				}
+			],
+			"enabled": true
+		},
+		"locale": { "language": "en", "timezone": "UTC" },
+		"minimumCliVersion": "0.12.10-beta.51",
+		"providers": {
+			"managed": {
+				"apiKeySecretRef": "provider.managed.apiKey",
+				"apiMode": "responses",
+				"baseUrl": "https://provider.test/v1",
+				"kind": "openai-compatible",
+				"managed_by": "clawdi",
+				"runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
+				"type": "openai"
+			}
+		},
+		"recovery": { "allowOfflineBoot": true, "cacheManifest": true },
+		"runtime": "openclaw",
+		"runtimes": {
+			"openclaw": {
+				"enabled": true,
+				"install": { "source": "official" },
+				"paths": {
+					"home": "/home/clawdi",
+					"workspace": "/home/clawdi/clawdi"
+				},
+				"primary_model": { "model": "gpt-test", "provider_id": "managed" },
+				"provider_ids": ["managed"],
+				"run": { "args": ["gateway", "run"] },
+				"services": {}
+			}
+		},
+		"schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+		"system": {
+			"home": "/home/clawdi",
+			"persistentPaths": ["/home/clawdi"],
+			"user": "clawdi",
+			"workspace": "/home/clawdi/clawdi"
+		}
+	},
+	"schemaVersion": "clawdi.hosted-runtime.bundle.v2",
+	"secretValues": {
+		"provider.managed.apiKey": "sk-provider-golden",
+		"secret://channels/telegram/clawdi_500000000000/agent-token": "123456789:telegram-agent-golden",
+		"secret://channels/telegram/clawdi_500000000000/placeholder-token": "999999999:eea06335e768d7a82e535465ae3b8bbd"
+	},
+	"sourceRevision": "d88db30a61541f30b71bc8f616d3a7079f444dcec40cb4c3f028c8580b87bac6"
+}

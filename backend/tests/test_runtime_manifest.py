@@ -14,16 +14,17 @@ import pytest_asyncio
 from fastapi import HTTPException
 from httpx import ASGITransport
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_runtime_snapshot_session, get_session
 from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
+from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
@@ -38,6 +39,7 @@ from app.schemas.runtime import (
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.http_cache import strong_json_etag
+from app.services.runtime_source import RUNTIME_BUNDLE_V2_MEDIA_TYPE
 from app.services.vault_crypto import encrypt
 from scripts.seed_dashboard_dev import _create_hosted_runtime_graph, _seed_ai_provider
 from tests.conftest import create_env_with_project
@@ -125,6 +127,57 @@ OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "too
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
 
 
+async def _create_bundle_runtime(admin_client, db_session, seed_user):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"bundle-runtime-{uuid4().hex[:8]}",
+        machine_name="Bundle runtime",
+        agent_type="openclaw",
+    )
+    provider = _seed_ai_provider(seed_user)
+    provider.provider_id = f"bundle-provider-{uuid4().hex[:8]}"
+    provider.label = "Bundle provider"
+    provider.auth_metadata = {"source": "managed"}
+    ciphertext, nonce = encrypt("sk-bundle-provider")
+    payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=provider.provider_id,
+        auth_profile="default",
+        kind="api_key",
+        source="managed",
+        encrypted_payload=ciphertext,
+        nonce=nonce,
+    )
+    account = ChannelAccount(
+        user_id=seed_user.id,
+        provider="telegram",
+        name="Bundle Telegram",
+        status="active",
+        visibility="private",
+        webhook_secret_hash="bundle-webhook-hash",
+    )
+    db_session.add_all([provider, payload, account])
+    await db_session.flush()
+    token_ciphertext, token_nonce = encrypt("123456789:bundle-agent-token")
+    link = ChannelBotAgentLink(
+        account_id=account.id,
+        user_id=seed_user.id,
+        agent_id=env.id,
+        status="active",
+        encrypted_agent_token=token_ciphertext,
+        agent_token_nonce=token_nonce,
+    )
+    db_session.add(link)
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        runtimes=_runtime_state(provider_ids=[provider.provider_id]),
+    )
+    return env, provider, payload, account, link
+
+
 def test_runtime_manifest_issued_at_falls_back_to_desired_created_at() -> None:
     created_at = datetime(2026, 7, 13, 1, 2, 3, tzinfo=UTC)
     state = SimpleNamespace(updated_at=None, created_at=created_at)
@@ -164,6 +217,7 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
         return AuthContext(user=seed_user, api_key=api_key)
 
     app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_runtime_snapshot_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")
@@ -3481,6 +3535,165 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
 
     assert response.status_code == 422, response.text
     assert "unsupported runtime desired state" in response.text
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
+    admin_client, db_session, seed_user
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        legacy = await client.get("/v1/runtime/manifest")
+        bundle = await client.get(
+            "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
+        )
+        not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                "Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+                "If-None-Match": bundle.headers["etag"],
+            },
+        )
+        unsupported = await client.get(
+            "/v1/runtime/manifest",
+            headers={"Accept": "application/vnd.clawdi.runtime-bundle.v3+json"},
+        )
+    app.dependency_overrides.clear()
+    assert legacy.status_code == 200
+    assert set(legacy.json()) == {"manifest", "secretValues"}
+    assert legacy.headers["etag"] == strong_json_etag(legacy.json())
+    assert legacy.headers["cache-control"] == "no-store"
+    assert "vary" not in legacy.headers
+    assert legacy.headers["content-type"].startswith("application/json")
+    body = bundle.json()
+    assert bundle.status_code == 200
+    assert set(body) == {
+        "schemaVersion",
+        "sourceRevision",
+        "manifest",
+        "channelBindings",
+        "secretValues",
+    }
+    assert body["schemaVersion"] == "clawdi.hosted-runtime.bundle.v2"
+    assert set(body["channelBindings"][0]) == {
+        "provider",
+        "accountKey",
+        "agentTokenSecretRef",
+        "placeholderTokenSecretRef",
+    }
+    assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
+    assert bundle.headers["vary"] == "Accept"
+    assert bundle.headers["etag"] == strong_json_etag(body)
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == bundle.headers["etag"]
+    assert unsupported.status_code == 406
+
+
+@pytest.mark.asyncio
+async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
+    admin_client, db_session, seed_user
+):
+    env, provider, payload, account, _ = await _create_bundle_runtime(
+        admin_client, db_session, seed_user
+    )
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
+
+    async def fetch(client):
+        response = await client.get(
+            "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
+        )
+        assert response.status_code == 200, response.text
+        return response
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await fetch(client)
+        provider.label = "Renamed provider"
+        provider.capabilities = {"irrelevant": True}
+        account.name = "Renamed channel"
+        await db_session.commit()
+        irrelevant = await fetch(client)
+        provider.base_url = "https://rotated-provider.test/v1"
+        await db_session.commit()
+        projected = await fetch(client)
+        payload.encrypted_payload, payload.nonce = encrypt("sk-rotated-bundle-provider")
+        await db_session.commit()
+        key_rotated = await fetch(client)
+        second_account = ChannelAccount(
+            user_id=seed_user.id,
+            provider="discord",
+            name="Bundle Discord",
+            status="active",
+            visibility="private",
+            webhook_secret_hash="discord-hash",
+        )
+        db_session.add(second_account)
+        await db_session.flush()
+        token_ciphertext, token_nonce = encrypt("discord-agent-token")
+        second_link = ChannelBotAgentLink(
+            account_id=second_account.id,
+            user_id=seed_user.id,
+            agent_id=env.id,
+            status="active",
+            encrypted_agent_token=token_ciphertext,
+            agent_token_nonce=token_nonce,
+        )
+        db_session.add(second_link)
+        await db_session.commit()
+        channel_added = await fetch(client)
+        second_link.status = "archived"
+        second_link.archived_at = datetime.now(UTC)
+        await db_session.commit()
+        channel_removed = await fetch(client)
+    app.dependency_overrides.clear()
+
+    def identity(response):
+        return response.json()["sourceRevision"], response.headers["etag"]
+
+    assert identity(irrelevant) == identity(initial)
+    assert identity(projected) != identity(initial)
+    assert identity(key_rotated) != identity(projected)
+    assert identity(channel_added) != identity(key_rotated)
+    assert identity(channel_removed) == identity(key_rotated)
+
+
+@pytest.mark.asyncio
+async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_constant(
+    admin_client, db_session, seed_user
+):
+    env, _, _, _, link = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
+    engine = db_session.bind.sync_engine
+    select_count = 0
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        async with await _runtime_client(db_session, seed_user, api_key) as client:
+            select_count = 0
+            healthy = await client.get(
+                "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
+            )
+            healthy_query_count = select_count
+            link.encrypted_agent_token = None
+            link.agent_token_nonce = None
+            await db_session.commit()
+            missing = await client.get(
+                "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
+            )
+            legacy = await client.get("/v1/runtime/manifest")
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+        app.dependency_overrides.clear()
+    assert healthy.status_code == 200
+    assert healthy_query_count == 4
+    assert missing.status_code == 409
+    assert missing.json() == {"detail": "Active runtime channel link has no token material"}
+    assert legacy.status_code == 200
 
 
 @pytest.mark.asyncio
