@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import uuid
 from pathlib import Path
 
@@ -11,246 +10,186 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "f1a7c3d9e2b4"
-HEAD_REVISION = "b7c4e1a9d2f6"
-MIGRATION_FILENAME = f"{REVISION}_separate_hosted_runtime_config_observations.py"
+MIGRATION_FILENAME = f"{REVISION}_finalize_unlaunched_agent_v2_schema.py"
 
 
 def _load_migration():
     migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location(
-        "hosted_runtime_observation_migration",
-        migration_path,
-    )
+    spec = importlib.util.spec_from_file_location("agent_v2_final_schema_migration", migration_path)
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
     return migration
 
 
-def test_hosted_runtime_config_observation_migration_is_single_head() -> None:
+def _create_previous_schema(connection: sa.Connection) -> None:
+    connection.execute(
+        sa.text(
+            """
+            CREATE TABLE ai_providers (
+                id integer PRIMARY KEY,
+                scope varchar(40) NOT NULL DEFAULT 'account_global'
+            )
+            """
+        )
+    )
+    connection.execute(
+        sa.text(
+            """
+            CREATE TABLE hosted_runtime_states (
+                environment_id uuid PRIMARY KEY,
+                app_id varchar(200),
+                observed jsonb
+            )
+            """
+        )
+    )
+
+
+def test_agent_v2_final_schema_migration_is_single_head() -> None:
     backend_dir = Path(__file__).parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == [HEAD_REVISION]
-    assert scripts.get_revision(REVISION).down_revision == "f3a6c9d2e5b8"
-    assert scripts.get_revision("a6d4e2f8c1b3").down_revision == REVISION
-    assert scripts.get_revision(HEAD_REVISION).down_revision == "a6d4e2f8c1b3"
+    assert scripts.get_heads() == [REVISION]
+    assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
 
 
-@pytest.mark.parametrize(
-    "legacy_diagnostics",
-    [
-        {
-            "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
-            "reportedAt": "2026-07-13T00:00:00Z",
-            "status": "ok",
-            "legacyDiagnostic": {"preserved": True},
-        },
-        "legacy-scalar",
-        ["legacy-list", {"preserved": True}],
-    ],
-    ids=["object", "scalar", "list"],
-)
-def test_hosted_runtime_config_observation_migration_preserves_diagnostics_and_compute_state(
+def test_agent_v2_final_schema_migration_upgrades_and_downgrades_empty_state(
     engine: AsyncEngine,
-    legacy_diagnostics,
 ) -> None:
     migration = _load_migration()
-    schema = f"hosted_runtime_observation_migration_{uuid.uuid4().hex}"
-    environment_id = uuid.uuid4()
-    empty_environment_id = uuid.uuid4()
+    schema = f"agent_v2_final_schema_{uuid.uuid4().hex}"
+    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
+    old_op = migration.op
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(sa.text(f'SET search_path TO "{schema}"'))
+            _create_previous_schema(connection)
+            migration.op = Operations(MigrationContext.configure(connection))
 
-    def run_migration(sync_conn: sa.Connection) -> None:
-        old_op = migration.op
-        sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
-        sync_conn.execute(sa.text(f'SET search_path TO "{schema}"'))
-        try:
-            sync_conn.execute(
-                sa.text(
-                    """
-                    CREATE TABLE hosted_runtime_states (
-                        environment_id uuid PRIMARY KEY,
-                        observed jsonb,
-                        desired_generation integer,
-                        observed_generation integer
-                    )
-                    """
-                )
-            )
-            sync_conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO hosted_runtime_states (
-                        environment_id,
-                        observed,
-                        desired_generation,
-                        observed_generation
-                    )
-                    VALUES
-                        (CAST(:environment_id AS uuid), CAST(:observed AS jsonb), 17, 13),
-                        (CAST(:empty_environment_id AS uuid), NULL, 23, 19)
-                    """
-                ),
-                {
-                    "environment_id": str(environment_id),
-                    "empty_environment_id": str(empty_environment_id),
-                    "observed": json.dumps(legacy_diagnostics),
-                },
-            )
-            migration.op = Operations(MigrationContext.configure(sync_conn))
             migration.upgrade()
 
+            inspector = inspect(connection)
+            provider_columns = {column["name"] for column in inspector.get_columns("ai_providers")}
             state_columns = {
-                row.column_name
-                for row in sync_conn.execute(
-                    sa.text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_schema = :schema
-                          AND table_name = 'hosted_runtime_states'
-                        """
-                    ),
-                    {"schema": schema},
-                )
+                column["name"] for column in inspector.get_columns("hosted_runtime_states")
             }
-            assert state_columns == {
+            observation_columns = {
+                column["name"]: column
+                for column in inspector.get_columns("hosted_runtime_config_observations")
+            }
+            assert "scope" not in provider_columns
+            assert "app_id" not in state_columns
+            assert "observed" not in state_columns
+            assert set(observation_columns) == {
                 "environment_id",
-                "desired_generation",
-                "observed_generation",
+                "observed_at",
+                "observed_config_generation",
+                "observed_manifest_etag",
+                "observed_source_revision",
+                "diagnostics",
+                "created_at",
+                "updated_at",
             }
-
-            compute_state = sync_conn.execute(
-                sa.text(
-                    """
-                    SELECT desired_generation, observed_generation
-                    FROM hosted_runtime_states
-                    WHERE environment_id = :environment_id
-                    """
-                ),
-                {"environment_id": environment_id},
-            ).one()
-            assert compute_state.desired_generation == 17
-            assert compute_state.observed_generation == 13
-
-            observation = sync_conn.execute(
-                sa.text(
-                    """
-                    SELECT environment_id, observed_at, observed_config_generation,
-                           observed_manifest_etag, diagnostics
-                    FROM hosted_runtime_config_observations
-                    """
-                )
-            ).one()
-            assert observation.environment_id == environment_id
-            assert observation.diagnostics == legacy_diagnostics
-            assert observation.observed_at is None
-            assert observation.observed_config_generation is None
-            assert observation.observed_manifest_etag is None
+            assert observation_columns["diagnostics"]["nullable"] is False
+            assert observation_columns["created_at"]["nullable"] is False
+            assert observation_columns["updated_at"]["nullable"] is False
 
             migration.downgrade()
 
-            restored = sync_conn.execute(
-                sa.text(
-                    """
-                    SELECT environment_id, observed, desired_generation, observed_generation
-                    FROM hosted_runtime_states
-                    ORDER BY environment_id
-                    """
-                )
-            ).all()
-            restored_by_id = {row.environment_id: row for row in restored}
-            assert restored_by_id[environment_id].observed == legacy_diagnostics
-            assert restored_by_id[environment_id].desired_generation == 17
-            assert restored_by_id[environment_id].observed_generation == 13
-            assert restored_by_id[empty_environment_id].observed is None
-            assert restored_by_id[empty_environment_id].desired_generation == 23
-            assert restored_by_id[empty_environment_id].observed_generation == 19
-            observation_table_count = sync_conn.execute(
-                sa.text(
-                    """
-                    SELECT count(*)
-                    FROM information_schema.tables
-                    WHERE table_schema = :schema
-                      AND table_name = 'hosted_runtime_config_observations'
-                    """
-                ),
-                {"schema": schema},
-            ).scalar_one()
-            assert observation_table_count == 0
-        finally:
-            migration.op = old_op
-
-    sync_url = engine.url.set(drivername="postgresql+psycopg2")
-    sync_engine = create_engine(sync_url)
-    try:
-        with sync_engine.begin() as conn:
-            run_migration(conn)
+            inspector = inspect(connection)
+            assert not inspector.has_table("hosted_runtime_config_observations")
+            provider_columns = {column["name"] for column in inspector.get_columns("ai_providers")}
+            state_columns = {
+                column["name"] for column in inspector.get_columns("hosted_runtime_states")
+            }
+            assert "scope" in provider_columns
+            assert "app_id" in state_columns
+            assert "observed" in state_columns
     finally:
-        with sync_engine.begin() as conn:
-            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        migration.op = old_op
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         sync_engine.dispose()
 
 
-def test_hosted_runtime_config_observation_cascades_with_runtime_state(
+def test_agent_v2_final_schema_migration_rejects_nonempty_runtime_state(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
-    schema = f"hosted_runtime_observation_cascade_{uuid.uuid4().hex}"
-    environment_id = uuid.uuid4()
-
-    def run_migration(sync_conn: sa.Connection) -> None:
-        old_op = migration.op
-        sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
-        sync_conn.execute(sa.text(f'SET search_path TO "{schema}"'))
-        try:
-            sync_conn.execute(
-                sa.text(
-                    """
-                    CREATE TABLE hosted_runtime_states (
-                        environment_id uuid PRIMARY KEY,
-                        observed jsonb
-                    )
-                    """
-                )
-            )
-            sync_conn.execute(
+    schema = f"agent_v2_nonempty_schema_{uuid.uuid4().hex}"
+    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
+    old_op = migration.op
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(sa.text(f'SET search_path TO "{schema}"'))
+            _create_previous_schema(connection)
+            connection.execute(
                 sa.text(
                     """
                     INSERT INTO hosted_runtime_states (environment_id, observed)
-                    VALUES (CAST(:environment_id AS uuid), '{"status":"ok"}'::jsonb)
+                    VALUES (:environment_id, '{}'::jsonb)
                     """
                 ),
-                {"environment_id": str(environment_id)},
+                {"environment_id": uuid.uuid4()},
             )
-            migration.op = Operations(MigrationContext.configure(sync_conn))
-            migration.upgrade()
+            migration.op = Operations(MigrationContext.configure(connection))
 
-            sync_conn.execute(
-                sa.text("DELETE FROM hosted_runtime_states WHERE environment_id = :environment_id"),
-                {"environment_id": environment_id},
-            )
-            observation_count = sync_conn.execute(
-                sa.text("SELECT count(*) FROM hosted_runtime_config_observations")
-            ).scalar_one()
-            assert observation_count == 0
+            with pytest.raises(RuntimeError, match="hosted_runtime_states must be empty"):
+                migration.upgrade()
 
-            migration.downgrade()
-        finally:
-            migration.op = old_op
-
-    sync_url = engine.url.set(drivername="postgresql+psycopg2")
-    sync_engine = create_engine(sync_url)
-    try:
-        with sync_engine.begin() as conn:
-            run_migration(conn)
+            inspector = inspect(connection)
+            assert "scope" in {column["name"] for column in inspector.get_columns("ai_providers")}
+            assert not inspector.has_table("hosted_runtime_config_observations")
     finally:
-        with sync_engine.begin() as conn:
-            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        migration.op = old_op
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        sync_engine.dispose()
+
+
+def test_agent_v2_final_schema_migration_rejects_nonempty_downgrade(
+    engine: AsyncEngine,
+) -> None:
+    migration = _load_migration()
+    schema = f"agent_v2_nonempty_downgrade_{uuid.uuid4().hex}"
+    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
+    old_op = migration.op
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(sa.text(f'SET search_path TO "{schema}"'))
+            _create_previous_schema(connection)
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO hosted_runtime_states (environment_id)
+                    VALUES (:environment_id)
+                    """
+                ),
+                {"environment_id": uuid.uuid4()},
+            )
+
+            with pytest.raises(RuntimeError, match="hosted_runtime_states must be empty"):
+                migration.downgrade()
+
+            inspector = inspect(connection)
+            assert inspector.has_table("hosted_runtime_config_observations")
+            assert "scope" not in {
+                column["name"] for column in inspector.get_columns("ai_providers")
+            }
+    finally:
+        migration.op = old_op
+        with sync_engine.begin() as connection:
+            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         sync_engine.dispose()
