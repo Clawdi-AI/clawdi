@@ -4515,6 +4515,194 @@ export interface components {
             persistentPaths: string[];
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+        /** HostedRuntimeObservedBootV1 */
+        HostedRuntimeObservedBootV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Mode */
+            mode: string;
+            /** Stage */
+            stage: string;
+            /** Timestamp */
+            timestamp: string;
+            /** Activegeneration */
+            activeGeneration?: number | null;
+            /** Instanceid */
+            instanceId?: string | null;
+            /** Enabledruntimes */
+            enabledRuntimes: string[];
+            /** Errors */
+            errors: string[];
+        };
+        /** HostedRuntimeObservedChannelsV1 */
+        HostedRuntimeObservedChannelsV1: {
+            /** Etag */
+            etag: string | null;
+        };
+        /** HostedRuntimeObservedCliUpdateV1 */
+        HostedRuntimeObservedCliUpdateV1: {
+            /** Status */
+            status?: string | null;
+            /** Packagespec */
+            packageSpec?: string | null;
+            /** Registry */
+            registry?: string | null;
+            /** Activepath */
+            activePath?: string | null;
+            /** Activetarget */
+            activeTarget?: string | null;
+            /** Version */
+            version?: string | null;
+        };
+        /** HostedRuntimeObservedCliV1 */
+        HostedRuntimeObservedCliV1: {
+            /** Status */
+            status?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Packagespec */
+            packageSpec?: string | null;
+            /** Registry */
+            registry?: string | null;
+            /** Activepath */
+            activePath?: string | null;
+            /** Activetarget */
+            activeTarget?: string | null;
+            /** Version */
+            version?: string | null;
+        };
+        /** HostedRuntimeObservedManifestV1 */
+        HostedRuntimeObservedManifestV1: {
+            /** Etag */
+            etag: string | null;
+            /** Lastgoodexists */
+            lastGoodExists: boolean;
+        };
+        /** HostedRuntimeObservedProviderPayload */
+        HostedRuntimeObservedProviderPayload: {
+            [key: string]: components["schemas"]["JsonValue"];
+        };
+        /** HostedRuntimeObservedSupervisorProgramV1 */
+        HostedRuntimeObservedSupervisorProgramV1: {
+            /** Name */
+            name: string;
+            /** State */
+            state: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Description */
+            description?: string | null;
+        };
+        /** HostedRuntimeObservedSupervisorV1 */
+        HostedRuntimeObservedSupervisorV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Programs */
+            programs: components["schemas"]["HostedRuntimeObservedSupervisorProgramV1"][];
+        };
+        /** HostedRuntimeObservedSystemdUnitV1 */
+        HostedRuntimeObservedSystemdUnitV1: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "system" | "user";
+            /** Name */
+            name: string;
+            /** Activestate */
+            activeState: string;
+            /** Substate */
+            subState: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Error */
+            error?: string | null;
+        };
+        /** HostedRuntimeObservedSystemdV1 */
+        HostedRuntimeObservedSystemdV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Unitcount */
+            unitCount: number;
+            /** Units */
+            units: components["schemas"]["HostedRuntimeObservedSystemdUnitV1"][];
+        };
+        /** HostedRuntimeObservedV1 */
+        HostedRuntimeObservedV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: "clawdi.hostedRuntimeObserved.v1";
+            /**
+             * Reportedat
+             * Format: date-time
+             */
+            reportedAt: string;
+            /**
+             * Runtimemode
+             * @constant
+             */
+            runtimeMode: "hosted";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            manifest: components["schemas"]["HostedRuntimeObservedManifestV1"];
+            channels: components["schemas"]["HostedRuntimeObservedChannelsV1"];
+            boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
+            watch: components["schemas"]["HostedRuntimeObservedWatchV1"] | null;
+            cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
+            supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
+            /** Providers */
+            providers?: {
+                [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
+            } | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
+            /** Truncated */
+            truncated?: boolean | null;
+        };
+        /** HostedRuntimeObservedWatchV1 */
+        HostedRuntimeObservedWatchV1: {
+            /** Status */
+            status?: ("applied" | "not_modified" | "error") | null;
+            /** Stage */
+            stage?: string | null;
+            /** Etag */
+            etag?: string | null;
+            /** Channelsetag */
+            channelsEtag?: string | null;
+            /** Generation */
+            generation?: number | null;
+            /** Instanceid */
+            instanceId?: string | null;
+            /** Selfreexec */
+            selfReexec?: boolean | null;
+            /** Error */
+            error?: string | null;
+            /** Errors */
+            errors?: string[];
+            cliUpdate?: components["schemas"]["HostedRuntimeObservedCliUpdateV1"] | null;
         };
         /**
          * InvitationAcceptResponse
@@ -4598,6 +4786,7 @@ export interface components {
              */
             created_at: string;
         };
+        JsonValue: unknown;
         /**
          * MemberResponse
          * @description Returned by GET /v1/projects/{project_id}/members.
@@ -4991,14 +5180,45 @@ export interface components {
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
         };
+        /** RuntimeObservedConfigResponse */
+        RuntimeObservedConfigResponse: {
+            /** Reported At */
+            reported_at?: string | null;
+            /** Status */
+            status?: ("ok" | "error" | "unknown") | null;
+            /** Observed Config Generation */
+            observed_config_generation?: number | null;
+            /** Instance Id */
+            instance_id?: string | null;
+            /** Observed Manifest Etag */
+            observed_manifest_etag?: string | null;
+            /** Observed Channels Etag */
+            observed_channels_etag?: string | null;
+            payload?: components["schemas"]["HostedRuntimeObservedV1"] | null;
+        };
+        /** RuntimeObservedConfigSummaryResponse */
+        RuntimeObservedConfigSummaryResponse: {
+            /** Reported At */
+            reported_at?: string | null;
+            /** Status */
+            status?: ("ok" | "error" | "unknown") | null;
+            /** Observed Config Generation */
+            observed_config_generation?: number | null;
+            /** Instance Id */
+            instance_id?: string | null;
+            /** Observed Manifest Etag */
+            observed_manifest_etag?: string | null;
+            /** Observed Channels Etag */
+            observed_channels_etag?: string | null;
+        };
         /** RuntimeObservedDesiredResponse */
         RuntimeObservedDesiredResponse: {
             /** Deployment Id */
             deployment_id: string;
             /** Instance Id */
             instance_id: string;
-            /** Generation */
-            generation: number;
+            /** Desired Config Generation */
+            desired_config_generation: number;
             /** Provider Id */
             provider_id?: string | null;
             /** Enabled Runtimes */
@@ -5049,19 +5269,13 @@ export interface components {
             desired?: {
                 [key: string]: unknown;
             } | null;
-            /** Observed */
-            observed?: {
-                [key: string]: unknown;
-            } | null;
+            observed?: components["schemas"]["HostedRuntimeObservedProviderPayload"] | null;
         };
         /** RuntimeObservedResponse */
         RuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
             desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
-            /** Observed */
-            observed?: {
-                [key: string]: unknown;
-            } | null;
+            observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
              * Provider Health
@@ -5101,6 +5315,7 @@ export interface components {
         RuntimeObservedSummaryItemResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
             desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            observed?: components["schemas"]["RuntimeObservedConfigSummaryResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
              * Provider Health
@@ -5777,10 +5992,7 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
-            /** Runtime Observed */
-            runtime_observed?: {
-                [key: string]: unknown;
-            } | null;
+            runtime_observed?: components["schemas"]["HostedRuntimeObservedV1"] | null;
         };
         /**
          * UnshareResponse

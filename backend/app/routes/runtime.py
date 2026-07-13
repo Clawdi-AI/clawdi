@@ -190,13 +190,11 @@ async def get_runtime_manifest(
     if state.tools:
         manifest["tools"] = state.tools
     payload = {"manifest": manifest, "secretValues": secret_values}
-    # Include generation in the ETag. The hosted CLI does not treat generation
-    # as a no-op bookkeeping field: runtime watch applies any non-304 manifest,
-    # writes generation into managed state/run-config outputs, and caches it as
-    # last-good. A generation-only control-plane bump must therefore wake the
-    # watcher immediately instead of waiting for the self-heal refetch path.
+    # `generation` is the desired config generation and remains part of the
+    # ETag. `issuedAt` is only an issuance timestamp: changing it without a
+    # config change must not wake runtime watch or imply new desired config.
     etag_payload = {
-        "manifest": manifest,
+        "manifest": {key: value for key, value in manifest.items() if key != "issuedAt"},
         "secretValues": secret_values,
     }
     etag = strong_json_etag(etag_payload)

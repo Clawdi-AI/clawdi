@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
@@ -23,7 +23,7 @@ from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
@@ -1903,12 +1903,18 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
         agent_type="openclaw",
     )
     expected = await _write_runtime_state(admin_client, str(env.id))
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    await db_session.refresh(state)
+    desired_updated_at = state.updated_at
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
         assert response.status_code == 200, response.text
         etag = response.headers["etag"]
+        issued_at = response.json()["manifest"]["issuedAt"]
+        assert issued_at == desired_updated_at.isoformat()
 
         heartbeat = await client.post(
             f"/v1/agents/{env.id}/sync-heartbeat",
@@ -1918,8 +1924,22 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
                 "runtime_observed": {
                     "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
                     "reportedAt": "2026-06-11T00:00:00+00:00",
+                    "runtimeMode": "hosted",
                     "status": "ok",
-                    "generation": expected["generation"],
+                    "manifest": {"etag": etag, "lastGoodExists": True},
+                    "channels": {"etag": '"channels-runtime-heartbeat"'},
+                    "boot": {
+                        "status": "ok",
+                        "mode": "normal",
+                        "stage": "final",
+                        "timestamp": "2026-06-11T00:00:00+00:00",
+                        "activeGeneration": expected["generation"],
+                        "instanceId": expected["instance_id"],
+                        "enabledRuntimes": ["openclaw"],
+                        "errors": [],
+                    },
+                    "watch": None,
+                    "cli": None,
                 },
             },
         )
@@ -1934,6 +1954,57 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
     assert not_modified.status_code == 304
     assert not_modified.headers["etag"] == etag
     assert not_modified.content == b""
+    await db_session.refresh(state)
+    assert state.updated_at == desired_updated_at
+    observation = await db_session.get(HostedRuntimeConfigObservation, env.id)
+    assert observation is not None
+    assert observation.observed_config_generation == expected["generation"]
+    assert observation.instance_id == expected["instance_id"]
+    assert observation.observed_manifest_etag == etag
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_etag_excludes_issued_at_but_keeps_config_generation(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-issued-at-{uuid4().hex[:8]}",
+        machine_name="Runtime issued at",
+        agent_type="openclaw",
+    )
+    expected = await _write_runtime_state(admin_client, str(env.id), generation=7)
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get("/v1/runtime/manifest")
+    assert initial.status_code == 200, initial.text
+    initial_etag = initial.headers["etag"]
+    initial_issued_at = initial.json()["manifest"]["issuedAt"]
+    assert initial.json()["manifest"]["generation"] == expected["generation"]
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    state.updated_at = state.updated_at + timedelta(seconds=1)
+    await db_session.commit()
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        refreshed = await client.get("/v1/runtime/manifest")
+        not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": initial_etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["manifest"]["issuedAt"] != initial_issued_at
+    assert refreshed.json()["manifest"]["generation"] == expected["generation"]
+    assert refreshed.headers["etag"] == initial_etag
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == initial_etag
 
 
 @pytest.mark.asyncio
@@ -3413,7 +3484,6 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
             egress_profiles=None,
             mcp=None,
             tools=None,
-            observed=None,
         )
     )
     await db_session.commit()

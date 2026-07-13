@@ -125,7 +125,13 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
     observed = {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
         "reportedAt": datetime.now(UTC).isoformat(),
+        "runtimeMode": "hosted",
         "status": "ok",
+        "manifest": {"etag": '"manifest-agent-alias"', "lastGoodExists": True},
+        "channels": {"etag": '"channels-agent-alias"'},
+        "boot": None,
+        "watch": None,
+        "cli": None,
     }
     heartbeat = await client.post(
         f"/v1/agents/{agent_id}/sync-heartbeat",

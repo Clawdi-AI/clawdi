@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { components } from "@clawdi/shared/api";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { readRuntimeBootStatus } from "./state";
+import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import {
 	isGeneratedRuntimeSystemdFile,
 	runtimeUserName,
@@ -12,12 +13,26 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
+type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV1"];
+type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
+type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
+type HostedRuntimeObservedCliUpdate = components["schemas"]["HostedRuntimeObservedCliUpdateV1"];
+type HostedRuntimeObservedProviderPayload =
+	components["schemas"]["HostedRuntimeObservedProviderPayload"];
+type HostedRuntimeObservedProviders = Record<string, HostedRuntimeObservedProviderPayload>;
+type HostedRuntimeObservedSystemd = components["schemas"]["HostedRuntimeObservedSystemdV1"];
+type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObservedSystemdUnitV1"];
+type HostedRuntimeObservedWatch = components["schemas"]["HostedRuntimeObservedWatchV1"];
+type HostedRuntimeObservedWatchStatus = Exclude<
+	HostedRuntimeObservedWatch["status"],
+	null | undefined
+>;
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
 
 export function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
-): JsonRecord | null {
+): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
 	const boot = readRuntimeBootStatus(paths);
 	const manifestEtag = readTrimmed(paths.manifestEtag);
@@ -27,7 +42,7 @@ export function readHostedRuntimeObserved(
 	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
 
-	const observed: JsonRecord = {
+	const observed: HostedRuntimeObserved = {
 		schemaVersion: "clawdi.hostedRuntimeObserved.v1",
 		reportedAt: new Date().toISOString(),
 		runtimeMode: paths.mode,
@@ -73,17 +88,14 @@ function readJsonRecord(path: string): JsonRecord | null {
 function observedStatus(
 	bootStatus: { status: string; errors?: string[] } | undefined,
 	watchStatus: JsonRecord | null,
-	systemd: JsonRecord | null,
-	providers: JsonRecord | null,
+	systemd: HostedRuntimeObservedSystemd | null,
+	providers: HostedRuntimeObservedProviders | null,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (watchEvent?.status === "error") return "error";
 	if (bootStatus?.status === "error") return "error";
 	if (systemd?.status === "error") return "error";
-	if (
-		providers &&
-		Object.values(providers).some((provider) => recordValue(provider)?.status === "error")
-	) {
+	if (providers && Object.values(providers).some((provider) => provider.status === "error")) {
 		return "error";
 	}
 	if (systemd?.status === "unknown") return "unknown";
@@ -92,16 +104,7 @@ function observedStatus(
 	return "unknown";
 }
 
-function summarizeBootStatus(status: {
-	status: string;
-	mode: string;
-	stage: string;
-	timestamp: string;
-	activeGeneration: number | null;
-	instanceId?: string | null;
-	enabledRuntimes: string[];
-	errors: string[];
-}): JsonRecord {
+function summarizeBootStatus(status: RuntimeBootStatus): HostedRuntimeObservedBoot {
 	return {
 		status: status.status,
 		mode: status.mode,
@@ -114,11 +117,11 @@ function summarizeBootStatus(status: {
 	};
 }
 
-function summarizeWatchStatus(status: JsonRecord | null): JsonRecord | null {
+function summarizeWatchStatus(status: JsonRecord | null): HostedRuntimeObservedWatch | null {
 	if (!status) return null;
 	const event = recordValue(status.event);
 	return {
-		status: stringValue(event?.status),
+		status: watchStatusValue(event?.status),
 		stage: stringValue(event?.stage),
 		etag: stringValue(event?.etag),
 		channelsEtag: stringValue(event?.channelsEtag),
@@ -126,7 +129,7 @@ function summarizeWatchStatus(status: JsonRecord | null): JsonRecord | null {
 		instanceId: stringValue(event?.instanceId),
 		selfReexec: booleanValue(event?.selfReexec),
 		error: stringValue(event?.error),
-		errors: arrayValue(event?.errors),
+		errors: stringArrayValue(event?.errors),
 		cliUpdate: summarizeCliUpdate(recordValue(event?.cliUpdate)),
 	};
 }
@@ -139,7 +142,7 @@ function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 	);
 }
 
-function summarizeCliUpdate(value: JsonRecord | null): JsonRecord | null {
+function summarizeCliUpdate(value: JsonRecord | null): HostedRuntimeObservedCliUpdate | null {
 	if (!value) return null;
 	return {
 		status: stringValue(value.status),
@@ -151,7 +154,7 @@ function summarizeCliUpdate(value: JsonRecord | null): JsonRecord | null {
 	};
 }
 
-function summarizeCliBootstrap(value: JsonRecord | null): JsonRecord | null {
+function summarizeCliBootstrap(value: JsonRecord | null): HostedRuntimeObservedCli | null {
 	if (!value) return null;
 	return {
 		status: stringValue(value.status),
@@ -164,11 +167,16 @@ function summarizeCliBootstrap(value: JsonRecord | null): JsonRecord | null {
 	};
 }
 
-function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
+function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProviders | null {
 	const providerStatus = readJsonRecord(paths.providerHealthStatus);
 	const statusProviders = recordValue(providerStatus?.providers);
 	if (statusProviders && Object.keys(statusProviders).length > 0) {
-		return statusProviders;
+		const observed: HostedRuntimeObservedProviders = {};
+		for (const [providerId, value] of Object.entries(statusProviders)) {
+			const provider = recordValue(value);
+			if (provider) observed[providerId] = provider;
+		}
+		if (Object.keys(observed).length > 0) return observed;
 	}
 
 	const manifest = readJsonRecord(paths.manifestLastGood);
@@ -180,7 +188,7 @@ function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
 		...(readJsonRecord(paths.managedSecretFile) ?? {}),
 		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
 	};
-	const observed: JsonRecord = {};
+	const observed: HostedRuntimeObservedProviders = {};
 	for (const providerId of Object.keys(providers).sort()) {
 		const provider = recordValue(providers[providerId]);
 		if (!provider) continue;
@@ -248,7 +256,7 @@ function isOpenAiCompatibleMode(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
-function readSystemdObserved(paths: RuntimePaths): JsonRecord | null {
+function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd | null {
 	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
 		systemdUnitStatus("system", unit, paths),
 	);
@@ -295,7 +303,7 @@ function systemdUnitStatus(
 	scope: "system" | "user",
 	unit: string,
 	paths: RuntimePaths,
-): JsonRecord {
+): HostedRuntimeObservedSystemdUnit {
 	const result =
 		scope === "system"
 			? runSystemctl(["show", unit, "--property=ActiveState", "--property=SubState"])
@@ -389,7 +397,7 @@ function parseSystemctlShow(output: string): Record<string, string> {
 	);
 }
 
-function systemdUnitsStatus(units: JsonRecord[]): ObservedStatus {
+function systemdUnitsStatus(units: HostedRuntimeObservedSystemdUnit[]): ObservedStatus {
 	if (units.some((unit) => unit.status === "error")) return "error";
 	if (units.some((unit) => unit.status === "unknown")) return "unknown";
 	return "ok";
@@ -414,6 +422,10 @@ function stringValue(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }
 
+function watchStatusValue(value: unknown): HostedRuntimeObservedWatchStatus | null {
+	return value === "applied" || value === "not_modified" || value === "error" ? value : null;
+}
+
 function numberValue(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -424,4 +436,10 @@ function booleanValue(value: unknown): boolean | null {
 
 function arrayValue(value: unknown): unknown[] {
 	return Array.isArray(value) ? value : [];
+}
+
+function stringArrayValue(value: unknown): string[] {
+	return Array.isArray(value)
+		? value.filter((item): item is string => typeof item === "string")
+		: [];
 }

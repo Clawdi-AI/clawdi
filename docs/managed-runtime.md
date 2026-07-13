@@ -404,9 +404,16 @@ plain text.
 
 At the boundary:
 
-- the control plane owns desired-state generation and secret resolution;
+- the control plane owns desired config generation and secret resolution;
 - the CLI owns local validation, projection, diagnostics, and command launch;
 - the runtime process owns normal agent behavior after launch.
+
+The manifest wire field remains `generation`, but it is specifically the
+desired config generation. Cloud API records daemon convergence separately as
+`observed_config_generation`, together with `observed_manifest_etag`; the ETag
+cannot be inferred from the generation. These CONFIG convergence fields are
+separate from hosted provider COMPUTE convergence fields such as desired or
+observed replica generation.
 
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:

@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -37,6 +37,12 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.runtime import HostedRuntimeDesiredState
+from app.schemas.runtime_observed import (
+    HostedRuntimeObservedProviderPayload,
+    HostedRuntimeObservedV1,
+    RuntimeObservedConfigResponse,
+    RuntimeObservedConfigSummaryResponse,
+)
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
@@ -401,6 +407,7 @@ async def list_environment_runtime_observed(
     )
     env_ids = [env.id for env in envs]
     states_by_env: dict[UUID, HostedRuntimeState] = {}
+    observations_by_env: dict[UUID, HostedRuntimeConfigObservation] = {}
     if env_ids:
         states = (
             (
@@ -412,18 +419,34 @@ async def list_environment_runtime_observed(
             .all()
         )
         states_by_env = {state.environment_id: state for state in states}
+        observations = (
+            (
+                await db.execute(
+                    select(HostedRuntimeConfigObservation).where(
+                        HostedRuntimeConfigObservation.environment_id.in_(env_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        observations_by_env = {
+            observation.environment_id: observation for observation in observations
+        }
     counts = RuntimeObservedSummaryCountsResponse()
     items: list[RuntimeObservedSummaryItemResponse] = []
     for env in envs:
         state = states_by_env.get(env.id)
-        health = _runtime_observed_health(env, state)
+        observation = observations_by_env.get(env.id)
+        health = _runtime_observed_health(env, state, observation)
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
                 environment=_env_to_response(env, state),
                 desired=_runtime_observed_desired(state) if state is not None else None,
+                observed=_runtime_observed_summary(observation),
                 health=health,
-                provider_health=_runtime_observed_provider_health(state),
+                provider_health=_runtime_observed_provider_health(state, observation),
             )
         )
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
@@ -767,12 +790,19 @@ async def get_environment_runtime_observed(
             select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
         )
     ).scalar_one_or_none()
+    observation = (
+        await db.execute(
+            select(HostedRuntimeConfigObservation).where(
+                HostedRuntimeConfigObservation.environment_id == environment_id
+            )
+        )
+    ).scalar_one_or_none()
     return RuntimeObservedResponse(
         environment=_env_to_response(env, state),
         desired=_runtime_observed_desired(state) if state is not None else None,
-        observed=state.observed if state is not None else None,
-        health=_runtime_observed_health(env, state),
-        provider_health=_runtime_observed_provider_health(state),
+        observed=_runtime_observed_response(observation),
+        health=_runtime_observed_health(env, state, observation),
+        provider_health=_runtime_observed_provider_health(state, observation),
     )
 
 
@@ -905,7 +935,7 @@ def _runtime_observed_desired(
     return RuntimeObservedDesiredResponse(
         deployment_id=state.deployment_id,
         instance_id=state.instance_id,
-        generation=state.generation,
+        desired_config_generation=state.generation,
         provider_id=primary_provider_id or (provider_ids[0] if provider_ids else None),
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
@@ -917,6 +947,7 @@ def _runtime_observed_desired(
 def _runtime_observed_health(
     env: AgentEnvironment,
     state: HostedRuntimeState | None,
+    observation: HostedRuntimeConfigObservation | None,
 ) -> RuntimeObservedHealthResponse:
     if state is None:
         return RuntimeObservedHealthResponse(
@@ -925,8 +956,8 @@ def _runtime_observed_health(
         )
 
     reasons: list[str] = []
-    observed = state.observed if isinstance(state.observed, dict) else None
-    reported_at = _observed_reported_at(observed)
+    payload = _validated_runtime_observed_payload(observation)
+    reported_at = observation.reported_at if observation is not None else None
     now = datetime.now(UTC)
 
     if env.last_sync_error:
@@ -936,16 +967,15 @@ def _runtime_observed_health(
     elif now - _as_utc(env.last_sync_at) > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("daemon_stale")
 
-    observed_status = observed.get("status") if observed is not None else None
-    if observed is None:
+    observed_status = observation.status if observation is not None else None
+    if observation is None:
         reasons.append("runtime_observed_missing")
     elif observed_status == "error":
         reasons.append("runtime_error")
     elif observed_status not in {"ok", "unknown"}:
         reasons.append("runtime_status_unknown")
 
-    supervisor = observed.get("supervisor") if observed is not None else None
-    supervisor_status = supervisor.get("status") if isinstance(supervisor, dict) else None
+    supervisor_status = payload.supervisor.status if payload and payload.supervisor else None
     if supervisor_status == "error":
         reasons.append("supervisor_error")
     elif supervisor_status == "unknown":
@@ -953,12 +983,12 @@ def _runtime_observed_health(
     elif supervisor_status is not None and supervisor_status != "ok":
         reasons.append("supervisor_status_invalid")
 
-    if observed is not None and reported_at is None:
+    if observation is not None and reported_at is None:
         reasons.append("runtime_reported_at_missing")
     elif reported_at is not None and now - reported_at > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("runtime_observed_stale")
 
-    provider_health = _runtime_observed_provider_health(state)
+    provider_health = _runtime_observed_provider_health(state, observation)
     if any(provider.status == "error" for provider in provider_health):
         reasons.append("provider_error")
     elif any(provider.status == "unknown" for provider in provider_health):
@@ -984,18 +1014,16 @@ def _runtime_observed_health(
 
 def _runtime_observed_provider_health(
     state: HostedRuntimeState | None,
+    observation: HostedRuntimeConfigObservation | None,
 ) -> list[RuntimeObservedProviderHealthResponse]:
-    if state is None or not isinstance(state.observed, dict):
-        return []
-    raw_providers = state.observed.get("providers")
-    if not isinstance(raw_providers, dict):
+    payload = _validated_runtime_observed_payload(observation)
+    if state is None or payload is None or payload.providers is None:
         return []
 
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
-    for provider_key in sorted(str(key) for key in raw_providers):
-        observed = raw_providers.get(provider_key)
-        observed_payload = observed if isinstance(observed, dict) else None
+    for provider_key in sorted(payload.providers):
+        observed_payload = payload.providers[provider_key]
         provider_health.append(
             RuntimeObservedProviderHealthResponse(
                 provider_id=provider_key,
@@ -1026,15 +1054,18 @@ def _runtime_desired_provider_binding(
     return runtime.provider_ids, runtime.primary_model.provider_id
 
 
-def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
+def _runtime_observed_provider_status(
+    observed: HostedRuntimeObservedProviderPayload | None,
+) -> str:
     if observed is None:
         return "unknown"
-    if observed.get("status") == "not_configured" or observed.get("configured") is False:
+    payload = observed.root
+    if payload.get("status") == "not_configured" or payload.get("configured") is False:
         return "not_configured"
     reasons = _runtime_observed_provider_reasons(observed)
     if reasons:
         return "error"
-    raw_status = observed.get("status")
+    raw_status = payload.get("status")
     if raw_status == "ok":
         return "ok"
     if raw_status == "unknown":
@@ -1044,14 +1075,17 @@ def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
     return "unknown"
 
 
-def _runtime_observed_provider_reasons(observed: dict[str, Any] | None) -> list[str]:
+def _runtime_observed_provider_reasons(
+    observed: HostedRuntimeObservedProviderPayload | None,
+) -> list[str]:
     if observed is None:
         return ["provider_observed_missing"]
 
+    payload = observed.root
     reasons: list[str] = []
-    raw_status = observed.get("status")
+    raw_status = payload.get("status")
     if raw_status == "error":
-        raw_reasons = observed.get("reasons")
+        raw_reasons = payload.get("reasons")
         if isinstance(raw_reasons, list):
             reasons.extend(str(reason) for reason in raw_reasons if isinstance(reason, str))
         if not reasons:
@@ -1059,9 +1093,9 @@ def _runtime_observed_provider_reasons(observed: dict[str, Any] | None) -> list[
     elif raw_status not in {"ok", "unknown", "not_configured"}:
         reasons.append("provider_status_invalid")
 
-    if observed.get("configured") is False:
+    if payload.get("configured") is False:
         reasons.append("provider_not_configured")
-    if observed.get("secretAvailable") is False:
+    if payload.get("secretAvailable") is False:
         reasons.append("provider_secret_missing")
 
     return sorted(set(reasons))
@@ -1075,16 +1109,42 @@ def _enabled_runtime_names(runtimes: dict) -> list[str]:
     return sorted(enabled)
 
 
-def _observed_reported_at(observed: dict[str, Any] | None) -> datetime | None:
-    if observed is None:
-        return None
-    value = observed.get("reportedAt")
-    if not isinstance(value, str):
+def _validated_runtime_observed_payload(
+    observation: HostedRuntimeConfigObservation | None,
+) -> HostedRuntimeObservedV1 | None:
+    if observation is None:
         return None
     try:
-        return _as_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
-    except ValueError:
+        return HostedRuntimeObservedV1.model_validate(observation.payload)
+    except ValidationError:
         return None
+
+
+def _runtime_observed_summary(
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedConfigSummaryResponse | None:
+    if observation is None:
+        return None
+    return RuntimeObservedConfigSummaryResponse(
+        reported_at=observation.reported_at,
+        status=observation.status,
+        observed_config_generation=observation.observed_config_generation,
+        instance_id=observation.instance_id,
+        observed_manifest_etag=observation.observed_manifest_etag,
+        observed_channels_etag=observation.observed_channels_etag,
+    )
+
+
+def _runtime_observed_response(
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedConfigResponse | None:
+    summary = _runtime_observed_summary(observation)
+    if summary is None:
+        return None
+    return RuntimeObservedConfigResponse(
+        **summary.model_dump(),
+        payload=_validated_runtime_observed_payload(observation),
+    )
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -1164,19 +1224,36 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
-    runtime_observed: dict[str, Any] | None = None
+    runtime_observed: HostedRuntimeObservedV1 | None = None
+
+    @field_validator("runtime_observed", mode="before")
+    @classmethod
+    def bound_runtime_observed(cls, value: object) -> object:
+        return _bounded_runtime_observed(value)
 
 
-def _bounded_runtime_observed(value: dict[str, Any] | None) -> dict[str, Any] | None:
+def _bounded_runtime_observed(value: object) -> object:
     if value is None:
         return None
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    if len(encoded.encode("utf-8")) <= _MAX_RUNTIME_OBSERVED_BYTES:
+    if not isinstance(value, dict):
+        return value
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        encoded_size = len(encoded.encode("utf-8"))
+    except (TypeError, UnicodeEncodeError, ValueError) as exc:
+        raise ValueError("runtime_observed must be valid UTF-8 JSON") from exc
+    if encoded_size <= _MAX_RUNTIME_OBSERVED_BYTES:
         return value
     return {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
         "reportedAt": datetime.now(UTC).isoformat(),
+        "runtimeMode": "hosted",
         "status": "error",
+        "manifest": {"etag": None, "lastGoodExists": False},
+        "channels": {"etag": None},
+        "boot": None,
+        "watch": None,
+        "cli": None,
         "error": "runtime observed payload exceeded size limit",
         "truncated": True,
     }
@@ -1188,6 +1265,41 @@ def _runtime_observed_comparison_value(
     if value is None:
         return None
     return {key: item for key, item in value.items() if key != "reportedAt"}
+
+
+def _runtime_observed_payload(value: HostedRuntimeObservedV1) -> dict[str, Any]:
+    return value.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_unset=True,
+    )
+
+
+def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
+    applied_watch = value.watch if value.watch and value.watch.status == "applied" else None
+    observed_config_generation = (
+        applied_watch.generation
+        if applied_watch is not None and applied_watch.generation is not None
+        else value.boot.active_generation
+        if value.boot is not None
+        else None
+    )
+    instance_id = (
+        applied_watch.instance_id
+        if applied_watch is not None and applied_watch.instance_id is not None
+        else value.boot.instance_id
+        if value.boot is not None
+        else None
+    )
+    return {
+        "reported_at": value.reported_at,
+        "status": value.status,
+        "observed_config_generation": observed_config_generation,
+        "instance_id": instance_id,
+        "observed_manifest_etag": value.manifest.etag,
+        "observed_channels_etag": value.channels.etag,
+        "payload": _runtime_observed_payload(value),
+    }
 
 
 @router.post("/agents/{agent_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
@@ -1246,18 +1358,27 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
-    runtime_observed = _bounded_runtime_observed(body.runtime_observed)
+    runtime_observed = body.runtime_observed
     hosted_state = None
+    observation = None
     observed_changed = False
     if runtime_observed is not None:
-        hosted_state = (
+        row = (
             await db.execute(
-                select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+                select(HostedRuntimeState, HostedRuntimeConfigObservation)
+                .outerjoin(
+                    HostedRuntimeConfigObservation,
+                    HostedRuntimeConfigObservation.environment_id
+                    == HostedRuntimeState.environment_id,
+                )
+                .where(HostedRuntimeState.environment_id == agent_id)
             )
-        ).scalar_one_or_none()
-        observed_changed = hosted_state is not None and _runtime_observed_comparison_value(
-            hosted_state.observed
-        ) != _runtime_observed_comparison_value(runtime_observed)
+        ).first()
+        if row is not None:
+            hosted_state, observation = row
+            observed_changed = _runtime_observed_comparison_value(
+                observation.payload if observation is not None else None
+            ) != _runtime_observed_comparison_value(_runtime_observed_payload(runtime_observed))
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
@@ -1297,7 +1418,28 @@ async def sync_heartbeat(
     if not env.sync_enabled:
         env.sync_enabled = True
     if hosted_state is not None and runtime_observed is not None:
-        hosted_state.observed = runtime_observed
+        values = _runtime_observed_columns(runtime_observed)
+        insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
+            environment_id=agent_id,
+            **values,
+        )
+        await db.execute(
+            insert_observation.on_conflict_do_update(
+                index_elements=[HostedRuntimeConfigObservation.environment_id],
+                set_={
+                    "reported_at": insert_observation.excluded.reported_at,
+                    "status": insert_observation.excluded.status,
+                    "observed_config_generation": (
+                        insert_observation.excluded.observed_config_generation
+                    ),
+                    "instance_id": insert_observation.excluded.instance_id,
+                    "observed_manifest_etag": (insert_observation.excluded.observed_manifest_etag),
+                    "observed_channels_etag": (insert_observation.excluded.observed_channels_etag),
+                    "payload": insert_observation.excluded.payload,
+                    "updated_at": func.now(),
+                },
+            )
+        )
     await db.commit()
 
 

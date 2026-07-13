@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,4 +32,32 @@ class HostedRuntimeState(Base, TimestampMixin):
     egress_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     mcp: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     tools: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    observed: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+
+
+class HostedRuntimeConfigObservation(Base, TimestampMixin):
+    """Daemon-reported CONFIG convergence, separate from provider COMPUTE state."""
+
+    __tablename__ = "hosted_runtime_config_observations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IS NULL OR status IN ('ok', 'error', 'unknown')",
+            name="ck_hosted_runtime_config_observations_status",
+        ),
+        CheckConstraint(
+            "observed_config_generation IS NULL OR observed_config_generation >= 0",
+            name="ck_hosted_runtime_config_observations_generation",
+        ),
+    )
+
+    environment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hosted_runtime_states.environment_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str | None] = mapped_column(String(16))
+    observed_config_generation: Mapped[int | None] = mapped_column(Integer)
+    instance_id: Mapped[str | None] = mapped_column(String(200))
+    observed_manifest_etag: Mapped[str | None] = mapped_column(String(1024))
+    observed_channels_etag: Mapped[str | None] = mapped_column(String(1024))
+    payload: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)

@@ -302,7 +302,6 @@ async def _create_hosted_runtime_graph(
                 egress_profiles={},
                 mcp={"enabled": True},
                 tools={"channels": True, "aiProviders": True},
-                observed={"status": "running", "runtime": runtime},
             ),
         ]
     )
