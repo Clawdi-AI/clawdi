@@ -1284,7 +1284,11 @@ def _runtime_observed_diagnostics(value: HostedRuntimeObservedV1) -> dict[str, A
     )
 
 
-def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
+def _runtime_observed_columns(
+    value: HostedRuntimeObservedV1,
+    *,
+    observed_at: datetime,
+) -> dict[str, Any]:
     applied_watch = (
         value.watch if value.watch and value.watch.status in {"applied", "not_modified"} else None
     )
@@ -1296,7 +1300,7 @@ def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
         else None
     )
     return {
-        "observed_at": value.reported_at,
+        "observed_at": observed_at,
         "observed_config_generation": observed_config_generation,
         "observed_manifest_etag": value.manifest.etag,
         "diagnostics": _runtime_observed_diagnostics(value),
@@ -1379,7 +1383,10 @@ async def sync_heartbeat(
     runtime_observed_values = None
     observed_changed = False
     if runtime_observed is not None:
-        runtime_observed_values = _runtime_observed_columns(runtime_observed)
+        runtime_observed_values = _runtime_observed_columns(
+            runtime_observed,
+            observed_at=now,
+        )
         row = (
             await db.execute(
                 select(HostedRuntimeState, HostedRuntimeConfigObservation)

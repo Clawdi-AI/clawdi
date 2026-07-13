@@ -488,10 +488,12 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_config_observation(
     desired_updated_at = state.updated_at
 
     observed = _runtime_observed()
+    received_at_lower_bound = datetime.now(UTC)
     r = await client.post(
         f"/v1/agents/{bound_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
+    received_at_upper_bound = datetime.now(UTC)
     assert r.status_code == 204, r.text
 
     await db_session.refresh(state)
@@ -500,9 +502,14 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_config_observation(
     assert observation is not None
     assert observation.observed_config_generation == 4
     assert observation.observed_manifest_etag == '"manifest-etag"'
+    assert observation.observed_at is not None
+    assert received_at_lower_bound <= observation.observed_at <= received_at_upper_bound
     assert observation.diagnostics == {
         **observed,
-        "reportedAt": observation.observed_at.isoformat().replace("+00:00", "Z"),
+        "reportedAt": datetime.fromisoformat(observed["reportedAt"])
+        .astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
 
 
@@ -590,10 +597,12 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         watch_generation=4,
         watch_instance_id="iid-watch-api",
     )
+    received_at_lower_bound = datetime.now(UTC)
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",
         json={"queue_depth": 1, "runtime_observed": observed},
     )
+    received_at_upper_bound = datetime.now(UTC)
     assert heartbeat.status_code == 204, heartbeat.text
 
     response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
@@ -610,9 +619,11 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "has_tools": True,
         "updated_at": payload["desired"]["updated_at"],
     }
-    assert datetime.fromisoformat(payload["observed"]["observed_at"].replace("Z", "+00:00")) == (
-        datetime.fromisoformat(observed["reportedAt"])
-    )
+    observed_at = datetime.fromisoformat(payload["observed"]["observed_at"].replace("Z", "+00:00"))
+    assert received_at_lower_bound <= observed_at <= received_at_upper_bound
+    assert datetime.fromisoformat(
+        payload["observed"]["diagnostics"]["reportedAt"].replace("Z", "+00:00")
+    ) == datetime.fromisoformat(observed["reportedAt"])
     assert payload["observed"]["observed_config_generation"] == 4
     assert payload["observed"]["observed_manifest_etag"] == '"manifest-etag"'
     assert payload["observed"]["diagnostics"]["schemaVersion"] == (
