@@ -4550,26 +4550,6 @@ export interface components {
             /** Errors */
             errors: string[];
         };
-        /** HostedRuntimeObservedChannelsV1 */
-        HostedRuntimeObservedChannelsV1: {
-            /** Etag */
-            etag: string | null;
-        };
-        /** HostedRuntimeObservedCliUpdateV1 */
-        HostedRuntimeObservedCliUpdateV1: {
-            /** Status */
-            status?: string | null;
-            /** Packagespec */
-            packageSpec?: string | null;
-            /** Registry */
-            registry?: string | null;
-            /** Activepath */
-            activePath?: string | null;
-            /** Activetarget */
-            activeTarget?: string | null;
-            /** Version */
-            version?: string | null;
-        };
         /** HostedRuntimeObservedCliV1 */
         HostedRuntimeObservedCliV1: {
             /** Status */
@@ -4586,13 +4566,6 @@ export interface components {
             activeTarget?: string | null;
             /** Version */
             version?: string | null;
-        };
-        /** HostedRuntimeObservedManifestV1 */
-        HostedRuntimeObservedManifestV1: {
-            /** Etag */
-            etag: string | null;
-            /** Lastgoodexists */
-            lastGoodExists: boolean;
         };
         /** HostedRuntimeObservedProviderPayload */
         HostedRuntimeObservedProviderPayload: {
@@ -4655,51 +4628,11 @@ export interface components {
             /** Units */
             units: components["schemas"]["HostedRuntimeObservedSystemdUnitV1"][];
         };
-        /** HostedRuntimeObservedV1 */
-        HostedRuntimeObservedV1: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            schemaVersion: "clawdi.hostedRuntimeObserved.v1";
-            /**
-             * Reportedat
-             * Format: date-time
-             */
-            reportedAt: string;
-            /**
-             * Runtimemode
-             * @constant
-             */
-            runtimeMode: "hosted";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "ok" | "error" | "unknown";
-            manifest: components["schemas"]["HostedRuntimeObservedManifestV1"];
-            channels: components["schemas"]["HostedRuntimeObservedChannelsV1"];
-            boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
-            watch: components["schemas"]["HostedRuntimeObservedWatchV1"] | null;
-            cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
-            systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
-            supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
-            /** Providers */
-            providers?: {
-                [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
-            } | null;
-            /** Error */
-            error?: string | null;
-            /** Convergeerror */
-            convergeError?: string | null;
-            /** Truncated */
-            truncated?: boolean | null;
-        };
         /** HostedRuntimeObservedV2 */
         HostedRuntimeObservedV2: {
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Schemaversion
+             * @constant
              */
             schemaVersion: "clawdi.hostedRuntimeObserved.v2";
             /**
@@ -4734,28 +4667,6 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: boolean | null;
-        };
-        /** HostedRuntimeObservedWatchV1 */
-        HostedRuntimeObservedWatchV1: {
-            /** Status */
-            status?: ("applied" | "not_modified" | "error") | null;
-            /** Stage */
-            stage?: string | null;
-            /** Etag */
-            etag?: string | null;
-            /** Channelsetag */
-            channelsEtag?: string | null;
-            /** Generation */
-            generation?: number | null;
-            /** Instanceid */
-            instanceId?: string | null;
-            /** Selfreexec */
-            selfReexec?: boolean | null;
-            /** Error */
-            error?: string | null;
-            /** Errors */
-            errors?: string[];
-            cliUpdate?: components["schemas"]["HostedRuntimeObservedCliUpdateV1"] | null;
         };
         /**
          * InvitationAcceptResponse
@@ -5243,8 +5154,7 @@ export interface components {
             observed_manifest_etag?: string | null;
             /** Observed Source Revision */
             observed_source_revision?: string | null;
-            /** Diagnostics */
-            diagnostics?: components["schemas"]["HostedRuntimeObservedV1"] | components["schemas"]["HostedRuntimeObservedV2"] | null;
+            diagnostics?: components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /** RuntimeObservedConfigSummaryResponse */
         RuntimeObservedConfigSummaryResponse: {
@@ -6040,8 +5950,7 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
-            /** Runtime Observed */
-            runtime_observed?: (components["schemas"]["HostedRuntimeObservedV1"] | components["schemas"]["HostedRuntimeObservedV2"]) | null;
+            runtime_observed?: components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /**
          * UnshareResponse

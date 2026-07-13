@@ -4,7 +4,6 @@ import importlib.util
 import uuid
 from pathlib import Path
 
-import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -60,7 +59,7 @@ def test_agent_v2_final_schema_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
 
 
-def test_agent_v2_final_schema_migration_upgrades_and_downgrades_empty_state(
+def test_agent_v2_final_schema_migration_is_additive_for_rolling_deploys(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
@@ -85,9 +84,9 @@ def test_agent_v2_final_schema_migration_upgrades_and_downgrades_empty_state(
                 column["name"]: column
                 for column in inspector.get_columns("hosted_runtime_config_observations")
             }
-            assert "scope" not in provider_columns
-            assert "app_id" not in state_columns
-            assert "observed" not in state_columns
+            assert "scope" in provider_columns
+            assert "app_id" in state_columns
+            assert "observed" in state_columns
             assert set(observation_columns) == {
                 "environment_id",
                 "observed_at",
@@ -113,81 +112,6 @@ def test_agent_v2_final_schema_migration_upgrades_and_downgrades_empty_state(
             assert "scope" in provider_columns
             assert "app_id" in state_columns
             assert "observed" in state_columns
-    finally:
-        migration.op = old_op
-        with sync_engine.begin() as connection:
-            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        sync_engine.dispose()
-
-
-def test_agent_v2_final_schema_migration_rejects_nonempty_runtime_state(
-    engine: AsyncEngine,
-) -> None:
-    migration = _load_migration()
-    schema = f"agent_v2_nonempty_schema_{uuid.uuid4().hex}"
-    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
-    old_op = migration.op
-    try:
-        with sync_engine.begin() as connection:
-            connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
-            connection.execute(sa.text(f'SET search_path TO "{schema}"'))
-            _create_previous_schema(connection)
-            connection.execute(
-                sa.text(
-                    """
-                    INSERT INTO hosted_runtime_states (environment_id, observed)
-                    VALUES (:environment_id, '{}'::jsonb)
-                    """
-                ),
-                {"environment_id": uuid.uuid4()},
-            )
-            migration.op = Operations(MigrationContext.configure(connection))
-
-            with pytest.raises(RuntimeError, match="hosted_runtime_states must be empty"):
-                migration.upgrade()
-
-            inspector = inspect(connection)
-            assert "scope" in {column["name"] for column in inspector.get_columns("ai_providers")}
-            assert not inspector.has_table("hosted_runtime_config_observations")
-    finally:
-        migration.op = old_op
-        with sync_engine.begin() as connection:
-            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        sync_engine.dispose()
-
-
-def test_agent_v2_final_schema_migration_rejects_nonempty_downgrade(
-    engine: AsyncEngine,
-) -> None:
-    migration = _load_migration()
-    schema = f"agent_v2_nonempty_downgrade_{uuid.uuid4().hex}"
-    sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
-    old_op = migration.op
-    try:
-        with sync_engine.begin() as connection:
-            connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
-            connection.execute(sa.text(f'SET search_path TO "{schema}"'))
-            _create_previous_schema(connection)
-            migration.op = Operations(MigrationContext.configure(connection))
-            migration.upgrade()
-            connection.execute(
-                sa.text(
-                    """
-                    INSERT INTO hosted_runtime_states (environment_id)
-                    VALUES (:environment_id)
-                    """
-                ),
-                {"environment_id": uuid.uuid4()},
-            )
-
-            with pytest.raises(RuntimeError, match="hosted_runtime_states must be empty"):
-                migration.downgrade()
-
-            inspector = inspect(connection)
-            assert inspector.has_table("hosted_runtime_config_observations")
-            assert "scope" not in {
-                column["name"] for column in inspector.get_columns("ai_providers")
-            }
     finally:
         migration.op = old_op
         with sync_engine.begin() as connection:

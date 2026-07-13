@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -20,15 +20,6 @@ class _StrictObservedWireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class HostedRuntimeObservedManifestV1(_StrictObservedWireModel):
-    etag: str | None = Field(max_length=1024)
-    last_good_exists: bool = Field(alias="lastGoodExists")
-
-
-class HostedRuntimeObservedChannelsV1(_StrictObservedWireModel):
-    etag: str | None = Field(max_length=1024)
-
-
 class HostedRuntimeObservedBootV1(_StrictObservedWireModel):
     status: RuntimeObservedStatus
     mode: str = Field(max_length=100)
@@ -38,31 +29,6 @@ class HostedRuntimeObservedBootV1(_StrictObservedWireModel):
     instance_id: str | None = Field(alias="instanceId", default=None, max_length=200)
     enabled_runtimes: list[str] = Field(alias="enabledRuntimes", max_length=20)
     errors: list[str] = Field(max_length=100)
-
-
-class HostedRuntimeObservedCliUpdateV1(_StrictObservedWireModel):
-    status: str | None = Field(default=None, max_length=100)
-    package_spec: str | None = Field(alias="packageSpec", default=None, max_length=200)
-    registry: str | None = Field(default=None, max_length=1000)
-    active_path: str | None = Field(alias="activePath", default=None, max_length=2000)
-    active_target: str | None = Field(alias="activeTarget", default=None, max_length=2000)
-    version: str | None = Field(default=None, max_length=200)
-
-
-class HostedRuntimeObservedWatchV1(_StrictObservedWireModel):
-    status: Literal["applied", "not_modified", "error"] | None = None
-    stage: str | None = Field(default=None, max_length=100)
-    etag: str | None = Field(default=None, max_length=1024)
-    channels_etag: str | None = Field(alias="channelsEtag", default=None, max_length=1024)
-    generation: int | None = Field(default=None, ge=0)
-    instance_id: str | None = Field(alias="instanceId", default=None, max_length=200)
-    self_reexec: bool | None = Field(alias="selfReexec", default=None)
-    error: str | None = Field(default=None, max_length=4000)
-    errors: list[str] = Field(default_factory=list, max_length=100)
-    cli_update: HostedRuntimeObservedCliUpdateV1 | None = Field(
-        alias="cliUpdate",
-        default=None,
-    )
 
 
 class HostedRuntimeObservedCliV1(_StrictObservedWireModel):
@@ -123,40 +89,6 @@ class HostedRuntimeObservedProviderPayload(RootModel[dict[str, JsonValue]]):
         return self
 
 
-class HostedRuntimeObservedV1(_StrictObservedWireModel):
-    schema_version: Literal["clawdi.hostedRuntimeObserved.v1"] = Field(alias="schemaVersion")
-    reported_at: datetime = Field(alias="reportedAt")
-    runtime_mode: Literal["hosted"] = Field(alias="runtimeMode")
-    status: RuntimeObservedStatus
-    manifest: HostedRuntimeObservedManifestV1
-    channels: HostedRuntimeObservedChannelsV1
-    boot: HostedRuntimeObservedBootV1 | None
-    watch: HostedRuntimeObservedWatchV1 | None
-    cli: HostedRuntimeObservedCliV1 | None
-    systemd: HostedRuntimeObservedSystemdV1 | None = None
-    supervisor: HostedRuntimeObservedSupervisorV1 | None = None
-    providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
-    error: str | None = Field(default=None, max_length=4000)
-    converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
-    truncated: bool | None = None
-
-    @field_validator("reported_at", mode="before")
-    @classmethod
-    def validate_reported_at(cls, value: object) -> datetime:
-        if isinstance(value, datetime):
-            parsed = value
-        elif isinstance(value, str):
-            try:
-                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ValueError("reportedAt must be an ISO 8601 timestamp") from exc
-        else:
-            raise ValueError("reportedAt must be an ISO 8601 timestamp string")
-        if parsed.tzinfo is None:
-            raise ValueError("reportedAt must include a timezone")
-        return parsed.astimezone(UTC)
-
-
 class HostedRuntimeObservedAppliedV2(_StrictObservedWireModel):
     etag: str = Field(min_length=1, max_length=1024)
     source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
@@ -195,13 +127,21 @@ class HostedRuntimeObservedV2(_StrictObservedWireModel):
     @field_validator("reported_at", mode="before")
     @classmethod
     def validate_reported_at(cls, value: object) -> datetime:
-        return HostedRuntimeObservedV1.validate_reported_at(value)
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("reportedAt must be an ISO 8601 timestamp") from exc
+        else:
+            raise ValueError("reportedAt must be an ISO 8601 timestamp string")
+        if parsed.tzinfo is None:
+            raise ValueError("reportedAt must include a timezone")
+        return parsed.astimezone(UTC)
 
 
-HostedRuntimeObserved = Annotated[
-    HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
-    Field(discriminator="schema_version"),
-]
+HostedRuntimeObserved = HostedRuntimeObservedV2
 
 
 class RuntimeObservedConfigSummaryResponse(BaseModel):
@@ -212,4 +152,4 @@ class RuntimeObservedConfigSummaryResponse(BaseModel):
 
 
 class RuntimeObservedConfigResponse(RuntimeObservedConfigSummaryResponse):
-    diagnostics: HostedRuntimeObservedV1 | HostedRuntimeObservedV2 | None = None
+    diagnostics: HostedRuntimeObservedV2 | None = None

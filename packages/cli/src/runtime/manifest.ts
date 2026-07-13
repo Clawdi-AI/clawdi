@@ -1985,12 +1985,7 @@ interface HostedAiProviderProjectionResult {
 const CODEX_MANAGED_PROVIDER_ID = "clawdi-managed";
 const CODEX_MANAGED_PROVIDER_STATE_FILE = "clawdi-managed-provider.json";
 const CODEX_MANAGED_ENV_KEY = "OPENAI_API_KEY";
-const CODEX_LEGACY_MANAGED_ENV_KEY = "CLAWDI_MANAGED_OPENAI_API_KEY";
 const CODEX_NPM_PACKAGE_SPEC = "@openai/codex@latest";
-const CODEX_MANAGED_PROVIDER_ENV_KEYS = new Set([
-	CODEX_MANAGED_ENV_KEY,
-	CODEX_LEGACY_MANAGED_ENV_KEY,
-]);
 
 interface HostedCodexManagedProvider {
 	providerId: string;
@@ -2191,7 +2186,7 @@ function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManag
 		if (!provider) continue;
 		if (provider.managed_by === "user") continue;
 		const runtimeEnvName = stringValue(provider.runtimeEnvName);
-		if (!runtimeEnvName || !CODEX_MANAGED_PROVIDER_ENV_KEYS.has(runtimeEnvName)) continue;
+		if (runtimeEnvName !== CODEX_MANAGED_ENV_KEY) continue;
 		const baseUrl = stringValue(provider.baseUrl);
 		if (!baseUrl?.trim()) continue;
 		entries.push({
@@ -5116,8 +5111,6 @@ export function runtimeLiveSnapshotPaths(
 		paths.egressEngineStatus,
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,
-		paths.manifestEtag,
-		paths.channelsEtag,
 		paths.appliedState,
 		paths.runConfigRoot,
 		paths.egressProfileRoot,

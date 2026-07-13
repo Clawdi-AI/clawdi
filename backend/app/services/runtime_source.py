@@ -40,7 +40,6 @@ from app.schemas.runtime import (
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
-    MANAGED_AI_PROVIDER_RUNTIME_ENV,
     managed_provider_api_mode,
 )
 from app.services.vault_crypto import decrypt
@@ -48,9 +47,14 @@ from app.services.vault_crypto import decrypt
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
+_MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
 
 
 class RuntimeSourceError(ValueError):
+    pass
+
+
+class RuntimeSourceNotFoundError(RuntimeSourceError):
     pass
 
 
@@ -172,13 +176,12 @@ def render_runtime_source(
     public_api_url: str,
     vault_key_identity: str,
     decrypt_secrets: bool,
-    include_channel_authority: bool = True,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
-        raise RuntimeSourceError("Agent environment not found")
+        raise RuntimeSourceNotFoundError("Agent environment not found")
     if row.state is None:
-        raise RuntimeSourceError("Hosted runtime state not found")
+        raise RuntimeSourceNotFoundError("Hosted runtime state not found")
     state = row.state
     user_id = row.environment.user_id
     try:
@@ -237,16 +240,12 @@ def render_runtime_source(
         secret_ref = _provider_secret_ref(provider_id) if payload is not None else None
         providers[provider_id] = _provider_entry(provider, secret_ref=secret_ref)
         if payload is not None and secret_ref is not None:
-            _add_secret_source(
-                secret_sources,
-                secret_ref,
-                _secret_identity(
-                    payload.id,
-                    payload.encrypted_payload,
-                    payload.nonce,
-                    vault_key_identity,
-                    "provider-api-key",
-                ),
+            secret_sources[secret_ref] = _secret_identity(
+                payload.id,
+                payload.encrypted_payload,
+                payload.nonce,
+                vault_key_identity,
+                "provider-api-key",
             )
             secret_materials.append(
                 RuntimeSecretMaterial(
@@ -295,7 +294,7 @@ def render_runtime_source(
         manifest["tools"] = state.tools
 
     bindings: list[dict[str, str]] = []
-    channel_rows = batch.channels.get(environment_id, ()) if include_channel_authority else ()
+    channel_rows = batch.channels.get(environment_id, ())
     for account, link in channel_rows:
         if not link.encrypted_agent_token or not link.agent_token_nonce:
             raise RuntimeSourceError("Active runtime channel link has no token material")
@@ -310,16 +309,12 @@ def render_runtime_source(
                 "placeholderTokenSecretRef": placeholder_ref,
             }
         )
-        _add_secret_source(
-            secret_sources,
-            agent_ref,
-            _secret_identity(
-                link.id,
-                link.encrypted_agent_token,
-                link.agent_token_nonce,
-                vault_key_identity,
-                "channel-agent-token",
-            ),
+        secret_sources[agent_ref] = _secret_identity(
+            link.id,
+            link.encrypted_agent_token,
+            link.agent_token_nonce,
+            vault_key_identity,
+            "channel-agent-token",
         )
         secret_materials.append(
             RuntimeSecretMaterial(
@@ -404,7 +399,7 @@ def _provider_entry(provider: AiProvider, *, secret_ref: str | None) -> dict[str
         if managed
         else provider.api_mode
     )
-    runtime_env = MANAGED_AI_PROVIDER_RUNTIME_ENV if managed else provider.runtime_env_name
+    runtime_env = _MANAGED_PROVIDER_RUNTIME_ENV if managed else provider.runtime_env_name
     if api_mode:
         result["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
@@ -452,8 +447,7 @@ def _unhealthy_provider(provider_id: str, runtime_name: str) -> dict[str, Any]:
 
 
 def _provider_secret_ref(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9._-]+", "-", value.strip().lower()).strip(".-")
-    return f"provider.{normalized or 'default'}.apiKey"
+    return f"provider.{value}.apiKey"
 
 
 def _secret_identity(
@@ -467,16 +461,6 @@ def _secret_identity(
         "ciphertextSha256": hashlib.sha256(ciphertext).hexdigest(),
         "nonceSha256": hashlib.sha256(nonce).hexdigest(),
     }
-
-
-def _add_secret_source(
-    sources: dict[str, dict[str, str]],
-    secret_ref: str,
-    identity: dict[str, str],
-) -> None:
-    if secret_ref in sources:
-        raise RuntimeSourceError(f"Runtime secret reference collision: {secret_ref}")
-    sources[secret_ref] = identity
 
 
 def _placeholder(provider: str, account_key: str) -> str:

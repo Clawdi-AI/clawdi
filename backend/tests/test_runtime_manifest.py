@@ -38,7 +38,6 @@ from app.schemas.runtime import (
 )
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
-from app.services.http_cache import strong_json_etag
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     expected_runtime_bundle_v2_etag,
@@ -223,7 +222,11 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     app.dependency_overrides[get_runtime_snapshot_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+    return httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE},
+    )
 
 
 @asynccontextmanager
@@ -303,7 +306,6 @@ def _runtime_state(
 def _runtime_state_body(environment_id: str, **overrides) -> dict:
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "cli_package_spec": TEST_CLI_PACKAGE_SPEC,
@@ -665,7 +667,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert "appId" not in manifest
     assert "channels" not in manifest
     assert payload["secretValues"] == {}
-    assert etag == strong_json_etag(payload)
+    assert etag == expected_runtime_bundle_v2_etag(payload["sourceRevision"])
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         not_modified = await client.get(
@@ -748,41 +750,6 @@ async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
             f"/v1/admin/environments/{env.id}/runtime-state",
             headers=_AUTH,
             json=body,
-        )
-
-        assert response.status_code == 200, response.text
-        await asyncio.sleep(0)
-        assert queue.empty()
-        assert await _runtime_state_audit_count(db_session, env.id) == audit_count
-    finally:
-        sync_events.unsubscribe(seed_user.id, queue)
-
-
-@pytest.mark.asyncio
-async def test_legacy_runtime_state_app_id_is_accepted_and_ignored(
-    admin_client,
-    db_session,
-    seed_user,
-):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"runtime-app-id-{uuid4().hex[:8]}",
-        machine_name="Runtime app id",
-        agent_type="openclaw",
-    )
-    body = await _write_runtime_state(admin_client, str(env.id))
-    audit_count = await _runtime_state_audit_count(db_session, env.id)
-    queue = sync_events.subscribe(
-        seed_user.id,
-        frozenset(),
-        environment_id=env.id,
-    )
-    try:
-        response = await admin_client.put(
-            f"/v1/admin/environments/{env.id}/runtime-state",
-            headers=_AUTH,
-            json={**body, "app_id": "presentation-only-app-id"},
         )
 
         assert response.status_code == 200, response.text
@@ -1988,7 +1955,8 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
         response = await client.get("/v1/runtime/manifest")
         assert response.status_code == 200, response.text
         etag = response.headers["etag"]
-        issued_at = response.json()["manifest"]["issuedAt"]
+        bundle = response.json()
+        issued_at = bundle["manifest"]["issuedAt"]
         assert issued_at == desired_updated_at.isoformat()
 
         heartbeat = await client.post(
@@ -1997,24 +1965,24 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
                 "last_revision_seen": 1,
                 "queue_depth": 0,
                 "runtime_observed": {
-                    "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+                    "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
                     "reportedAt": "2026-06-11T00:00:00+00:00",
                     "runtimeMode": "hosted",
                     "status": "ok",
-                    "manifest": {"etag": etag, "lastGoodExists": True},
-                    "channels": {"etag": '"channels-runtime-heartbeat"'},
-                    "boot": {
-                        "status": "ok",
-                        "mode": "normal",
-                        "stage": "final",
-                        "timestamp": "2026-06-11T00:00:00+00:00",
-                        "activeGeneration": expected["generation"],
+                    "activeCliVersion": TEST_CLI_PACKAGE_SPEC.split("@", 1)[1],
+                    "applied": {
+                        "etag": etag,
+                        "sourceRevision": bundle["sourceRevision"],
+                        "generation": expected["generation"],
                         "instanceId": expected["instance_id"],
-                        "enabledRuntimes": ["openclaw"],
-                        "errors": [],
+                        "appliedProviderIds": sorted(bundle["manifest"]["providers"]),
                     },
-                    "watch": None,
+                    "boot": None,
                     "cli": None,
+                    "providers": {
+                        provider_id: {"status": "ok", "configured": True}
+                        for provider_id in bundle["manifest"]["providers"]
+                    },
                 },
             },
         )
@@ -2076,7 +2044,9 @@ async def test_runtime_manifest_etag_hashes_issued_at_and_keeps_config_generatio
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["manifest"]["issuedAt"] != initial_issued_at
     assert refreshed.json()["manifest"]["generation"] == expected["generation"]
-    assert refreshed.headers["etag"] == strong_json_etag(refreshed.json())
+    assert refreshed.headers["etag"] == expected_runtime_bundle_v2_etag(
+        refreshed.json()["sourceRevision"]
+    )
     assert refreshed.headers["etag"] != initial_etag
     assert not_modified.status_code == 200, not_modified.text
     assert not_modified.headers["etag"] == refreshed.headers["etag"]
@@ -2143,7 +2113,9 @@ async def test_runtime_manifest_provider_label_is_not_projected_but_projected_fi
     app.dependency_overrides.clear()
 
     assert projected_change.status_code == 200, projected_change.text
-    assert projected_change.headers["etag"] == strong_json_etag(projected_change.json())
+    assert projected_change.headers["etag"] == expected_runtime_bundle_v2_etag(
+        projected_change.json()["sourceRevision"]
+    )
     assert projected_change.headers["etag"] != initial_etag
     assert projected_change.json()["manifest"]["issuedAt"] == initial_issued_at
     assert projected_change.json()["manifest"]["providers"][provider.provider_id]["baseUrl"] == (
@@ -3125,12 +3097,21 @@ async def test_admin_runtime_state_rejects_top_level_provider_binding(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["channels", "providers", "secretValues"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("app_id", "app-test"),
+        ("channels", {}),
+        ("providers", {}),
+        ("secretValues", {}),
+    ],
+)
 async def test_admin_runtime_state_rejects_legacy_top_level_fields(
     admin_client,
     db_session,
     seed_user,
     field,
+    value,
 ):
     env = await create_env_with_project(
         db_session,
@@ -3139,16 +3120,7 @@ async def test_admin_runtime_state_rejects_legacy_top_level_fields(
         machine_name="Runtime legacy field",
         agent_type="openclaw",
     )
-    body = {
-        "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
-        "instance_id": f"hri_{uuid4().hex}",
-        "generation": 7,
-        "locale": TEST_LOCALE,
-        "system": TEST_SYSTEM,
-        "runtimes": _runtime_state(),
-        field: {},
-    }
+    body = _runtime_state_body(str(env.id), **{field: value})
 
     response = await admin_client.put(
         f"/v1/admin/environments/{env.id}/runtime-state",
@@ -3372,7 +3344,6 @@ async def test_admin_runtime_state_rejects_invalid_bridge_surfaces(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,
@@ -3414,7 +3385,6 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,
@@ -3447,7 +3417,6 @@ async def test_admin_runtime_state_rejects_nested_runtime_channels(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,
@@ -3527,7 +3496,6 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,
@@ -3549,20 +3517,12 @@ async def test_admin_runtime_state_rejects_unknown_runtime_names(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
-    admin_client, db_session, seed_user
-):
+async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_session, seed_user):
     env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
-        legacy = await client.get("/v1/runtime/manifest")
-        legacy_not_modified = await client.get(
-            "/v1/runtime/manifest",
-            headers={"If-None-Match": legacy.headers["etag"]},
-        )
-        bundle = await client.get(
-            "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
-        )
+        missing_accept = await client.get("/v1/runtime/manifest", headers={"Accept": "*/*"})
+        bundle = await client.get("/v1/runtime/manifest")
         bundle_not_modified = await client.get(
             "/v1/runtime/manifest",
             headers={
@@ -3575,15 +3535,9 @@ async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
             headers={"Accept": "application/vnd.clawdi.runtime-bundle.v3+json"},
         )
     app.dependency_overrides.clear()
-    assert legacy.status_code == 200
-    assert set(legacy.json()) == {"manifest", "secretValues"}
-    assert legacy.headers["etag"] == strong_json_etag(legacy.json())
-    assert legacy.headers["cache-control"] == "no-store"
-    assert legacy.headers["vary"] == "Accept"
-    assert legacy.headers["content-type"].startswith("application/json")
-    assert legacy_not_modified.status_code == 304
-    assert legacy_not_modified.headers["etag"] == legacy.headers["etag"]
-    assert legacy_not_modified.headers["vary"] == "Accept"
+    assert missing_accept.status_code == 406
+    assert missing_accept.headers["cache-control"] == "no-store"
+    assert missing_accept.headers["vary"] == "Accept"
     body = bundle.json()
     assert bundle.status_code == 200
     assert set(body) == {
@@ -3706,7 +3660,9 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
             missing = await client.get(
                 "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
             )
-            legacy = await client.get("/v1/runtime/manifest")
+            wrong_media_type = await client.get(
+                "/v1/runtime/manifest", headers={"Accept": "application/json"}
+            )
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
         app.dependency_overrides.clear()
@@ -3714,7 +3670,7 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
     assert healthy_query_count == 4
     assert missing.status_code == 409
     assert missing.json() == {"detail": "Active runtime channel link has no token material"}
-    assert legacy.status_code == 200
+    assert wrong_media_type.status_code == 406
 
 
 @pytest.mark.asyncio
@@ -3871,7 +3827,6 @@ async def test_admin_runtime_state_rejects_hosted_control_plane_authority(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,
@@ -4070,7 +4025,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "apiMode": "openai_chat",
         "managed_by": "clawdi",
         "models": managed_models,
-        "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "runtimeEnvName": "OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed-v2.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == ["clawdi-managed-v2"]
@@ -4125,7 +4080,9 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
 
     assert rotated.status_code == 200, rotated.text
     assert rotated.headers["etag"] != etag
-    assert rotated.headers["etag"] == strong_json_etag(rotated.json())
+    assert rotated.headers["etag"] == expected_runtime_bundle_v2_etag(
+        rotated.json()["sourceRevision"]
+    )
     assert rotated.json()["manifest"]["issuedAt"] == issued_at
     assert rotated.json()["secretValues"] == {
         "provider.clawdi-managed-v2.apiKey": "sk-rotated-provider"
@@ -4392,7 +4349,7 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "apiMode": "openai_responses",
         "managed_by": "clawdi",
         "models": [{"id": "openai-codex/gpt-5.5"}],
-        "runtimeEnvName": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "runtimeEnvName": "OPENAI_API_KEY",
         "apiKeySecretRef": "provider.clawdi-managed.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
@@ -4556,7 +4513,6 @@ async def test_admin_runtime_state_rejects_codex_hosted_runtime(
     )
     body = {
         "deployment_id": f"dep_{uuid4().hex}",
-        "app_id": "app-test",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
         "locale": TEST_LOCALE,

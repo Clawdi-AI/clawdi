@@ -40,8 +40,6 @@ describe("hosted runtime observed v2", () => {
 			},
 			paths,
 		);
-		mkdirSync(dirname(paths.manifestEtag), { recursive: true });
-		writeFileSync(paths.manifestEtag, '"stale-cache-validator"\n');
 		mkdirSync(dirname(paths.cliBootstrapStatus), { recursive: true });
 		writeFileSync(paths.cliBootstrapStatus, JSON.stringify({ version: "0.0.0-stale" }));
 
@@ -55,7 +53,6 @@ describe("hosted runtime observed v2", () => {
 			instanceId: "hri_observed",
 			appliedProviderIds: ["managed"],
 		});
-		expect(JSON.stringify(observed)).not.toContain("stale-cache-validator");
 	});
 
 	test("reports missing applied state as unknown authority", () => {

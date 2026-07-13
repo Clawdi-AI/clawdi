@@ -248,25 +248,19 @@ provides service installers for separate surfaces, keep OpenClaw loopback when
 behind the bridge, and require runtime-native auth when exposing the official
 OpenClaw port directly.
 
-## Manifest Shapes
+## Manifest Shape
 
-The control plane exposes two negotiated representations:
+The control plane accepts only exact
+`Accept: application/vnd.clawdi.runtime-bundle.v2+json` and returns strict
+`clawdi.hosted-runtime.bundle.v2`. The response contains the hosted manifest,
+sanitized Telegram and Discord `channelBindings`, one merged `secretValues`
+map, and deterministic `sourceRevision`. Missing or unsupported media types
+return `406`; the CLI does not fall back to another representation or a second
+`/v1/channels` request.
 
-- Requests without the Agent v2 vendor media type receive the existing v1
-  `{manifest, secretValues}` response unchanged. This is the strict old-CLI
-  compatibility and self-upgrade path. Its strong ETag remains the canonical
-  JSON hash of that legacy payload.
-- Requests with exact `Accept: application/vnd.clawdi.runtime-bundle.v2+json`
-  receive strict `clawdi.hosted-runtime.bundle.v2`. The response contains the
-  existing hosted manifest, sanitized Telegram and Discord `channelBindings`,
-  one merged `secretValues` map, and deterministic `sourceRevision`. Unknown
-  vendor media types return `406`; the v2 CLI does not fall back to a second
-  `/v1/channels` request.
-
-Both representations return `Vary: Accept` on `200` and `304` responses.
-Unsupported vendor-media `406` responses also return `Vary: Accept` and
-`Cache-Control: no-store`, so negotiation errors are not reused across media
-types.
+Bundle responses identify the vendor media type and return `Vary: Accept`.
+Negotiation `406` responses also return `Vary: Accept` and
+`Cache-Control: no-store`, so errors are not reused across media types.
 The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
 the revision's effective public and secret-source identity make it a strong
 validator without decrypting secrets in the health summary.

@@ -36,19 +36,13 @@ export function readHostedRuntimeObserved(
 	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
 	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
-	const appliedAuthorityState =
-		appliedState?.schemaVersion === "clawdi.runtimeAppliedState.v2" &&
-		appliedState.etag &&
-		appliedState.sourceRevision
-			? appliedState
-			: null;
-	const appliedAuthority = appliedAuthorityState
+	const appliedAuthority = appliedState
 		? {
-				etag: appliedAuthorityState.etag ?? "",
-				sourceRevision: appliedAuthorityState.sourceRevision ?? "",
-				generation: appliedAuthorityState.generation,
-				instanceId: appliedAuthorityState.instanceId,
-				appliedProviderIds: [...(appliedAuthorityState.providerIds ?? [])],
+				etag: appliedState.etag,
+				sourceRevision: appliedState.sourceRevision,
+				generation: appliedState.generation,
+				instanceId: appliedState.instanceId,
+				appliedProviderIds: [...appliedState.providerIds],
 			}
 		: null;
 

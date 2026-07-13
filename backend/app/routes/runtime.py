@@ -10,10 +10,11 @@ from app.core.auth import AuthContext, require_cli_auth
 from app.core.config import settings
 from app.core.database import get_runtime_snapshot_session
 from app.models.hosted_runtime import HostedRuntimeState
-from app.services.http_cache import if_none_match_contains, strong_json_etag
+from app.services.http_cache import if_none_match_contains
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RuntimeSourceError,
+    RuntimeSourceNotFoundError,
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
     render_runtime_bundle,
@@ -33,9 +34,7 @@ async def get_runtime_manifest(
     db: AsyncSession = Depends(get_runtime_snapshot_session),
 ) -> Response:
     environment_id = _authorized_environment_id(auth, requested_environment_id)
-    accept = request.headers.get("accept")
-    bundle_v2 = accept == RUNTIME_BUNDLE_V2_MEDIA_TYPE
-    if accept and accept.startswith("application/vnd.clawdi.") and not bundle_v2:
+    if request.headers.get("accept") != RUNTIME_BUNDLE_V2_MEDIA_TYPE:
         raise HTTPException(
             status.HTTP_406_NOT_ACCEPTABLE,
             "Unsupported runtime media type",
@@ -54,29 +53,20 @@ async def get_runtime_manifest(
             public_api_url=settings.public_api_url,
             vault_key_identity=vault_key_identity(settings.vault_encryption_key),
             decrypt_secrets=True,
-            include_channel_authority=bundle_v2,
         )
+    except RuntimeSourceNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except RuntimeSourceError as exc:
-        code = (
-            status.HTTP_404_NOT_FOUND
-            if str(exc) in {"Agent environment not found", "Hosted runtime state not found"}
-            else status.HTTP_409_CONFLICT
-        )
-        raise HTTPException(code, str(exc)) from exc
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
-    if bundle_v2:
-        payload = render_runtime_bundle(source)
-        etag = expected_runtime_bundle_v2_etag(source.source_revision)
-        headers = {
-            "ETag": etag,
-            "Cache-Control": "no-store",
-            "Vary": "Accept",
-            "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-        }
-    else:
-        payload = {"manifest": source.manifest, "secretValues": source.secret_values}
-        etag = strong_json_etag(payload)
-        headers = {"ETag": etag, "Cache-Control": "no-store", "Vary": "Accept"}
+    payload = render_runtime_bundle(source)
+    etag = expected_runtime_bundle_v2_etag(source.source_revision)
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "no-store",
+        "Vary": "Accept",
+        "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+    }
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)

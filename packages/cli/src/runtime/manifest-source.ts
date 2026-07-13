@@ -543,23 +543,11 @@ function hostedRuntimeServiceRunSettings(
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 	const appliedState = readRuntimeAppliedState(paths);
-	if (appliedState) {
-		return {
-			instanceId: appliedState.instanceId,
-			generation: appliedState.generation,
-		};
-	}
-	if (existsSync(paths.appliedState) || !existsSync(paths.manifestLastGood)) return {};
-	try {
-		const legacyManifest = manifestSchema.safeParse(readJsonFile(paths.manifestLastGood));
-		if (!legacyManifest.success) return {};
-		return {
-			instanceId: legacyManifest.data.instanceId,
-			generation: legacyManifest.data.generation,
-		};
-	} catch {
-		return {};
-	}
+	if (!appliedState) return {};
+	return {
+		instanceId: appliedState.instanceId,
+		generation: appliedState.generation,
+	};
 }
 
 function manifestExpiryError(manifest: RuntimeManifest): string | null {

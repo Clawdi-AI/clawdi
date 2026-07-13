@@ -2063,9 +2063,7 @@ async function runtimeWatchTickLocked(
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
-		activeAppliedState.schemaVersion === "clawdi.runtimeAppliedState.v2" &&
-		activeAppliedState.etag === responseManifestEtag &&
-		activeAppliedState.sourceRevision !== null
+		activeAppliedState.etag === responseManifestEtag
 	) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2309,11 +2307,7 @@ function runtimeManifestIdentityForWatch(
 	return {
 		generation,
 		etag: observedManifestEtag,
-		previouslyApplied:
-			(appliedState?.etag !== null && appliedState?.etag === observedManifestEtag) ||
-			(appliedState?.etag === null &&
-				observedManifestEtag === null &&
-				appliedState?.generation === generation),
+		previouslyApplied: appliedState?.etag === observedManifestEtag,
 	};
 }
 

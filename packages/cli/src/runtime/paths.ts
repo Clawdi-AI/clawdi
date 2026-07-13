@@ -33,8 +33,6 @@ export interface RuntimePaths {
 	cacheRoot: string;
 	manifestLastGood: string;
 	appliedState: string;
-	manifestEtag: string;
-	channelsEtag: string;
 	managedSecretCacheFile: string;
 	runConfigRoot: string;
 	egressProfileRoot: string;
@@ -146,8 +144,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		appliedState: join(serviceStateRoot, "status", "runtime-applied.json"),
-		manifestEtag: join(cacheRoot, "manifest.etag"),
-		channelsEtag: join(cacheRoot, "channels.etag"),
 		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
 		egressProfileRoot: join(serviceStateRoot, "config", "egress"),

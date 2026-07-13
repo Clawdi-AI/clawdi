@@ -5,15 +5,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-import pytest
-
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.services.runtime_source import (
     RuntimeSourceBatch,
-    RuntimeSourceError,
     RuntimeSourceRow,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
@@ -153,39 +150,39 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
-def test_runtime_source_rejects_colliding_secret_references_before_decrypt(monkeypatch) -> None:
+def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> None:
     from app.services import runtime_source
 
     batch = _batch()
     state = batch.rows[ENV_ID].state
     assert state is not None
     runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = ["managed/a", "managed-a"]
-    runtime["primary_model"] = {"provider_id": "managed/a", "model": "gpt-test"}
+    runtime["provider_ids"] = ["managed", "managed-"]
+    runtime["primary_model"] = {"provider_id": "managed", "model": "gpt-test"}
     state.runtimes = {"openclaw": runtime}
 
     provider = batch.providers.pop((USER_ID, "managed"))
-    provider.provider_id = "managed/a"
+    provider.provider_id = "managed"
     auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
-    auth.provider_id = "managed/a"
-    batch.providers[(USER_ID, "managed/a")] = provider
-    batch.auth_payloads[(USER_ID, "managed/a", "default")] = auth
-    batch.providers[(USER_ID, "managed-a")] = AiProvider(
+    auth.provider_id = "managed"
+    batch.providers[(USER_ID, "managed")] = provider
+    batch.auth_payloads[(USER_ID, "managed", "default")] = auth
+    batch.providers[(USER_ID, "managed-")] = AiProvider(
         id=UUID("30000000-0000-0000-0000-000000000013"),
         owner_user_id=USER_ID,
-        provider_id="managed-a",
+        provider_id="managed-",
         type="openai",
-        label="Colliding provider",
+        label="Trailing punctuation provider",
         base_url="https://provider-two.test/v1",
         api_mode="responses",
         auth_type="api_key",
         auth_metadata={"source": "managed", "profile": "default"},
         managed_by="clawdi",
     )
-    batch.auth_payloads[(USER_ID, "managed-a", "default")] = AiProviderAuthPayload(
+    batch.auth_payloads[(USER_ID, "managed-", "default")] = AiProviderAuthPayload(
         id=UUID("40000000-0000-0000-0000-000000000014"),
         owner_user_id=USER_ID,
-        provider_id="managed-a",
+        provider_id="managed-",
         auth_profile="default",
         kind="api_key",
         source="managed",
@@ -197,22 +194,20 @@ def test_runtime_source_rejects_colliding_secret_references_before_decrypt(monke
 
     def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
         decrypt_calls.append((ciphertext, nonce))
-        return "unused"
+        return ciphertext.decode()
 
     monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
 
-    with pytest.raises(
-        RuntimeSourceError,
-        match=r"Runtime secret reference collision: provider\.managed-a\.apiKey",
-    ):
-        render_runtime_source(
-            batch,
-            environment_id=ENV_ID,
-            public_api_url="https://cloud.test/",
-            vault_key_identity="vault-key-generation-1",
-            decrypt_secrets=True,
-        )
-    assert decrypt_calls == []
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=True,
+    )
+    assert source.secret_values["provider.managed.apiKey"] == "provider-ciphertext"
+    assert source.secret_values["provider.managed-.apiKey"] == "provider-two-ciphertext"
+    assert len(decrypt_calls) == 3
 
 
 def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
@@ -236,21 +231,3 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
     assert render_runtime_bundle(source) == json.loads(fixture_path.read_text())
-
-
-def test_legacy_manifest_render_ignores_channel_authority(monkeypatch) -> None:
-    from app.services import runtime_source
-
-    monkeypatch.setattr(runtime_source, "decrypt", lambda *_args: "sk-provider-golden")
-    batch = _batch(token=b"")
-    source = render_runtime_source(
-        batch,
-        environment_id=ENV_ID,
-        public_api_url="https://cloud.test/",
-        vault_key_identity="vault-key-generation-1",
-        decrypt_secrets=True,
-        include_channel_authority=False,
-    )
-
-    assert source.channel_bindings == []
-    assert source.secret_values == {"provider.managed.apiKey": "sk-provider-golden"}

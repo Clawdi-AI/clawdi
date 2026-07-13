@@ -780,8 +780,7 @@ function hostedProviderSwitchProvider(
 		],
 		apiMode: providerId === "clawdi-managed" ? "openai_responses" : "openai_chat",
 		managed_by: managedBy,
-		runtimeEnvName:
-			managedBy === "clawdi" ? "CLAWDI_MANAGED_OPENAI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
+		runtimeEnvName: managedBy === "clawdi" ? "OPENAI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
 		apiKeySecretRef: `provider.${providerId}.apiKey`,
 	};
 }
@@ -1765,7 +1764,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.5" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									runtimeEnvName: "OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -1855,7 +1854,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									runtimeEnvName: "OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -1875,7 +1874,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				baseUrl: "https://ai-gateway.example.test/v1",
 				models: [{ id: "gpt-5.4-mini" }],
 				apiMode: "openai_chat",
-				runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				runtimeEnvName: "OPENAI_API_KEY",
 			});
 			expect(
 				loaded.manifest.egressProfiles?.profiles.find(
@@ -1954,7 +1953,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									models: [{ id: "gpt-5.4-mini" }],
 									apiMode: "openai_responses",
 									managed_by: "clawdi",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									runtimeEnvName: "OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -2076,7 +2075,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.4-mini",
 							apiMode: "openai_chat",
-							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							runtimeEnvName: "OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
 						},
 					},
@@ -2195,7 +2194,7 @@ chmod +x "$HOME/.local/bin/hermes"
 								model: "kimi/kimi-for-coding",
 								apiMode: "openai_chat",
 								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								runtimeEnvName: "OPENAI_API_KEY",
 								apiKeySecretRef: "provider.hermes.apiKey",
 							},
 							openclaw: {
@@ -2204,7 +2203,7 @@ chmod +x "$HOME/.local/bin/hermes"
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
 								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								runtimeEnvName: "OPENAI_API_KEY",
 								apiKeySecretRef: "provider.openclaw.apiKey",
 							},
 						},
@@ -2320,7 +2319,7 @@ chmod +x "$HOME/.local/bin/hermes"
 									model: "gpt-5.5",
 									apiMode: "openai_responses",
 									managed_by: "clawdi",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									runtimeEnvName: "OPENAI_API_KEY",
 									apiKeySecretRef: "provider.default.apiKey",
 								},
 							},
@@ -2532,7 +2531,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							],
 							apiMode: "openai_chat",
 							managed_by: "clawdi",
-							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							runtimeEnvName: "OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
 						},
 					},
@@ -2785,7 +2784,7 @@ exit 0
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.4-mini",
 							apiMode: "openai_chat",
-							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							runtimeEnvName: "OPENAI_API_KEY",
 							apiKeySecretRef: "provider.default.apiKey",
 						},
 					},
@@ -3577,7 +3576,7 @@ exit 0
 							models: [{ id: "gpt-5.5" }],
 							apiMode: "openai_chat",
 							managed_by: "clawdi",
-							runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+							runtimeEnvName: "OPENAI_API_KEY",
 							apiKeySecretRef: "provider.clawdi-managed-v2.apiKey",
 						},
 					},
@@ -5033,7 +5032,7 @@ exit 42
 		}
 	});
 
-	it("runtime watch records the effective ETags after a manifest 304 refetch race", async () => {
+	it("runtime watch trusts the committed v2 authority after a manifest 304", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5086,7 +5085,7 @@ exit 42
 						models: [{ id: "gpt-5.5" }],
 						apiMode: "openai_chat",
 						managed_by: "clawdi",
-						runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+						runtimeEnvName: "OPENAI_API_KEY",
 						apiKeySecretRef: providerSecretRef,
 					},
 				},
@@ -5173,21 +5172,18 @@ exit 64
 			writeFileSync(
 				paths.appliedState,
 				JSON.stringify({
-					schemaVersion: "clawdi.runtimeAppliedState.v1",
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
 					appliedAt: "2026-07-13T00:00:00.000Z",
 					instanceId: "iid_watch_secret",
-					observedManifestEtag: '"manifest-etag-stable"',
-					observedChannelsEtag: null,
-					observedConfigGeneration: 22,
+					etag: '"manifest-etag-stable"',
+					sourceRevision: "d".repeat(64),
+					generation: 22,
 					contentIdentity: {
-						manifest: {
-							source: "remote-datasource",
-							sourcePath: "https://runtime.test/v1/runtime/manifest",
-							sha256: "a".repeat(64),
-						},
-						channels: null,
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
 					},
-					projectedProviderIds: {},
+					providerIds: ["clawdi-managed-v2"],
+					projectedProviderIds: { openclaw: ["clawdi-managed-v2"] },
 				}),
 			);
 		} finally {
@@ -5226,31 +5222,21 @@ exit 64
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
-			expect(watchFetch.captured.map((request) => request.path)).toEqual([
-				"/v1/runtime/manifest",
-				"/v1/runtime/manifest",
-			]);
+			expect(watchFetch.captured.map((request) => request.path)).toEqual(["/v1/runtime/manifest"]);
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
-			expect(watchFetch.captured[1].headers["if-none-match"]).toBeUndefined();
 			const event = JSON.parse(logs[0]);
-			expect(event.status).toBe("applied");
+			expect(event.status).toBe("not_modified");
 			expect(event.generation).toBe(22);
-			expect(event.etag).toBe('"manifest-etag-effective"');
-			expect(existsSync(paths.manifestEtag)).toBe(false);
-			expect(existsSync(paths.channelsEtag)).toBe(false);
+			expect(event.etag).toBe('"manifest-etag-stable"');
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				etag: '"manifest-etag-effective"',
+				etag: '"manifest-etag-stable"',
 				sourceRevision: "d".repeat(64),
 				generation: 22,
 				providerIds: ["clawdi-managed-v2"],
 			});
-			expect(event.systemdUnitsChanged).toBe(false);
-			expect(event.systemdApply).toEqual({
-				applied: true,
-				systemUnitsChanged: [],
-				userUnitsChanged: [],
-			});
+			expect(event.systemdUnitsChanged).toBeUndefined();
+			expect(event.systemdApply).toBeUndefined();
 			const secrets = JSON.parse(
 				readFileSync(join(run, "secrets", "runtime-secrets.json"), "utf-8"),
 			);
@@ -6113,7 +6099,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 								baseUrl: "https://ai-gateway.example.test/v1",
 								models: [{ id: "gpt-5.5" }],
 								apiMode: "openai_responses",
-								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								runtimeEnvName: "OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
 						},
@@ -6184,7 +6170,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 										baseUrl: "https://ai-gateway.example.test/v1",
 										models: [{ id: "gpt-5.5" }],
 										apiMode: "openai_responses",
-										runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+										runtimeEnvName: "OPENAI_API_KEY",
 										apiKeySecretRef: "provider.default.apiKey",
 									},
 								},
@@ -7178,8 +7164,6 @@ chmod +x "$prefix/bin/clawdi"
 			});
 			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"))).toBe(false);
 			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(false);
-			expect(existsSync(paths.manifestEtag)).toBe(false);
-			expect(existsSync(paths.channelsEtag)).toBe(false);
 			expect(existsSync(paths.manifestLastGood)).toBe(false);
 			expect(existsSync(paths.appliedState)).toBe(false);
 		} finally {
@@ -7299,7 +7283,6 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.selfReexec).toBe(true);
 			expect(event.gate.minimumCliVersion).toBe("999.0.0");
 			const paths = getRuntimePaths();
-			expect(existsSync(paths.manifestEtag)).toBe(false);
 			expect(existsSync(paths.manifestLastGood)).toBe(false);
 		} finally {
 			restore();
@@ -9644,7 +9627,7 @@ exit 64
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
 								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								runtimeEnvName: "OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
 						},
@@ -9777,7 +9760,7 @@ exit 64
 								model: "gpt-5.5",
 								apiMode: "openai_responses",
 								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+								runtimeEnvName: "OPENAI_API_KEY",
 								apiKeySecretRef: "provider.default.apiKey",
 							},
 						},
@@ -10455,7 +10438,7 @@ exit 64
 									models: [{ id: "gpt-test" }],
 									apiMode: "openai_chat",
 									managed_by: "clawdi",
-									runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+									runtimeEnvName: "OPENAI_API_KEY",
 									apiKeySecretRef: "provider.clawdi-managed-v2.apiKey",
 								},
 							},

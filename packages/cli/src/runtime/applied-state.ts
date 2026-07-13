@@ -38,38 +38,8 @@ export const runtimeAppliedStateSchema = z
 	})
 	.strict();
 
-const runtimeAppliedStateV1Schema = z
-	.object({
-		schemaVersion: z.literal("clawdi.runtimeAppliedState.v1"),
-		appliedAt: z.string().datetime({ offset: true }),
-		instanceId: z.string().min(1),
-		observedManifestEtag: z.string().min(1).nullable(),
-		observedChannelsEtag: z.string().min(1).nullable(),
-		observedConfigGeneration: z.number().int().nonnegative(),
-		contentIdentity: z
-			.object({
-				manifest: appliedContentSourceSchema.extend({
-					source: z.enum(["fixture-file", "remote-datasource", "last-good-cache"]),
-				}),
-				channels: appliedContentSourceSchema.nullable(),
-			})
-			.strict(),
-		projectedProviderIds: projectedProviderIdsSchema,
-	})
-	.strict();
-
-export type RuntimeAppliedStateV2 = z.infer<typeof runtimeAppliedStateSchema>;
-export interface RuntimeAppliedState {
-	schemaVersion: "clawdi.runtimeAppliedState.v1" | "clawdi.runtimeAppliedState.v2";
-	appliedAt: string;
-	instanceId: string;
-	etag: string | null;
-	sourceRevision: string | null;
-	generation: number;
-	contentIdentity: RuntimeAppliedContentSource;
-	providerIds: string[] | null;
-	projectedProviderIds: Record<string, string[]>;
-}
+export type RuntimeAppliedState = z.infer<typeof runtimeAppliedStateSchema>;
+export type RuntimeAppliedStateV2 = RuntimeAppliedState;
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;
 export type RuntimeAppliedContentIdentity = RuntimeAppliedContentSource;
 
@@ -83,21 +53,8 @@ export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedStat
 	if (!existsSync(paths.appliedState)) return null;
 	try {
 		const raw = JSON.parse(readFileSync(paths.appliedState, "utf-8")) as unknown;
-		const current = runtimeAppliedStateSchema.safeParse(raw);
-		if (current.success) return current.data;
-		const legacy = runtimeAppliedStateV1Schema.safeParse(raw);
-		if (!legacy.success) return null;
-		return {
-			schemaVersion: legacy.data.schemaVersion,
-			appliedAt: legacy.data.appliedAt,
-			instanceId: legacy.data.instanceId,
-			etag: legacy.data.observedManifestEtag,
-			sourceRevision: null,
-			generation: legacy.data.observedConfigGeneration,
-			contentIdentity: legacy.data.contentIdentity.manifest,
-			providerIds: null,
-			projectedProviderIds: legacy.data.projectedProviderIds,
-		};
+		const parsed = runtimeAppliedStateSchema.safeParse(raw);
+		return parsed.success ? parsed.data : null;
 	} catch {
 		return null;
 	}

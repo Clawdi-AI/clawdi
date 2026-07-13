@@ -40,7 +40,6 @@ from app.schemas.runtime import HostedRuntimeDesiredState
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
-    HostedRuntimeObservedV1,
     HostedRuntimeObservedV2,
     RuntimeObservedConfigResponse,
     RuntimeObservedConfigSummaryResponse,
@@ -1076,7 +1075,7 @@ def _runtime_observed_health(
         ):
             reasons.append("source_revision_mismatch")
 
-    if isinstance(diagnostics, HostedRuntimeObservedV2) and not desired_source_error:
+    if diagnostics is not None and not desired_source_error:
         if desired_source_revision is not None and observation is not None:
             expected_etag = expected_runtime_bundle_v2_etag(desired_source_revision)
             if (
@@ -1261,7 +1260,7 @@ def _enabled_runtime_names(runtimes: dict) -> list[str]:
 
 def _validated_runtime_observed_diagnostics(
     observation: HostedRuntimeConfigObservation | None,
-) -> HostedRuntimeObservedV1 | HostedRuntimeObservedV2 | None:
+) -> HostedRuntimeObservedV2 | None:
     if observation is None:
         return None
     try:
@@ -1393,14 +1392,13 @@ def _bounded_runtime_observed(value: object) -> object:
     if encoded_size <= _MAX_RUNTIME_OBSERVED_BYTES:
         return value
     return {
-        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
         "reportedAt": datetime.now(UTC).isoformat(),
         "runtimeMode": "hosted",
         "status": "error",
-        "manifest": {"etag": None, "lastGoodExists": False},
-        "channels": {"etag": None},
+        "activeCliVersion": None,
+        "applied": None,
         "boot": None,
-        "watch": None,
         "cli": None,
         "error": "runtime observed payload exceeded size limit",
         "truncated": True,
@@ -1416,7 +1414,7 @@ def _runtime_observed_comparison_value(
 
 
 def _runtime_observed_diagnostics(
-    value: HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
+    value: HostedRuntimeObservedV2,
 ) -> dict[str, Any]:
     return value.model_dump(
         mode="json",
@@ -1426,34 +1424,16 @@ def _runtime_observed_diagnostics(
 
 
 def _runtime_observed_columns(
-    value: HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
+    value: HostedRuntimeObservedV2,
     *,
     observed_at: datetime,
 ) -> dict[str, Any]:
-    if isinstance(value, HostedRuntimeObservedV2):
-        applied = value.applied
-        return {
-            "observed_at": observed_at,
-            "observed_config_generation": applied.generation if applied else None,
-            "observed_manifest_etag": applied.etag if applied else None,
-            "observed_source_revision": applied.source_revision if applied else None,
-            "diagnostics": _runtime_observed_diagnostics(value),
-        }
-    applied_watch = (
-        value.watch if value.watch and value.watch.status in {"applied", "not_modified"} else None
-    )
-    observed_config_generation = (
-        applied_watch.generation
-        if applied_watch is not None and applied_watch.generation is not None
-        else value.boot.active_generation
-        if value.boot is not None
-        else None
-    )
+    applied = value.applied
     return {
         "observed_at": observed_at,
-        "observed_config_generation": observed_config_generation,
-        "observed_manifest_etag": value.manifest.etag,
-        "observed_source_revision": None,
+        "observed_config_generation": applied.generation if applied else None,
+        "observed_manifest_etag": applied.etag if applied else None,
+        "observed_source_revision": applied.source_revision if applied else None,
         "diagnostics": _runtime_observed_diagnostics(value),
     }
 
