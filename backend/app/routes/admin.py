@@ -1097,7 +1097,6 @@ def _runtime_state_changed_fields(
 ) -> list[str]:
     fields = [
         "deployment_id",
-        "app_id",
         "instance_id",
         "generation",
         "cli_package_spec",

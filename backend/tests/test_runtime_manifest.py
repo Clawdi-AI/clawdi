@@ -692,6 +692,41 @@ async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
 
 
 @pytest.mark.asyncio
+async def test_runtime_state_app_id_change_is_not_a_manifest_conflict_or_invalidation(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-app-id-{uuid4().hex[:8]}",
+        machine_name="Runtime app id",
+        agent_type="openclaw",
+    )
+    body = await _write_runtime_state(admin_client, str(env.id))
+    audit_count = await _runtime_state_audit_count(db_session, env.id)
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    try:
+        response = await admin_client.put(
+            f"/v1/admin/environments/{env.id}/runtime-state",
+            headers=_AUTH,
+            json={**body, "app_id": "presentation-only-app-id"},
+        )
+
+        assert response.status_code == 200, response.text
+        await asyncio.sleep(0)
+        assert queue.empty()
+        assert await _runtime_state_audit_count(db_session, env.id) == audit_count
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
 async def test_stale_runtime_state_generation_returns_current_generation_without_side_effects(
     admin_client,
     db_session,
@@ -3550,21 +3585,20 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
             "supports_reasoning": True,
         }
     ]
-    db_session.add(
-        AiProvider(
-            owner_user_id=seed_user.id,
-            provider_id="clawdi-managed-v2",
-            type="custom_openai_compatible",
-            base_url="https://sub2api.test/v1",
-            models=managed_models,
-            # Simulate a stale v2 managed provider row from before the chat-completions contract.
-            api_mode="openai_responses",
-            auth_type="api_key",
-            auth_metadata={"source": "managed"},
-            managed_by="clawdi",
-            runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
-        )
+    provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id="clawdi-managed-v2",
+        type="custom_openai_compatible",
+        base_url="https://sub2api.test/v1",
+        models=managed_models,
+        # Simulate a stale v2 managed provider row from before the chat-completions contract.
+        api_mode="openai_responses",
+        auth_type="api_key",
+        auth_metadata={"source": "managed"},
+        managed_by="clawdi",
+        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
     )
+    db_session.add(provider)
     db_session.add(
         AiProviderAuthPayload(
             owner_user_id=seed_user.id,
@@ -3606,6 +3640,20 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     }
     assert payload["secretValues"] == {"provider.clawdi-managed-v2.apiKey": "sk-test-provider"}
     etag = response.headers["etag"]
+
+    provider.label = "Presentation-only label"
+    await db_session.commit()
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        presentation_only = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": etag},
+        )
+    app.dependency_overrides.clear()
+
+    assert presentation_only.status_code == 304, presentation_only.text
+    assert presentation_only.headers["etag"] == etag
 
     ciphertext, nonce = encrypt("sk-rotated-provider")
     provider_payload = (

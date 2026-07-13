@@ -142,17 +142,13 @@ async def get_runtime_manifest(
             "Hosted runtime bridge state does not match the selected runtime",
         ) from exc
 
-    (
-        providers,
-        secret_values,
-        provider_version_sources,
-    ) = await _provider_projection(
+    providers, secret_values = await _provider_projection(
         db,
         auth=auth,
         runtime_name=runtime,
         runtime=runtime_state,
     )
-    issued_at = _runtime_manifest_issued_at(state, provider_version_sources)
+    issued_at = _as_utc(state.created_at).isoformat()
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
         "deploymentId": state.deployment_id,
@@ -210,29 +206,6 @@ async def get_runtime_manifest(
     return JSONResponse(payload, headers=headers)
 
 
-def _runtime_manifest_issued_at(
-    state: HostedRuntimeState,
-    provider_version_sources: list[Any],
-) -> str:
-    # `HostedRuntimeState.updated_at` also moves when the daemon writes
-    # observed liveness into the row. Runtime manifests must version desired
-    # state, not heartbeat state, so only use the stable state creation time
-    # plus provider config/secret timestamps here. Desired field changes still
-    # alter the manifest payload and ETag directly.
-    timestamps: list[datetime] = []
-    if isinstance(state.created_at, datetime):
-        timestamps.append(_as_utc(state.created_at))
-    for source in provider_version_sources:
-        for attr in ("updated_at", "created_at"):
-            value = getattr(source, attr, None)
-            if isinstance(value, datetime):
-                timestamps.append(_as_utc(value))
-                break
-    if not timestamps:
-        return datetime.now(UTC).isoformat()
-    return max(timestamps).isoformat()
-
-
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -282,14 +255,12 @@ async def _provider_projection(
 ) -> tuple[
     dict[str, Any],
     dict[str, str],
-    list[Any],
 ]:
     provider_ids = _runtime_provider_binding(runtime)
     providers: dict[str, Any] = {}
     secret_values: dict[str, str] = {}
-    version_sources: list[Any] = []
     provider_cache: dict[str, AiProvider | None] = {}
-    secret_cache: dict[str, tuple[str | None, AiProviderAuthPayload | None]] = {}
+    secret_cache: dict[str, str | None] = {}
     resolved_providers: list[AiProvider] = []
     for provider_id in provider_ids:
         if provider_id not in provider_cache:
@@ -314,7 +285,7 @@ async def _provider_projection(
                 auth=auth,
                 provider=provider,
             )
-        secret, payload = secret_cache[provider.provider_id]
+        secret = secret_cache[provider.provider_id]
         secret_ref = _provider_secret_ref(provider.provider_id) if secret else None
         missing_required_secret = _provider_requires_secret(provider) and not secret_ref
         providers[provider.provider_id] = _provider_manifest_entry(
@@ -333,12 +304,7 @@ async def _provider_projection(
         )
         if secret and secret_ref:
             secret_values[secret_ref] = secret
-        if provider not in version_sources:
-            version_sources.append(provider)
-        if payload is not None and payload not in version_sources:
-            version_sources.append(payload)
-
-    return providers, secret_values, version_sources
+    return providers, secret_values
 
 
 def _provider_manifest_entry(
@@ -455,12 +421,12 @@ async def _provider_secret(
     *,
     auth: AuthContext,
     provider: AiProvider,
-) -> tuple[str | None, AiProviderAuthPayload | None]:
+) -> str | None:
     if provider.auth_type != "api_key":
-        return None, None
+        return None
     metadata = provider.auth_metadata or {}
     if metadata.get("source") not in {None, "managed"}:
-        return None, None
+        return None
     profile = metadata.get("profile") if isinstance(metadata.get("profile"), str) else "default"
     payload = (
         await db.execute(
@@ -473,5 +439,5 @@ async def _provider_secret(
         )
     ).scalar_one_or_none()
     if payload is None:
-        return None, None
-    return decrypt(payload.encrypted_payload, payload.nonce), payload
+        return None
+    return decrypt(payload.encrypted_payload, payload.nonce)
