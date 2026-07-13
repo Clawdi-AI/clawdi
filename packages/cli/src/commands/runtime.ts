@@ -1214,6 +1214,7 @@ interface RuntimeApplyConvergedResult {
 	kind: "converged";
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
+	systemdApply: ReturnType<typeof applySystemdRuntimeUpdate>;
 }
 
 interface RuntimeApplyGatedResult {
@@ -1228,6 +1229,7 @@ interface RuntimeApplyCliUpdateFailedResult {
 }
 
 interface RuntimeApplyOptions {
+	authorityCommit?: (convergence: ReturnType<typeof convergeRuntimeManifest>) => void;
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
@@ -1325,24 +1327,44 @@ function commitRuntimeAppliedState(input: {
 	persistRemoteEtags: boolean;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 }): void {
-	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
-	if (input.persistRemoteEtags) {
-		writeRuntimeManifestEtag(input.paths, input.observedManifestEtag ?? undefined);
-		writeRuntimeChannelsEtag(input.paths, input.observedChannelsEtag ?? undefined);
-	}
-	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
-		{
-			schemaVersion: "clawdi.runtimeAppliedState.v1",
-			appliedAt: new Date().toISOString(),
-			instanceId: input.convergence.manifest.instanceId,
-			observedManifestEtag: input.observedManifestEtag,
-			observedChannelsEtag: input.observedChannelsEtag,
-			observedConfigGeneration: input.convergence.manifest.generation,
-			contentIdentity: runtimeAppliedContentIdentity(input.load, input.channels),
-			projectedProviderIds: input.convergence.projectedProviderIds,
-		},
-		input.paths,
+	const authorityPaths = [
+		input.paths.manifestLastGood,
+		input.paths.manifestEtag,
+		input.paths.channelsEtag,
+		input.paths.appliedState,
+	];
+	const previous = new Map(
+		authorityPaths.map((path) => [path, existsSync(path) ? readFileSync(path) : null]),
 	);
+	try {
+		input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(
+			input.load,
+			input.paths,
+		);
+		if (input.persistRemoteEtags) {
+			writeRuntimeManifestEtag(input.paths, input.observedManifestEtag ?? undefined);
+			writeRuntimeChannelsEtag(input.paths, input.observedChannelsEtag ?? undefined);
+		}
+		input.convergence.outputs.appliedState = writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: new Date().toISOString(),
+				instanceId: input.convergence.manifest.instanceId,
+				observedManifestEtag: input.observedManifestEtag,
+				observedChannelsEtag: input.observedChannelsEtag,
+				observedConfigGeneration: input.convergence.manifest.generation,
+				contentIdentity: runtimeAppliedContentIdentity(input.load, input.channels),
+				projectedProviderIds: input.convergence.projectedProviderIds,
+			},
+			input.paths,
+		);
+	} catch (error) {
+		for (const [path, content] of previous) {
+			if (content === null) rmSync(path, { force: true });
+			else writePrivateFileAtomic(path, content.toString("utf8"), { mode: 0o600, dirMode: 0o700 });
+		}
+		throw error;
+	}
 }
 
 function readRuntimeChannelsEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
@@ -1944,10 +1966,19 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		}
 
 		let applyResult: RuntimeApplyResult;
-		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		try {
 			applyResult = withRuntimeConvergeLock(paths, () =>
 				applyRuntimeDesiredState(convergenceLoad, paths, {
+					authorityCommit: (convergence) =>
+						commitRuntimeAppliedState({
+							load: convergenceLoad,
+							paths,
+							channels: channelsLoad,
+							observedManifestEtag: loaded.etag ?? null,
+							observedChannelsEtag: channelsLoad?.etag ?? null,
+							persistRemoteEtags: loaded.source === "remote-datasource",
+							convergence,
+						}),
 					manifestIdentity: {
 						generation: convergenceLoad.manifest.generation,
 						etag: loaded.etag ?? null,
@@ -2063,42 +2094,8 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			return;
 		}
 		const { convergence } = applyResult;
-		let systemdApplyError: string | null = null;
-		if (convergence.installErrors.length === 0) {
-			try {
-				applySystemdRuntimeUpdate(paths, previousSystemdUnits, readSystemdUnitSnapshot(paths));
-			} catch (error) {
-				systemdApplyError = `systemd apply failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`;
-			}
-		}
-		const runtimeErrors = [
-			...convergence.installErrors,
-			...(systemdApplyError ? [systemdApplyError] : []),
-		];
+		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
-		if (installOk && loaded.source === "remote-datasource") {
-			commitRuntimeAppliedState({
-				load: convergenceLoad,
-				paths,
-				channels: channelsLoad,
-				observedManifestEtag: loaded.etag ?? null,
-				observedChannelsEtag: channelsLoad?.etag ?? null,
-				persistRemoteEtags: true,
-				convergence,
-			});
-		} else if (installOk) {
-			commitRuntimeAppliedState({
-				load: convergenceLoad,
-				paths,
-				channels: channelsLoad,
-				observedManifestEtag: loaded.etag ?? null,
-				observedChannelsEtag: channelsLoad?.etag ?? null,
-				persistRemoteEtags: false,
-				convergence,
-			});
-		}
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
@@ -2224,7 +2221,6 @@ async function runtimeWatchTick(
 	}
 
 	try {
-		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		const applyLoad = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
 		const loaded = applyLoad.load;
 		const manifestIdentity = runtimeManifestIdentityForWatch(
@@ -2234,6 +2230,16 @@ async function runtimeWatchTick(
 		);
 		const applyResult = withRuntimeConvergeLock(paths, () =>
 			applyRuntimeDesiredState(loaded, paths, {
+				authorityCommit: (convergence) =>
+					commitRuntimeAppliedState({
+						load: loaded,
+						paths,
+						channels: applyLoad.channels,
+						observedManifestEtag: applyLoad.observedManifestEtag,
+						observedChannelsEtag: applyLoad.observedChannelsEtag,
+						persistRemoteEtags: true,
+						convergence,
+					}),
 				continueOnCliUpdateError: true,
 				deferCliInstall: opts.deferCliInstall,
 				deferCliInstallReason: opts.deferCliInstallReason,
@@ -2282,33 +2288,10 @@ async function runtimeWatchTick(
 				gate: applyResult.gate,
 			};
 		}
-		const { convergence, cliUpdate } = applyResult;
+		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
-		let systemdApplyResult = {
-			applied: false,
-			systemUnitsChanged: [] as string[],
-			userUnitsChanged: [] as string[],
-		};
-		let systemdApplyError: string | null = null;
-		if (convergence.installErrors.length === 0) {
-			try {
-				systemdApplyResult = applySystemdRuntimeUpdate(
-					paths,
-					previousSystemdUnits,
-					readSystemdUnitSnapshot(paths),
-				);
-			} catch (error) {
-				systemdApplyError = `systemd apply failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`;
-			}
-		}
-		const errors = [
-			...(cliUpdateError ? [cliUpdateError] : []),
-			...convergence.installErrors,
-			...(systemdApplyError ? [systemdApplyError] : []),
-		];
+		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
 		let selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
@@ -2335,15 +2318,6 @@ async function runtimeWatchTick(
 			};
 		}
 		completePendingRuntimeCliUpgrade(paths, getCliVersion(), manifestIdentity);
-		commitRuntimeAppliedState({
-			load: loaded,
-			paths,
-			channels: applyLoad.channels,
-			observedManifestEtag: applyLoad.observedManifestEtag,
-			observedChannelsEtag: applyLoad.observedChannelsEtag,
-			persistRemoteEtags: true,
-			convergence,
-		});
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
@@ -2394,8 +2368,38 @@ function applyRuntimeDesiredState(
 	if (gate) {
 		return { kind: "minimum_cli_version_gated", cliUpdate, gate };
 	}
-	const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
-	return { kind: "converged", cliUpdate, convergence };
+	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
+	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
+	let systemdApply = {
+		applied: false,
+		systemUnitsChanged: [] as string[],
+		userUnitsChanged: [] as string[],
+	};
+	const convergence = convergeRuntimeManifest(load, paths, {
+		cacheLastGood: false,
+		commitAuthority: opts.authorityCommit,
+		systemdApply: {
+			activate: () => {
+				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				try {
+					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, failedSystemdUnits);
+					return systemdApply;
+				} catch (error) {
+					throw new Error(
+						`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			},
+			rollback: () => {
+				applySystemdRuntimeUpdate(
+					paths,
+					failedSystemdUnits ?? { system: new Map(), user: new Map() },
+					readSystemdUnitSnapshot(paths),
+				);
+			},
+		},
+	});
+	return { kind: "converged", cliUpdate, convergence, systemdApply };
 }
 
 function minimumCliVersionGate(

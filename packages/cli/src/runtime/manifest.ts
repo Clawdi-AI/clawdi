@@ -11,9 +11,11 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
 	renameSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +42,11 @@ import {
 	mergeHermesMcpServer,
 	mergeHermesRuntimeLocale,
 	removeHermesMcpServer,
+	renderHermesChannelConfig,
+	renderHermesConfig,
+	renderHermesMcpServer,
+	renderHermesMcpServerRemoval,
+	renderHermesRuntimeLocale,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState } from "./applied-state";
@@ -144,6 +151,27 @@ export interface RuntimeConvergenceResult {
 		instanceSemaphores: string[];
 		bootFinished: string;
 	};
+}
+
+type RuntimeSystemdApplyResult = {
+	applied: boolean;
+	systemUnitsChanged: string[];
+	userUnitsChanged: string[];
+};
+
+interface RuntimeSystemdApplyHooks {
+	activate: () => RuntimeSystemdApplyResult;
+	rollback: () => void;
+}
+
+type RuntimeLiveSnapshotNode =
+	| { kind: "missing" }
+	| { kind: "file"; content: Buffer; mode: number }
+	| { kind: "symlink"; target: string }
+	| { kind: "directory"; mode: number; entries: Map<string, RuntimeLiveSnapshotNode> };
+
+interface RuntimeLiveSnapshot {
+	entries: Map<string, RuntimeLiveSnapshotNode>;
 }
 
 interface RuntimeInstallObservation {
@@ -309,6 +337,54 @@ function materializeHostedChannelCredentials(
 	removeStaleManagedWhatsAppAuthDirs(manifest, expectedAuthDirs);
 	if (errors.length > 0) {
 		throw new Error(errors.join("; "));
+	}
+}
+
+function validateHostedChannelCredentialsPlan(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): void {
+	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_UPSTREAM_READY) return;
+	const normalizedSecrets = normalizeSecretValues(secretValues);
+	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
+		const authDirError = managedWhatsAppAuthDirError(manifest, credential);
+		if (authDirError) throw new Error(authDirError);
+		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
+		if (!credsJson) {
+			throw new Error(
+				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
+			);
+		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(credsJson);
+		} catch (error) {
+			throw new Error(
+				`invalid WhatsApp auth state JSON for ${credential.accountKey}/${credential.credentialId}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+		if (!recordValue(parsed)) {
+			throw new Error(
+				`invalid WhatsApp auth state JSON for ${credential.accountKey}/${credential.credentialId}: creds.json must be a JSON object`,
+			);
+		}
+		if (existsSync(credential.authDir) && lstatSync(credential.authDir).isSymbolicLink()) {
+			throw new Error(
+				`refusing to overwrite symlinked WhatsApp auth directory ${credential.authDir}`,
+			);
+		}
+		const existingMarker = readManagedWhatsAppAuthMarker(credential.authDir);
+		if (
+			existsSync(credential.authDir) &&
+			!existingMarker &&
+			readdirSync(credential.authDir).length > 0
+		) {
+			throw new Error(
+				`refusing to overwrite unmanaged WhatsApp auth directory ${credential.authDir}`,
+			);
+		}
 	}
 }
 
@@ -1094,13 +1170,18 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 	}
 	if (!runtime.install) {
 		if (runtime.run?.command?.trim() || isSupportedRuntimeName(name)) {
+			const configuredCommand = runtime.run?.command?.trim() || null;
+			const commandPath =
+				isSupportedRuntimeName(name) && configuredCommand && commandResolvable(configuredCommand)
+					? configuredCommand
+					: null;
 			return {
 				runtime: name,
 				enabled: true,
 				status: "configured",
 				executionUser: null,
-				commandPath: null,
-				appRoot: null,
+				commandPath,
+				appRoot: commandPath ? runtimeAppRoot(name, process.env.HOME ?? "") : null,
 				install: null,
 				installerUrl: null,
 				executedInstallerUrl: null,
@@ -1127,6 +1208,31 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 		} satisfies RuntimeInstallObservation;
 	}
 	return runOfficialInstaller(name, runtime.install);
+}
+
+function planRuntimeInstallObservation(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+): RuntimeInstallObservation {
+	if (!runtime.install) return observeRuntimeInstall(name, runtime);
+	if (!runtime.enabled) return observeRuntimeInstall(name, runtime);
+	const commandPath = runtimeCommandPath(name, runtime.install.home);
+	const appRoot = runtimeAppRoot(name, runtime.install.home);
+	return {
+		runtime: name,
+		enabled: true,
+		status: commandPath && executableExists(commandPath) ? "present" : "configured",
+		executionUser: null,
+		commandPath,
+		appRoot,
+		install: runtime.install,
+		installerUrl: runtime.install.url,
+		executedInstallerUrl: null,
+		exitCode: null,
+		stdoutTail: null,
+		stderrTail: null,
+		error: commandPath && appRoot ? null : `unsupported runtime ${name}`,
+	};
 }
 
 function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
@@ -1890,6 +1996,33 @@ type HostedAiProviderProjectionInput = {
 	primaryModel: AgentPrimaryModel;
 };
 
+function agentTargetProjectionInput(
+	input: HostedAiProviderProjectionInput | null,
+): HostedAiProviderProjectionInput | null {
+	if (!input) return null;
+	const providerIdMap = new Map<string, string>();
+	const providers = input.catalog.providers.map((provider) => {
+		if (provider.managed_by !== "clawdi") return provider;
+		const id = provider.id.startsWith("clawdi-managed") ? provider.id : "clawdi-managed";
+		providerIdMap.set(provider.id, id);
+		return {
+			...provider,
+			id,
+			api_mode: id === "clawdi-managed-v2" ? "openai_chat" : "openai_responses",
+		} satisfies AiProviderCatalog["providers"][number];
+	});
+	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);
+	if (!primaryProviderId) return input;
+	return {
+		catalog: {
+			...input.catalog,
+			providers,
+			defaults: { ...input.catalog.defaults, chat_provider_id: primaryProviderId },
+		},
+		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
+	};
+}
+
 interface ManagedGatewayModelFetchInput {
 	baseUrl: string;
 	home: string;
@@ -1956,9 +2089,11 @@ function applyHostedAiProviderProjection(
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
 	}
-	const projectionInput = hostedAiProviderCatalog(manifest, name, {
-		primaryModelOverride: managedPrimaryModelOverrides[name],
-	});
+	const projectionInput = agentTargetProjectionInput(
+		hostedAiProviderCatalog(manifest, name, {
+			primaryModelOverride: managedPrimaryModelOverrides[name],
+		}),
+	);
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
 		return applyHostedHermesAiProviderProjection(
@@ -4821,6 +4956,20 @@ function planRuntimeSystemdUserPrograms(input: {
 	return programs;
 }
 
+function validateRuntimeSystemdProgramsPlan(programs: RuntimeSystemdUserProgram[]): void {
+	for (const program of programs) {
+		systemdUnitFileName(runtimeSystemdProgramName(program));
+		systemdPath(program.cwd);
+		systemdExec(program.command, program.args);
+		for (const [key, value] of Object.entries(program.env)) {
+			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+				throw new Error(`invalid systemd environment key: ${key}`);
+			}
+			systemdEnvironmentFileQuote(value);
+		}
+	}
+}
+
 function runtimeConvergenceWithoutApply(input: {
 	load: RuntimeManifestLoad;
 	paths: RuntimePaths;
@@ -4869,12 +5018,244 @@ function runtimeConvergenceWithoutApply(input: {
 	};
 }
 
+function runtimeLiveSnapshotPaths(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	workspaceRoot: string,
+): string[] {
+	const home = projectionSystemHome(manifest) ?? paths.userHome;
+	return [
+		paths.serviceStateRoot,
+		paths.runRoot,
+		paths.clawdiHome,
+		paths.systemdUserRoot,
+		paths.systemdSystemRoot,
+		join(workspaceRoot, "SOUL.md"),
+		join(home, ".hermes"),
+		join(home, ".openclaw"),
+		hostedCodexHome(home),
+	].filter((path, index, all) => all.indexOf(path) === index);
+}
+
+function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
+	if (!existsSync(path)) return { kind: "missing" };
+	const stat = lstatSync(path);
+	if (stat.isSymbolicLink()) return { kind: "symlink", target: readlinkSync(path) };
+	if (stat.isFile()) {
+		return { kind: "file", content: readFileSync(path), mode: stat.mode & 0o777 };
+	}
+	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
+	return {
+		kind: "directory",
+		mode: stat.mode & 0o777,
+		entries: new Map(
+			readdirSync(path)
+				.sort()
+				.map((entry) => [entry, captureRuntimeLiveNode(join(path, entry))]),
+		),
+	};
+}
+
+function captureRuntimeLiveSnapshot(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	workspaceRoot: string,
+): RuntimeLiveSnapshot {
+	return {
+		entries: new Map(
+			runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot).map((path) => [
+				path,
+				captureRuntimeLiveNode(path),
+			]),
+		),
+	};
+}
+
+function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): void {
+	rmSync(path, { recursive: true, force: true });
+	if (node.kind === "missing") return;
+	mkdirSync(dirname(path), { recursive: true });
+	if (node.kind === "symlink") {
+		symlinkSync(node.target, path);
+		return;
+	}
+	if (node.kind === "file") {
+		writeFileSync(path, node.content, { mode: node.mode });
+		chmodSync(path, node.mode);
+		return;
+	}
+	mkdirSync(path, { recursive: true, mode: node.mode });
+	chmodSync(path, node.mode);
+	for (const [entry, child] of node.entries) restoreRuntimeLiveNode(join(path, entry), child);
+}
+
+function restoreRuntimeLiveSnapshot(snapshot: RuntimeLiveSnapshot): void {
+	for (const [path, node] of snapshot.entries) restoreRuntimeLiveNode(path, node);
+}
+
+function validateRuntimeProjectionPlan(input: {
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	workspaceRoot: string;
+	secretValues: Record<string, string> | undefined;
+	observations: Map<string, RuntimeInstallObservation>;
+	previousProjectedProviderIds: Record<string, string[]>;
+	managedPrimaryModelOverrides?: Partial<Record<string, AgentPrimaryModel>>;
+}): void {
+	const {
+		manifest,
+		paths,
+		workspaceRoot,
+		secretValues,
+		observations,
+		previousProjectedProviderIds,
+		managedPrimaryModelOverrides,
+	} = input;
+	const home = projectionSystemHome(manifest) ?? paths.userHome;
+	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
+	if (localeBlock) {
+		for (const name of Object.keys(manifest.runtimes)) {
+			if (name === "openclaw") {
+				nextManagedLocaleFileContent(join(workspaceRoot, "SOUL.md"), localeBlock);
+			}
+			if (name === "hermes") {
+				nextManagedLocaleFileContent(join(home, ".hermes", "SOUL.md"), localeBlock);
+			}
+		}
+	}
+
+	let hermesConfig = existsSync(join(home, ".hermes", "config.yaml"))
+		? readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")
+		: "";
+	if (manifest.locale && Object.hasOwn(manifest.runtimes, "hermes")) {
+		hermesConfig = renderHermesRuntimeLocale(hermesConfig, manifest.locale.timezone);
+	}
+
+	const codexProvider = hostedCodexManagedProvider(manifest);
+	if (codexProvider) {
+		hostedCodexManagedConfigToml(codexProvider);
+		hostedCodexManagedProviderState(codexProvider);
+	}
+
+	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
+		a.localeCompare(b),
+	)) {
+		const observation = observations.get(name);
+		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+		const providerPlaceholderEnv = runtime.enabled
+			? hostedProviderPlaceholderEnv(manifest, name)
+			: {};
+		const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+		assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
+		mergeRuntimeEnvWithProviderPlaceholders(name, runtime.run, providerPlaceholderEnv);
+		const secretEnv = runtime.enabled
+			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			: {};
+		scopedSecretValues(secretValues, Object.values(secretEnv));
+		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
+			const service = runtimeServiceNameSchema.parse(serviceName);
+			const settings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+				name,
+				service,
+				serviceSettings,
+				providerPlaceholderEnv,
+			);
+			mergeRuntimeServiceSecretEnv(name, service, settings, secretEnv);
+		}
+
+		const projectionInput = agentTargetProjectionInput(
+			hostedAiProviderCatalog(manifest, name, {
+				primaryModelOverride: managedPrimaryModelOverrides?.[name],
+			}),
+		);
+		const projectionRequiresInstalledModelProbe =
+			projectionInput?.catalog.providers.some((provider) => provider.managed_by === "clawdi") &&
+			managedPrimaryModelOverrides === undefined;
+		if (name === "openclaw") {
+			if (projectionInput && !projectionRequiresInstalledModelProbe) {
+				const projection = buildAgentTargetProjection(
+					"openclaw",
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				);
+				const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+				if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+				mergeOpenClawProviderDeletes(
+					file.content,
+					staleProviderIds(
+						new Set(previousProjectedProviderIds.openclaw ?? []),
+						openClawProviderIdsFromPatch(file.content),
+					),
+				);
+			} else {
+				JSON.stringify(openClawProviderDeletePatch(previousProjectedProviderIds.openclaw ?? []));
+			}
+			JSON.stringify(openClawGatewayHostedPatch(manifest));
+		}
+		if (name === "hermes") {
+			if (projectionInput && !projectionRequiresInstalledModelProbe) {
+				const yamlProjection = buildAgentTargetProjection(
+					"hermes",
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				);
+				const yamlFile = yamlProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
+				if (!yamlFile)
+					throw new Error("Hermes projection did not include a config merge YAML file.");
+				buildHermesHostedProviderPluginProjection(
+					projectionInput.catalog,
+					projectionInput.primaryModel,
+				);
+				hermesConfig = renderHermesConfig(hermesConfig, yamlFile.content);
+			} else if ((previousProjectedProviderIds.hermes ?? []).length > 0) {
+				hermesConfig = renderHermesConfig(
+					hermesConfig,
+					hermesProviderDeletePatch(previousProjectedProviderIds.hermes ?? []),
+				);
+			}
+		}
+
+		const channels = hostedChannelProjection(manifest);
+		if (channels && name === "openclaw") JSON.stringify(openClawManagedChannelsPatch(channels));
+		if (channels && name === "hermes") {
+			hermesConfig = renderHermesChannelConfig(
+				hermesConfig,
+				hermesManagedChannelsPatch(
+					channels,
+					manifest.controlPlane.apiUrl,
+					manifest.projection?.channelCredentials,
+				),
+			);
+		}
+
+		if (hostedMcpProjectionDeclared(manifest) && name === "hermes") {
+			hermesConfig = hostedMcpProjectionEnabled(manifest)
+				? renderHermesMcpServer(
+						hermesConfig,
+						"clawdi",
+						hostedMcpServerConfig(manifest, paths.daemonAuthToken),
+					)
+				: renderHermesMcpServerRemoval(hermesConfig, "clawdi");
+		}
+		if (hostedMcpProjectionDeclared(manifest) && name === "openclaw") {
+			JSON.stringify(
+				hostedMcpProjectionEnabled(manifest)
+					? hostedMcpServerConfig(manifest, paths.daemonAuthToken)
+					: { remove: "clawdi" },
+			);
+		}
+	}
+	validateHostedChannelCredentialsPlan(manifest, secretValues);
+}
+
 export function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
 	opts: {
 		cacheLastGood?: boolean;
+		commitAuthority?: (convergence: RuntimeConvergenceResult) => void;
 		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		systemdApply?: RuntimeSystemdApplyHooks;
 	} = {},
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
@@ -4912,10 +5293,18 @@ export function convergeRuntimeManifest(
 
 	validateRuntimeManifestPlan(manifest, paths);
 	for (const [name, runtime] of runtimeEntries) {
-		const observation = observeRuntimeInstall(name, runtime);
+		const observation = planRuntimeInstallObservation(name, runtime);
 		observations.set(name, observation);
 		if (observation.error) installErrors.push(observation.error);
 	}
+	validateRuntimeProjectionPlan({
+		manifest,
+		paths,
+		workspaceRoot,
+		secretValues,
+		observations,
+		previousProjectedProviderIds,
+	});
 	if (installErrors.length > 0) {
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -4940,6 +5329,30 @@ export function convergeRuntimeManifest(
 		observations,
 		egressProfileBundlePath: plannedEgressProfileBundlePath,
 	});
+	validateRuntimeSystemdProgramsPlan(plannedRuntimePrograms);
+	observations.clear();
+	for (const [name, runtime] of runtimeEntries) {
+		const observation = observeRuntimeInstall(name, runtime);
+		observations.set(name, observation);
+		if (observation.error) installErrors.push(observation.error);
+	}
+	if (installErrors.length > 0) {
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: Object.fromEntries(
+				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+					runtime,
+					[...providerIds],
+				]),
+			),
+		});
+	}
+	// Installers and probes may need a private scratch/log root. This is not
+	// generation-owned live configuration and is created only after Plan succeeds.
 	mkdirSync(paths.runRoot, { recursive: true });
 	mkdirSync(workspaceRoot, { recursive: true });
 	let codexCli: Record<string, string> | null = null;
@@ -4967,29 +5380,6 @@ export function convergeRuntimeManifest(
 			);
 		}
 	}
-	if (installErrors.length === 0) {
-		const installedOfficialServices = new Set<string>();
-		for (const program of plannedRuntimePrograms) {
-			const serviceName = officialRuntimeSystemdProgramName(program);
-			if (!serviceName || installedOfficialServices.has(serviceName)) continue;
-			installedOfficialServices.add(serviceName);
-			const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
-			if (error) installErrors.push(error);
-		}
-	}
-	if (installErrors.length === 0) {
-		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
-			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
-		);
-		for (const unitName of staleOfficialRuntimeUserServices(paths, plannedUserUnits)) {
-			const error = uninstallOfficialRuntimeUserService({
-				unitName,
-				paths,
-				workspaceRoot,
-			});
-			if (error) installErrors.push(error);
-		}
-	}
 	if (installErrors.length > 0) {
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -5005,291 +5395,284 @@ export function convergeRuntimeManifest(
 			),
 		});
 	}
-
-	makeRuntimeUserOwned(paths.userHome);
-	makeRuntimeUserPrivateDir(paths.clawdiHome);
-	makeRuntimeUserOwned(workspaceRoot);
-	mkdirSync(paths.installInventory, { recursive: true });
-	mkdirSync(paths.projectionRoot, { recursive: true });
-	mkdirSync(semRoot, { recursive: true });
-	mkdirSync(paths.managedSecretRoot, { recursive: true });
-	makeManagedSecretRoot(paths.managedSecretRoot);
-	makeRootReadableDir(paths.egressProfileRoot);
-	makeRootReadableDir(paths.egressRoot);
-	makeEgressIdentityPrivateDir(paths.egressCaDir);
-	makeRootReadableDir(dirname(paths.egressSystemCaFile));
-	makeRuntimeUserPrivateDir(paths.egressScratchRoot);
-
-	let manifestLastGood: string | null = null;
-	writeJsonFile(paths.managedConfig, {
-		schemaVersion: "clawdi.hostedManagedConfig.v1",
-		generatedAt,
-		deploymentId: manifest.deploymentId,
-		environmentId: manifest.environmentId,
-		instanceId: manifest.instanceId,
-		generation: manifest.generation,
-		locale: manifest.locale ?? null,
-		controlPlane: manifest.controlPlane,
-		egressEngine: manifest.egressEngine ?? null,
-		auth: {
-			source: "runtime-instance-data",
-			token: "<redacted>",
-		},
-		workspaceRoot,
-	});
-	writeJsonFile(paths.syncState, {
-		schemaVersion: "clawdi.runtimeSyncState.v1",
-		generatedAt,
-		deploymentId: manifest.deploymentId,
-		environmentId: manifest.environmentId,
-		instanceId: manifest.instanceId,
-		generation: manifest.generation,
-		locale: manifest.locale ?? null,
-		runtimes: Object.fromEntries(
-			Object.entries(manifest.runtimes).map(([name, runtime]) => [
-				name,
-				{
-					enabled: runtime.enabled,
-					updateChannel: runtime.updateChannel ?? null,
-					workspaceRoot,
-				},
-			]),
-		),
-	});
-	writeJsonFile(paths.instanceData, {
-		schemaVersion: "clawdi.runtimeInstanceData.v1",
-		generatedAt,
-		deploymentId: manifest.deploymentId,
-		environmentId: manifest.environmentId,
-		instanceId: manifest.instanceId,
-		generation: manifest.generation,
-		locale: manifest.locale ?? null,
-		controlPlane: manifest.controlPlane,
-		workspaceRoot,
-	});
-	writeJsonFile(paths.sensitiveInstanceData, {
-		schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
-		generatedAt,
-		tokenSource: process.env.CLAWDI_AUTH_TOKEN ? "CLAWDI_AUTH_TOKEN" : load.source,
-		token: "<redacted>",
-	});
-
-	const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
-		? writeEgressProfileBundle(egressProfileBundle, paths)
-		: clearEgressProfileBundle(paths);
-	const egressEngine = writeEgressEngineStatus(
-		egressProfileBundlePath ? ensureRuntimeMitmproxy(manifest.egressEngine, paths) : null,
-		paths,
-	);
-	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
-	const daemonAuthTokenFile = writeDaemonAuthToken(paths);
-	writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
-	try {
-		materializeHostedChannelCredentials(manifest, secretValues);
-	} catch (error) {
-		installErrors.push(
-			`runtime channel credential materialization failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-	}
-	const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths);
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const egressSystemdProgram = runtimeEgressSystemdProgram(
-		manifest,
-		paths,
-		egressProfileBundlePath,
-		egressSecretFile,
-		egressEngine,
-		egressAddon,
-	);
-	const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
-	const egressUid = egressSystemdProgram ? runtimeEgressUid() : 0;
-	const egressGid = egressSystemdProgram ? runtimeEgressGid() : 0;
-	const egressIdentity = egressSystemdProgram ? { runtimeUid, egressUid, egressGid } : null;
-	const egressTransparentEnv = writeTransparentEgressEnvFile({
-		program: egressSystemdProgram,
-		paths,
-		runtimeUser,
-		runtimeUid,
-		egressUid,
-		egressGid,
-	});
-	writeProviderHealthStatus(manifest, load.secretValues, paths);
-	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
-	const writtenRunConfigIds = new Set<string>();
-	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 	const managedPrimaryModelOverrides = resolveManagedGatewayPrimaryModelOverrides(
 		manifest,
 		enabledRuntimes,
 		paths.userHome,
 		workspaceRoot,
-		egressSystemdProgram?.systemCaBundle ?? null,
+		plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
 		opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
 	);
+	validateRuntimeProjectionPlan({
+		manifest,
+		paths,
+		workspaceRoot,
+		secretValues,
+		observations,
+		previousProjectedProviderIds,
+		managedPrimaryModelOverrides,
+	});
+
+	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
 	try {
-		const codexProjection = applyHostedCodexManagedProviderProjection(
-			manifest,
-			projectionSystemHome(manifest) ?? paths.userHome,
-			codexCli,
+		const installedOfficialServices = new Set<string>();
+		for (const program of plannedRuntimePrograms) {
+			const serviceName = officialRuntimeSystemdProgramName(program);
+			if (!serviceName || installedOfficialServices.has(serviceName)) continue;
+			installedOfficialServices.add(serviceName);
+			const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
+			if (error) throw new Error(error);
+		}
+		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
+			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
 		);
-		providerProjectionRevisions.codex = codexProjection.revision;
-		projectedProviderIds.codex = codexProjection.providerIds;
-	} catch (error) {
-		installErrors.push(
-			`runtime codex provider projection failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-	}
+		for (const unitName of staleOfficialRuntimeUserServices(paths, plannedUserUnits)) {
+			const error = uninstallOfficialRuntimeUserService({ unitName, paths, workspaceRoot });
+			if (error) throw new Error(error);
+		}
 
-	for (const [name, runtime] of runtimeEntries) {
-		const observation = observations.get(name);
-		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+		makeRuntimeUserOwned(paths.userHome);
+		makeRuntimeUserPrivateDir(paths.clawdiHome);
+		makeRuntimeUserOwned(workspaceRoot);
+		mkdirSync(paths.installInventory, { recursive: true });
+		mkdirSync(paths.projectionRoot, { recursive: true });
+		mkdirSync(semRoot, { recursive: true });
+		mkdirSync(paths.managedSecretRoot, { recursive: true });
+		makeManagedSecretRoot(paths.managedSecretRoot);
+		makeRootReadableDir(paths.egressProfileRoot);
+		makeRootReadableDir(paths.egressRoot);
+		makeEgressIdentityPrivateDir(paths.egressCaDir);
+		makeRootReadableDir(dirname(paths.egressSystemCaFile));
+		makeRuntimeUserPrivateDir(paths.egressScratchRoot);
 
-		const inventoryPath = join(paths.installInventory, `${name}.json`);
-		writeJsonFile(inventoryPath, {
-			schemaVersion: "clawdi.runtimeInstallInventory.v1",
+		let manifestLastGood: string | null = null;
+		writeJsonFile(paths.managedConfig, {
+			schemaVersion: "clawdi.hostedManagedConfig.v1",
 			generatedAt,
-			runtime: name,
-			enabled: runtime.enabled,
-			updateChannel: runtime.updateChannel ?? null,
-			simulation: false,
-			status: observation.status,
-			executionUser: observation.executionUser,
-			install: observation.install,
-			command: runtimeInstallerCommand(name, runtime.install),
-			commandPath: observation.commandPath,
-			appRoot: observation.appRoot,
-			installerUrl: observation.installerUrl,
-			executedInstallerUrl: observation.executedInstallerUrl,
-			installStartedAt: observation.installStartedAt ?? null,
-			installFinishedAt: observation.installFinishedAt ?? null,
-			installDurationMs: observation.installDurationMs ?? null,
-			resultExitCode: observation.exitCode,
-			stdoutTail: observation.stdoutTail,
-			stderrTail: observation.stderrTail,
-			error: observation.error,
+			deploymentId: manifest.deploymentId,
+			environmentId: manifest.environmentId,
+			instanceId: manifest.instanceId,
+			generation: manifest.generation,
+			locale: manifest.locale ?? null,
+			controlPlane: manifest.controlPlane,
+			egressEngine: manifest.egressEngine ?? null,
+			auth: {
+				source: "runtime-instance-data",
+				token: "<redacted>",
+			},
+			workspaceRoot,
 		});
-		installInventory.push(inventoryPath);
+		writeJsonFile(paths.syncState, {
+			schemaVersion: "clawdi.runtimeSyncState.v1",
+			generatedAt,
+			deploymentId: manifest.deploymentId,
+			environmentId: manifest.environmentId,
+			instanceId: manifest.instanceId,
+			generation: manifest.generation,
+			locale: manifest.locale ?? null,
+			runtimes: Object.fromEntries(
+				Object.entries(manifest.runtimes).map(([name, runtime]) => [
+					name,
+					{
+						enabled: runtime.enabled,
+						updateChannel: runtime.updateChannel ?? null,
+						workspaceRoot,
+					},
+				]),
+			),
+		});
+		writeJsonFile(paths.instanceData, {
+			schemaVersion: "clawdi.runtimeInstanceData.v1",
+			generatedAt,
+			deploymentId: manifest.deploymentId,
+			environmentId: manifest.environmentId,
+			instanceId: manifest.instanceId,
+			generation: manifest.generation,
+			locale: manifest.locale ?? null,
+			controlPlane: manifest.controlPlane,
+			workspaceRoot,
+		});
+		writeJsonFile(paths.sensitiveInstanceData, {
+			schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
+			generatedAt,
+			tokenSource: process.env.CLAWDI_AUTH_TOKEN ? "CLAWDI_AUTH_TOKEN" : load.source,
+			token: "<redacted>",
+		});
 
-		const projectionPath = join(paths.projectionRoot, `${name}.json`);
-		writeJsonFile(projectionPath, projectionPayload(name, manifest));
-		projections.push(projectionPath);
-		try {
-			const localeFile = applyHostedLocaleProjection(
-				name,
-				manifest,
-				projectionSystemHome(manifest) ?? paths.userHome,
-				workspaceRoot,
-			);
-			if (localeFile) managedLocaleFiles.push(localeFile);
-		} catch (error) {
-			installErrors.push(
-				`runtime ${name} locale projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		try {
-			const providerProjection = applyHostedAiProviderProjection(
-				name,
-				observation,
-				manifest,
-				workspaceRoot,
-				previousProjectedProviderIds[name] ?? [],
-				managedPrimaryModelOverrides,
-			);
-			providerProjectionRevisions[name] = providerProjection.revision;
-			projectedProviderIds[name] = providerProjection.providerIds;
-		} catch (error) {
-			installErrors.push(
-				`runtime ${name} provider projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		try {
-			applyHostedChannelProjection(name, observation, manifest, workspaceRoot);
-		} catch (error) {
-			installErrors.push(
-				`runtime ${name} channel projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		try {
-			applyHostedMcpProjection(name, observation, manifest, workspaceRoot, daemonAuthTokenFile);
-		} catch (error) {
-			installErrors.push(
-				`runtime ${name} mcp projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		const runtimeName = runtimeNameSchema.parse(name);
-		const providerPlaceholderEnv = runtime.enabled
-			? hostedProviderPlaceholderEnv(manifest, name)
-			: {};
-		const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
-		assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
-		const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
-			name,
-			runtime.run,
-			providerPlaceholderEnv,
-		);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
-			: {};
-		const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
-			name,
-			secretValues,
-			secretEnv,
+		const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
+			? writeEgressProfileBundle(egressProfileBundle, paths)
+			: clearEgressProfileBundle(paths);
+		const egressEngine = writeEgressEngineStatus(
+			egressProfileBundlePath ? ensureRuntimeMitmproxy(manifest.egressEngine, paths) : null,
 			paths,
 		);
-		if (runtimeProviderSecretFile) writtenRuntimeSecretIds.add(name);
-		const runConfig = buildRuntimeRunConfig({
-			runtime: runtimeName,
-			enabled: runtime.enabled,
-			generatedAt,
-			generation: manifest.generation,
-			instanceId: manifest.instanceId,
-			commandPath: observation.commandPath,
-			appRoot: observation.appRoot,
-			workspaceRoot,
-			egressProfileBundlePath,
-			settings: runtimeRunSettings,
-			secretFilePath: runtimeProviderSecretFile,
-			secretEnv,
-		});
-		const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
-		runConfigs.push(runConfigPath);
-		writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
-		if (runtime.enabled && shouldRunRuntime(name, manifest)) {
-			const program = buildRuntimeSystemdUserProgram({
-				config: runConfig,
-				paths,
-				secretValues,
-				egress: egressSystemdProgram,
-			});
-			if (program) {
-				runtimeSystemdUserPrograms.push(program);
-			}
+		const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
+		const daemonAuthTokenFile = writeDaemonAuthToken(paths);
+		writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
+		try {
+			materializeHostedChannelCredentials(manifest, secretValues);
+		} catch (error) {
+			installErrors.push(
+				`runtime channel credential materialization failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
 		}
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+		const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths);
+		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+		const egressSystemdProgram = runtimeEgressSystemdProgram(
+			manifest,
+			paths,
+			egressProfileBundlePath,
+			egressSecretFile,
+			egressEngine,
+			egressAddon,
+		);
+		const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
+		const egressUid = egressSystemdProgram ? runtimeEgressUid() : 0;
+		const egressGid = egressSystemdProgram ? runtimeEgressGid() : 0;
+		const egressIdentity = egressSystemdProgram ? { runtimeUid, egressUid, egressGid } : null;
+		const egressTransparentEnv = writeTransparentEgressEnvFile({
+			program: egressSystemdProgram,
+			paths,
+			runtimeUser,
+			runtimeUid,
+			egressUid,
+			egressGid,
+		});
+		writeProviderHealthStatus(manifest, load.secretValues, paths);
+		const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
+		const writtenRunConfigIds = new Set<string>();
+		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
+		try {
+			const codexProjection = applyHostedCodexManagedProviderProjection(
+				manifest,
+				projectionSystemHome(manifest) ?? paths.userHome,
+				codexCli,
+			);
+			providerProjectionRevisions.codex = codexProjection.revision;
+			projectedProviderIds.codex = codexProjection.providerIds;
+		} catch (error) {
+			installErrors.push(
+				`runtime codex provider projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+		if (installErrors.length > 0) {
+			throw new Error(installErrors.join("; "));
+		}
+
+		for (const [name, runtime] of runtimeEntries) {
+			const observation = observations.get(name);
+			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+
+			const inventoryPath = join(paths.installInventory, `${name}.json`);
+			writeJsonFile(inventoryPath, {
+				schemaVersion: "clawdi.runtimeInstallInventory.v1",
+				generatedAt,
+				runtime: name,
+				enabled: runtime.enabled,
+				updateChannel: runtime.updateChannel ?? null,
+				simulation: false,
+				status: observation.status,
+				executionUser: observation.executionUser,
+				install: observation.install,
+				command: runtimeInstallerCommand(name, runtime.install),
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+				installerUrl: observation.installerUrl,
+				executedInstallerUrl: observation.executedInstallerUrl,
+				installStartedAt: observation.installStartedAt ?? null,
+				installFinishedAt: observation.installFinishedAt ?? null,
+				installDurationMs: observation.installDurationMs ?? null,
+				resultExitCode: observation.exitCode,
+				stdoutTail: observation.stdoutTail,
+				stderrTail: observation.stderrTail,
+				error: observation.error,
+			});
+			installInventory.push(inventoryPath);
+
+			const projectionPath = join(paths.projectionRoot, `${name}.json`);
+			writeJsonFile(projectionPath, projectionPayload(name, manifest));
+			projections.push(projectionPath);
+			try {
+				const localeFile = applyHostedLocaleProjection(
+					name,
+					manifest,
+					projectionSystemHome(manifest) ?? paths.userHome,
+					workspaceRoot,
+				);
+				if (localeFile) managedLocaleFiles.push(localeFile);
+			} catch (error) {
+				installErrors.push(
+					`runtime ${name} locale projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			try {
+				const providerProjection = applyHostedAiProviderProjection(
+					name,
+					observation,
+					manifest,
+					workspaceRoot,
+					previousProjectedProviderIds[name] ?? [],
+					managedPrimaryModelOverrides,
+				);
+				providerProjectionRevisions[name] = providerProjection.revision;
+				projectedProviderIds[name] = providerProjection.providerIds;
+			} catch (error) {
+				installErrors.push(
+					`runtime ${name} provider projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			try {
+				applyHostedChannelProjection(name, observation, manifest, workspaceRoot);
+			} catch (error) {
+				installErrors.push(
+					`runtime ${name} channel projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			try {
+				applyHostedMcpProjection(name, observation, manifest, workspaceRoot, daemonAuthTokenFile);
+			} catch (error) {
+				installErrors.push(
+					`runtime ${name} mcp projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			if (installErrors.length > 0) {
+				throw new Error(installErrors.join("; "));
+			}
+			const runtimeName = runtimeNameSchema.parse(name);
+			const providerPlaceholderEnv = runtime.enabled
+				? hostedProviderPlaceholderEnv(manifest, name)
+				: {};
+			const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
+			assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
+			const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
 				name,
-				service,
-				serviceSettings,
+				runtime.run,
 				providerPlaceholderEnv,
 			);
-			const serviceSecretEnv = runtime.enabled
-				? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
+			const secretEnv = runtime.enabled
+				? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
 				: {};
-			const serviceRunConfig = buildRuntimeRunConfig({
+			const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
+				name,
+				secretValues,
+				secretEnv,
+				paths,
+			);
+			if (runtimeProviderSecretFile) writtenRuntimeSecretIds.add(name);
+			const runConfig = buildRuntimeRunConfig({
 				runtime: runtimeName,
-				service,
 				enabled: runtime.enabled,
 				generatedAt,
 				generation: manifest.generation,
@@ -5297,94 +5680,176 @@ export function convergeRuntimeManifest(
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 				workspaceRoot,
-				settings: serviceRunSettings,
-				secretFilePath: null,
-				secretEnv: serviceSecretEnv,
+				egressProfileBundlePath,
+				settings: runtimeRunSettings,
+				secretFilePath: runtimeProviderSecretFile,
+				secretEnv,
 			});
-			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
-			runConfigs.push(serviceRunConfigPath);
-			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
-			const program = buildRuntimeSystemdUserProgram({
-				config: serviceRunConfig,
-				paths,
-				secretValues,
-				egress: egressSystemdProgram,
-			});
-			if (program) {
-				runtimeSystemdUserPrograms.push(program);
+			const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
+			runConfigs.push(runConfigPath);
+			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
+			if (runtime.enabled && shouldRunRuntime(name, manifest)) {
+				const program = buildRuntimeSystemdUserProgram({
+					config: runConfig,
+					paths,
+					secretValues,
+					egress: egressSystemdProgram,
+				});
+				if (program) {
+					runtimeSystemdUserPrograms.push(program);
+				}
+			}
+			for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
+				const service = runtimeServiceNameSchema.parse(serviceName);
+				const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
+					name,
+					service,
+					serviceSettings,
+					providerPlaceholderEnv,
+				);
+				const serviceSecretEnv = runtime.enabled
+					? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
+					: {};
+				const serviceRunConfig = buildRuntimeRunConfig({
+					runtime: runtimeName,
+					service,
+					enabled: runtime.enabled,
+					generatedAt,
+					generation: manifest.generation,
+					instanceId: manifest.instanceId,
+					commandPath: observation.commandPath,
+					appRoot: observation.appRoot,
+					workspaceRoot,
+					settings: serviceRunSettings,
+					secretFilePath: null,
+					secretEnv: serviceSecretEnv,
+				});
+				const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
+				runConfigs.push(serviceRunConfigPath);
+				writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
+				const program = buildRuntimeSystemdUserProgram({
+					config: serviceRunConfig,
+					paths,
+					secretValues,
+					egress: egressSystemdProgram,
+				});
+				if (program) {
+					runtimeSystemdUserPrograms.push(program);
+				}
+			}
+
+			const semaphorePath = join(semRoot, `${name}.enabled`);
+			if (runtime.enabled) {
+				writePrivateFileAtomic(semaphorePath, `${generatedAt}\n`);
+				instanceSemaphores.push(semaphorePath);
 			}
 		}
 
-		const semaphorePath = join(semRoot, `${name}.enabled`);
-		if (runtime.enabled) {
-			writePrivateFileAtomic(semaphorePath, `${generatedAt}\n`);
-			instanceSemaphores.push(semaphorePath);
-		}
-	}
-
-	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
-	writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
-	projections.push(mcpProjection);
-	const systemdUnits = writeSystemdUnits(
-		runtimeSystemdUserPrograms,
-		egressSystemdProgram,
-		egressIdentity,
-		manifest,
-		load.sourcePath,
-		paths,
-		workspaceRoot,
-		daemonAuthTokenFile,
-		secretValues,
-		providerProjectionRevisions,
-	);
-
-	const bootFinished = join(instanceRoot, "boot-finished");
-	writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
-	removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
-	removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
-	if (installErrors.length === 0 && opts.cacheLastGood !== false) {
-		manifestLastGood = writeLastGoodManifest(
-			load.sourceManifest ?? manifest,
+		const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
+		writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
+		projections.push(mcpProjection);
+		const systemdUnits = writeSystemdUnits(
+			runtimeSystemdUserPrograms,
+			egressSystemdProgram,
+			egressIdentity,
+			manifest,
+			load.sourcePath,
 			paths,
-			load.secretValues,
-		);
-	}
-
-	return {
-		manifest,
-		source: load.source,
-		sourcePath: load.sourcePath,
-		offline: load.offline,
-		mode: load.offline ? "degraded-offline" : "normal",
-		enabledRuntimes,
-		installErrors,
-		projectedProviderIds,
-		outputs: {
-			processManager: "systemd",
 			workspaceRoot,
-			managedConfig: paths.managedConfig,
-			syncState: paths.syncState,
-			instanceData: paths.instanceData,
-			sensitiveInstanceData: paths.sensitiveInstanceData,
-			manifestLastGood,
-			appliedState: null,
-			installInventory,
-			projections,
-			managedLocaleFiles,
-			runConfigs,
-			systemdSystemUnitRoot: paths.systemdSystemRoot,
-			systemdSystemUnits: systemdUnits.systemUnits,
-			systemdUserUnitRoot: paths.systemdUserRoot,
-			systemdUserUnits: systemdUnits.userUnits,
-			egressProfileBundle: egressProfileBundlePath,
-			egressSecretFile,
-			egressEngine,
-			egressTransparentEnv,
-			egressAddon: egressAddon?.path ?? null,
-			liveSyncEnvironments,
 			daemonAuthTokenFile,
-			instanceSemaphores,
-			bootFinished,
-		},
-	};
+			secretValues,
+			providerProjectionRevisions,
+		);
+
+		const bootFinished = join(instanceRoot, "boot-finished");
+		writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
+		removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
+		removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
+		if (opts.systemdApply) {
+			opts.systemdApply.activate();
+		}
+		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
+			manifestLastGood = writeLastGoodManifest(
+				load.sourceManifest ?? manifest,
+				paths,
+				load.secretValues,
+			);
+		}
+
+		const convergence: RuntimeConvergenceResult = {
+			manifest,
+			source: load.source,
+			sourcePath: load.sourcePath,
+			offline: load.offline,
+			mode: load.offline ? "degraded-offline" : "normal",
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds,
+			outputs: {
+				processManager: "systemd",
+				workspaceRoot,
+				managedConfig: paths.managedConfig,
+				syncState: paths.syncState,
+				instanceData: paths.instanceData,
+				sensitiveInstanceData: paths.sensitiveInstanceData,
+				manifestLastGood,
+				appliedState: null,
+				installInventory,
+				projections,
+				managedLocaleFiles,
+				runConfigs,
+				systemdSystemUnitRoot: paths.systemdSystemRoot,
+				systemdSystemUnits: systemdUnits.systemUnits,
+				systemdUserUnitRoot: paths.systemdUserRoot,
+				systemdUserUnits: systemdUnits.userUnits,
+				egressProfileBundle: egressProfileBundlePath,
+				egressSecretFile,
+				egressEngine,
+				egressTransparentEnv,
+				egressAddon: egressAddon?.path ?? null,
+				liveSyncEnvironments,
+				daemonAuthTokenFile,
+				instanceSemaphores,
+				bootFinished,
+			},
+		};
+		opts.commitAuthority?.(convergence);
+		return convergence;
+	} catch (error) {
+		const applyError = error instanceof Error ? error.message : String(error);
+		try {
+			restoreRuntimeLiveSnapshot(liveSnapshot);
+		} catch (rollbackError) {
+			installErrors.push(
+				`runtime filesystem rollback failed: ${
+					rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+				}`,
+			);
+		}
+		if (opts.systemdApply) {
+			try {
+				opts.systemdApply.rollback();
+			} catch (rollbackError) {
+				installErrors.push(
+					`runtime systemd rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+		}
+		installErrors.unshift(`runtime apply failed: ${applyError}`);
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: Object.fromEntries(
+				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+					runtime,
+					[...providerIds],
+				]),
+			),
+		});
+	}
 }

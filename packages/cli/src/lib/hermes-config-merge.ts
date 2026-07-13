@@ -27,10 +27,20 @@ const HERMES_GENERATED_PROVIDER_FIELDS = [
 ] as const;
 
 export function mergeHermesConfig(configPath: string, patchContent: string): void {
-	const document = readHermesConfig(configPath);
-	const patchConfig = readHermesPatch(patchContent);
-	applyHermesProviderPatch(document, patchConfig);
-	writePrivateFileAtomic(configPath, String(document), {
+	writeHermesConfig(
+		configPath,
+		renderHermesConfig(readHermesConfigContent(configPath), patchContent),
+	);
+}
+
+export function renderHermesConfig(content: string, patchContent: string): string {
+	const document = parseHermesConfig(content, "Hermes config");
+	applyHermesProviderPatch(document, readHermesPatch(patchContent));
+	return String(document);
+}
+
+function writeHermesConfig(configPath: string, content: string): void {
+	writePrivateFileAtomic(configPath, content, {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});
@@ -43,7 +53,20 @@ export function mergeHermesMcpServer(
 		| { command: string; args: string[] }
 		| { url: string; transport?: string; headers?: Record<string, string> },
 ): void {
-	const document = readHermesConfig(configPath);
+	writeHermesConfig(
+		configPath,
+		renderHermesMcpServer(readHermesConfigContent(configPath), name, server),
+	);
+}
+
+export function renderHermesMcpServer(
+	content: string,
+	name: string,
+	server:
+		| { command: string; args: string[] }
+		| { url: string; transport?: string; headers?: Record<string, string> },
+): string {
+	const document = parseHermesConfig(content, "Hermes config");
 	const root = document.toJS();
 	if (isPlainRecord(root) && root.mcp_servers !== undefined && !isPlainRecord(root.mcp_servers)) {
 		throw new Error("Hermes config field mcp_servers must be a YAML object.");
@@ -52,17 +75,24 @@ export function mergeHermesMcpServer(
 		document.set("mcp_servers", document.createNode({}));
 	}
 	document.setIn(["mcp_servers", name], server);
-	writePrivateFileAtomic(configPath, String(document), {
-		mode: PRIVATE_FILE_MODE,
-		dirMode: PRIVATE_DIR_MODE,
-	});
+	return String(document);
 }
 
 export function mergeHermesChannelConfig(
 	configPath: string,
 	platforms: Record<string, Record<string, unknown>>,
 ): void {
-	const document = readHermesConfig(configPath);
+	writeHermesConfig(
+		configPath,
+		renderHermesChannelConfig(readHermesConfigContent(configPath), platforms),
+	);
+}
+
+export function renderHermesChannelConfig(
+	content: string,
+	platforms: Record<string, Record<string, unknown>>,
+): string {
+	const document = parseHermesConfig(content, "Hermes config");
 	for (const [platform, config] of Object.entries(platforms)) {
 		if (platform === "platforms") {
 			const root = document.toJS();
@@ -79,52 +109,60 @@ export function mergeHermesChannelConfig(
 		}
 		document.set(platform, document.createNode(config));
 	}
-	writePrivateFileAtomic(configPath, String(document), {
-		mode: PRIVATE_FILE_MODE,
-		dirMode: PRIVATE_DIR_MODE,
-	});
+	return String(document);
 }
 
 export function mergeHermesRuntimeLocale(configPath: string, timezone: string): void {
-	const document = readHermesConfig(configPath);
+	writeHermesConfig(
+		configPath,
+		renderHermesRuntimeLocale(readHermesConfigContent(configPath), timezone),
+	);
+}
+
+export function renderHermesRuntimeLocale(content: string, timezone: string): string {
+	const document = parseHermesConfig(content, "Hermes config");
 	document.set("timezone", timezone);
-	writePrivateFileAtomic(configPath, String(document), {
-		mode: PRIVATE_FILE_MODE,
-		dirMode: PRIVATE_DIR_MODE,
-	});
+	return String(document);
 }
 
 export function removeHermesMcpServer(configPath: string, name: string): void {
 	if (!existsSync(configPath)) return;
-	const document = readHermesConfig(configPath);
+	const existing = readHermesConfigContent(configPath);
+	const next = renderHermesMcpServerRemoval(existing, name);
+	if (next === existing) return;
+	writeHermesConfig(configPath, next);
+}
+
+export function renderHermesMcpServerRemoval(content: string, name: string): string {
+	const document = parseHermesConfig(content, "Hermes config");
 	const root = document.toJS();
 	if (isPlainRecord(root) && root.mcp_servers !== undefined && !isPlainRecord(root.mcp_servers)) {
 		throw new Error("Hermes config field mcp_servers must be a YAML object.");
 	}
-	if (!isPlainRecord(root) || !isPlainRecord(root.mcp_servers)) return;
-	if (!Object.hasOwn(root.mcp_servers, name)) return;
+	if (!isPlainRecord(root) || !isPlainRecord(root.mcp_servers)) return content;
+	if (!Object.hasOwn(root.mcp_servers, name)) return content;
 	document.deleteIn(["mcp_servers", name]);
-	writePrivateFileAtomic(configPath, String(document), {
-		mode: PRIVATE_FILE_MODE,
-		dirMode: PRIVATE_DIR_MODE,
-	});
+	return String(document);
 }
 
-function readHermesConfig(configPath: string): ReturnType<typeof parseDocument> {
-	const content = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
+function readHermesConfigContent(configPath: string): string {
+	return existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
+}
+
+function parseHermesConfig(content: string, label: string): ReturnType<typeof parseDocument> {
 	const document = parseDocument(content);
 	if (document.errors.length > 0) {
-		throw new Error(`Hermes config contains invalid YAML: ${document.errors[0]?.message}`);
+		throw new Error(`${label} contains invalid YAML: ${document.errors[0]?.message}`);
 	}
 	const parsed = document.toJS();
 	if (parsed === null || parsed === undefined) {
 		if (document.contents) {
-			throw new Error(`Hermes config must be a YAML object: ${configPath}`);
+			throw new Error(`${label} must be a YAML object`);
 		}
 		return document;
 	}
 	if (!isPlainRecord(parsed)) {
-		throw new Error(`Hermes config must be a YAML object: ${configPath}`);
+		throw new Error(`${label} must be a YAML object`);
 	}
 	return document;
 }

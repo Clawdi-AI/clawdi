@@ -1501,19 +1501,53 @@ describe("runtime manifest reconciliation invariants", () => {
 		const workspaceRoot = join(paths.userHome, "clawdi");
 		const soulPath = join(workspaceRoot, "SOUL.md");
 		const staleRunConfig = join(paths.runConfigRoot, "stale-runtime.json");
+		const runtimeSecret = join(paths.runtimeSecretFileRoot, "openclaw.json");
+		const staleSecret = join(paths.runtimeSecretFileRoot, "stale-runtime.json");
+		const systemdUnit = join(paths.systemdUserRoot, "clawdi-openclaw.service");
+		const installerPath = join(dirname(paths.userHome), "openclaw-installer.sh");
+		const installerLog = join(dirname(paths.userHome), "openclaw-installer.log");
+		writeFileSync(installerPath, `#!/usr/bin/env bash\necho spawned > '${installerLog}'\nexit 0\n`);
+		chmodSync(installerPath, 0o700);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
 		mkdirSync(workspaceRoot, { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
+		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(soulPath, "<!-- >>> clawdi managed locale >>>\nmalformed\n");
 		writeFileSync(paths.managedConfig, '{"generation":1}\n');
 		writeFileSync(staleRunConfig, '{"generation":1}\n');
-		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
-		const previousStaleRunConfig = readFileSync(staleRunConfig, "utf-8");
+		writeFileSync(runtimeSecret, '{"secret":"old"}\n');
+		writeFileSync(staleSecret, '{"secret":"stale"}\n');
+		writeFileSync(systemdUnit, "old unit\n");
+		writeFileSync(paths.manifestLastGood, '{"generation":1}\n');
+		writeFileSync(paths.appliedState, '{"generation":1}\n');
+		const preservedPaths = [
+			soulPath,
+			paths.managedConfig,
+			staleRunConfig,
+			runtimeSecret,
+			staleSecret,
+			systemdUnit,
+			paths.manifestLastGood,
+			paths.appliedState,
+		];
+		const previous = new Map(preservedPaths.map((path) => [path, readFileSync(path)]));
 		const manifest = baseManifest(
 			paths,
 			{
 				openclaw: {
 					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: OFFICIAL_INSTALL_URLS.openclaw,
+						home: paths.userHome,
+						args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+					},
 					run: runSettings("openclaw", ["gateway", "run"]),
 					services: {},
 				},
@@ -1527,9 +1561,95 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(manifest, "inline-plan-failure"), paths),
 		).toThrow(/managed locale block markers are malformed/);
-		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
-		expect(readFileSync(staleRunConfig, "utf-8")).toBe(previousStaleRunConfig);
-		expect(existsSync(paths.appliedState)).toBe(false);
+		for (const path of preservedPaths) {
+			const expected = previous.get(path);
+			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
+			expect(readFileSync(path)).toEqual(expected);
+		}
+		expect(existsSync(installerLog)).toBe(false);
+	});
+
+	test("rolls back every live file when an OpenClaw target patch fails", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const targetConfig = join(paths.userHome, ".openclaw", "openclaw.json");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		mkdirSync(workspaceRoot, { recursive: true });
+		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		mkdirSync(paths.runConfigRoot, { recursive: true });
+		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		writeFileSync(
+			commandPath,
+			["#!/usr/bin/env bash", "set -euo pipefail", "cat >/dev/null || true", "exit 42", ""].join(
+				"\n",
+			),
+		);
+		chmodSync(commandPath, 0o700);
+		const preservedPaths = [
+			paths.managedConfig,
+			join(paths.runConfigRoot, "stale.json"),
+			join(paths.runtimeSecretFileRoot, "stale.json"),
+			join(paths.systemdUserRoot, "clawdi-old.service"),
+			targetConfig,
+		];
+		for (const [index, path] of preservedPaths.entries()) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `old-${index}\n`);
+		}
+		const previous = new Map(preservedPaths.map((path) => [path, readFileSync(path)]));
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{ locale: { language: "en", timezone: "UTC" } },
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths);
+
+		expect(result.installErrors.join("\n")).toContain(
+			"runtime openclaw provider projection failed",
+		);
+		for (const path of preservedPaths) {
+			const expected = previous.get(path);
+			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
+			expect(readFileSync(path)).toEqual(expected);
+		}
+	});
+
+	test("rejects a malformed Hermes MCP patch before Apply", () => {
+		const paths = tempRuntimePaths();
+		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
+		mkdirSync(dirname(hermesConfig), { recursive: true });
+		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		writeFileSync(hermesConfig, "mcp_servers: []\n");
+		writeFileSync(paths.managedConfig, '{"generation":1}\n');
+		const previousConfig = readFileSync(hermesConfig);
+		const previousManaged = readFileSync(paths.managedConfig);
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings("hermes", ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{ projection: { mcp: { enabled: true } } },
+		);
+
+		expect(() =>
+			convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-patch-failure"), paths),
+		).toThrow(/mcp_servers must be a YAML object/);
+		expect(readFileSync(hermesConfig)).toEqual(previousConfig);
+		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
 	});
 
 	test("garbage collects stale run configs when a runtime is removed", () => {

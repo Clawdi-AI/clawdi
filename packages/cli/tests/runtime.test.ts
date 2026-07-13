@@ -1709,6 +1709,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			const loaded = await loadRuntimeManifest(paths);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			const convergence = convergeRuntimeManifest(loaded, paths);
+			expect(convergence.installErrors).toEqual([]);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
@@ -5033,6 +5034,21 @@ exit 42
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		const paths = getRuntimePaths();
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		mkdirSync(paths.runConfigRoot, { recursive: true });
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		const targetConfig = join(home, ".openclaw", "openclaw.json");
+		const rollbackFixtures = [
+			paths.managedConfig,
+			join(paths.runConfigRoot, "openclaw.json"),
+			join(paths.systemdUserRoot, "clawdi-previous.service"),
+			targetConfig,
+		];
+		for (const [index, path] of rollbackFixtures.entries()) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `previous-${index}\n`);
+		}
+		const rollbackContents = new Map(rollbackFixtures.map((path) => [path, readFileSync(path)]));
 		writeFileSync(paths.manifestLastGood, '{"generation":12}\n');
 		writeFileSync(paths.manifestEtag, '"etag-watch-previous"\n');
 		writeFileSync(paths.channelsEtag, '"channels-etag-previous"\n');
@@ -5145,6 +5161,11 @@ exit 42
 				generation: 12,
 			});
 			expect(readFileSync(paths.appliedState, "utf-8")).toBe(previousAppliedState);
+			for (const path of rollbackFixtures) {
+				const expected = rollbackContents.get(path);
+				if (!expected) throw new Error(`missing rollback fixture for ${path}`);
+				expect(readFileSync(path)).toEqual(expected);
+			}
 		} finally {
 			restore();
 			console.log = previousLog;
