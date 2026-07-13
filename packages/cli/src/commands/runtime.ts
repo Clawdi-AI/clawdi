@@ -2203,10 +2203,13 @@ async function runtimeWatchTick(
 	}
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
 	const responseChannelsEtag = channelsLoad.etag ?? channelsEtag ?? null;
+	const activeAppliedState = readRuntimeAppliedState(paths);
 	if (
 		"notModified" in manifestLoad &&
 		"notModified" in channelsLoad &&
-		runtimeAppliedStateMatchesEtags(paths, responseManifestEtag, responseChannelsEtag)
+		activeAppliedState !== null &&
+		activeAppliedState.observedManifestEtag === responseManifestEtag &&
+		activeAppliedState.observedChannelsEtag === responseChannelsEtag
 	) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2215,6 +2218,8 @@ async function runtimeWatchTick(
 			etag: responseManifestEtag,
 			channelsSourcePath: channelsLoad.sourcePath,
 			channelsEtag: responseChannelsEtag,
+			generation: activeAppliedState.observedConfigGeneration,
+			instanceId: activeAppliedState.instanceId,
 		};
 	}
 
@@ -2451,19 +2456,6 @@ function runtimeManifestIdentityForWatch(
 				observedManifestEtag === null &&
 				appliedState?.observedConfigGeneration === generation),
 	};
-}
-
-function runtimeAppliedStateMatchesEtags(
-	paths: RuntimePaths,
-	observedManifestEtag: string | null,
-	observedChannelsEtag: string | null,
-): boolean {
-	const appliedState = readRuntimeAppliedState(paths);
-	return (
-		appliedState !== null &&
-		appliedState.observedManifestEtag === observedManifestEtag &&
-		appliedState.observedChannelsEtag === observedChannelsEtag
-	);
 }
 
 function maybeRollbackFailedCliUpgrade(

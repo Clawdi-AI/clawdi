@@ -4573,6 +4573,8 @@ exit 0
 			expect(manifestCalls).toBe(2);
 			const events = logs.map((line) => JSON.parse(line));
 			expect(events.map((event) => event.status)).toEqual(["not_modified", "applied"]);
+			expect(events[0].generation).toBe(1);
+			expect(events[0].instanceId).toBe("iid_watch_locale");
 			expect(events[1].etag).toBe('"manifest-locale-2"');
 			expect(
 				captured.filter((request) => request.path === "/v1/runtime/manifest")[1].headers[
