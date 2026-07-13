@@ -425,7 +425,7 @@ async def _provider_secret(
     if provider.auth_type != "api_key":
         return None
     metadata = provider.auth_metadata or {}
-    if metadata.get("source") not in {None, "managed"}:
+    if metadata.get("source") != "managed":
         return None
     profile = metadata.get("profile") if isinstance(metadata.get("profile"), str) else "default"
     payload = (

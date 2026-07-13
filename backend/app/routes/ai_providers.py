@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,7 @@ from app.schemas.ai_provider import (
     AiProviderResponse,
     AiProviderUpsert,
     AiProviderValidationResponse,
+    ai_provider_auth_from_persistence,
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
@@ -47,6 +49,7 @@ from app.services.sync_events import queue_provider_runtime_manifest_changed
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
+AI_PROVIDER_SCOPE = "account_global"
 
 ALLOWED_API_MODES: dict[str, set[str]] = {
     "openai": {"openai_chat", "openai_responses"},
@@ -151,21 +154,17 @@ async def patch_ai_provider(
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
-    merged = _response_to_upsert(provider)
-    update = body.model_dump(exclude_unset=True)
+    merged = _to_response(provider)
+    update = {field: getattr(body, field) for field in body.model_fields_set}
     null_errors = _validate_patch_nulls(update)
     if null_errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": null_errors})
     for key, value in update.items():
-        if key == "auth" and isinstance(value, dict):
-            value = AiProviderAuth.model_validate(value)
-        if key == "models" and isinstance(value, list):
-            value = [AiProviderModel.model_validate(item) for item in value]
         setattr(merged, key, value)
     errors = _validate_provider(merged)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
-    _apply_provider_body(provider, merged)
+    _apply_provider_body(provider, merged, apply_auth="auth" in body.model_fields_set)
     if previous_signature != _runtime_manifest_provider_signature(provider):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
@@ -209,7 +208,7 @@ async def validate_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderValidationResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    body = _response_to_upsert(provider)
+    body = _to_response(provider)
     errors = _validate_provider(body)
     return AiProviderValidationResponse(valid=not errors, errors=errors, warnings=[])
 
@@ -264,11 +263,10 @@ async def import_ai_provider_auth(
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
-    profile = _normalize_profile(body.profile)
-    if body.type == "agent_profile":
-        if not body.tool:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "agent_profile requires tool")
-        tool = _normalize_profile(body.tool)
+    auth_import = body.root
+    profile = _normalize_profile(auth_import.profile)
+    if auth_import.type == "agent_profile":
+        tool = _normalize_profile(auth_import.tool)
         _validate_supported_agent_profile_tool(tool)
         metadata = {
             "tool": tool,
@@ -277,7 +275,7 @@ async def import_ai_provider_auth(
         provider.auth_type = "agent_profile"
         provider.auth_ref = None
         provider.auth_metadata = metadata
-    elif body.type == "oauth_profile":
+    elif auth_import.type == "oauth_profile":
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "oauth_profile import is not supported; use Codex OAuth connect",
@@ -287,8 +285,8 @@ async def import_ai_provider_auth(
         auth,
         provider_id,
         profile,
-        body.type,
-        body.payload.get_secret_value(),
+        auth_import.type,
+        auth_import.payload.get_secret_value(),
         provider.auth_metadata,
     )
     if previous_signature != _runtime_manifest_provider_signature(provider):
@@ -795,8 +793,12 @@ async def _get_provider_or_404(db: AsyncSession, auth: AuthContext, provider_id:
     return provider
 
 
-def _apply_provider_body(provider: AiProvider, body: AiProviderUpsert) -> None:
-    provider.scope = "account_global"
+def _apply_provider_body(
+    provider: AiProvider,
+    body: AiProviderUpsert | AiProviderResponse,
+    *,
+    apply_auth: bool = True,
+) -> None:
     provider.type = body.type
     provider.label = body.label
     provider.base_url = body.base_url
@@ -805,8 +807,9 @@ def _apply_provider_body(provider: AiProvider, body: AiProviderUpsert) -> None:
     provider.models = _provider_models_payload(body.models)
     provider.managed_by = body.managed_by
     provider.runtime_env_name = body.runtime_env_name
-    provider.auth_type = body.auth.type
-    provider.auth_ref, provider.auth_metadata = _split_auth(body.auth)
+    if apply_auth:
+        provider.auth_type = body.auth.type
+        provider.auth_ref, provider.auth_metadata = body.auth.persistence_fields()
 
 
 def _provider_models_payload(models: list[AiProviderModel] | None) -> list[dict] | None:
@@ -815,62 +818,25 @@ def _provider_models_payload(models: list[AiProviderModel] | None) -> list[dict]
     return [model.model_dump(exclude_none=True) for model in models]
 
 
-def _split_auth(auth: AiProviderAuth) -> tuple[str | None, dict | None]:
-    if auth.type == "secret_ref":
-        return auth.ref, None
-    if auth.type == "api_key":
-        metadata = {
-            "source": auth.source,
-            "profile": auth.profile,
-        }
-        return auth.ref, _compact(metadata)
-    if auth.type == "oauth_profile":
-        metadata = {
-            "provider": auth.provider,
-            "profile": auth.profile,
-        }
-        return None, _compact(metadata)
-    if auth.type == "agent_profile":
-        metadata = {
-            "tool": auth.tool,
-            "profile": auth.profile,
-        }
-        return None, _compact(metadata)
-    return None, None
-
-
 def _to_auth(provider: AiProvider) -> AiProviderAuth:
-    metadata = provider.auth_metadata or {}
-    if provider.auth_type == "secret_ref":
-        return AiProviderAuth(type="secret_ref", ref=provider.auth_ref)
-    if provider.auth_type == "api_key":
-        source = metadata.get("source")
-        return AiProviderAuth(
-            type="api_key",
-            source=source,
-            profile=metadata.get("profile"),
-            ref=provider.auth_ref if source != "managed" else None,
+    try:
+        return ai_provider_auth_from_persistence(
+            provider.auth_type,
+            provider.auth_ref,
+            provider.auth_metadata,
         )
-    if provider.auth_type == "oauth_profile":
-        return AiProviderAuth(
-            type="oauth_profile",
-            provider=metadata.get("provider"),
-            profile=metadata.get("profile"),
-        )
-    if provider.auth_type == "agent_profile":
-        return AiProviderAuth(
-            type="agent_profile",
-            tool=metadata.get("tool"),
-            profile=metadata.get("profile"),
-        )
-    return AiProviderAuth(type="none")
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Stored AI provider auth metadata is invalid",
+        ) from exc
 
 
 def _to_response(provider: AiProvider) -> AiProviderResponse:
     return AiProviderResponse(
         id=str(provider.id),
         provider_id=provider.provider_id,
-        scope=provider.scope,
+        scope=AI_PROVIDER_SCOPE,
         type=provider.type,
         label=provider.label,
         base_url=provider.base_url,
@@ -889,7 +855,6 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
     if provider is None:
         return None
     return {
-        "scope": provider.scope,
         "type": provider.type,
         "label": provider.label,
         "base_url": provider.base_url,
@@ -905,22 +870,7 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
     }
 
 
-def _response_to_upsert(provider: AiProvider) -> AiProviderUpsert:
-    return AiProviderUpsert(
-        provider_id=provider.provider_id,
-        type=provider.type,
-        label=provider.label,
-        base_url=provider.base_url,
-        api_mode=provider.api_mode,
-        auth=_to_auth(provider),
-        managed_by=provider.managed_by,
-        runtime_env_name=provider.runtime_env_name,
-        capabilities=provider.capabilities,
-        models=provider.models,
-    )
-
-
-def _validate_provider(body: AiProviderUpsert) -> list[str]:
+def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     errors: list[str] = []
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
@@ -932,11 +882,11 @@ def _validate_provider(body: AiProviderUpsert) -> list[str]:
     if body.type == "custom_openai_compatible" and body.api_mode is None:
         errors.append("custom_openai_compatible requires api_mode")
     errors.extend(_validate_managed_provider_contract(body))
-    errors.extend(_validate_auth(body.provider_id, body.auth))
+    errors.extend(_validate_auth_business_rules(body.auth))
     return errors
 
 
-def _validate_provider_models(body: AiProviderUpsert) -> list[str]:
+def _validate_provider_models(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     if not body.models:
         return []
     errors: list[str] = []
@@ -958,7 +908,7 @@ def _validate_provider_models(body: AiProviderUpsert) -> list[str]:
     return errors
 
 
-def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
+def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     is_managed_contract = body.provider_id in MANAGED_AI_PROVIDER_IDS or body.managed_by == "clawdi"
     if not is_managed_contract:
         return []
@@ -983,34 +933,10 @@ def _validate_managed_provider_contract(body: AiProviderUpsert) -> list[str]:
     return errors
 
 
-def _validate_auth(provider_id: str, auth: AiProviderAuth) -> list[str]:
-    errors: list[str] = []
-    if auth.value is not None:
-        errors.append("auth must not include plaintext value")
-    if auth.type == "secret_ref":
-        if not auth.ref or not (_is_env_ref(auth.ref) or auth.ref.startswith("clawdi://")):
-            errors.append("secret_ref auth requires env: or clawdi:// ref")
-    elif auth.type == "api_key":
-        if auth.source not in {"env", "vault", "managed"}:
-            errors.append("api_key auth requires source env, vault, or managed")
-        if auth.profile is not None and not _is_profile_id(auth.profile):
-            errors.append("api_key auth has invalid profile")
-        if auth.source == "env" and (not auth.ref or not _is_env_ref(auth.ref)):
-            errors.append("api_key env auth requires env: ref")
-        if auth.source == "vault" and (not auth.ref or not auth.ref.startswith("clawdi://")):
-            errors.append("api_key vault auth requires clawdi:// ref")
-        if auth.source == "managed" and auth.ref:
-            errors.append("api_key managed auth must not include ref")
-    elif auth.type == "oauth_profile":
-        errors.append("oauth_profile auth is not supported; use Codex OAuth connect")
-    elif auth.type == "agent_profile":
-        if not auth.tool or not auth.profile:
-            errors.append("agent_profile auth requires tool and profile")
-        elif not _is_profile_id(auth.tool) or not _is_profile_id(auth.profile):
-            errors.append("agent_profile auth has invalid tool or profile")
-        elif auth.tool not in SUPPORTED_AGENT_PROFILE_TOOLS:
-            errors.append("agent_profile auth currently supports codex only")
-    return errors
+def _validate_auth_business_rules(auth: AiProviderAuth) -> list[str]:
+    if auth.type == "agent_profile" and auth.tool not in SUPPORTED_AGENT_PROFILE_TOOLS:
+        return ["agent_profile auth currently supports codex only"]
+    return []
 
 
 def _validate_supported_agent_profile_tool(tool: str) -> None:
@@ -1161,11 +1087,3 @@ def _normalize_profile(input: str) -> str:
 
 def _is_runtime_env_name(input: str) -> bool:
     return re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", input) is not None
-
-
-def _is_env_ref(input: str) -> bool:
-    return re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", input) is not None
-
-
-def _is_profile_id(input: str) -> bool:
-    return re.fullmatch(r"[a-z][a-z0-9._-]{0,119}", input) is not None

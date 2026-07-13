@@ -31,7 +31,7 @@ def _load_migration():
     return migration
 
 
-def test_agent_v2_runtime_contract_migration_is_single_head() -> None:
+def test_agent_v2_runtime_contract_migration_remains_on_single_head_chain() -> None:
     backend_dir = Path(__file__).parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))

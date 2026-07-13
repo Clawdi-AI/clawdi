@@ -411,7 +411,6 @@ def _try_add_vault_items(vault: Vault, names: list[str]) -> list[VaultItem]:
 def _seed_ai_provider(user: User) -> AiProvider:
     return AiProvider(
         owner_user_id=user.id,
-        scope="account_global",
         provider_id=DEV_V2_PROVIDER_ID,
         type="openrouter",
         label="OpenRouter Dev",
@@ -420,7 +419,7 @@ def _seed_ai_provider(user: User) -> AiProvider:
         models=[{"id": "openai/gpt-4o-mini"}],
         capabilities={"chat": True, "responses": False, "tools": True, "vision": True},
         auth_type="api_key",
-        auth_ref="OPENROUTER_API_KEY",
+        auth_ref="env:OPENROUTER_API_KEY",
         auth_metadata={"source": "env"},
         managed_by="user",
         runtime_env_name="OPENROUTER_API_KEY",

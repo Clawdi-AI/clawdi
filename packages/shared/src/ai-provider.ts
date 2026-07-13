@@ -18,13 +18,28 @@ export const AI_PROVIDER_API_MODES = [
 
 export type AiProviderApiMode = (typeof AI_PROVIDER_API_MODES)[number];
 
-export type AiProviderAuth =
-	| { type: "secret_ref"; ref: string }
+export type AiProviderApiKeyAuth =
 	| {
 			type: "api_key";
-			source: "env" | "vault" | "managed";
-			ref?: string;
+			source: "env";
+			ref: string;
+			profile?: string | null;
 	  }
+	| {
+			type: "api_key";
+			source: "vault";
+			ref: string;
+			profile?: string | null;
+	  }
+	| {
+			type: "api_key";
+			source: "managed";
+			profile?: string | null;
+	  };
+
+export type AiProviderAuth =
+	| { type: "secret_ref"; ref: string }
+	| AiProviderApiKeyAuth
 	| { type: "oauth_profile"; provider: string; profile: string }
 	| { type: "agent_profile"; tool: string; profile: string }
 	| { type: "none" };
@@ -308,7 +323,7 @@ function validateProvider(
 	if (!isRecord(auth)) {
 		errors.push(`Provider ${prefix} auth must be an object.`);
 	} else {
-		validateAuth(prefix, provider, auth as AiProviderAuth, errors, warnings, options);
+		validateAuth(prefix, provider, auth, errors, warnings, options);
 	}
 	validateModels(prefix, (provider as { models?: unknown }).models, errors);
 }
@@ -361,18 +376,35 @@ function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 function validateAuth(
 	prefix: string,
 	provider: AiProvider,
-	auth: AiProviderAuth,
+	auth: Record<string, unknown>,
 	errors: string[],
 	warnings: string[],
 	options: AiProviderValidationOptions,
 ): void {
 	if (auth.type === "secret_ref") {
+		rejectUnexpectedAuthFields(prefix, auth, ["type", "ref"], errors);
 		if (!isSupportedSecretRef(auth.ref)) {
 			errors.push(`Provider ${prefix} has unsupported secret ref.`);
 		}
 		return;
 	}
 	if (auth.type === "api_key") {
+		if (auth.source !== "env" && auth.source !== "vault" && auth.source !== "managed") {
+			errors.push(`Provider ${prefix} api_key auth has invalid source.`);
+			return;
+		}
+		const allowedFields =
+			auth.source === "managed"
+				? (["type", "source", "profile"] as const)
+				: (["type", "source", "ref", "profile"] as const);
+		rejectUnexpectedAuthFields(prefix, auth, allowedFields, errors);
+		if (
+			auth.profile !== undefined &&
+			auth.profile !== null &&
+			(typeof auth.profile !== "string" || !isProviderAuthProfileId(auth.profile))
+		) {
+			errors.push(`Provider ${prefix} api_key auth has invalid profile.`);
+		}
 		if (auth.source === "env" && (!auth.ref || !isEnvSecretRef(auth.ref))) {
 			errors.push(`Provider ${prefix} api_key auth with source env requires env:<NAME> ref.`);
 		}
@@ -385,22 +417,49 @@ function validateAuth(
 		return;
 	}
 	if (auth.type === "oauth_profile") {
-		if (!isProviderAuthProfileId(auth.provider) || !isProviderAuthProfileId(auth.profile)) {
+		rejectUnexpectedAuthFields(prefix, auth, ["type", "provider", "profile"], errors);
+		if (
+			typeof auth.provider !== "string" ||
+			typeof auth.profile !== "string" ||
+			!isProviderAuthProfileId(auth.provider) ||
+			!isProviderAuthProfileId(auth.profile)
+		) {
 			errors.push(`Provider ${prefix} has invalid oauth_profile auth metadata.`);
 		}
 		return;
 	}
 	if (auth.type === "agent_profile") {
-		if (!isProviderAuthProfileId(auth.tool) || !isProviderAuthProfileId(auth.profile)) {
+		rejectUnexpectedAuthFields(prefix, auth, ["type", "tool", "profile"], errors);
+		if (
+			typeof auth.tool !== "string" ||
+			typeof auth.profile !== "string" ||
+			!isProviderAuthProfileId(auth.tool) ||
+			!isProviderAuthProfileId(auth.profile)
+		) {
 			errors.push(`Provider ${prefix} has invalid agent_profile auth metadata.`);
 		}
 		return;
 	}
 	if (auth.type === "none") {
+		rejectUnexpectedAuthFields(prefix, auth, ["type"], errors);
 		validateNoAuthUrl(prefix, provider.base_url, errors, warnings, options);
 		return;
 	}
 	errors.push(`Provider ${prefix} has unsupported auth type.`);
+}
+
+function rejectUnexpectedAuthFields(
+	prefix: string,
+	auth: Record<string, unknown>,
+	allowedFields: readonly string[],
+	errors: string[],
+): void {
+	const allowed = new Set(allowedFields);
+	for (const field of Object.keys(auth)) {
+		if (!allowed.has(field)) {
+			errors.push(`Provider ${prefix} auth has unexpected field "${field}".`);
+		}
+	}
 }
 
 function validateNoAuthUrl(

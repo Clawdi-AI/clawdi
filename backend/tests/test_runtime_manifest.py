@@ -2736,6 +2736,64 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
 
 
 @pytest.mark.asyncio
+async def test_runtime_manifest_does_not_select_secret_without_managed_source(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-missing-source-{uuid4().hex[:8]}",
+        machine_name="Runtime provider missing source",
+        agent_type="openclaw",
+    )
+    ciphertext, nonce = encrypt("sk-must-not-project")
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="missing-source-provider",
+                type="anthropic",
+                base_url="https://api.anthropic.com",
+                models=[{"id": "claude-opus-4-6"}],
+                api_mode="anthropic_messages",
+                auth_type="api_key",
+                auth_metadata={},
+                managed_by="user",
+                runtime_env_name="ANTHROPIC_API_KEY",
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id="missing-source-provider",
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=ciphertext,
+                nonce=nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        runtimes=_runtime_state(provider_ids=["missing-source-provider"]),
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    provider = response.json()["manifest"]["providers"]["missing-source-provider"]
+    assert provider["status"] == "error"
+    assert provider["error"]["code"] == "provider_secret_unavailable"
+    assert response.json()["secretValues"] == {}
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealthy(
     admin_client,
     db_session,
@@ -3688,6 +3746,75 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     assert rotated.json()["secretValues"] == {
         "provider.clawdi-managed-v2.apiKey": "sk-rotated-provider"
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active_profile", ["default", "work_team"])
+async def test_runtime_manifest_selects_managed_provider_secret_by_auth_profile(
+    admin_client,
+    db_session,
+    seed_user,
+    active_profile: str,
+):
+    provider_id = f"profile-{active_profile.replace('_', '-')}"
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"provider-profile-{uuid4().hex[:8]}",
+        machine_name="Runtime Provider Profile",
+        agent_type="openclaw",
+    )
+    default_ciphertext, default_nonce = encrypt("sk-default-profile")
+    work_ciphertext, work_nonce = encrypt("sk-work-profile")
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+                type="custom_openai_compatible",
+                base_url="https://profile-provider.test/v1",
+                models=[{"id": "gpt-5.5"}],
+                api_mode="openai_chat",
+                auth_type="api_key",
+                auth_metadata={"source": "managed", "profile": active_profile},
+                managed_by="user",
+                runtime_env_name="PROFILE_PROVIDER_API_KEY",
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=default_ciphertext,
+                nonce=default_nonce,
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+                auth_profile="work_team",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=work_ciphertext,
+                nonce=work_nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        runtimes=_runtime_state(provider_ids=[provider_id]),
+    )
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    expected_secret = "sk-default-profile" if active_profile == "default" else "sk-work-profile"
+    assert response.json()["secretValues"] == {f"provider.{provider_id}.apiKey": expected_secret}
 
 
 @pytest.mark.asyncio

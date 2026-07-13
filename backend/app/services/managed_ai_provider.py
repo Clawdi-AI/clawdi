@@ -68,7 +68,6 @@ async def upsert_clawdi_managed_provider(
         owner_user_id=user.id,
         provider_id=MANAGED_AI_PROVIDER_ID,
     )
-    provider.scope = "account_global"
     provider.type = MANAGED_AI_PROVIDER_TYPE
     provider.label = label or MANAGED_AI_PROVIDER_LABEL
     provider.base_url = normalized_base_url

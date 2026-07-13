@@ -131,11 +131,17 @@ function toRuntimeAuth(auth: AiProvider["auth"]): RuntimeAiProviderAuth {
 		if (auth.source !== "env" && auth.source !== "vault" && auth.source !== "managed") {
 			throw new Error("Invalid AI provider auth source.");
 		}
-		if (auth.source === "managed") return { type: "api_key", source: "managed" };
+		const profile = auth.profile ?? undefined;
+		if (auth.source === "managed") {
+			return profile
+				? { type: "api_key", source: "managed", profile }
+				: { type: "api_key", source: "managed" };
+		}
 		return {
 			type: "api_key",
 			source: auth.source,
 			ref: requireAuthString(auth.ref, `api_key.${auth.source}.ref`),
+			...(profile ? { profile } : {}),
 		};
 	}
 	if (auth.type === "oauth_profile") {

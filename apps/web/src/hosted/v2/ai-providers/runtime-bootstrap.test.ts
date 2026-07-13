@@ -102,15 +102,29 @@ describe("AI provider runtime bootstrap", () => {
 	});
 
 	test("rejects malformed auth before building a bootstrap payload", () => {
-		expect(() =>
-			buildAiProviderBootstrap(
-				{
-					...provider,
-					auth: { type: "api_key" },
-				},
-				"api_key",
-			),
-		).toThrow("Invalid AI provider auth source.");
+		const malformedProvider: AiProvider = JSON.parse(
+			JSON.stringify({
+				...provider,
+				auth: { type: "api_key" },
+			}),
+		);
+
+		expect(() => buildAiProviderBootstrap(malformedProvider, "api_key")).toThrow(
+			"Invalid AI provider auth source.",
+		);
+	});
+
+	test("preserves api key profiles in the runtime catalog", () => {
+		const runtimeProvider = toRuntimeAiProvider({
+			...provider,
+			auth: { type: "api_key", source: "managed", profile: "work_team" },
+		});
+
+		expect(runtimeProvider.auth).toEqual({
+			type: "api_key",
+			source: "managed",
+			profile: "work_team",
+		});
 	});
 
 	test("rejects public no-auth provider endpoints", () => {

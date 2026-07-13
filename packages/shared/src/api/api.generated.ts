@@ -2640,31 +2640,20 @@ export interface components {
             /** Default Project Id */
             default_project_id: string;
         };
-        /** AiProviderAuth */
-        AiProviderAuth: {
+        /** AiProviderAgentProfileAuth */
+        AiProviderAgentProfileAuth: {
             /**
-             * Type
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "secret_ref" | "api_key" | "oauth_profile" | "agent_profile" | "none";
-            /** Ref */
-            ref?: string | null;
-            /** Source */
-            source?: string | null;
-            /** Provider */
-            provider?: string | null;
+            type: "agent_profile";
             /** Tool */
-            tool?: string | null;
+            tool: string;
             /** Profile */
-            profile?: string | null;
+            profile: string;
         };
-        /** AiProviderAuthImportRequest */
-        AiProviderAuthImportRequest: {
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "agent_profile" | "oauth_profile";
+        /** AiProviderAgentProfileAuthImportRequest */
+        AiProviderAgentProfileAuthImportRequest: {
             /**
              * Payload
              * Format: password
@@ -2675,11 +2664,18 @@ export interface components {
              * @default default
              */
             profile: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent_profile";
             /** Tool */
-            tool?: string | null;
-            /** Provider */
-            provider?: string | null;
+            tool: string;
         };
+        AiProviderApiKeyAuth: components["schemas"]["AiProviderEnvApiKeyAuth"] | components["schemas"]["AiProviderVaultApiKeyAuth"] | components["schemas"]["AiProviderManagedApiKeyAuth"];
+        AiProviderAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderOAuthProfileAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
+        /** AiProviderAuthImportRequest */
+        AiProviderAuthImportRequest: components["schemas"]["AiProviderAgentProfileAuthImportRequest"] | components["schemas"]["AiProviderOAuthProfileAuthImportRequest"];
         /** AiProviderAuthResolveRequest */
         AiProviderAuthResolveRequest: {
             /**
@@ -2718,10 +2714,42 @@ export interface components {
             /** Provider Id */
             provider_id: string;
         };
+        /** AiProviderEnvApiKeyAuth */
+        AiProviderEnvApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "env";
+            /** Profile */
+            profile?: string | null;
+            /** Ref */
+            ref: string;
+        };
         /** AiProviderListResponse */
         AiProviderListResponse: {
             /** Providers */
             providers: components["schemas"]["AiProviderResponse"][];
+        };
+        /** AiProviderManagedApiKeyAuth */
+        AiProviderManagedApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "managed";
+            /** Profile */
+            profile?: string | null;
         };
         /** AiProviderManagedApiKeyRequest */
         AiProviderManagedApiKeyRequest: {
@@ -2789,6 +2817,14 @@ export interface components {
             /** Cache Write */
             cache_write?: number;
         };
+        /** AiProviderNoneAuth */
+        AiProviderNoneAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "none";
+        };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -2797,6 +2833,38 @@ export interface components {
             code: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
+        };
+        /** AiProviderOAuthProfileAuth */
+        AiProviderOAuthProfileAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth_profile";
+            /** Provider */
+            provider: string;
+            /** Profile */
+            profile: string;
+        };
+        /** AiProviderOAuthProfileAuthImportRequest */
+        AiProviderOAuthProfileAuthImportRequest: {
+            /**
+             * Payload
+             * Format: password
+             */
+            payload: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth_profile";
+            /** Provider */
+            provider: string;
         };
         /** AiProviderOAuthStartRequest */
         AiProviderOAuthStartRequest: {
@@ -2835,7 +2903,7 @@ export interface components {
             base_url?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth?: components["schemas"]["AiProviderAuth"] | null;
+            auth?: components["schemas"]["AiProviderUpsertAuth"] | null;
             /** Managed By */
             managed_by?: ("user" | "clawdi") | null;
             /** Runtime Env Name */
@@ -2860,7 +2928,6 @@ export interface components {
             base_url: string;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By
              * @default user
@@ -2881,6 +2948,7 @@ export interface components {
             provider_id: string;
             /** Scope */
             scope: string;
+            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Created At
              * Format: date-time
@@ -2891,6 +2959,16 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiProviderSecretRefAuth */
+        AiProviderSecretRefAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "secret_ref";
+            /** Ref */
+            ref: string;
         };
         /** AiProviderUpsert */
         AiProviderUpsert: {
@@ -2905,7 +2983,6 @@ export interface components {
             base_url: string;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By
              * @default user
@@ -2922,7 +2999,9 @@ export interface components {
             models?: components["schemas"]["AiProviderModel"][] | null;
             /** Provider Id */
             provider_id: string;
+            auth: components["schemas"]["AiProviderUpsertAuth"];
         };
+        AiProviderUpsertAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
         /** AiProviderValidationResponse */
         AiProviderValidationResponse: {
             /** Valid */
@@ -2937,6 +3016,23 @@ export interface components {
              * @default []
              */
             warnings: string[];
+        };
+        /** AiProviderVaultApiKeyAuth */
+        AiProviderVaultApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "vault";
+            /** Profile */
+            profile?: string | null;
+            /** Ref */
+            ref: string;
         };
         /** ApiKeyCreate */
         ApiKeyCreate: {

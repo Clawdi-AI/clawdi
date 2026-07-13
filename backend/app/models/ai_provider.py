@@ -19,7 +19,6 @@ class AiProvider(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    scope: Mapped[str] = mapped_column(String(40), nullable=False, server_default="account_global")
     provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
     type: Mapped[str] = mapped_column(String(80), nullable=False)
     label: Mapped[str | None] = mapped_column(String(200))
