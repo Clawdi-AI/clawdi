@@ -329,10 +329,19 @@ support; exact Hosted updates do not call `npm view` and can move to either a
 higher or lower exact version.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
-non-304 manifest without monotonic generation gating, writes `generation` into
-managed state, sync state, egress bundles, run configs, and projections, then
-caches the fetched manifest as last-good. A generation-only control-plane bump
-therefore must produce a new ETag so `runtime watch` converges immediately.
+non-304 manifest without monotonic generation gating, while treating generation
+as the desired intent sequence and the ETag as effective content identity. A
+generation-only control-plane bump therefore produces a new ETag so `runtime
+watch` converges immediately.
+
+Reconciliation validates and plans projections before live mutation, completes
+required installers before Apply, and commits last-good, remote ETags, and
+`status/runtime-applied.json` only after managed files and systemd state apply
+successfully. A recoverable Apply failure restores the previous Clawdi-owned
+files and systemd declaration and leaves those authority records unchanged.
+Last-good remains an offline recovery cache; `runtime-applied.json` is the
+online record of the applied instance, config generation, content identity, and
+projected provider IDs.
 
 Manifest validation is defensive. A Hosted manifest selects exactly one enabled
 `openclaw` or `hermes` compute runtime; top-level `runtime` must match the sole
@@ -411,10 +420,12 @@ At the boundary:
 The manifest wire field remains `generation`, but it is specifically the
 desired config generation. Cloud API records daemon convergence separately as
 `observed_at`, `observed_config_generation`, and `observed_manifest_etag`, plus
-the validated v1 diagnostics JSONB. The ETag cannot be inferred from the
-generation, and the generation cannot be inferred from the ETag. These CONFIG
-convergence fields are separate from hosted provider COMPUTE convergence fields
-such as desired or observed replica generation.
+the validated v1 diagnostics JSONB. `observed_at` is the server receipt time for
+the accepted heartbeat; the client-reported timestamp remains diagnostics only.
+The ETag cannot be inferred from the generation, and the generation cannot be
+inferred from the ETag. These CONFIG convergence fields are separate from hosted
+provider COMPUTE convergence fields such as desired or observed replica
+generation.
 
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:
@@ -423,8 +434,9 @@ outputs include:
 | --- | --- |
 | `config/clawdi.json` | Redacted managed runtime config |
 | `sync/runtimes.json` | Runtime sync state |
-| `cache/manifest.last-good.json` | Last accepted manifest |
+| `cache/manifest.last-good.json` | Last successfully applied manifest for offline recovery |
 | `cache/manifest.etag`, `cache/channels.etag` | Remote refresh cache validators |
+| `status/runtime-applied.json` | Online authority for the applied instance, config generation, content identity, and projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `config/projections/<runtime>.json` | Runtime projection payload |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
