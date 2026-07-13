@@ -250,7 +250,19 @@ OpenClaw port directly.
 
 ## Manifest Shapes
 
-The CLI accepts two related shapes:
+The control plane exposes two negotiated representations:
+
+- Requests without the Agent v2 vendor media type receive the existing v1
+  `{manifest, secretValues}` response unchanged. This is the strict old-CLI
+  compatibility and self-upgrade path.
+- Requests with exact `Accept: application/vnd.clawdi.runtime-bundle.v2+json`
+  receive strict `clawdi.hosted-runtime.bundle.v2`. The response contains the
+  existing hosted manifest, sanitized Telegram and Discord `channelBindings`,
+  one merged `secretValues` map, and deterministic `sourceRevision`. Unknown
+  vendor media types return `406`; the v2 CLI does not fall back to a second
+  `/v1/channels` request.
+
+The CLI normalizes these wire contracts into the desired-state shape:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
   shape served only from `/v1/runtime/manifest`. It requires explicit `runtime`
@@ -413,9 +425,17 @@ plain text.
 
 At the boundary:
 
-- the control plane owns desired config generation and secret resolution;
+- the control plane owns desired config generation, deterministic source
+  rendering, and secret resolution;
 - the CLI owns local validation, projection, diagnostics, and command launch;
 - the runtime process owns normal agent behavior after launch.
+
+For Agent v2, `generation` remains the Hosted intent/CAS sequence.
+`sourceRevision` is a deterministic SHA-256 identity of the effective public
+descriptor and the selected encrypted secret-source identities, keyed by
+secret reference. The strong ETag identifies the complete plaintext response.
+The endpoint and summary paths use the same batch loader and pure materializer
+inside a read-only repeatable-read snapshot.
 
 The manifest wire field remains `generation`, but it is specifically the
 desired config generation. Cloud API records daemon convergence separately as
@@ -434,9 +454,9 @@ outputs include:
 | --- | --- |
 | `config/clawdi.json` | Redacted managed runtime config |
 | `sync/runtimes.json` | Runtime sync state |
-| `cache/manifest.last-good.json` | Last successfully applied manifest for offline recovery |
-| `cache/manifest.etag`, `cache/channels.etag` | Remote refresh cache validators |
-| `status/runtime-applied.json` | Online authority for the applied instance, config generation, content identity, and projected provider IDs |
+| `cache/manifest.last-good.json` | Last successfully applied effective, channel-projected manifest for offline recovery |
+| `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
+| `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, and projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `config/projections/<runtime>.json` | Runtime projection payload |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
@@ -447,7 +467,9 @@ outputs include:
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
 
 Short-lived secrets belong under the runtime run directory, not in durable
-config. Status and diagnostic output must redact secrets.
+config. Offline secret recovery uses only the existing root-only,
+reference-scoped secret cache. The complete plaintext bundle is never cached.
+Status and diagnostic output must redact secrets.
 
 ## Command And Launch Model
 

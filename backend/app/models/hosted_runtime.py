@@ -53,4 +53,5 @@ class HostedRuntimeConfigObservation(Base, TimestampMixin):
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     observed_config_generation: Mapped[int | None] = mapped_column(Integer)
     observed_manifest_etag: Mapped[str | None] = mapped_column(String(1024))
+    observed_source_revision: Mapped[str | None] = mapped_column(String(64))
     diagnostics: Mapped[JsonValue] = mapped_column(JSONB(none_as_null=True), nullable=False)

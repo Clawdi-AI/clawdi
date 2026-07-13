@@ -301,6 +301,7 @@ class RuntimeObservedDesiredResponse(BaseModel):
     deployment_id: str
     instance_id: str
     desired_config_generation: int
+    desired_source_revision: str | None = None
     provider_id: str | None = None
     enabled_runtimes: list[str]
     has_mcp: bool = False

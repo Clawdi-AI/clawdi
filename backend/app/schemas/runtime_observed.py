@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -157,11 +157,52 @@ class HostedRuntimeObservedV1(_StrictObservedWireModel):
         return parsed.astimezone(UTC)
 
 
+class HostedRuntimeObservedAppliedV2(_StrictObservedWireModel):
+    etag: str = Field(min_length=1, max_length=1024)
+    source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
+    generation: int = Field(ge=0)
+    instance_id: str = Field(alias="instanceId", min_length=1, max_length=200)
+    projected_provider_ids: list[str] = Field(alias="projectedProviderIds", max_length=100)
+
+
+class HostedRuntimeObservedV2(_StrictObservedWireModel):
+    schema_version: Literal["clawdi.hostedRuntimeObserved.v2"] = Field(alias="schemaVersion")
+    reported_at: datetime = Field(alias="reportedAt")
+    runtime_mode: Literal["hosted"] = Field(alias="runtimeMode")
+    status: RuntimeObservedStatus
+    active_cli_version: str | None = Field(
+        alias="activeCliVersion",
+        min_length=1,
+        max_length=200,
+    )
+    applied: HostedRuntimeObservedAppliedV2 | None
+    boot: HostedRuntimeObservedBootV1 | None
+    cli: HostedRuntimeObservedCliV1 | None
+    systemd: HostedRuntimeObservedSystemdV1 | None = None
+    supervisor: HostedRuntimeObservedSupervisorV1 | None = None
+    providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
+    error: str | None = Field(default=None, max_length=4000)
+    converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
+    truncated: bool | None = None
+
+    @field_validator("reported_at", mode="before")
+    @classmethod
+    def validate_reported_at(cls, value: object) -> datetime:
+        return HostedRuntimeObservedV1.validate_reported_at(value)
+
+
+HostedRuntimeObserved = Annotated[
+    HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
+    Field(discriminator="schema_version"),
+]
+
+
 class RuntimeObservedConfigSummaryResponse(BaseModel):
     observed_at: datetime | None = None
     observed_config_generation: int | None = None
     observed_manifest_etag: str | None = None
+    observed_source_revision: str | None = None
 
 
 class RuntimeObservedConfigResponse(RuntimeObservedConfigSummaryResponse):
-    diagnostics: HostedRuntimeObservedV1 | None = None
+    diagnostics: HostedRuntimeObservedV1 | HostedRuntimeObservedV2 | None = None

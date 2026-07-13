@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, JsonValue, ValidationError, field_validator
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_session, runtime_snapshot_session
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
@@ -38,8 +38,10 @@ from app.models.session_permission import (
 from app.schemas.common import Paginated
 from app.schemas.runtime import HostedRuntimeDesiredState
 from app.schemas.runtime_observed import (
+    HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
     HostedRuntimeObservedV1,
+    HostedRuntimeObservedV2,
     RuntimeObservedConfigResponse,
     RuntimeObservedConfigSummaryResponse,
 )
@@ -78,6 +80,12 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
+from app.services.runtime_source import (
+    RuntimeSourceError,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
@@ -97,6 +105,7 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
+_RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -407,18 +416,35 @@ async def list_environment_runtime_observed(
     )
     env_ids = [env.id for env in envs]
     states_by_env: dict[UUID, HostedRuntimeState] = {}
+    source_revisions: dict[UUID, str] = {}
+    source_errors: set[UUID] = set()
+    desired_cli_specs: dict[UUID, str] = {}
     observations_by_env: dict[UUID, HostedRuntimeConfigObservation] = {}
     if env_ids:
-        states = (
-            (
-                await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
-                )
+        async with runtime_snapshot_session() as source_db:
+            source_batch = await load_runtime_source_batch(
+                source_db,
+                environment_ids=env_ids,
+                owner_user_id=auth.user_id,
             )
-            .scalars()
-            .all()
-        )
-        states_by_env = {state.environment_id: state for state in states}
+            states_by_env = {
+                environment_id: row.state for environment_id, row in source_batch.rows.items()
+            }
+            key_identity = vault_key_identity(settings.vault_encryption_key)
+            for environment_id in source_batch.rows:
+                try:
+                    rendered = render_runtime_source(
+                        source_batch,
+                        environment_id=environment_id,
+                        public_api_url=settings.public_api_url,
+                        vault_key_identity=key_identity,
+                        decrypt_secrets=False,
+                    )
+                except RuntimeSourceError:
+                    source_errors.add(environment_id)
+                    continue
+                source_revisions[environment_id] = rendered.source_revision
+                desired_cli_specs[environment_id] = rendered.manifest["clawdiCli"]["packageSpec"]
         observations = (
             (
                 await db.execute(
@@ -438,12 +464,26 @@ async def list_environment_runtime_observed(
     for env in envs:
         state = states_by_env.get(env.id)
         observation = observations_by_env.get(env.id)
-        health = _runtime_observed_health(env, state, observation)
+        health = _runtime_observed_health(
+            env,
+            state,
+            observation,
+            desired_source_revision=source_revisions.get(env.id),
+            desired_source_error=env.id in source_errors,
+            desired_cli_package_spec=desired_cli_specs.get(env.id),
+        )
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
                 environment=_env_to_response(env, state),
-                desired=_runtime_observed_desired(state) if state is not None else None,
+                desired=(
+                    _runtime_observed_desired(
+                        state,
+                        source_revision=source_revisions.get(env.id),
+                    )
+                    if state is not None
+                    else None
+                ),
                 observed=_runtime_observed_summary(observation),
                 health=health,
                 provider_health=_runtime_observed_provider_health(state, observation),
@@ -785,11 +825,31 @@ async def get_environment_runtime_observed(
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+    source_revision = None
+    source_error = False
+    desired_cli_package_spec = None
+    async with runtime_snapshot_session() as source_db:
+        source_batch = await load_runtime_source_batch(
+            source_db,
+            environment_ids=[environment_id],
+            owner_user_id=auth.user_id,
         )
-    ).scalar_one_or_none()
+        source_row = source_batch.rows.get(environment_id)
+        state = source_row.state if source_row is not None else None
+        if state is not None:
+            try:
+                rendered = render_runtime_source(
+                    source_batch,
+                    environment_id=environment_id,
+                    public_api_url=settings.public_api_url,
+                    vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                    decrypt_secrets=False,
+                )
+            except RuntimeSourceError:
+                source_error = True
+            else:
+                source_revision = rendered.source_revision
+                desired_cli_package_spec = rendered.manifest["clawdiCli"]["packageSpec"]
     observation = (
         await db.execute(
             select(HostedRuntimeConfigObservation).where(
@@ -799,9 +859,20 @@ async def get_environment_runtime_observed(
     ).scalar_one_or_none()
     return RuntimeObservedResponse(
         environment=_env_to_response(env, state),
-        desired=_runtime_observed_desired(state) if state is not None else None,
+        desired=(
+            _runtime_observed_desired(state, source_revision=source_revision)
+            if state is not None
+            else None
+        ),
         observed=_runtime_observed_response(observation),
-        health=_runtime_observed_health(env, state, observation),
+        health=_runtime_observed_health(
+            env,
+            state,
+            observation,
+            desired_source_revision=source_revision,
+            desired_source_error=source_error,
+            desired_cli_package_spec=desired_cli_package_spec,
+        ),
         provider_health=_runtime_observed_provider_health(state, observation),
     )
 
@@ -930,12 +1001,15 @@ async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
 
 def _runtime_observed_desired(
     state: HostedRuntimeState,
+    *,
+    source_revision: str | None = None,
 ) -> RuntimeObservedDesiredResponse:
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     return RuntimeObservedDesiredResponse(
         deployment_id=state.deployment_id,
         instance_id=state.instance_id,
         desired_config_generation=state.generation,
+        desired_source_revision=source_revision,
         provider_id=primary_provider_id or (provider_ids[0] if provider_ids else None),
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
@@ -948,6 +1022,10 @@ def _runtime_observed_health(
     env: AgentEnvironment,
     state: HostedRuntimeState | None,
     observation: HostedRuntimeConfigObservation | None,
+    *,
+    desired_source_revision: str | None = None,
+    desired_source_error: bool = False,
+    desired_cli_package_spec: str | None = None,
 ) -> RuntimeObservedHealthResponse:
     if state is None:
         return RuntimeObservedHealthResponse(
@@ -959,6 +1037,9 @@ def _runtime_observed_health(
     diagnostics = _validated_runtime_observed_diagnostics(observation)
     observed_at = observation.observed_at if observation is not None else None
     now = datetime.now(UTC)
+
+    if desired_source_error:
+        reasons.append("desired_source_invalid")
 
     if env.last_sync_error:
         reasons.append("daemon_error")
@@ -982,8 +1063,26 @@ def _runtime_observed_health(
             reasons.append("observed_config_generation_missing")
         elif observation.observed_config_generation != state.generation:
             reasons.append("config_generation_mismatch")
-        if observation.observed_manifest_etag is None:
+        if not observation.observed_manifest_etag or not observation.observed_manifest_etag.strip():
             reasons.append("observed_manifest_etag_missing")
+        if not desired_source_error and observation.observed_source_revision is None:
+            reasons.append("observed_source_revision_missing")
+        elif not desired_source_error and desired_source_revision is None:
+            reasons.append("desired_source_revision_missing")
+        elif (
+            not desired_source_error
+            and observation.observed_source_revision != desired_source_revision
+        ):
+            reasons.append("source_revision_mismatch")
+
+    if isinstance(diagnostics, HostedRuntimeObservedV2) and not desired_source_error:
+        desired_cli_version = _clawdi_cli_version(desired_cli_package_spec or "")
+        if desired_cli_version is None:
+            reasons.append("desired_cli_version_invalid")
+        elif diagnostics.active_cli_version is None:
+            reasons.append("active_cli_version_missing")
+        elif diagnostics.active_cli_version != desired_cli_version:
+            reasons.append("active_cli_version_mismatch")
 
     supervisor_status = (
         diagnostics.supervisor.status if diagnostics and diagnostics.supervisor else None
@@ -1029,13 +1128,25 @@ def _runtime_observed_provider_health(
     observation: HostedRuntimeConfigObservation | None,
 ) -> list[RuntimeObservedProviderHealthResponse]:
     diagnostics = _validated_runtime_observed_diagnostics(observation)
-    if state is None or diagnostics is None or diagnostics.providers is None:
+    if state is None or diagnostics is None:
         return []
 
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
-    for provider_key in sorted(diagnostics.providers):
-        observed_payload = diagnostics.providers[provider_key]
+    observed_providers = diagnostics.providers or {}
+    for provider_key in sorted(set(provider_ids) | set(observed_providers)):
+        observed_payload = observed_providers.get(provider_key)
+        if observed_payload is None:
+            provider_health.append(
+                RuntimeObservedProviderHealthResponse(
+                    provider_id=provider_key,
+                    status="unknown",
+                    reasons=["provider_observation_missing"],
+                    desired={"selected": True, "primary": provider_key == primary_provider_id},
+                    observed=None,
+                )
+            )
+            continue
         provider_health.append(
             RuntimeObservedProviderHealthResponse(
                 provider_id=provider_key,
@@ -1049,6 +1160,13 @@ def _runtime_observed_provider_health(
             )
         )
     return provider_health
+
+
+def _clawdi_cli_version(package_spec: str) -> str | None:
+    prefix = "clawdi@"
+    if not package_spec.startswith(prefix) or len(package_spec) == len(prefix):
+        return None
+    return package_spec[len(prefix) :]
 
 
 def _runtime_desired_provider_binding(
@@ -1123,11 +1241,11 @@ def _enabled_runtime_names(runtimes: dict) -> list[str]:
 
 def _validated_runtime_observed_diagnostics(
     observation: HostedRuntimeConfigObservation | None,
-) -> HostedRuntimeObservedV1 | None:
+) -> HostedRuntimeObservedV1 | HostedRuntimeObservedV2 | None:
     if observation is None:
         return None
     try:
-        return HostedRuntimeObservedV1.model_validate(observation.diagnostics)
+        return _RUNTIME_OBSERVED_ADAPTER.validate_python(observation.diagnostics)
     except ValidationError:
         return None
 
@@ -1141,6 +1259,7 @@ def _runtime_observed_summary(
         observed_at=observation.observed_at,
         observed_config_generation=observation.observed_config_generation,
         observed_manifest_etag=observation.observed_manifest_etag,
+        observed_source_revision=observation.observed_source_revision,
     )
 
 
@@ -1233,7 +1352,7 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
-    runtime_observed: HostedRuntimeObservedV1 | None = None
+    runtime_observed: HostedRuntimeObserved | None = None
 
     @field_validator("runtime_observed", mode="before")
     @classmethod
@@ -1276,7 +1395,9 @@ def _runtime_observed_comparison_value(
     return {key: item for key, item in value.items() if key != "reportedAt"}
 
 
-def _runtime_observed_diagnostics(value: HostedRuntimeObservedV1) -> dict[str, Any]:
+def _runtime_observed_diagnostics(
+    value: HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
+) -> dict[str, Any]:
     return value.model_dump(
         mode="json",
         by_alias=True,
@@ -1285,10 +1406,19 @@ def _runtime_observed_diagnostics(value: HostedRuntimeObservedV1) -> dict[str, A
 
 
 def _runtime_observed_columns(
-    value: HostedRuntimeObservedV1,
+    value: HostedRuntimeObservedV1 | HostedRuntimeObservedV2,
     *,
     observed_at: datetime,
 ) -> dict[str, Any]:
+    if isinstance(value, HostedRuntimeObservedV2):
+        applied = value.applied
+        return {
+            "observed_at": observed_at,
+            "observed_config_generation": applied.generation if applied else None,
+            "observed_manifest_etag": applied.etag if applied else None,
+            "observed_source_revision": applied.source_revision if applied else None,
+            "diagnostics": _runtime_observed_diagnostics(value),
+        }
     applied_watch = (
         value.watch if value.watch and value.watch.status in {"applied", "not_modified"} else None
     )
@@ -1303,6 +1433,7 @@ def _runtime_observed_columns(
         "observed_at": observed_at,
         "observed_config_generation": observed_config_generation,
         "observed_manifest_etag": value.manifest.etag,
+        "observed_source_revision": None,
         "diagnostics": _runtime_observed_diagnostics(value),
     }
 
@@ -1316,6 +1447,7 @@ def _runtime_observation_changed(
     return (
         observation.observed_config_generation != values["observed_config_generation"]
         or observation.observed_manifest_etag != values["observed_manifest_etag"]
+        or observation.observed_source_revision != values["observed_source_revision"]
         or _runtime_observed_comparison_value(observation.diagnostics)
         != _runtime_observed_comparison_value(values["diagnostics"])
     )
@@ -1453,6 +1585,9 @@ async def sync_heartbeat(
                         insert_observation.excluded.observed_config_generation
                     ),
                     "observed_manifest_etag": (insert_observation.excluded.observed_manifest_etag),
+                    "observed_source_revision": (
+                        insert_observation.excluded.observed_source_revision
+                    ),
                     "diagnostics": insert_observation.excluded.diagnostics,
                     "updated_at": func.now(),
                 },

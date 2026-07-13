@@ -4515,6 +4515,19 @@ export interface components {
             persistentPaths: string[];
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+        /** HostedRuntimeObservedAppliedV2 */
+        HostedRuntimeObservedAppliedV2: {
+            /** Etag */
+            etag: string;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Generation */
+            generation: number;
+            /** Instanceid */
+            instanceId: string;
+            /** Projectedproviderids */
+            projectedProviderIds: string[];
+        };
         /** HostedRuntimeObservedBootV1 */
         HostedRuntimeObservedBootV1: {
             /**
@@ -4645,8 +4658,8 @@ export interface components {
         /** HostedRuntimeObservedV1 */
         HostedRuntimeObservedV1: {
             /**
-             * Schemaversion
-             * @constant
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
             schemaVersion: "clawdi.hostedRuntimeObserved.v1";
             /**
@@ -4668,6 +4681,46 @@ export interface components {
             channels: components["schemas"]["HostedRuntimeObservedChannelsV1"];
             boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
             watch: components["schemas"]["HostedRuntimeObservedWatchV1"] | null;
+            cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
+            supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
+            /** Providers */
+            providers?: {
+                [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
+            } | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
+            /** Truncated */
+            truncated?: boolean | null;
+        };
+        /** HostedRuntimeObservedV2 */
+        HostedRuntimeObservedV2: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            schemaVersion: "clawdi.hostedRuntimeObserved.v2";
+            /**
+             * Reportedat
+             * Format: date-time
+             */
+            reportedAt: string;
+            /**
+             * Runtimemode
+             * @constant
+             */
+            runtimeMode: "hosted";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Activecliversion */
+            activeCliVersion: string | null;
+            applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
             cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
             systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
             supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
@@ -5188,7 +5241,10 @@ export interface components {
             observed_config_generation?: number | null;
             /** Observed Manifest Etag */
             observed_manifest_etag?: string | null;
-            diagnostics?: components["schemas"]["HostedRuntimeObservedV1"] | null;
+            /** Observed Source Revision */
+            observed_source_revision?: string | null;
+            /** Diagnostics */
+            diagnostics?: components["schemas"]["HostedRuntimeObservedV1"] | components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /** RuntimeObservedConfigSummaryResponse */
         RuntimeObservedConfigSummaryResponse: {
@@ -5198,6 +5254,8 @@ export interface components {
             observed_config_generation?: number | null;
             /** Observed Manifest Etag */
             observed_manifest_etag?: string | null;
+            /** Observed Source Revision */
+            observed_source_revision?: string | null;
         };
         /** RuntimeObservedDesiredResponse */
         RuntimeObservedDesiredResponse: {
@@ -5207,6 +5265,8 @@ export interface components {
             instance_id: string;
             /** Desired Config Generation */
             desired_config_generation: number;
+            /** Desired Source Revision */
+            desired_source_revision?: string | null;
             /** Provider Id */
             provider_id?: string | null;
             /** Enabled Runtimes */
@@ -5980,7 +6040,8 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
-            runtime_observed?: components["schemas"]["HostedRuntimeObservedV1"] | null;
+            /** Runtime Observed */
+            runtime_observed?: (components["schemas"]["HostedRuntimeObservedV1"] | components["schemas"]["HostedRuntimeObservedV2"]) | null;
         };
         /**
          * UnshareResponse
