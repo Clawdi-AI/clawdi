@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "f1a7c3d9e2b4"
-HEAD_REVISION = "a6d4e2f8c1b3"
+HEAD_REVISION = "b7c4e1a9d2f6"
 MIGRATION_FILENAME = f"{REVISION}_separate_hosted_runtime_config_observations.py"
 
 
@@ -39,7 +39,8 @@ def test_hosted_runtime_config_observation_migration_is_single_head() -> None:
 
     assert scripts.get_heads() == [HEAD_REVISION]
     assert scripts.get_revision(REVISION).down_revision == "f3a6c9d2e5b8"
-    assert scripts.get_revision(HEAD_REVISION).down_revision == REVISION
+    assert scripts.get_revision("a6d4e2f8c1b3").down_revision == REVISION
+    assert scripts.get_revision(HEAD_REVISION).down_revision == "a6d4e2f8c1b3"
 
 
 @pytest.mark.parametrize(

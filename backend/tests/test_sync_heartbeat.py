@@ -1027,6 +1027,7 @@ async def test_runtime_observed_endpoint_safely_degrades_migrated_legacy_diagnos
         "observed_at": None,
         "observed_config_generation": None,
         "observed_manifest_etag": None,
+        "observed_source_revision": None,
         "diagnostics": None,
     }
     assert payload["health"]["status"] == "unknown"

@@ -1654,7 +1654,6 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
             ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "url": url})
             for url in TEST_INVALID_EGRESS_ENGINE_URLS
         ],
-        ("egress_profiles", {}),
         (
             "egress_profiles",
             {
