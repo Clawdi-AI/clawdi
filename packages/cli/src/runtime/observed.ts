@@ -48,9 +48,7 @@ export function readHostedRuntimeObserved(
 				sourceRevision: appliedAuthorityState.sourceRevision ?? "",
 				generation: appliedAuthorityState.generation,
 				instanceId: appliedAuthorityState.instanceId,
-				projectedProviderIds: [
-					...new Set(Object.values(appliedAuthorityState.projectedProviderIds).flat()),
-				].sort(),
+				appliedProviderIds: [...(appliedAuthorityState.providerIds ?? [])],
 			}
 		: null;
 

@@ -4881,6 +4881,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				etag: '"etag-watch-12"',
 				sourceRevision: "a".repeat(64),
 				generation: 12,
+				providerIds: ["default"],
 			});
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
@@ -4903,6 +4904,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				etag: '"etag-watch-12"',
 				sourceRevision: "a".repeat(64),
 				generation: 12,
+				appliedProviderIds: ["default"],
 			});
 			const paths = getRuntimePaths();
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-watch")).toContain(
@@ -5402,6 +5404,7 @@ exit 64
 				etag: '"manifest-etag-effective"',
 				sourceRevision: "d".repeat(64),
 				generation: 22,
+				providerIds: ["clawdi-managed-v2"],
 			});
 			expect(event.systemdUnitsChanged).toBe(false);
 			expect(event.systemdApply).toEqual({
@@ -8163,6 +8166,100 @@ exit 64
 			const status = JSON.parse(logs[0] ?? "{}");
 			expect(status.status).toBe("ok");
 			expect(status.activeGeneration).toBe(7);
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime init records malformed bundle channel references as a boot error", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		const workspace = join(home, "clawdi");
+		const bundle = JSON.parse(
+			readFileSync(
+				join(import.meta.dir, "../../../test-fixtures/runtime-bundle-v2.golden.json"),
+				"utf-8",
+			),
+		) as {
+			manifest: {
+				runtime: string;
+				system: {
+					home: string;
+					workspace: string;
+					persistentPaths: string[];
+				};
+				runtimes: Record<string, { paths: { home: string; workspace: string } }>;
+			};
+			channelBindings: Array<{ agentTokenSecretRef: string }>;
+			secretValues: Record<string, string>;
+		};
+		const selectedRuntime = bundle.manifest.runtimes[bundle.manifest.runtime];
+		if (!selectedRuntime) throw new Error("golden bundle has no selected runtime");
+		bundle.manifest.system.home = home;
+		bundle.manifest.system.workspace = workspace;
+		bundle.manifest.system.persistentPaths = [home];
+		selectedRuntime.paths.home = home;
+		selectedRuntime.paths.workspace = workspace;
+		const missingSecretRef = bundle.channelBindings[0]?.agentTokenSecretRef;
+		if (!missingSecretRef) throw new Error("golden bundle has no channel binding");
+		delete bundle.secretValues[missingSecretRef];
+
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(dirname(policyPath), { recursive: true });
+		writeFileSync(
+			policyPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.hostPolicy.v1",
+				mode: "hosted-runtime",
+				cliUpdateMode: "system-managed-npm",
+				deniedCommands: ["setup", "teardown", "update"],
+			}),
+		);
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_HOME = home;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					new Response(JSON.stringify(bundle), {
+						status: 200,
+						headers: {
+							"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+							etag: '"bundle-malformed-channel-ref"',
+						},
+					}),
+			},
+		]);
+
+		try {
+			await runtimeInit({ nonInteractive: true, json: true });
+
+			const paths = getRuntimePaths();
+			const status = JSON.parse(logs[0] ?? "{}");
+			expect(status.status).toBe("error");
+			expect(status.error).toContain(`runtime bundle is missing ${missingSecretRef}`);
+			expect(status.stage).toBe("final");
+			expect(process.exitCode).toBe(23);
+			expect(JSON.parse(readFileSync(paths.bootStatus, "utf-8"))).toEqual(status);
+			expect(existsSync(paths.appliedState)).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;

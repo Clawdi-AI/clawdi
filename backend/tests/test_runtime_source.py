@@ -12,6 +12,7 @@ from app.models.session import AgentEnvironment
 from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceRow,
+    expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
 )
@@ -22,6 +23,14 @@ PROVIDER_ROW_ID = UUID("30000000-0000-0000-0000-000000000003")
 AUTH_ROW_ID = UUID("40000000-0000-0000-0000-000000000004")
 ACCOUNT_ID = UUID("50000000-0000-0000-0000-000000000005")
 LINK_ID = UUID("60000000-0000-0000-0000-000000000006")
+
+
+def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
+    source_revision = "a" * 64
+    assert expected_runtime_bundle_v2_etag(source_revision) == f'"sha256:{source_revision}"'
+    assert expected_runtime_bundle_v2_etag("b" * 64) != expected_runtime_bundle_v2_etag(
+        source_revision
+    )
 
 
 def _batch(

@@ -54,6 +54,13 @@ class RuntimeSourceError(ValueError):
     pass
 
 
+def expected_runtime_bundle_v2_etag(source_revision: str) -> str:
+    """Return the frozen v2 validator derived from its complete source identity."""
+    if not re.fullmatch(r"[0-9a-f]{64}", source_revision):
+        raise ValueError("runtime bundle source revision must be a SHA-256 digest")
+    return f'"sha256:{source_revision}"'
+
+
 @dataclass(frozen=True)
 class RuntimeSourceRow:
     environment: AgentEnvironment

@@ -31,6 +31,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.services.runtime_source import expected_runtime_bundle_v2_etag
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
@@ -115,6 +116,8 @@ def _runtime_observed_v2(
     source_revision: str,
     active_cli_version: str | None = "0.12.10-beta.51",
     applied: bool = True,
+    manifest_etag: str | None = None,
+    applied_provider_ids: list[str] | None = None,
     providers: dict | None = None,
 ) -> dict:
     return {
@@ -125,11 +128,13 @@ def _runtime_observed_v2(
         "activeCliVersion": active_cli_version,
         "applied": (
             {
-                "etag": '"bundle-etag"',
+                "etag": manifest_etag or expected_runtime_bundle_v2_etag(source_revision),
                 "sourceRevision": source_revision,
                 "generation": 4,
                 "instanceId": "iid-observed-v2",
-                "projectedProviderIds": ["clawdi-managed"],
+                "appliedProviderIds": applied_provider_ids
+                if applied_provider_ids is not None
+                else ["clawdi-managed"],
             }
             if applied
             else None
@@ -712,7 +717,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
     observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
     assert observation is not None
     assert observation.observed_config_generation == 4
-    assert observation.observed_manifest_etag == '"bundle-etag"'
+    assert observation.observed_manifest_etag == expected_runtime_bundle_v2_etag(source_revision)
     assert observation.observed_source_revision == source_revision
     assert observation.diagnostics["activeCliVersion"] == "0.12.10-beta.51"
     healthy = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
@@ -758,6 +763,65 @@ async def test_v2_applied_authority_persists_and_drives_health(
     assert "observed_source_revision_missing" in unknown["health"]["reasons"]
     assert "observed_manifest_etag_missing" in unknown["health"]["reasons"]
     assert "active_cli_version_missing" in unknown["health"]["reasons"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("manifest_etag", "applied_provider_ids", "expected_reason", "absent_reason"),
+    [
+        ('"wrong-bundle-etag"', ["clawdi-managed"], "observed_manifest_etag_mismatch", None),
+        (None, [], "applied_provider_ids_missing_desired", "applied_provider_ids_extra"),
+        (
+            None,
+            ["clawdi-managed", "stale-provider"],
+            "applied_provider_ids_extra",
+            "applied_provider_ids_missing_desired",
+        ),
+    ],
+)
+async def test_v2_health_requires_expected_etag_and_exact_source_provider_set(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    manifest_etag: str | None,
+    applied_provider_ids: list[str],
+    expected_reason: str,
+    absent_reason: str | None,
+):
+    env_id = await _create_env(client)
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=uuid.UUID(env_id),
+            deployment_id="dep-observed-v2-equality",
+            instance_id="iid-observed-v2-equality",
+            generation=4,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+            locale=_TEST_LOCALE,
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes=_test_runtimes(),
+        )
+    )
+    await db_session.commit()
+    desired = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()["desired"]
+    source_revision = desired["desired_source_revision"]
+
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": _runtime_observed_v2(
+                source_revision=source_revision,
+                manifest_etag=manifest_etag,
+                applied_provider_ids=applied_provider_ids,
+            )
+        },
+    )
+
+    assert heartbeat.status_code == 204, heartbeat.text
+    health = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()["health"]
+    assert expected_reason in health["reasons"]
+    if absent_reason is not None:
+        assert absent_reason not in health["reasons"]
 
 
 @pytest.mark.asyncio

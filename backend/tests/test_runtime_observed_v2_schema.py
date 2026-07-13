@@ -30,7 +30,7 @@ def _payload() -> dict:
             "sourceRevision": "a" * 64,
             "generation": 3,
             "instanceId": "instance",
-            "projectedProviderIds": ["provider"],
+            "appliedProviderIds": ["provider"],
         },
         "boot": None,
         "cli": None,
@@ -50,6 +50,11 @@ def test_runtime_observed_v2_is_strict_and_applied_is_complete() -> None:
     extra["channels"] = {"etag": '"legacy"'}
     with pytest.raises(ValidationError):
         adapter.validate_python(extra)
+
+    projected = _payload()
+    projected["applied"]["projectedProviderIds"] = ["target-specific"]
+    with pytest.raises(ValidationError):
+        adapter.validate_python(projected)
 
 
 def test_runtime_observed_v2_columns_come_from_applied_authority() -> None:

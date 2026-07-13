@@ -14,6 +14,7 @@ from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RuntimeSourceError,
+    expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
     render_runtime_bundle,
     render_runtime_source,
@@ -35,7 +36,11 @@ async def get_runtime_manifest(
     accept = request.headers.get("accept")
     bundle_v2 = accept == RUNTIME_BUNDLE_V2_MEDIA_TYPE
     if accept and accept.startswith("application/vnd.clawdi.") and not bundle_v2:
-        raise HTTPException(status.HTTP_406_NOT_ACCEPTABLE, "Unsupported runtime media type")
+        raise HTTPException(
+            status.HTTP_406_NOT_ACCEPTABLE,
+            "Unsupported runtime media type",
+            headers={"Cache-Control": "no-store", "Vary": "Accept"},
+        )
 
     batch = await load_runtime_source_batch(
         db,
@@ -61,7 +66,7 @@ async def get_runtime_manifest(
 
     if bundle_v2:
         payload = render_runtime_bundle(source)
-        etag = strong_json_etag(payload)
+        etag = expected_runtime_bundle_v2_etag(source.source_revision)
         headers = {
             "ETag": etag,
             "Cache-Control": "no-store",
@@ -71,7 +76,7 @@ async def get_runtime_manifest(
     else:
         payload = {"manifest": source.manifest, "secretValues": source.secret_values}
         etag = strong_json_etag(payload)
-        headers = {"ETag": etag, "Cache-Control": "no-store"}
+        headers = {"ETag": etag, "Cache-Control": "no-store", "Vary": "Accept"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     return JSONResponse(payload, headers=headers)

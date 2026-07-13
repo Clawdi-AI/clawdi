@@ -25,6 +25,7 @@ function appliedStateFixture() {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: "a".repeat(64),
 		},
+		providerIds: ["clawdi-default", "default"],
 		projectedProviderIds: {
 			hermes: ["clawdi-default"],
 			openclaw: ["default"],
@@ -43,6 +44,10 @@ describe("runtime applied state", () => {
 		expect(runtimeAppliedStateSchema.safeParse(state).success).toBe(true);
 		expect(
 			runtimeAppliedStateSchema.safeParse({ ...state, channelsEtag: '"legacy"' }).success,
+		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({ ...state, providerIds: ["default", "default"] })
+				.success,
 		).toBe(false);
 		expect(
 			runtimeAppliedStateSchema.safeParse({
@@ -114,6 +119,7 @@ describe("runtime applied state", () => {
 			etag: '"legacy"',
 			sourceRevision: null,
 			generation: 6,
+			providerIds: null,
 		});
 	});
 });

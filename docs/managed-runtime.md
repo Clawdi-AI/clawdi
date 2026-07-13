@@ -254,13 +254,22 @@ The control plane exposes two negotiated representations:
 
 - Requests without the Agent v2 vendor media type receive the existing v1
   `{manifest, secretValues}` response unchanged. This is the strict old-CLI
-  compatibility and self-upgrade path.
+  compatibility and self-upgrade path. Its strong ETag remains the canonical
+  JSON hash of that legacy payload.
 - Requests with exact `Accept: application/vnd.clawdi.runtime-bundle.v2+json`
   receive strict `clawdi.hosted-runtime.bundle.v2`. The response contains the
   existing hosted manifest, sanitized Telegram and Discord `channelBindings`,
   one merged `secretValues` map, and deterministic `sourceRevision`. Unknown
   vendor media types return `406`; the v2 CLI does not fall back to a second
   `/v1/channels` request.
+
+Both representations return `Vary: Accept` on `200` and `304` responses.
+Unsupported vendor-media `406` responses also return `Vary: Accept` and
+`Cache-Control: no-store`, so negotiation errors are not reused across media
+types.
+The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
+the revision's effective public and secret-source identity make it a strong
+validator without decrypting secrets in the health summary.
 
 The CLI normalizes these wire contracts into the desired-state shape:
 
@@ -352,8 +361,9 @@ required installers before Apply, and commits last-good, remote ETags, and
 successfully. A recoverable Apply failure restores the previous Clawdi-owned
 files and systemd declaration and leaves those authority records unchanged.
 Last-good remains an offline recovery cache; `runtime-applied.json` is the
-online record of the applied instance, config generation, content identity, and
-projected provider IDs.
+online record of the applied instance, config generation, content identity,
+source manifest provider IDs, and the target-specific projected provider ID map
+needed for stale deletion. The record is committed only after Apply succeeds.
 
 Manifest validation is defensive. A Hosted manifest selects exactly one enabled
 `openclaw` or `hermes` compute runtime; top-level `runtime` must match the sole
@@ -433,19 +443,25 @@ At the boundary:
 For Agent v2, `generation` remains the Hosted intent/CAS sequence.
 `sourceRevision` is a deterministic SHA-256 identity of the effective public
 descriptor and the selected encrypted secret-source identities, keyed by
-secret reference. The strong ETag identifies the complete plaintext response.
-The endpoint and summary paths use the same batch loader and pure materializer
-inside a read-only repeatable-read snapshot.
+secret reference. For the immutable v2 renderer, the strong ETag is derived as
+`"sha256:<sourceRevision>"`. The endpoint and summary paths use the same batch
+loader and pure materializer inside a read-only repeatable-read snapshot; the
+summary path does not decrypt secrets.
 
 The manifest wire field remains `generation`, but it is specifically the
 desired config generation. Cloud API records daemon convergence separately as
 `observed_at`, `observed_config_generation`, and `observed_manifest_etag`, plus
-the validated v1 diagnostics JSONB. `observed_at` is the server receipt time for
-the accepted heartbeat; the client-reported timestamp remains diagnostics only.
-The ETag cannot be inferred from the generation, and the generation cannot be
-inferred from the ETag. These CONFIG convergence fields are separate from hosted
-provider COMPUTE convergence fields such as desired or observed replica
-generation.
+validated diagnostics JSONB. Agent v2 diagnostics report applied ETag,
+`sourceRevision`, and the source-level applied provider ID set only from
+`runtime-applied.json`; target-specific projected IDs remain local stale-deletion
+state. Health compares the v2 ETag with the validator derived from current
+`sourceRevision` and requires exact provider-set equality, reporting missing and
+extra sets separately. Legacy provider-set authority remains unknown.
+`observed_at` is the server receipt time for the accepted heartbeat; the
+client-reported timestamp remains diagnostics only. The ETag cannot be inferred
+from the generation, and the generation cannot be inferred from the ETag. These
+CONFIG convergence fields are separate from hosted provider COMPUTE convergence
+fields such as desired or observed replica generation.
 
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:
@@ -456,7 +472,7 @@ outputs include:
 | `sync/runtimes.json` | Runtime sync state |
 | `cache/manifest.last-good.json` | Last successfully applied effective, channel-projected manifest for offline recovery |
 | `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
-| `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, and projected provider IDs |
+| `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `config/projections/<runtime>.json` | Runtime projection payload |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |

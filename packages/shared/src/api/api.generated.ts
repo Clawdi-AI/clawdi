@@ -4525,8 +4525,8 @@ export interface components {
             generation: number;
             /** Instanceid */
             instanceId: string;
-            /** Projectedproviderids */
-            projectedProviderIds: string[];
+            /** Appliedproviderids */
+            appliedProviderIds: string[];
         };
         /** HostedRuntimeObservedBootV1 */
         HostedRuntimeObservedBootV1: {

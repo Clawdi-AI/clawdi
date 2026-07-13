@@ -32,19 +32,27 @@ payloads, and active Telegram/Discord links with set-based queries inside one
 use the same pure materializer. Summary rendering does not decrypt secrets.
 
 `sourceRevision` hashes the effective public descriptor plus secret-reference
-keyed encrypted-source identities. The strong HTTP ETag hashes the complete v2
-response, including plaintext secret values. Neither value is a persisted
-desired-state counter.
+keyed encrypted-source identities. Because the v2 media-type renderer is
+immutable, its strong HTTP ETag is derived as `"sha256:<sourceRevision>"`.
+The frozen renderer plus that source identity covers every effective response
+field without decrypting secrets in the summary path. The legacy v1 response
+continues to use the canonical JSON hash of its payload. Neither validator is a
+persisted desired-state counter, table, singleton, trigger, or cache.
 
 The CLI holds one converge lock from fetch through validation, projection,
 apply, and applied-authority commit. `runtime-applied.json` is the observation
-authority. SSE invalidation only reduces latency; conditional polling and the
-applied ETag/sourceRevision preserve correctness.
+authority. Its v2 record stores the source manifest's provider ID set alongside
+the target-specific projected provider ID map used for stale deletion. The
+heartbeat reports the source-level set, while health requires exact equality
+with current desired provider IDs. SSE invalidation only reduces latency;
+conditional polling and the applied ETag/sourceRevision preserve correctness.
 
 ## Consequences
 
 - There is one network representation, validator, apply operation, and applied
   identity for v2 convergence.
+- Legacy and v2 `200` and `304` responses vary on `Accept`.
+- Unsupported vendor-media `406` responses vary on `Accept` and are not cached.
 - Database mutation fan-out and cross-table revision triggers are unnecessary.
 - WhatsApp remains outside v2 while its CLI projection gate is disabled.
 - Offline recovery caches the effective projected manifest. Secret persistence

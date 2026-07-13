@@ -162,7 +162,14 @@ class HostedRuntimeObservedAppliedV2(_StrictObservedWireModel):
     source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
     generation: int = Field(ge=0)
     instance_id: str = Field(alias="instanceId", min_length=1, max_length=200)
-    projected_provider_ids: list[str] = Field(alias="projectedProviderIds", max_length=100)
+    applied_provider_ids: list[str] = Field(alias="appliedProviderIds", max_length=100)
+
+    @field_validator("applied_provider_ids")
+    @classmethod
+    def validate_applied_provider_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("appliedProviderIds must be unique")
+        return value
 
 
 class HostedRuntimeObservedV2(_StrictObservedWireModel):

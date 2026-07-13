@@ -35,6 +35,7 @@ describe("hosted runtime observed v2", () => {
 					sourcePath: "https://runtime.test/v1/runtime/manifest",
 					sha256: "b".repeat(64),
 				},
+				providerIds: ["managed"],
 				projectedProviderIds: { openclaw: ["managed", "fallback"] },
 			},
 			paths,
@@ -52,7 +53,7 @@ describe("hosted runtime observed v2", () => {
 			sourceRevision: "a".repeat(64),
 			generation: 9,
 			instanceId: "hri_observed",
-			projectedProviderIds: ["fallback", "managed"],
+			appliedProviderIds: ["managed"],
 		});
 		expect(JSON.stringify(observed)).not.toContain("stale-cache-validator");
 	});

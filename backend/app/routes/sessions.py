@@ -82,6 +82,7 @@ from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_source import (
     RuntimeSourceError,
+    expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
     render_runtime_source,
     vault_key_identity,
@@ -1076,6 +1077,14 @@ def _runtime_observed_health(
             reasons.append("source_revision_mismatch")
 
     if isinstance(diagnostics, HostedRuntimeObservedV2) and not desired_source_error:
+        if desired_source_revision is not None and observation is not None:
+            expected_etag = expected_runtime_bundle_v2_etag(desired_source_revision)
+            if (
+                observation.observed_manifest_etag
+                and observation.observed_manifest_etag != expected_etag
+            ):
+                reasons.append("observed_manifest_etag_mismatch")
+
         desired_cli_version = _clawdi_cli_version(desired_cli_package_spec or "")
         if desired_cli_version is None:
             reasons.append("desired_cli_version_invalid")
@@ -1083,6 +1092,17 @@ def _runtime_observed_health(
             reasons.append("active_cli_version_missing")
         elif diagnostics.active_cli_version != desired_cli_version:
             reasons.append("active_cli_version_mismatch")
+
+        desired_provider_ids, _ = _runtime_desired_provider_binding(state.runtimes)
+        applied_provider_ids = (
+            diagnostics.applied.applied_provider_ids if diagnostics.applied else []
+        )
+        missing_provider_ids = sorted(set(desired_provider_ids) - set(applied_provider_ids))
+        extra_provider_ids = sorted(set(applied_provider_ids) - set(desired_provider_ids))
+        if missing_provider_ids:
+            reasons.append("applied_provider_ids_missing_desired")
+        if extra_provider_ids:
+            reasons.append("applied_provider_ids_extra")
 
     supervisor_status = (
         diagnostics.supervisor.status if diagnostics and diagnostics.supervisor else None

@@ -1286,6 +1286,7 @@ function commitRuntimeAppliedState(input: {
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 }): void {
+	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
 		{
@@ -1296,10 +1297,17 @@ function commitRuntimeAppliedState(input: {
 			sourceRevision: input.sourceRevision,
 			generation: input.convergence.manifest.generation,
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 		},
 		input.paths,
 	);
+}
+
+function runtimeSourceProviderIds(manifest: RuntimeManifestLoad["manifest"]): string[] {
+	const selectedRuntime = manifest.runtime;
+	if (!selectedRuntime) return [];
+	return [...new Set(manifest.runtimes[selectedRuntime]?.provider_ids ?? [])].sort();
 }
 
 function parsePositiveMs(
@@ -1822,10 +1830,10 @@ async function runtimeInitLocked(
 			return;
 		}
 
-		const convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
-
+		let convergenceLoad = loaded;
 		let applyResult: RuntimeApplyResult;
 		try {
+			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence) =>
 					commitRuntimeAppliedState({

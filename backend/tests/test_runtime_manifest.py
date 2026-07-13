@@ -39,7 +39,10 @@ from app.schemas.runtime import (
 from app.services import sync_events
 from app.services.audit import _sanitize_audit_details
 from app.services.http_cache import strong_json_etag
-from app.services.runtime_source import RUNTIME_BUNDLE_V2_MEDIA_TYPE
+from app.services.runtime_source import (
+    RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+    expected_runtime_bundle_v2_etag,
+)
 from app.services.vault_crypto import encrypt
 from scripts.seed_dashboard_dev import _create_hosted_runtime_graph, _seed_ai_provider
 from tests.conftest import create_env_with_project
@@ -3545,10 +3548,14 @@ async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         legacy = await client.get("/v1/runtime/manifest")
+        legacy_not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": legacy.headers["etag"]},
+        )
         bundle = await client.get(
             "/v1/runtime/manifest", headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE}
         )
-        not_modified = await client.get(
+        bundle_not_modified = await client.get(
             "/v1/runtime/manifest",
             headers={
                 "Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -3564,8 +3571,11 @@ async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
     assert set(legacy.json()) == {"manifest", "secretValues"}
     assert legacy.headers["etag"] == strong_json_etag(legacy.json())
     assert legacy.headers["cache-control"] == "no-store"
-    assert "vary" not in legacy.headers
+    assert legacy.headers["vary"] == "Accept"
     assert legacy.headers["content-type"].startswith("application/json")
+    assert legacy_not_modified.status_code == 304
+    assert legacy_not_modified.headers["etag"] == legacy.headers["etag"]
+    assert legacy_not_modified.headers["vary"] == "Accept"
     body = bundle.json()
     assert bundle.status_code == 200
     assert set(body) == {
@@ -3584,10 +3594,13 @@ async def test_runtime_manifest_v2_negotiation_preserves_exact_v1_contract(
     }
     assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
     assert bundle.headers["vary"] == "Accept"
-    assert bundle.headers["etag"] == strong_json_etag(body)
-    assert not_modified.status_code == 304
-    assert not_modified.headers["etag"] == bundle.headers["etag"]
+    assert bundle.headers["etag"] == expected_runtime_bundle_v2_etag(body["sourceRevision"])
+    assert bundle_not_modified.status_code == 304
+    assert bundle_not_modified.headers["etag"] == bundle.headers["etag"]
+    assert bundle_not_modified.headers["vary"] == "Accept"
     assert unsupported.status_code == 406
+    assert unsupported.headers["cache-control"] == "no-store"
+    assert unsupported.headers["vary"] == "Accept"
 
 
 @pytest.mark.asyncio

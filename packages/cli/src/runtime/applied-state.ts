@@ -18,6 +18,12 @@ const projectedProviderIdsSchema = z.record(
 	}),
 );
 
+const providerIdsSchema = z
+	.array(z.string().min(1))
+	.refine((ids) => new Set(ids).size === ids.length, {
+		message: "provider IDs must be unique",
+	});
+
 export const runtimeAppliedStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
@@ -27,6 +33,7 @@ export const runtimeAppliedStateSchema = z
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
 		generation: z.number().int().nonnegative(),
 		contentIdentity: appliedContentSourceSchema,
+		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})
 	.strict();
@@ -60,6 +67,7 @@ export interface RuntimeAppliedState {
 	sourceRevision: string | null;
 	generation: number;
 	contentIdentity: RuntimeAppliedContentSource;
+	providerIds: string[] | null;
 	projectedProviderIds: Record<string, string[]>;
 }
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;
@@ -87,6 +95,7 @@ export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedStat
 			sourceRevision: null,
 			generation: legacy.data.observedConfigGeneration,
 			contentIdentity: legacy.data.contentIdentity.manifest,
+			providerIds: null,
 			projectedProviderIds: legacy.data.projectedProviderIds,
 		};
 	} catch {
