@@ -37,7 +37,7 @@ def test_hosted_runtime_config_observation_migration_is_single_head() -> None:
     scripts = ScriptDirectory.from_config(config)
 
     assert scripts.get_heads() == [REVISION]
-    assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
+    assert scripts.get_revision(REVISION).down_revision == "f3a6c9d2e5b8"
 
 
 @pytest.mark.parametrize(
