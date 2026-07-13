@@ -1486,15 +1486,18 @@ describe("runtime manifest reconciliation invariants", () => {
 			generation: 2,
 			issuedAt: "2026-07-01T00:02:00.000Z",
 		};
+		let authorityCommits = 0;
 		const failed = convergeRuntimeManifest(
 			manifestLoad(failedManifest, "inline-install-error"),
 			paths,
+			{ commitAuthority: () => authorityCommits++ },
 		);
 
 		expect(failed.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
 		expect(failed.outputs.manifestLastGood).toBeNull();
+		expect(authorityCommits).toBe(0);
 		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).toMatchObject({
 			generation: 1,
 		});

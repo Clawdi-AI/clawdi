@@ -28,7 +28,10 @@ import {
 	RUNTIME_BRIDGE_SURFACES_ENV,
 	RUNTIME_BRIDGE_TOKEN_ENV,
 } from "../src/runtime/bridge";
-import { applyRuntimeChannelsToManifestLoad } from "../src/runtime/channels";
+import {
+	applyRuntimeBundleChannelsToManifestLoad,
+	applyRuntimeChannelsToManifestLoad,
+} from "../src/runtime/channels";
 import { applyRuntimeCliDesiredState } from "../src/runtime/cli-update";
 import {
 	deniedCommandReason,
@@ -43,6 +46,7 @@ import {
 	withRuntimeConvergeLock,
 } from "../src/runtime/manifest";
 import {
+	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeChannels,
 	loadRemoteRuntimeManifest,
 	normalizeManifestPayload,
@@ -4809,6 +4813,8 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				response: () =>
 					new Response(
 						JSON.stringify({
+							schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+							sourceRevision: "a".repeat(64),
 							manifest: {
 								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -4842,28 +4848,17 @@ printf 'ActiveState=active\\nSubState=running\\n'
 									},
 								},
 							},
+							channelBindings: [],
 							secretValues: { "provider.default.apiKey": "sk-provider-watch" },
 						}),
 						{
 							status: 200,
 							headers: {
-								"content-type": "application/json",
+								"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 								etag: '"etag-watch-12"',
 							},
 						},
 					),
-			},
-			{
-				method: "GET",
-				path: "/v1/channels",
-				response: () =>
-					new Response(JSON.stringify([]), {
-						status: 200,
-						headers: {
-							"content-type": "application/json",
-							etag: '"channels-etag-watch-1"',
-						},
-					}),
 			},
 		]);
 
@@ -4874,22 +4869,18 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(2);
+			expect(captured).toHaveLength(1);
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
-			expect(captured[1].headers.authorization).toBe("Bearer file-runtime-token");
-			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
-				'"etag-watch-12"\n',
-			);
-			expect(readFileSync(join(state, "cache", "channels.etag"), "utf-8")).toBe(
-				'"channels-etag-watch-1"\n',
-			);
+			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
+			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
+			expect(existsSync(join(state, "cache", "channels.etag"))).toBe(false);
 			const appliedState = readRuntimeAppliedState(getRuntimePaths());
 			expect(appliedState).toMatchObject({
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				instanceId: "iid_watch",
-				observedManifestEtag: '"etag-watch-12"',
-				observedChannelsEtag: '"channels-etag-watch-1"',
-				observedConfigGeneration: 12,
+				etag: '"etag-watch-12"',
+				sourceRevision: "a".repeat(64),
+				generation: 12,
 			});
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
@@ -4908,11 +4899,11 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(watchStatus.event.status).toBe("applied");
 			const observed = readHostedRuntimeObserved(getRuntimePaths());
 			expect(observed?.status).toBe("ok");
-			expect(observed?.manifest).toEqual({
+			expect(observed?.applied).toMatchObject({
 				etag: '"etag-watch-12"',
-				lastGoodExists: true,
+				sourceRevision: "a".repeat(64),
+				generation: 12,
 			});
-			expect(observed?.channels).toEqual({ etag: '"channels-etag-watch-1"' });
 			const paths = getRuntimePaths();
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-watch")).toContain(
 				'ExecStart="clawdi" "runtime" "watch"',
@@ -5216,6 +5207,8 @@ exit 42
 		const channelPlaceholderSecretRef =
 			"secret://channels/telegram/clawdi_accttelegram/placeholder-token";
 		const hostedPayload = {
+			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceRevision: "d".repeat(64),
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -5257,42 +5250,26 @@ exit 42
 					},
 				},
 			},
+			channelBindings: [
+				{
+					provider: "telegram",
+					accountKey: "clawdi_accttelegram",
+					agentTokenSecretRef: channelSecretRef,
+					placeholderTokenSecretRef: channelPlaceholderSecretRef,
+				},
+			],
 			secretValues: {
 				[providerSecretRef]: "sk-provider-watch",
+				[channelSecretRef]: "agent-token-watch",
+				[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
 			},
 		};
-		const channelsPayload = [
-			{
-				id: "acct-telegram-watch",
-				provider: "telegram",
-				name: "Runtime Telegram",
-				status: "active",
-				visibility: "private",
-				runtime_links: [
-					{
-						id: "link-telegram-watch",
-						account_id: "acct-telegram-watch",
-						agent_id: "env_watch_secret",
-						status: "active",
-						agent_token: "agent-token-watch",
-					},
-				],
-			},
-		];
 		const manifestResponse = (etag = '"manifest-etag-stable"') =>
 			new Response(JSON.stringify(hostedPayload), {
 				status: 200,
 				headers: {
-					"content-type": "application/json",
+					"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 					etag,
-				},
-			});
-		const channelsResponse = () =>
-			new Response(JSON.stringify(channelsPayload), {
-				status: 200,
-				headers: {
-					"content-type": "application/json",
-					etag: '"channels-etag-next"',
 				},
 			});
 
@@ -5335,22 +5312,14 @@ exit 64
 		const paths = getRuntimePaths();
 		const initial = mockFetch([
 			{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
-			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 		try {
 			const manifestLoad = await loadRemoteRuntimeManifest(paths);
 			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
 				throw new Error("expected initial manifest load success");
 			}
-			const channelsLoad = await loadRemoteRuntimeChannels(paths);
-			if (!("channels" in channelsLoad) || "notModified" in channelsLoad) {
-				throw new Error("expected initial channels load success");
-			}
 			const initialConvergence = convergeRuntimeManifest(
-				applyRuntimeChannelsToManifestLoad(
-					manifestLoad as RuntimeManifestLoad,
-					channelsLoad as RuntimeChannelsLoad,
-				),
+				applyRuntimeBundleChannelsToManifestLoad(manifestLoad as RuntimeManifestLoad),
 				paths,
 			);
 			expect(initialConvergence.installErrors).toEqual([]);
@@ -5359,8 +5328,27 @@ exit 64
 				"secret://provider.default.apiKey",
 				"sk-provider-watch",
 			);
-			writeFileSync(paths.manifestEtag, '"manifest-etag-stable"\n');
-			writeFileSync(paths.channelsEtag, '"channels-etag-current"\n');
+			mkdirSync(dirname(paths.appliedState), { recursive: true });
+			writeFileSync(
+				paths.appliedState,
+				JSON.stringify({
+					schemaVersion: "clawdi.runtimeAppliedState.v1",
+					appliedAt: "2026-07-13T00:00:00.000Z",
+					instanceId: "iid_watch_secret",
+					observedManifestEtag: '"manifest-etag-stable"',
+					observedChannelsEtag: null,
+					observedConfigGeneration: 22,
+					contentIdentity: {
+						manifest: {
+							source: "remote-datasource",
+							sourcePath: "https://runtime.test/v1/runtime/manifest",
+							sha256: "a".repeat(64),
+						},
+						channels: null,
+					},
+					projectedProviderIds: {},
+				}),
+			);
 		} finally {
 			initial.restore();
 		}
@@ -5389,7 +5377,6 @@ exit 64
 							})
 						: manifestResponse('"manifest-etag-effective"'),
 			},
-			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 
 		try {
@@ -5400,23 +5387,21 @@ exit 64
 			}
 			expect(watchFetch.captured.map((request) => request.path)).toEqual([
 				"/v1/runtime/manifest",
-				"/v1/channels",
 				"/v1/runtime/manifest",
 			]);
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
-			expect(watchFetch.captured[1].headers["if-none-match"]).toBe('"channels-etag-current"');
-			expect(watchFetch.captured[2].headers["if-none-match"]).toBeUndefined();
+			expect(watchFetch.captured[1].headers["if-none-match"]).toBeUndefined();
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(22);
 			expect(event.etag).toBe('"manifest-etag-effective"');
-			expect(event.channelsEtag).toBe('"channels-etag-next"');
-			expect(readFileSync(paths.manifestEtag, "utf-8")).toBe('"manifest-etag-effective"\n');
-			expect(readFileSync(paths.channelsEtag, "utf-8")).toBe('"channels-etag-next"\n');
+			expect(existsSync(paths.manifestEtag)).toBe(false);
+			expect(existsSync(paths.channelsEtag)).toBe(false);
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
-				observedManifestEtag: '"manifest-etag-effective"',
-				observedChannelsEtag: '"channels-etag-next"',
-				observedConfigGeneration: 22,
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				etag: '"manifest-etag-effective"',
+				sourceRevision: "d".repeat(64),
+				generation: 22,
 			});
 			expect(event.systemdUnitsChanged).toBe(false);
 			expect(event.systemdApply).toEqual({

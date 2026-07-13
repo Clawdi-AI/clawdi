@@ -3936,6 +3936,48 @@ export function withRuntimeConvergeLock<T>(
 	}
 }
 
+export async function withRuntimeConvergeLockAsync<T>(
+	paths: RuntimePaths,
+	fn: () => Promise<T>,
+	opts: { timeoutMs?: number } = {},
+): Promise<T> {
+	const timeoutMs = opts.timeoutMs ?? 300_000;
+	const lockRoot = join(paths.runRoot, "locks");
+	const lockDir = join(lockRoot, "converge.lock");
+	const startedAt = Date.now();
+	mkdirSync(lockRoot, { recursive: true });
+	for (;;) {
+		try {
+			mkdirSync(lockDir);
+			try {
+				writeConvergeLockOwner(lockDir);
+			} catch (error) {
+				rmSync(lockDir, { recursive: true, force: true });
+				throw error;
+			}
+			break;
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				!("code" in error) ||
+				(error as NodeJS.ErrnoException).code !== "EEXIST"
+			) {
+				throw error;
+			}
+			if (reclaimStaleConvergeLock(lockDir, timeoutMs)) continue;
+			if (Date.now() - startedAt > timeoutMs) {
+				throw new Error(`timed out waiting for runtime converge lock at ${lockDir}`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		rmSync(lockDir, { recursive: true, force: true });
+	}
+}
+
 export function runtimeProgramRevision(
 	manifest: RuntimeManifest,
 	runtime: string,
@@ -4832,11 +4874,9 @@ function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): s
 }
 
 function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> | undefined {
-	const merged = {
-		...(load.secretValues ?? {}),
-		...(load.localSecretValues ?? {}),
-	};
-	return Object.keys(merged).length > 0 ? merged : undefined;
+	return load.secretValues && Object.keys(load.secretValues).length > 0
+		? load.secretValues
+		: undefined;
 }
 
 function validateRuntimeManifestPlan(manifest: RuntimeManifest, paths: RuntimePaths): void {
@@ -5978,7 +6018,7 @@ export function convergeRuntimeManifest(
 				bootFinished,
 			},
 		};
-		opts.commitAuthority?.(convergence);
+		if (installErrors.length === 0) opts.commitAuthority?.(convergence);
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);

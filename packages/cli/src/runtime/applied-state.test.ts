@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,22 +15,15 @@ const roots: string[] = [];
 
 function appliedStateFixture() {
 	return {
-		schemaVersion: "clawdi.runtimeAppliedState.v1" as const,
+		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
 		appliedAt: "2026-07-13T06:00:00.000Z",
 		instanceId: "hri_applied_state",
-		observedManifestEtag: '"manifest-generation-7"',
-		observedChannelsEtag: '"channels-3"',
-		observedConfigGeneration: 7,
+		etag: '"bundle-generation-7"',
+		sourceRevision: "c".repeat(64),
+		generation: 7,
 		contentIdentity: {
-			manifest: {
-				source: "remote-datasource" as const,
-				sourcePath: "https://runtime.test/v1/runtime/manifest",
-				sha256: "a".repeat(64),
-			},
-			channels: {
-				sourcePath: "https://runtime.test/v1/channels",
-				sha256: "b".repeat(64),
-			},
+			sourcePath: "https://runtime.test/v1/runtime/manifest",
+			sha256: "a".repeat(64),
 		},
 		projectedProviderIds: {
 			hermes: ["clawdi-default"],
@@ -45,17 +38,16 @@ afterEach(() => {
 });
 
 describe("runtime applied state", () => {
-	test("uses a strict v1 schema with separate observed ETag and generation facts", () => {
+	test("uses a strict v2 schema with one applied authority", () => {
 		const state = appliedStateFixture();
 		expect(runtimeAppliedStateSchema.safeParse(state).success).toBe(true);
-		expect(runtimeAppliedStateSchema.safeParse({ ...state, generation: 7 }).success).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({ ...state, channelsEtag: '"legacy"' }).success,
+		).toBe(false);
 		expect(
 			runtimeAppliedStateSchema.safeParse({
 				...state,
-				contentIdentity: {
-					...state.contentIdentity,
-					manifest: { ...state.contentIdentity.manifest, etag: '"legacy"' },
-				},
+				contentIdentity: { ...state.contentIdentity, etag: '"legacy"' },
 			}).success,
 		).toBe(false);
 		expect(
@@ -86,5 +78,42 @@ describe("runtime applied state", () => {
 		expect(runtimeContentSha256({ a: 1, nested: { b: 2, c: 3 } })).toBe(
 			runtimeContentSha256({ nested: { c: 3, b: 2 }, a: 1 }),
 		);
+	});
+
+	test("reads legacy v1 state without inventing a source revision", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-applied-state-legacy-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(join(root, "state", "status"), { recursive: true });
+		writeFileSync(
+			paths.appliedState,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T06:00:00.000Z",
+				instanceId: "hri_legacy",
+				observedManifestEtag: '"legacy"',
+				observedChannelsEtag: null,
+				observedConfigGeneration: 6,
+				contentIdentity: {
+					manifest: {
+						source: "remote-datasource",
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
+					},
+					channels: null,
+				},
+				projectedProviderIds: {},
+			}),
+		);
+
+		expect(readRuntimeAppliedState(paths)).toMatchObject({
+			schemaVersion: "clawdi.runtimeAppliedState.v1",
+			etag: '"legacy"',
+			sourceRevision: null,
+			generation: 6,
+		});
 	});
 });

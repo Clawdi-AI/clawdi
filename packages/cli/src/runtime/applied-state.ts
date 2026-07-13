@@ -13,14 +13,25 @@ const appliedContentSourceSchema = z
 
 const projectedProviderIdsSchema = z.record(
 	z.string().min(1),
-	z
-		.array(z.string().min(1))
-		.refine((providerIds) => new Set(providerIds).size === providerIds.length, {
-			message: "projected provider IDs must be unique",
-		}),
+	z.array(z.string().min(1)).refine((ids) => new Set(ids).size === ids.length, {
+		message: "projected provider IDs must be unique",
+	}),
 );
 
 export const runtimeAppliedStateSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
+		appliedAt: z.string().datetime({ offset: true }),
+		instanceId: z.string().min(1),
+		etag: z.string().min(1),
+		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
+		generation: z.number().int().nonnegative(),
+		contentIdentity: appliedContentSourceSchema,
+		projectedProviderIds: projectedProviderIdsSchema,
+	})
+	.strict();
+
+const runtimeAppliedStateV1Schema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v1"),
 		appliedAt: z.string().datetime({ offset: true }),
@@ -38,20 +49,21 @@ export const runtimeAppliedStateSchema = z
 			.strict(),
 		projectedProviderIds: projectedProviderIdsSchema,
 	})
-	.strict()
-	.superRefine((state, context) => {
-		if (state.contentIdentity.channels === null && state.observedChannelsEtag !== null) {
-			context.addIssue({
-				code: "custom",
-				path: ["observedChannelsEtag"],
-				message: "observed channels ETag requires applied channels content",
-			});
-		}
-	});
+	.strict();
 
-export type RuntimeAppliedState = z.infer<typeof runtimeAppliedStateSchema>;
+export type RuntimeAppliedStateV2 = z.infer<typeof runtimeAppliedStateSchema>;
+export interface RuntimeAppliedState {
+	schemaVersion: "clawdi.runtimeAppliedState.v1" | "clawdi.runtimeAppliedState.v2";
+	appliedAt: string;
+	instanceId: string;
+	etag: string | null;
+	sourceRevision: string | null;
+	generation: number;
+	contentIdentity: RuntimeAppliedContentSource;
+	projectedProviderIds: Record<string, string[]>;
+}
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;
-export type RuntimeAppliedContentIdentity = RuntimeAppliedState["contentIdentity"];
+export type RuntimeAppliedContentIdentity = RuntimeAppliedContentSource;
 
 export function runtimeContentSha256(value: unknown): string {
 	return createHash("sha256")
@@ -62,16 +74,30 @@ export function runtimeContentSha256(value: unknown): string {
 export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedState | null {
 	if (!existsSync(paths.appliedState)) return null;
 	try {
-		const parsed = runtimeAppliedStateSchema.safeParse(
-			JSON.parse(readFileSync(paths.appliedState, "utf-8")),
-		);
-		return parsed.success ? parsed.data : null;
+		const raw = JSON.parse(readFileSync(paths.appliedState, "utf-8")) as unknown;
+		const current = runtimeAppliedStateSchema.safeParse(raw);
+		if (current.success) return current.data;
+		const legacy = runtimeAppliedStateV1Schema.safeParse(raw);
+		if (!legacy.success) return null;
+		return {
+			schemaVersion: legacy.data.schemaVersion,
+			appliedAt: legacy.data.appliedAt,
+			instanceId: legacy.data.instanceId,
+			etag: legacy.data.observedManifestEtag,
+			sourceRevision: null,
+			generation: legacy.data.observedConfigGeneration,
+			contentIdentity: legacy.data.contentIdentity.manifest,
+			projectedProviderIds: legacy.data.projectedProviderIds,
+		};
 	} catch {
 		return null;
 	}
 }
 
-export function writeRuntimeAppliedState(state: RuntimeAppliedState, paths: RuntimePaths): string {
+export function writeRuntimeAppliedState(
+	state: RuntimeAppliedStateV2,
+	paths: RuntimePaths,
+): string {
 	const parsed = runtimeAppliedStateSchema.parse(state);
 	writePrivateFileAtomic(paths.appliedState, `${JSON.stringify(parsed, null, 2)}\n`, {
 		mode: 0o644,

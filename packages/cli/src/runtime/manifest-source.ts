@@ -31,11 +31,52 @@ export interface RuntimeManifestLoad {
 	offline: boolean;
 	// Values supplied by the manifest datasource. Keep this deploy-surface map provider-only.
 	secretValues?: Record<string, string>;
-	// Values synthesized from separate local/runtime datasources, such as /v1/channels.
-	localSecretValues?: Record<string, string>;
+	channelBindings?: RuntimeBundleChannelBinding[];
+	sourceRevision?: string;
 	// Original datasource manifest before local runtime projections are applied.
 	sourceManifest?: RuntimeManifest;
 	etag?: string;
+}
+
+export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
+
+export interface RuntimeBundleChannelBinding {
+	provider: "telegram" | "discord";
+	accountKey: string;
+	agentTokenSecretRef: string;
+	placeholderTokenSecretRef: string;
+}
+
+const runtimeBundleChannelBindingSchema = z
+	.object({
+		provider: z.enum(["telegram", "discord"]),
+		accountKey: z.string().min(1),
+		agentTokenSecretRef: z.string().min(1),
+		placeholderTokenSecretRef: z.string().min(1),
+	})
+	.strict();
+
+const hostedRuntimeBundleV2Schema = z
+	.object({
+		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
+		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
+		manifest: hostedRuntimeManifestResponseSchema.shape.manifest,
+		channelBindings: z.array(runtimeBundleChannelBindingSchema),
+		secretValues: z.record(z.string(), z.string()),
+	})
+	.strict();
+
+export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
+	const bundle = hostedRuntimeBundleV2Schema.parse(value);
+	return {
+		manifest: hostedManifestToRuntimeManifest(bundle.manifest),
+		source: "remote-datasource",
+		sourcePath: "https://fixture.invalid/v1/runtime/manifest",
+		offline: false,
+		secretValues: normalizeSecretValues(bundle.secretValues),
+		channelBindings: bundle.channelBindings,
+		sourceRevision: bundle.sourceRevision,
+	};
 }
 
 export interface RuntimeManifestNotModified {
@@ -250,12 +291,19 @@ export function normalizeManifestPayload(value: unknown): {
 function normalizeRemoteManifestPayload(
 	value: unknown,
 	paths: RuntimePaths,
-): { manifest: RuntimeManifest; secretValues?: Record<string, string> } {
+): {
+	manifest: RuntimeManifest;
+	secretValues?: Record<string, string>;
+	channelBindings?: RuntimeBundleChannelBinding[];
+	sourceRevision?: string;
+} {
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
-	const hostedResponse = hostedRuntimeManifestResponseSchema.parse(value);
+	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
 	return {
 		manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
+		channelBindings: hostedResponse.channelBindings,
+		sourceRevision: hostedResponse.sourceRevision,
 	};
 }
 
@@ -393,7 +441,7 @@ async function fetchRuntimeManifestPayload(
 		const response = await fetch(url, {
 			method: "GET",
 			headers: {
-				accept: "application/json",
+				accept: paths.mode === "hosted" ? HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE : "application/json",
 				authorization: `Bearer ${token}`,
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
@@ -413,6 +461,15 @@ async function fetchRuntimeManifestPayload(
 					detail ? ` ${detail.slice(0, 200)}` : ""
 				}`,
 			);
+		}
+		if (paths.mode === "hosted") {
+			const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+			if (contentType !== HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE) {
+				throw new Error(
+					`runtime manifest response content-type must be ${HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE}, received ${contentType ?? "missing"}`,
+				);
+			}
+			if (!etag) throw new Error("runtime bundle response is missing its strong ETag");
 		}
 		return { url, raw: await response.json(), etag };
 	} finally {
@@ -524,7 +581,12 @@ export async function loadRemoteRuntimeManifest(
 		};
 	}
 
-	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
+	let normalized: {
+		manifest: RuntimeManifest;
+		secretValues?: Record<string, string>;
+		channelBindings?: RuntimeBundleChannelBinding[];
+		sourceRevision?: string;
+	};
 	try {
 		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
 	} catch (error) {
@@ -685,7 +747,7 @@ function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 	if (appliedState) {
 		return {
 			instanceId: appliedState.instanceId,
-			generation: appliedState.observedConfigGeneration,
+			generation: appliedState.generation,
 		};
 	}
 	if (existsSync(paths.appliedState) || !existsSync(paths.manifestLastGood)) return {};
@@ -1077,7 +1139,12 @@ function collectSecretRefs(value: unknown, refs: Set<string>): void {
 }
 
 function validateLoadedManifest(
-	normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> },
+	normalized: {
+		manifest: RuntimeManifest;
+		secretValues?: Record<string, string>;
+		channelBindings?: RuntimeBundleChannelBinding[];
+		sourceRevision?: string;
+	},
 	paths: RuntimePaths,
 	source: RuntimeManifestLoad["source"],
 	sourcePath: string,
@@ -1108,5 +1175,7 @@ function validateLoadedManifest(
 		sourcePath,
 		offline: false,
 		secretValues: normalized.secretValues,
+		channelBindings: normalized.channelBindings,
+		sourceRevision: normalized.sourceRevision,
 	};
 }
