@@ -856,10 +856,8 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
         return None
     return {
         "type": provider.type,
-        "label": provider.label,
         "base_url": provider.base_url,
         "api_mode": provider.api_mode,
-        "capabilities": provider.capabilities,
         "models": provider.models,
         "auth_type": provider.auth_type,
         "auth_ref": provider.auth_ref,

@@ -346,6 +346,17 @@ async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
         }
         assert q_b.empty()
 
+        presentation_only = await client.patch(
+            "/v1/ai-providers/openai-main",
+            json={
+                "label": "OpenAI presentation label",
+                "capabilities": {"chat": True},
+            },
+        )
+        assert presentation_only.status_code == 200, presentation_only.text
+        assert q_a.empty()
+        assert q_b.empty()
+
         rotated = await client.post(
             "/v1/ai-providers/openai-main/auth/api-key",
             json={"value": "sk-rotated", "runtime_env_name": "OPENAI_API_KEY"},
