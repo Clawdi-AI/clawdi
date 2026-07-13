@@ -1299,7 +1299,7 @@ function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePat
 	);
 }
 
-function runtimeAppliedContentIdentity(
+export function runtimeAppliedContentIdentity(
 	load: RuntimeManifestLoad,
 	channels: RuntimeChannelsLoad | null,
 ): RuntimeAppliedContentIdentity {
@@ -1307,7 +1307,10 @@ function runtimeAppliedContentIdentity(
 		manifest: {
 			source: load.source,
 			sourcePath: load.sourcePath,
-			sha256: runtimeContentSha256(load.sourceManifest ?? load.manifest),
+			sha256: runtimeContentSha256({
+				manifest: load.sourceManifest ?? load.manifest,
+				secretValues: load.secretValues ?? {},
+			}),
 		},
 		channels: channels
 			? {
@@ -1327,44 +1330,24 @@ function commitRuntimeAppliedState(input: {
 	persistRemoteEtags: boolean;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 }): void {
-	const authorityPaths = [
-		input.paths.manifestLastGood,
-		input.paths.manifestEtag,
-		input.paths.channelsEtag,
-		input.paths.appliedState,
-	];
-	const previous = new Map(
-		authorityPaths.map((path) => [path, existsSync(path) ? readFileSync(path) : null]),
-	);
-	try {
-		input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(
-			input.load,
-			input.paths,
-		);
-		if (input.persistRemoteEtags) {
-			writeRuntimeManifestEtag(input.paths, input.observedManifestEtag ?? undefined);
-			writeRuntimeChannelsEtag(input.paths, input.observedChannelsEtag ?? undefined);
-		}
-		input.convergence.outputs.appliedState = writeRuntimeAppliedState(
-			{
-				schemaVersion: "clawdi.runtimeAppliedState.v1",
-				appliedAt: new Date().toISOString(),
-				instanceId: input.convergence.manifest.instanceId,
-				observedManifestEtag: input.observedManifestEtag,
-				observedChannelsEtag: input.observedChannelsEtag,
-				observedConfigGeneration: input.convergence.manifest.generation,
-				contentIdentity: runtimeAppliedContentIdentity(input.load, input.channels),
-				projectedProviderIds: input.convergence.projectedProviderIds,
-			},
-			input.paths,
-		);
-	} catch (error) {
-		for (const [path, content] of previous) {
-			if (content === null) rmSync(path, { force: true });
-			else writePrivateFileAtomic(path, content.toString("utf8"), { mode: 0o600, dirMode: 0o700 });
-		}
-		throw error;
+	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
+	if (input.persistRemoteEtags) {
+		writeRuntimeManifestEtag(input.paths, input.observedManifestEtag ?? undefined);
+		writeRuntimeChannelsEtag(input.paths, input.observedChannelsEtag ?? undefined);
 	}
+	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
+		{
+			schemaVersion: "clawdi.runtimeAppliedState.v1",
+			appliedAt: new Date().toISOString(),
+			instanceId: input.convergence.manifest.instanceId,
+			observedManifestEtag: input.observedManifestEtag,
+			observedChannelsEtag: input.observedChannelsEtag,
+			observedConfigGeneration: input.convergence.manifest.generation,
+			contentIdentity: runtimeAppliedContentIdentity(input.load, input.channels),
+			projectedProviderIds: input.convergence.projectedProviderIds,
+		},
+		input.paths,
+	);
 }
 
 function readRuntimeChannelsEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
@@ -2391,11 +2374,8 @@ function applyRuntimeDesiredState(
 				}
 			},
 			rollback: () => {
-				applySystemdRuntimeUpdate(
-					paths,
-					failedSystemdUnits ?? { system: new Map(), user: new Map() },
-					readSystemdUnitSnapshot(paths),
-				);
+				if (!failedSystemdUnits) return;
+				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths));
 			},
 		},
 	});

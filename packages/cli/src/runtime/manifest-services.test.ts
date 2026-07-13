@@ -557,6 +557,7 @@ cat > '${logPath}'
 			"official openclaw-gateway service install failed",
 		);
 		expect(existsSync(paths.managedConfig)).toBe(false);
+		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
 		expect(existsSync(dropInPath)).toBe(false);
 		expect(
 			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),

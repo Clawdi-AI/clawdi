@@ -6,6 +6,7 @@ import {
 	chownSync,
 	constants,
 	existsSync,
+	lchownSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -166,9 +167,17 @@ interface RuntimeSystemdApplyHooks {
 
 type RuntimeLiveSnapshotNode =
 	| { kind: "missing" }
-	| { kind: "file"; content: Buffer; mode: number }
-	| { kind: "symlink"; target: string }
-	| { kind: "directory"; mode: number; entries: Map<string, RuntimeLiveSnapshotNode> };
+	| { kind: "metadata"; existed: false }
+	| { kind: "metadata"; existed: true; mode: number; uid: number; gid: number }
+	| { kind: "file"; content: Buffer; mode: number; uid: number; gid: number }
+	| { kind: "symlink"; target: string; uid: number; gid: number }
+	| {
+			kind: "directory";
+			mode: number;
+			uid: number;
+			gid: number;
+			entries: Map<string, RuntimeLiveSnapshotNode>;
+	  };
 
 interface RuntimeLiveSnapshot {
 	entries: Map<string, RuntimeLiveSnapshotNode>;
@@ -5018,36 +5027,140 @@ function runtimeConvergenceWithoutApply(input: {
 	};
 }
 
-function runtimeLiveSnapshotPaths(
+function addExistingManagedSystemdPaths(paths: RuntimePaths, result: Set<string>): void {
+	for (const root of [paths.systemdSystemRoot, paths.systemdUserRoot]) {
+		if (!existsSync(root)) continue;
+		for (const entry of readdirSync(root)) {
+			const path = join(root, entry);
+			if (
+				entry.endsWith(".service") &&
+				(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path))
+			) {
+				result.add(path);
+			}
+			if (!entry.endsWith(".service.d")) continue;
+			const dropIn = join(path, "10-clawdi-hosted.conf");
+			if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
+		}
+	}
+	const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
+	if (existsSync(wantsRoot)) {
+		for (const entry of readdirSync(wantsRoot)) {
+			const path = join(wantsRoot, entry);
+			if (entry.startsWith("clawdi-") || isGeneratedSystemdFile(path)) result.add(path);
+		}
+	}
+}
+
+function addManagedWhatsAppSnapshotPaths(manifest: RuntimeManifest, result: Set<string>): void {
+	for (const credential of hostedWhatsAppAuthCredentials(manifest)) result.add(credential.authDir);
+	for (const root of Object.values(managedWhatsAppAuthRoots(manifest))) {
+		if (!root || !existsSync(root)) continue;
+		for (const entry of readdirSync(root)) {
+			const authDir = join(root, entry);
+			if (readManagedWhatsAppAuthMarker(authDir)) result.add(authDir);
+		}
+	}
+}
+
+export function runtimeLiveSnapshotPaths(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	workspaceRoot: string,
 ): string[] {
 	const home = projectionSystemHome(manifest) ?? paths.userHome;
-	return [
-		paths.serviceStateRoot,
-		paths.runRoot,
-		paths.clawdiHome,
-		paths.systemdUserRoot,
-		paths.systemdSystemRoot,
+	const result = new Set<string>([
+		paths.managedConfig,
+		paths.syncState,
+		paths.providerHealthStatus,
+		paths.egressEngineStatus,
+		paths.manifestLastGood,
+		paths.managedSecretCacheFile,
+		paths.manifestEtag,
+		paths.channelsEtag,
+		paths.appliedState,
+		paths.runConfigRoot,
+		paths.egressProfileRoot,
+		paths.installInventory,
+		paths.projectionRoot,
+		join(paths.instanceRoot, manifest.instanceId),
+		paths.managedSecretRoot,
+		paths.egressRoot,
+		paths.egressScratchRoot,
+		paths.systemdEnvRoot,
+		paths.instanceData,
+		paths.sensitiveInstanceData,
+		liveSyncEnvironmentIndexPath(paths),
 		join(workspaceRoot, "SOUL.md"),
-		join(home, ".hermes"),
-		join(home, ".openclaw"),
-		hostedCodexHome(home),
-	].filter((path, index, all) => all.indexOf(path) === index);
+		join(home, ".openclaw", "openclaw.json"),
+		join(home, ".hermes", "config.yaml"),
+		join(home, ".hermes", "SOUL.md"),
+		hermesModelProviderPluginDir(home),
+		join(hostedCodexHome(home), "config.toml"),
+		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_STATE_FILE),
+	]);
+	for (const agent of MANAGED_LIVE_SYNC_AGENTS) {
+		result.add(join(paths.localEnvironments, `${agent}.json`));
+	}
+	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
+		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
+	}
+	for (const [runtime, settings] of Object.entries(manifest.runtimes)) {
+		const names = [
+			runtimeServiceProgramName(runtime, "gateway"),
+			`clawdi-${systemdUnitNameSegment(runtime)}`,
+			...Object.keys(settings.services ?? {}).map((service) =>
+				runtimeServiceProgramName(runtime, service),
+			),
+		];
+		for (const name of names) {
+			const unit = systemdUnitFileName(name);
+			result.add(join(paths.systemdUserRoot, unit));
+			result.add(join(paths.systemdUserRoot, `${unit}.d`, "10-clawdi-hosted.conf"));
+			result.add(join(paths.systemdUserRoot, "default.target.wants", unit));
+		}
+	}
+	addExistingManagedSystemdPaths(paths, result);
+	addManagedWhatsAppSnapshotPaths(manifest, result);
+	return [...result].sort();
+}
+
+function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): string[] {
+	return [
+		...new Set(
+			snapshotPaths
+				.filter((path) => basename(path) === "10-clawdi-hosted.conf")
+				.map((path) => dirname(path)),
+		),
+	].sort();
 }
 
 function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
-	if (!existsSync(path)) return { kind: "missing" };
-	const stat = lstatSync(path);
-	if (stat.isSymbolicLink()) return { kind: "symlink", target: readlinkSync(path) };
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+		throw error;
+	}
+	if (stat.isSymbolicLink()) {
+		return { kind: "symlink", target: readlinkSync(path), uid: stat.uid, gid: stat.gid };
+	}
 	if (stat.isFile()) {
-		return { kind: "file", content: readFileSync(path), mode: stat.mode & 0o777 };
+		return {
+			kind: "file",
+			content: readFileSync(path),
+			mode: stat.mode & 0o777,
+			uid: stat.uid,
+			gid: stat.gid,
+		};
 	}
 	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
 	return {
 		kind: "directory",
 		mode: stat.mode & 0o777,
+		uid: stat.uid,
+		gid: stat.gid,
 		entries: new Map(
 			readdirSync(path)
 				.sort()
@@ -5056,41 +5169,90 @@ function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
 	};
 }
 
+function captureRuntimeLiveMetadata(path: string): RuntimeLiveSnapshotNode {
+	try {
+		const stat = lstatSync(path);
+		return {
+			kind: "metadata",
+			existed: true,
+			mode: stat.mode & 0o777,
+			uid: stat.uid,
+			gid: stat.gid,
+		};
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return { kind: "metadata", existed: false };
+		}
+		throw error;
+	}
+}
+
+function restoreRuntimeLiveOwnership(
+	path: string,
+	uid: number,
+	gid: number,
+	symlink: boolean,
+): void {
+	const restored = lstatSync(path);
+	if (restored.uid === uid && restored.gid === gid) return;
+	if (symlink) lchownSync(path, uid, gid);
+	else chownSync(path, uid, gid);
+}
+
 function captureRuntimeLiveSnapshot(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	workspaceRoot: string,
 ): RuntimeLiveSnapshot {
+	const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
 	return {
-		entries: new Map(
-			runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot).map((path) => [
-				path,
-				captureRuntimeLiveNode(path),
-			]),
-		),
+		entries: new Map([
+			...snapshotPaths.map((path) => [path, captureRuntimeLiveNode(path)] as const),
+			...runtimeLiveSnapshotMetadataPaths(snapshotPaths).map(
+				(path) => [path, captureRuntimeLiveMetadata(path)] as const,
+			),
+		]),
 	};
 }
 
 function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): void {
+	if (node.kind === "metadata") {
+		if (!node.existed) {
+			if (existsSync(path) && readdirSync(path).length === 0) rmSync(path, { recursive: true });
+			return;
+		}
+		if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: node.mode });
+		chmodSync(path, node.mode);
+		restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
+		return;
+	}
 	rmSync(path, { recursive: true, force: true });
 	if (node.kind === "missing") return;
 	mkdirSync(dirname(path), { recursive: true });
 	if (node.kind === "symlink") {
 		symlinkSync(node.target, path);
+		restoreRuntimeLiveOwnership(path, node.uid, node.gid, true);
 		return;
 	}
 	if (node.kind === "file") {
 		writeFileSync(path, node.content, { mode: node.mode });
 		chmodSync(path, node.mode);
+		restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
 		return;
 	}
 	mkdirSync(path, { recursive: true, mode: node.mode });
 	chmodSync(path, node.mode);
 	for (const [entry, child] of node.entries) restoreRuntimeLiveNode(join(path, entry), child);
+	restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
 }
 
 function restoreRuntimeLiveSnapshot(snapshot: RuntimeLiveSnapshot): void {
-	for (const [path, node] of snapshot.entries) restoreRuntimeLiveNode(path, node);
+	for (const [path, node] of snapshot.entries) {
+		if (node.kind !== "metadata") restoreRuntimeLiveNode(path, node);
+	}
+	for (const [path, node] of snapshot.entries) {
+		if (node.kind === "metadata") restoreRuntimeLiveNode(path, node);
+	}
 }
 
 function validateRuntimeProjectionPlan(input: {
@@ -5354,7 +5516,6 @@ export function convergeRuntimeManifest(
 	// Installers and probes may need a private scratch/log root. This is not
 	// generation-owned live configuration and is created only after Plan succeeds.
 	mkdirSync(paths.runRoot, { recursive: true });
-	mkdirSync(workspaceRoot, { recursive: true });
 	let codexCli: Record<string, string> | null = null;
 	if (hostedCodexManagedProvider(manifest)) {
 		try {
@@ -5371,7 +5532,7 @@ export function convergeRuntimeManifest(
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 		try {
-			installHostedChannelProjectionDependencies(name, observation, manifest, workspaceRoot);
+			installHostedChannelProjectionDependencies(name, observation, manifest, paths.userHome);
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} channel plugin install failed: ${
@@ -5413,7 +5574,9 @@ export function convergeRuntimeManifest(
 		managedPrimaryModelOverrides,
 	});
 
+	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
+	let systemdActivationAttempted = false;
 	try {
 		const installedOfficialServices = new Set<string>();
 		for (const program of plannedRuntimePrograms) {
@@ -5431,6 +5594,7 @@ export function convergeRuntimeManifest(
 			if (error) throw new Error(error);
 		}
 
+		mkdirSync(workspaceRoot, { recursive: true });
 		makeRuntimeUserOwned(paths.userHome);
 		makeRuntimeUserPrivateDir(paths.clawdiHome);
 		makeRuntimeUserOwned(workspaceRoot);
@@ -5766,6 +5930,7 @@ export function convergeRuntimeManifest(
 		removeStaleRuntimeRunConfigs(writtenRunConfigIds, paths);
 		removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
 		if (opts.systemdApply) {
+			systemdActivationAttempted = true;
 			opts.systemdApply.activate();
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
@@ -5826,7 +5991,18 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		if (opts.systemdApply) {
+		if (!workspaceExistedBeforeApply && existsSync(workspaceRoot)) {
+			try {
+				if (readdirSync(workspaceRoot).length === 0) rmSync(workspaceRoot, { recursive: true });
+			} catch (rollbackError) {
+				installErrors.push(
+					`runtime workspace rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+		}
+		if (systemdActivationAttempted && opts.systemdApply) {
 			try {
 				opts.systemdApply.rollback();
 			} catch (rollbackError) {

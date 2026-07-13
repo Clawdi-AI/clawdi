@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	existsSync,
@@ -6,6 +7,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +16,7 @@ import {
 	convergeRuntimeManifest,
 	hostedAiProviderCatalog,
 	type RuntimeManifest,
+	runtimeLiveSnapshotPaths,
 	runtimeProgramRevision,
 	runtimeSecretValue,
 	runtimeSidecarProgramRevision,
@@ -32,6 +35,7 @@ import {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
@@ -1575,6 +1579,11 @@ describe("runtime manifest reconciliation invariants", () => {
 		const workspaceRoot = join(paths.userHome, "clawdi");
 		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const targetConfig = join(paths.userHome, ".openclaw", "openclaw.json");
+		const unmanagedState = join(paths.serviceStateRoot, "unmanaged.txt");
+		const unmanagedRun = join(paths.runRoot, "unmanaged.txt");
+		const unmanagedOpenClaw = join(paths.userHome, ".openclaw", "user-data.txt");
+		const unmanagedHermes = join(paths.userHome, ".hermes", "user-data.txt");
+		const unmanagedFifo = join(paths.runRoot, "unmanaged.fifo");
 		mkdirSync(dirname(commandPath), { recursive: true });
 		mkdirSync(workspaceRoot, { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
@@ -1588,6 +1597,17 @@ describe("runtime manifest reconciliation invariants", () => {
 			),
 		);
 		chmodSync(commandPath, 0o700);
+		for (const path of [unmanagedState, unmanagedRun, unmanagedOpenClaw, unmanagedHermes]) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `unmanaged:${path}\n`);
+		}
+		execFileSync("mkfifo", [unmanagedFifo]);
+		const unmanagedContents = new Map(
+			[unmanagedState, unmanagedRun, unmanagedOpenClaw, unmanagedHermes].map((path) => [
+				path,
+				readFileSync(path),
+			]),
+		);
 		const preservedPaths = [
 			paths.managedConfig,
 			join(paths.runConfigRoot, "stale.json"),
@@ -1599,6 +1619,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `old-${index}\n`);
 		}
+		chmodSync(paths.managedConfig, 0o640);
+		const previousManagedStat = statSync(paths.managedConfig);
 		const previous = new Map(preservedPaths.map((path) => [path, readFileSync(path)]));
 		const manifest = baseManifest(
 			paths,
@@ -1612,7 +1634,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			{ locale: { language: "en", timezone: "UTC" } },
 		);
 
-		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths);
+		let activateCalls = 0;
+		let rollbackCalls = 0;
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths, {
+			systemdApply: {
+				activate: () => {
+					activateCalls += 1;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					rollbackCalls += 1;
+				},
+			},
+		});
 
 		expect(result.installErrors.join("\n")).toContain(
 			"runtime openclaw provider projection failed",
@@ -1621,6 +1655,80 @@ describe("runtime manifest reconciliation invariants", () => {
 			const expected = previous.get(path);
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
 			expect(readFileSync(path)).toEqual(expected);
+		}
+		const restoredManagedStat = statSync(paths.managedConfig);
+		expect(restoredManagedStat.mode & 0o777).toBe(previousManagedStat.mode & 0o777);
+		expect(restoredManagedStat.uid).toBe(previousManagedStat.uid);
+		expect(restoredManagedStat.gid).toBe(previousManagedStat.gid);
+		for (const [path, expected] of unmanagedContents) {
+			expect(readFileSync(path)).toEqual(expected);
+		}
+		expect(statSync(unmanagedFifo).isFIFO()).toBe(true);
+		expect(activateCalls).toBe(0);
+		expect(rollbackCalls).toBe(0);
+	});
+
+	test("snapshots only the managed systemd drop-in and leaves siblings untouched", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const dropInRoot = join(paths.systemdUserRoot, "openclaw-gateway.service.d");
+		const managedDropIn = join(dropInRoot, "10-clawdi-hosted.conf");
+		const siblingDropIn = join(dropInRoot, "50-user.conf");
+		const siblingFifo = join(dropInRoot, "60-user.fifo");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		mkdirSync(workspaceRoot, { recursive: true });
+		mkdirSync(dropInRoot, { recursive: true });
+		writeFileSync(commandPath, "#!/usr/bin/env bash\ncat >/dev/null || true\nexit 42\n");
+		chmodSync(commandPath, 0o700);
+		writeFileSync(managedDropIn, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nold managed\n`);
+		writeFileSync(siblingDropIn, "user-owned\n");
+		execFileSync("mkfifo", [siblingFifo]);
+		const previousManaged = readFileSync(managedDropIn);
+		const previousSibling = readFileSync(siblingDropIn);
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{ locale: { language: "en", timezone: "UTC" } },
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-dropin-failure"), paths);
+
+		expect(result.installErrors).not.toEqual([]);
+		expect(readFileSync(managedDropIn)).toEqual(previousManaged);
+		expect(readFileSync(siblingDropIn)).toEqual(previousSibling);
+		expect(statSync(siblingFifo).isFIFO()).toBe(true);
+	});
+
+	test("uses an explicit managed snapshot allowlist without broad runtime roots", () => {
+		const paths = tempRuntimePaths();
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const manifest = baseManifest(paths, {
+			openclaw: { enabled: true, run: runSettings("openclaw", []), services: {} },
+			hermes: { enabled: true, run: runSettings("hermes", []), services: {} },
+		});
+		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
+
+		expect(snapshotPaths).not.toContain(paths.serviceStateRoot);
+		expect(snapshotPaths).not.toContain(paths.runRoot);
+		expect(snapshotPaths).not.toContain(paths.userHome);
+		expect(snapshotPaths).not.toContain(workspaceRoot);
+		expect(snapshotPaths).not.toContain(join(paths.userHome, ".openclaw"));
+		expect(snapshotPaths).not.toContain(join(paths.userHome, ".hermes"));
+		expect(snapshotPaths).toContain(paths.managedConfig);
+		expect(snapshotPaths).toContain(join(paths.userHome, ".openclaw", "openclaw.json"));
+		expect(snapshotPaths).toContain(join(paths.userHome, ".hermes", "config.yaml"));
+		for (const [index, path] of snapshotPaths.entries()) {
+			for (const other of snapshotPaths.slice(index + 1)) {
+				expect(other.startsWith(`${path}/`) || path.startsWith(`${other}/`)).toBe(false);
+			}
 		}
 	});
 
@@ -1650,6 +1758,46 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow(/mcp_servers must be a YAML object/);
 		expect(readFileSync(hermesConfig)).toEqual(previousConfig);
 		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
+	});
+
+	test("rolls back managed state when the authority commit fails", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		mkdirSync(dirname(paths.appliedState), { recursive: true });
+		writeFileSync(paths.managedConfig, "old-managed\n");
+		writeFileSync(paths.appliedState, "old-applied\n");
+		chmodSync(paths.managedConfig, 0o640);
+		const previousManaged = readFileSync(paths.managedConfig);
+		const previousApplied = readFileSync(paths.appliedState);
+		const previousStat = statSync(paths.managedConfig);
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				run: runSettings("openclaw", ["gateway", "run"]),
+				services: {},
+			},
+		});
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "inline-authority-failure"),
+			paths,
+			{
+				cacheLastGood: false,
+				commitAuthority: () => {
+					writeFileSync(paths.managedConfig, "authority-mutated\n");
+					throw new Error("authority commit failed");
+				},
+			},
+		);
+
+		expect(result.installErrors.join("\n")).toContain("authority commit failed");
+		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
+		expect(readFileSync(paths.appliedState)).toEqual(previousApplied);
+		const restoredStat = statSync(paths.managedConfig);
+		expect(restoredStat.mode & 0o777).toBe(previousStat.mode & 0o777);
+		expect(restoredStat.uid).toBe(previousStat.uid);
+		expect(restoredStat.gid).toBe(previousStat.gid);
 	});
 
 	test("garbage collects stale run configs when a runtime is removed", () => {

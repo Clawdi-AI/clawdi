@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { runtimeInit, runtimeWatch } from "../src/commands/runtime";
+import { runtimeAppliedContentIdentity, runtimeInit, runtimeWatch } from "../src/commands/runtime";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -1084,6 +1084,34 @@ describe("host policy", () => {
 		process.env.CLAWDI_HOST_POLICY_PATH = path;
 		writeFileSync(path, "{}");
 		expect(detectRuntimeMode()).toBe("local");
+	});
+});
+
+describe("runtime applied content identity", () => {
+	it("changes when fixture secret values rotate without an ETag", () => {
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_identity",
+			environmentId: "env_identity",
+			instanceId: "iid_identity",
+			generation: 1,
+			issuedAt: "2026-07-13T00:00:00.000Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: {},
+			recovery: {},
+		};
+		const load = (secret: string): RuntimeManifestLoad => ({
+			manifest,
+			sourceManifest: manifest,
+			secretValues: { "provider.default.apiKey": secret },
+			source: "fixture-file",
+			sourcePath: "inline-secret-identity",
+			offline: false,
+		});
+
+		expect(runtimeAppliedContentIdentity(load("sk-one"), null).manifest.sha256).not.toBe(
+			runtimeAppliedContentIdentity(load("sk-two"), null).manifest.sha256,
+		);
 	});
 });
 
