@@ -508,19 +508,20 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_config_observation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("watch_status", "watch_generation", "watch_instance_id"),
+    ("watch_status", "watch_generation", "watch_instance_id", "expected_generation"),
     [
-        ("not_modified", 99, "iid-not-modified"),
-        ("error", 99, "iid-error"),
-        ("applied", None, None),
+        ("not_modified", 99, "iid-not-modified", 99),
+        ("error", 99, "iid-error", 8),
+        ("applied", None, None, 8),
     ],
 )
-async def test_config_observation_falls_back_to_boot_without_complete_applied_watch(
+async def test_config_observation_uses_confirmed_watch_identity_or_falls_back_to_boot(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     watch_status: str,
     watch_generation: int | None,
     watch_instance_id: str | None,
+    expected_generation: int,
 ):
     env_id = await _create_env(client)
     db_session.add(
@@ -556,7 +557,7 @@ async def test_config_observation_falls_back_to_boot_without_complete_applied_wa
     assert heartbeat.status_code == 204, heartbeat.text
     observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
     assert observation is not None
-    assert observation.observed_config_generation == 8
+    assert observation.observed_config_generation == expected_generation
     assert observation.observed_manifest_etag == '"manifest-source-etag"'
 
 

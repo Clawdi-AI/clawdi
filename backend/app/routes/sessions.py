@@ -1285,7 +1285,9 @@ def _runtime_observed_diagnostics(value: HostedRuntimeObservedV1) -> dict[str, A
 
 
 def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
-    applied_watch = value.watch if value.watch and value.watch.status == "applied" else None
+    applied_watch = (
+        value.watch if value.watch and value.watch.status in {"applied", "not_modified"} else None
+    )
     observed_config_generation = (
         applied_watch.generation
         if applied_watch is not None and applied_watch.generation is not None
