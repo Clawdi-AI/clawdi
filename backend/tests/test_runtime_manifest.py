@@ -353,7 +353,6 @@ async def test_dashboard_dev_seed_runtime_state_validates_and_serves_manifest(
     validated = AdminRuntimeStateUpsert.model_validate(
         {
             "deployment_id": state.deployment_id,
-            "app_id": state.app_id,
             "instance_id": state.instance_id,
             "generation": state.generation,
             "cli_package_spec": state.cli_package_spec,
@@ -703,7 +702,7 @@ async def test_unchanged_runtime_state_upsert_does_not_emit_invalidation(
 
 
 @pytest.mark.asyncio
-async def test_runtime_state_app_id_change_is_not_a_manifest_conflict_or_invalidation(
+async def test_legacy_runtime_state_app_id_is_accepted_and_ignored(
     admin_client,
     db_session,
     seed_user,
@@ -3550,7 +3549,6 @@ async def test_runtime_manifest_rejects_unknown_enabled_runtime_state(
         HostedRuntimeState(
             environment_id=env.id,
             deployment_id=f"dep_{uuid4().hex}",
-            app_id="app-test",
             instance_id=f"hri_{uuid4().hex}",
             generation=7,
             cli_package_spec=TEST_CLI_PACKAGE_SPEC,
@@ -3593,7 +3591,6 @@ async def test_runtime_manifest_rejects_codex_selected_runtime_state(
         HostedRuntimeState(
             environment_id=env.id,
             deployment_id=f"dep_{uuid4().hex}",
-            app_id="app-test",
             instance_id=f"hri_{uuid4().hex}",
             generation=7,
             cli_package_spec=TEST_CLI_PACKAGE_SPEC,

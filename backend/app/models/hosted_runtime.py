@@ -19,7 +19,6 @@ class HostedRuntimeState(Base, TimestampMixin):
         primary_key=True,
     )
     deployment_id: Mapped[str] = mapped_column(String(200), nullable=False)
-    app_id: Mapped[str | None] = mapped_column(String(200))
     instance_id: Mapped[str] = mapped_column(String(200), nullable=False)
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
     cli_package_spec: Mapped[str] = mapped_column(String(200), nullable=False)

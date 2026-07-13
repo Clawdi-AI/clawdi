@@ -240,7 +240,6 @@ async def _create_hosted_runtime_graph(
             HostedRuntimeState(
                 environment_id=env.id,
                 deployment_id=DEV_V2_DEPLOYMENT_ID,
-                app_id=DEV_V2_APP_ID,
                 instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
                 generation=3,
                 cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,

@@ -867,7 +867,6 @@ async def _admin_upsert_runtime_state(
         source="api.admin",
         details={
             "deployment_id": body.deployment_id,
-            "app_id": body.app_id,
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
@@ -954,7 +953,6 @@ async def _admin_delete_runtime_state(
         details.update(
             {
                 "deployment_id": state.deployment_id,
-                "app_id": state.app_id,
                 "instance_id": state.instance_id,
                 "generation": state.generation,
                 "cli_package_spec": state.cli_package_spec,
@@ -1067,7 +1065,6 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
 
     return {
         "deployment_id": body.deployment_id,
-        "app_id": body.app_id,
         "instance_id": body.instance_id,
         "generation": body.generation,
         "cli_package_spec": body.cli_package_spec,
@@ -1094,7 +1091,7 @@ def _runtime_state_changed_fields(
     return [
         field
         for field, value in desired_state.items()
-        if field != "app_id" and (state is None or getattr(state, field) != value)
+        if state is None or getattr(state, field) != value
     ]
 
 
