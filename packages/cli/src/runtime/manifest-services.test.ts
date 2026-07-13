@@ -556,6 +556,7 @@ cat > '${logPath}'
 		expect(failedFirstInstall.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
+		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(dropInPath)).toBe(false);
 		expect(
 			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
@@ -571,6 +572,8 @@ cat > '${logPath}'
 		expect(installed.installErrors).toEqual([]);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
+		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
+		const previousDropIn = readFileSync(dropInPath, "utf-8");
 
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -585,9 +588,9 @@ cat > '${logPath}'
 		);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
-		expect(
-			failedReinstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
-		).toContain("openclaw-gateway.service");
+		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
+		expect(readFileSync(dropInPath, "utf-8")).toBe(previousDropIn);
+		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 
 	test("keeps stale official gateway drop-ins when official uninstall fails", () => {
@@ -637,6 +640,7 @@ cat > '${logPath}'
 			},
 			paths,
 		);
+		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
 		const disabled = convergeRuntimeManifest(
 			{
 				manifest: disabledManifest,
@@ -651,6 +655,8 @@ cat > '${logPath}'
 		expect(disabled.installErrors.join("\n")).toContain(
 			"official openclaw-gateway.service uninstall failed",
 		);
+		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
+		expect(disabled.outputs.systemdUserUnits).toEqual([]);
 		expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
 		expect(
 			existsSync(

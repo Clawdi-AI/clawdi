@@ -32,6 +32,7 @@ export interface RuntimeBootStatus {
 		instanceData: string;
 		sensitiveInstanceData: string;
 		manifestLastGood: string | null;
+		appliedState: string | null;
 		installInventory: string[];
 		projections: string[];
 		runConfigs: string[];
@@ -70,6 +71,7 @@ export interface RuntimeBootStatus {
 		managedConfig: string;
 		syncState: string;
 		manifestLastGood: string;
+		appliedState: string;
 		managedSecretCacheFile: string;
 		runConfigRoot: string;
 		egressProfileRoot: string;
@@ -115,6 +117,7 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		managedConfig: paths.managedConfig,
 		syncState: paths.syncState,
 		manifestLastGood: paths.manifestLastGood,
+		appliedState: paths.appliedState,
 		managedSecretCacheFile: paths.managedSecretCacheFile,
 		runConfigRoot: paths.runConfigRoot,
 		egressProfileRoot: paths.egressProfileRoot,

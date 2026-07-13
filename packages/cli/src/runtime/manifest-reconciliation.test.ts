@@ -1465,6 +1465,8 @@ describe("runtime manifest reconciliation invariants", () => {
 		const clean = convergeRuntimeManifest(manifestLoad(manifest, "inline-clean"), paths);
 		expect(clean.installErrors).toEqual([]);
 		expect(clean.outputs.manifestLastGood).toBe(paths.manifestLastGood);
+		expect(clean.outputs.appliedState).toBeNull();
+		expect(existsSync(paths.appliedState)).toBe(false);
 		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).toMatchObject({
 			generation: 1,
 		});
@@ -1492,6 +1494,42 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).toMatchObject({
 			generation: 1,
 		});
+	});
+
+	test("does not mutate live state when runtime planning fails", () => {
+		const paths = tempRuntimePaths();
+		const workspaceRoot = join(paths.userHome, "clawdi");
+		const soulPath = join(workspaceRoot, "SOUL.md");
+		const staleRunConfig = join(paths.runConfigRoot, "stale-runtime.json");
+		mkdirSync(workspaceRoot, { recursive: true });
+		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		mkdirSync(paths.runConfigRoot, { recursive: true });
+		writeFileSync(soulPath, "<!-- >>> clawdi managed locale >>>\nmalformed\n");
+		writeFileSync(paths.managedConfig, '{"generation":1}\n');
+		writeFileSync(staleRunConfig, '{"generation":1}\n');
+		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
+		const previousStaleRunConfig = readFileSync(staleRunConfig, "utf-8");
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				generation: 2,
+				locale: { language: "en", timezone: "UTC" },
+			},
+		);
+
+		expect(() =>
+			convergeRuntimeManifest(manifestLoad(manifest, "inline-plan-failure"), paths),
+		).toThrow(/managed locale block markers are malformed/);
+		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
+		expect(readFileSync(staleRunConfig, "utf-8")).toBe(previousStaleRunConfig);
+		expect(existsSync(paths.appliedState)).toBe(false);
 	});
 
 	test("garbage collects stale run configs when a runtime is removed", () => {

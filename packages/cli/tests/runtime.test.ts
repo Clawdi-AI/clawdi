@@ -17,6 +17,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { runtimeInit, runtimeWatch } from "../src/commands/runtime";
+import {
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+	writeRuntimeAppliedState,
+} from "../src/runtime/applied-state";
 import { runtimeAuthEnvName } from "../src/runtime/auth-token";
 import {
 	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
@@ -33,6 +38,7 @@ import {
 import {
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
+	type RuntimeConvergenceResult,
 	type RuntimeManifest,
 	withRuntimeConvergeLock,
 } from "../src/runtime/manifest";
@@ -368,18 +374,26 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 	const paths = getRuntimePaths();
-	convergeRuntimeManifest(
-		{
-			manifest: runtimeWatchLocaleManifest(home, 1),
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/v1/runtime/manifest",
-			offline: false,
-			secretValues: {},
-		},
-		paths,
-	);
+	const load: RuntimeManifestLoad = {
+		manifest: runtimeWatchLocaleManifest(home, 1),
+		source: "remote-datasource",
+		sourcePath: "https://runtime.test/v1/runtime/manifest",
+		offline: false,
+		secretValues: {},
+	};
+	const convergence = convergeRuntimeManifest(load, paths);
 	writeFileSync(paths.manifestEtag, '"manifest-locale-1"\n');
 	writeFileSync(paths.channelsEtag, '"channels-locale-1"\n');
+	writeTestRuntimeAppliedState(paths, load, convergence, {
+		manifestEtag: '"manifest-locale-1"',
+		channelsEtag: '"channels-locale-1"',
+		channels: {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: '"channels-locale-1"',
+		},
+	});
 	return paths;
 }
 
@@ -804,6 +818,43 @@ function hostedProviderSwitchLoad(
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		},
 	};
+}
+
+function writeTestRuntimeAppliedState(
+	paths: RuntimePaths,
+	load: RuntimeManifestLoad,
+	convergence: RuntimeConvergenceResult,
+	input: {
+		manifestEtag?: string | null;
+		channelsEtag?: string | null;
+		channels?: RuntimeChannelsLoad | null;
+	} = {},
+): void {
+	writeRuntimeAppliedState(
+		{
+			schemaVersion: "clawdi.runtimeAppliedState.v1",
+			appliedAt: new Date().toISOString(),
+			instanceId: load.manifest.instanceId,
+			observedManifestEtag: input.manifestEtag ?? null,
+			observedChannelsEtag: input.channelsEtag ?? null,
+			observedConfigGeneration: load.manifest.generation,
+			contentIdentity: {
+				manifest: {
+					source: load.source,
+					sourcePath: load.sourcePath,
+					sha256: runtimeContentSha256(load.sourceManifest ?? load.manifest),
+				},
+				channels: input.channels
+					? {
+							sourcePath: input.channels.sourcePath,
+							sha256: runtimeContentSha256(input.channels.channels),
+						}
+					: null,
+			},
+			projectedProviderIds: convergence.projectedProviderIds,
+		},
+		paths,
+	);
 }
 
 function applyOpenClawProviderPatchLog(
@@ -2224,6 +2275,58 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(readFileSync(commandShim, "utf-8")).toBe(`#!/usr/bin/env sh\nexec '${realBin}' "$@"\n`);
 	});
 
+	it("does not mutate live config when the Codex runtime add-on install fails", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const binDir = join(root, "fake-bin");
+		const previousPath = process.env.PATH;
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(join(binDir, "npm"), "#!/usr/bin/env bash\necho npm failed >&2\nexit 42\n");
+		chmodSync(join(binDir, "npm"), 0o755);
+		seedOpenClawBinary(home);
+		writeHermesVersionBinary(home, "0.18.0");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.PATH = [binDir, previousPath].filter(Boolean).join(":");
+		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
+		process.env.CLAWDI_CODEX_PACKAGE_SPEC = "@openai/codex@latest";
+		const paths = getRuntimePaths();
+		const liveFiles = [
+			paths.managedConfig,
+			paths.syncState,
+			join(paths.runConfigRoot, "stale-runtime.json"),
+			join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		];
+		for (const path of liveFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `generation-1:${path.split("/").at(-1)}\n`);
+		}
+		const previousLiveSnapshot = Object.fromEntries(
+			liveFiles.map((path) => [path, readFileSync(path, "utf-8")]),
+		);
+
+		try {
+			const convergence = convergeRuntimeManifest(
+				hostedProviderSwitchLoad(home, "clawdi-managed", 2),
+				paths,
+			);
+
+			expect(convergence.installErrors.join("\n")).toContain("runtime codex add-on install failed");
+			expect(convergence.outputs.systemdSystemUnits).toEqual([]);
+			expect(convergence.outputs.systemdUserUnits).toEqual([]);
+			for (const [path, content] of Object.entries(previousLiveSnapshot)) {
+				expect(readFileSync(path, "utf-8")).toBe(content);
+			}
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
 	it("does not write Codex managed provider config for user-owned providers", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -2423,11 +2526,12 @@ exit 0
 			process.env.CLAWDI_RUN_DIR = run;
 
 			const paths = getRuntimePaths();
-			const first = convergeRuntimeManifest(
-				hostedProviderSwitchLoad(home, providerCase.first, 1),
-				paths,
-			);
+			const firstLoad = hostedProviderSwitchLoad(home, providerCase.first, 1);
+			const first = convergeRuntimeManifest(firstLoad, paths);
 			expect(first.installErrors).toEqual([]);
+			writeTestRuntimeAppliedState(paths, firstLoad, first, {
+				manifestEtag: `"${providerCase.id}-1"`,
+			});
 
 			const second = convergeRuntimeManifest(
 				hostedProviderSwitchLoad(home, providerCase.second, 2),
@@ -2467,7 +2571,69 @@ exit 0
 		}
 	});
 
-	it("reapplies OpenClaw hosted gateway config after the official gateway installer", () => {
+	it("does not delete unknown provider projections when applied state is missing", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatchLog = join(root, "openclaw-provider-patches.jsonl");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(join(home, ".hermes"), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatchLog}'
+  printf '\\n---\\n' >> '${openclawPatchLog}'
+  exit 0
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		writeHermesVersionBinary(home, "0.18.0");
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			[
+				"providers:",
+				"  clawdi-orphaned:",
+				'    api: "https://orphaned.example.test/v1"',
+				'    custom_field: "preserve-without-applied-state"',
+				"",
+			].join("\n"),
+		);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const paths = getRuntimePaths();
+		const convergence = convergeRuntimeManifest(hostedProviderSwitchLoad(home, "byok-b", 1), paths);
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(existsSync(paths.appliedState)).toBe(false);
+		const openclawProviders = applyOpenClawProviderPatchLog(openclawPatchLog, {
+			orphaned: {
+				baseUrl: "https://orphaned.example.test/v1",
+				models: [{ id: "orphaned-model" }],
+			},
+		});
+		expect(openclawProviders.orphaned).toBeDefined();
+		expect(openclawProviders["byok-b"]).toBeDefined();
+		const hermesProviders = expectRecord(
+			readHermesConfigYaml(home).providers,
+			"Hermes providers config",
+		);
+		expect(hermesProviders["clawdi-orphaned"]).toMatchObject({
+			custom_field: "preserve-without-applied-state",
+		});
+		expect(hermesProviders["clawdi-byok-b"]).toBeDefined();
+	});
+
+	it("applies OpenClaw hosted config after the official gateway installer", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2559,19 +2725,11 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
-			"config patch --stdin",
-			"config patch --stdin",
 			"gateway install --force --json",
 			"config patch --stdin",
 			"config patch --stdin",
 		]);
-		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual(
-			JSON.parse(readFileSync(join(root, "openclaw-patch-3.json"), "utf-8")),
-		);
-		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-2.json"), "utf-8"))).toEqual(
-			JSON.parse(readFileSync(join(root, "openclaw-patch-4.json"), "utf-8")),
-		);
-		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-4.json"), "utf-8"))).toEqual({
+		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-2.json"), "utf-8"))).toEqual({
 			gateway: {
 				auth: {
 					mode: "token",
@@ -4694,10 +4852,19 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(readFileSync(join(state, "cache", "channels.etag"), "utf-8")).toBe(
 				'"channels-etag-watch-1"\n',
 			);
+			const appliedState = readRuntimeAppliedState(getRuntimePaths());
+			expect(appliedState).toMatchObject({
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				instanceId: "iid_watch",
+				observedManifestEtag: '"etag-watch-12"',
+				observedChannelsEtag: '"channels-etag-watch-1"',
+				observedConfigGeneration: 12,
+			});
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(12);
 			expect(event.etag).toBe('"etag-watch-12"');
+			expect(event.convergence.appliedState).toBe(getRuntimePaths().appliedState);
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
@@ -4722,6 +4889,114 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(readSystemdEnvFile(paths, "clawdi-runtime-watch")).not.toContain("file-runtime-token");
 		} finally {
 			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime watch advances applied generation on a generation-only manifest update", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const sourcePath = join(root, "runtime-source.json");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		let generation = 30;
+		let manifestEtag = '"manifest-generation-30"';
+		let channelsFullEtag = '"channels-generation-stable"';
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		seedOpenClawBinary(home);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		writeFileSync(
+			sourcePath,
+			JSON.stringify({
+				schemaVersion: "clawdi.runtimeSource.v1",
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest",
+				auth: { type: "bearer-env", env: "CLAWDI_AUTH_TOKEN" },
+			}),
+		);
+		const watchFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					new Response(JSON.stringify(hostedRuntimeWatchLocalePayload(home, generation)), {
+						status: 200,
+						headers: { "content-type": "application/json", etag: manifestEtag },
+					}),
+			},
+			{
+				method: "GET",
+				path: "/v1/channels",
+				response: (request) =>
+					request.headers["if-none-match"]
+						? new Response(null, {
+								status: 304,
+								headers: { etag: '"channels-generation-stable"' },
+							})
+						: new Response(JSON.stringify([]), {
+								status: 200,
+								headers: {
+									"content-type": "application/json",
+									etag: channelsFullEtag,
+								},
+							}),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				observedManifestEtag: '"manifest-generation-30"',
+				observedConfigGeneration: 30,
+			});
+
+			generation = 31;
+			manifestEtag = '"manifest-generation-31"';
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			const event = JSON.parse(logs.at(-1) ?? "{}");
+			expect(event.status).toBe("applied");
+			expect(event.generation).toBe(31);
+			expect(event.etag).toBe('"manifest-generation-31"');
+			expect(event.channelsEtag).toBe('"channels-generation-stable"');
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				observedManifestEtag: '"manifest-generation-31"',
+				observedChannelsEtag: '"channels-generation-stable"',
+				observedConfigGeneration: 31,
+			});
+
+			channelsFullEtag = '"channels-generation-effective"';
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			const channelsRaceEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(channelsRaceEvent.status).toBe("applied");
+			expect(channelsRaceEvent.etag).toBe('"manifest-generation-31"');
+			expect(channelsRaceEvent.channelsEtag).toBe('"channels-generation-effective"');
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				observedManifestEtag: '"manifest-generation-31"',
+				observedChannelsEtag: '"channels-generation-effective"',
+				observedConfigGeneration: 31,
+			});
+			expect(
+				watchFetch.captured.filter((request) => request.path.startsWith("/v1/channels")),
+			).toHaveLength(5);
+		} finally {
+			watchFetch.restore();
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
 		}
@@ -4754,6 +5029,35 @@ exit 42
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		const paths = getRuntimePaths();
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		writeFileSync(paths.manifestLastGood, '{"generation":12}\n');
+		writeFileSync(paths.manifestEtag, '"etag-watch-previous"\n');
+		writeFileSync(paths.channelsEtag, '"channels-etag-previous"\n');
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T05:00:00.000Z",
+				instanceId: "iid_watch_systemd_failure",
+				observedManifestEtag: '"etag-watch-previous"',
+				observedChannelsEtag: '"channels-etag-previous"',
+				observedConfigGeneration: 12,
+				contentIdentity: {
+					manifest: {
+						source: "remote-datasource",
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
+					},
+					channels: {
+						sourcePath: "https://runtime.test/v1/channels",
+						sha256: "b".repeat(64),
+					},
+				},
+				projectedProviderIds: { openclaw: ["previous"] },
+			},
+			paths,
+		);
+		const previousAppliedState = readFileSync(paths.appliedState, "utf-8");
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -4830,9 +5134,15 @@ exit 42
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("error");
 			expect(event.error).toContain("systemd apply failed");
-			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			expect(existsSync(join(state, "cache", "channels.etag"))).toBe(false);
-			expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(false);
+			expect(event.activeGeneration).toBe(12);
+			expect(event.rejectedGeneration).toBe(13);
+			expect(event.instanceId).toBe("iid_watch_systemd_failure");
+			expect(readFileSync(paths.manifestEtag, "utf-8")).toBe('"etag-watch-previous"\n');
+			expect(readFileSync(paths.channelsEtag, "utf-8")).toBe('"channels-etag-previous"\n');
+			expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toEqual({
+				generation: 12,
+			});
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(previousAppliedState);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -4840,7 +5150,7 @@ exit 42
 		}
 	});
 
-	it("runtime watch keeps provider secrets when manifest is 304 and channels changed", async () => {
+	it("runtime watch records the effective ETags after a manifest 304 refetch race", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4918,12 +5228,12 @@ exit 42
 				],
 			},
 		];
-		const manifestResponse = () =>
+		const manifestResponse = (etag = '"manifest-etag-stable"') =>
 			new Response(JSON.stringify(hostedPayload), {
 				status: 200,
 				headers: {
 					"content-type": "application/json",
-					etag: '"manifest-etag-stable"',
+					etag,
 				},
 			});
 		const channelsResponse = () =>
@@ -4973,7 +5283,7 @@ exit 64
 		);
 		const paths = getRuntimePaths();
 		const initial = mockFetch([
-			{ method: "GET", path: "/v1/runtime/manifest", response: manifestResponse },
+			{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
 			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
 		try {
@@ -5026,7 +5336,7 @@ exit 64
 								status: 304,
 								headers: { etag: '"manifest-etag-stable"' },
 							})
-						: manifestResponse(),
+						: manifestResponse('"manifest-etag-effective"'),
 			},
 			{ method: "GET", path: "/v1/channels", response: channelsResponse },
 		]);
@@ -5048,6 +5358,15 @@ exit 64
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(22);
+			expect(event.etag).toBe('"manifest-etag-effective"');
+			expect(event.channelsEtag).toBe('"channels-etag-next"');
+			expect(readFileSync(paths.manifestEtag, "utf-8")).toBe('"manifest-etag-effective"\n');
+			expect(readFileSync(paths.channelsEtag, "utf-8")).toBe('"channels-etag-next"\n');
+			expect(readRuntimeAppliedState(paths)).toMatchObject({
+				observedManifestEtag: '"manifest-etag-effective"',
+				observedChannelsEtag: '"channels-etag-next"',
+				observedConfigGeneration: 22,
+			});
 			expect(event.systemdUnitsChanged).toBe(false);
 			expect(event.systemdApply).toEqual({
 				applied: true,
@@ -6483,6 +6802,29 @@ chmod +x "$prefix/bin/clawdi"
 			},
 			secretValues: {},
 		};
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T05:00:00.000Z",
+				instanceId: "iid_cli_self_heal",
+				observedManifestEtag: '"manifest-self-heal"',
+				observedChannelsEtag: '"channels-self-heal"',
+				observedConfigGeneration: 30,
+				contentIdentity: {
+					manifest: {
+						source: "remote-datasource",
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
+					},
+					channels: {
+						sourcePath: "https://runtime.test/v1/channels",
+						sha256: "b".repeat(64),
+					},
+				},
+				projectedProviderIds: {},
+			},
+			paths,
+		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -6847,6 +7189,26 @@ chmod +x "$prefix/bin/clawdi"
 				}),
 			},
 		};
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T05:00:00.000Z",
+				instanceId: "iid_cli_rollback",
+				observedManifestEtag: '"etag-cli-rollback"',
+				observedChannelsEtag: null,
+				observedConfigGeneration: 18,
+				contentIdentity: {
+					manifest: {
+						source: "remote-datasource",
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
+					},
+					channels: null,
+				},
+				projectedProviderIds: {},
+			},
+			paths,
+		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -6928,7 +7290,7 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("runtime watch applies systemd state when CLI install fails", async () => {
+	it("runtime watch does not converge or apply systemd when CLI install fails", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7019,19 +7381,22 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.status).toBe("error");
 			expect(event.stage).toBe("cli-update");
 			expect(event.cliUpdate.status).toBe("error");
-			expect(event.convergence.processManager).toBe("systemd");
+			expect(event.activeGeneration).toBeNull();
+			expect(event.rejectedGeneration).toBe(17);
 			const paths = getRuntimePaths();
-			expect(event.convergence.systemdSystemUnits).toContain(
-				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
-			);
+			expect(event.convergence).toBeUndefined();
+			expect(event.systemdUnitsChanged).toBe(false);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
-				userUnitsChanged: ["openclaw-gateway.service"],
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
 			});
-			expect(readFileSync(join(state, "cache", "manifest.etag"), "utf-8")).toBe(
-				'"etag-cli-failed"\n',
-			);
+			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"))).toBe(false);
+			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(false);
+			expect(existsSync(paths.manifestEtag)).toBe(false);
+			expect(existsSync(paths.channelsEtag)).toBe(false);
+			expect(existsSync(paths.manifestLastGood)).toBe(false);
+			expect(existsSync(paths.appliedState)).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -8268,6 +8633,97 @@ exit 0
 		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
+	});
+
+	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+  echo "plugin install failed" >&2
+  exit 73
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		const paths = getRuntimePaths();
+		const liveFiles = [
+			paths.managedConfig,
+			paths.syncState,
+			join(paths.runConfigRoot, "openclaw.json"),
+			join(paths.runConfigRoot, "stale-runtime.json"),
+			join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		];
+		for (const path of liveFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `generation-1:${path.split("/").at(-1)}\n`);
+		}
+		const previousLiveSnapshot = Object.fromEntries(
+			liveFiles.map((path) => [path, readFileSync(path, "utf-8")]),
+		);
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_channel_plugin_failure",
+				environmentId: "env_channel_plugin_failure",
+				instanceId: "iid_channel_plugin_failure",
+				generation: 2,
+				issuedAt: "2026-07-13T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					channels: {
+						discord: {
+							enabled: true,
+							accounts: { default: { enabled: true } },
+						},
+					},
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: "test://channel-plugin-install-failure",
+			offline: false,
+			secretValues: {},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, paths);
+
+		expect(convergence.installErrors.join("\n")).toContain(
+			"runtime openclaw channel plugin install failed",
+		);
+		expect(convergence.outputs.systemdSystemUnits).toEqual([]);
+		expect(convergence.outputs.systemdUserUnits).toEqual([]);
+		for (const [path, content] of Object.entries(previousLiveSnapshot)) {
+			expect(readFileSync(path, "utf-8")).toBe(content);
+		}
 	});
 
 	it("keeps OpenClaw WhatsApp materialization disabled until upstream support is ready", () => {
@@ -9621,7 +10077,7 @@ exit 64
 		}
 	});
 
-	it("does not advance last-good manifest cache when convergence has install errors", async () => {
+	it("keeps the previous live generation unchanged when runtime install fails", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9637,6 +10093,7 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = failingInstaller;
+		const paths = getRuntimePaths();
 		const previousManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_last_good_floor",
@@ -9649,6 +10106,45 @@ exit 64
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
 		writeFileSync(cachePath, JSON.stringify(previousManifest));
+		const liveFiles = [
+			paths.managedConfig,
+			paths.syncState,
+			join(paths.projectionRoot, "openclaw.json"),
+			join(paths.runConfigRoot, "openclaw.json"),
+			join(paths.runConfigRoot, "stale-runtime.json"),
+			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+			join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		];
+		for (const path of liveFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `generation-1:${path.split("/").at(-1)}\n`);
+		}
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T05:00:00.000Z",
+				instanceId: previousManifest.instanceId,
+				observedManifestEtag: '"manifest-generation-1"',
+				observedChannelsEtag: '"channels-generation-1"',
+				observedConfigGeneration: 1,
+				contentIdentity: {
+					manifest: {
+						source: "remote-datasource",
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "a".repeat(64),
+					},
+					channels: {
+						sourcePath: "https://runtime.test/v1/channels",
+						sha256: "b".repeat(64),
+					},
+				},
+				projectedProviderIds: { openclaw: ["generation-1-provider"] },
+			},
+			paths,
+		);
+		const previousLiveSnapshot = Object.fromEntries(
+			[...liveFiles, paths.appliedState].map((path) => [path, readFileSync(path, "utf-8")]),
+		);
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				...previousManifest,
@@ -9673,11 +10169,16 @@ exit 64
 			secretValues: {},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
 		expect(convergence.outputs.manifestLastGood).toBeNull();
 		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
+		expect(convergence.outputs.systemdSystemUnits).toEqual([]);
+		expect(convergence.outputs.systemdUserUnits).toEqual([]);
+		for (const [path, content] of Object.entries(previousLiveSnapshot)) {
+			expect(readFileSync(path, "utf-8")).toBe(content);
+		}
 	});
 
 	it("updates the OpenClaw locale block without changing user-authored workspace content", () => {
@@ -9862,7 +10363,7 @@ exit 64
 		expect(siblingRuntimeRev).toBe(baseRev);
 	});
 
-	it("allows generation reset for the same runtime instance identity", async () => {
+	it("uses applied state, not last-good cache, for the live runtime instance identity", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9873,26 +10374,46 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
-		const previousManifest = {
+		const desiredManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_generation_reset",
 			environmentId: "env_generation_reset",
 			instanceId: "iid_generation_reset",
-			generation: 42,
+			generation: 1,
 			issuedAt: "2026-06-06T00:00:00Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
-		writeFileSync(paths.manifestLastGood, JSON.stringify(previousManifest));
 		writeFileSync(
-			manifestPath,
+			paths.manifestLastGood,
 			JSON.stringify({
-				...previousManifest,
-				generation: 1,
-				issuedAt: "2026-06-07T00:00:00Z",
+				...desiredManifest,
+				instanceId: "iid_stale_last_good",
+				generation: 99,
 			}),
 		);
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v1",
+				appliedAt: "2026-07-13T05:00:00.000Z",
+				instanceId: desiredManifest.instanceId,
+				observedManifestEtag: null,
+				observedChannelsEtag: null,
+				observedConfigGeneration: 42,
+				contentIdentity: {
+					manifest: {
+						source: "fixture-file",
+						sourcePath: "test://generation-reset-previous",
+						sha256: "a".repeat(64),
+					},
+					channels: null,
+				},
+				projectedProviderIds: {},
+			},
+			paths,
+		);
+		writeFileSync(manifestPath, JSON.stringify(desiredManifest));
 
 		const loaded = await loadRuntimeManifest(paths, { manifestPath });
 

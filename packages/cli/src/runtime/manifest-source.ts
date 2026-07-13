@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { readRuntimeAppliedState } from "./applied-state";
 import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
@@ -223,11 +224,6 @@ function zodErrors(error: z.ZodError): string[] {
 
 function parseManifest(value: unknown): RuntimeManifest {
 	return manifestSchema.parse(value);
-}
-
-function parseManifestSafe(value: unknown): RuntimeManifest | null {
-	const result = manifestSchema.safeParse(value);
-	return result.success ? result.data : null;
 }
 
 export function normalizeManifestPayload(value: unknown): {
@@ -685,12 +681,11 @@ function hostedRuntimeServiceRunSettings(
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
-	if (!existsSync(paths.manifestLastGood)) return {};
-	const parsed = parseManifestSafe(readJsonFile(paths.manifestLastGood));
-	if (!parsed) return {};
+	const appliedState = readRuntimeAppliedState(paths);
+	if (!appliedState) return {};
 	return {
-		instanceId: parsed.instanceId,
-		generation: parsed.generation,
+		instanceId: appliedState.instanceId,
+		generation: appliedState.observedConfigGeneration,
 	};
 }
 
@@ -1082,7 +1077,7 @@ function validateLoadedManifest(
 	const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
-			`manifest instanceId ${manifest.instanceId} does not match last-good instanceId ${existing.instanceId}`,
+			`manifest instanceId ${manifest.instanceId} does not match applied instanceId ${existing.instanceId}`,
 		);
 	}
 	if (semanticErrors.length > 0) {
