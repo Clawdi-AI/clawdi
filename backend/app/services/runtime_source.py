@@ -228,12 +228,16 @@ def render_runtime_source(
         secret_ref = _provider_secret_ref(provider_id) if payload is not None else None
         providers[provider_id] = _provider_entry(provider, secret_ref=secret_ref)
         if payload is not None and secret_ref is not None:
-            secret_sources[secret_ref] = _secret_identity(
-                payload.id,
-                payload.encrypted_payload,
-                payload.nonce,
-                vault_key_identity,
-                "provider-api-key",
+            _add_secret_source(
+                secret_sources,
+                secret_ref,
+                _secret_identity(
+                    payload.id,
+                    payload.encrypted_payload,
+                    payload.nonce,
+                    vault_key_identity,
+                    "provider-api-key",
+                ),
             )
             if decrypt_secrets:
                 try:
@@ -296,12 +300,16 @@ def render_runtime_source(
                 "placeholderTokenSecretRef": placeholder_ref,
             }
         )
-        secret_sources[agent_ref] = _secret_identity(
-            link.id,
-            link.encrypted_agent_token,
-            link.agent_token_nonce,
-            vault_key_identity,
-            "channel-agent-token",
+        _add_secret_source(
+            secret_sources,
+            agent_ref,
+            _secret_identity(
+                link.id,
+                link.encrypted_agent_token,
+                link.agent_token_nonce,
+                vault_key_identity,
+                "channel-agent-token",
+            ),
         )
         if decrypt_secrets:
             try:
@@ -437,6 +445,16 @@ def _secret_identity(
         "ciphertextSha256": hashlib.sha256(ciphertext).hexdigest(),
         "nonceSha256": hashlib.sha256(nonce).hexdigest(),
     }
+
+
+def _add_secret_source(
+    sources: dict[str, dict[str, str]],
+    secret_ref: str,
+    identity: dict[str, str],
+) -> None:
+    if secret_ref in sources:
+        raise RuntimeSourceError(f"Runtime secret reference collision: {secret_ref}")
+    sources[secret_ref] = identity
 
 
 def _placeholder(provider: str, account_key: str) -> str:

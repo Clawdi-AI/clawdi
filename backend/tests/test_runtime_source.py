@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+import pytest
+
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.services.runtime_source import (
     RuntimeSourceBatch,
+    RuntimeSourceError,
     RuntimeSourceRow,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
@@ -148,6 +151,51 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
             ),
         }
     ]
+
+
+def test_runtime_source_rejects_colliding_secret_references() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = ["managed/a", "managed-a"]
+    runtime["primary_model"] = {"provider_id": "managed/a", "model": "gpt-test"}
+    state.runtimes = {"openclaw": runtime}
+
+    provider = batch.providers.pop((USER_ID, "managed"))
+    provider.provider_id = "managed/a"
+    auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
+    auth.provider_id = "managed/a"
+    batch.providers[(USER_ID, "managed/a")] = provider
+    batch.auth_payloads[(USER_ID, "managed/a", "default")] = auth
+    batch.providers[(USER_ID, "managed-a")] = AiProvider(
+        id=UUID("30000000-0000-0000-0000-000000000013"),
+        owner_user_id=USER_ID,
+        provider_id="managed-a",
+        type="openai",
+        label="Colliding provider",
+        base_url="https://provider-two.test/v1",
+        api_mode="responses",
+        auth_type="api_key",
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+    )
+    batch.auth_payloads[(USER_ID, "managed-a", "default")] = AiProviderAuthPayload(
+        id=UUID("40000000-0000-0000-0000-000000000014"),
+        owner_user_id=USER_ID,
+        provider_id="managed-a",
+        auth_profile="default",
+        kind="api_key",
+        source="managed",
+        encrypted_payload=b"provider-two-ciphertext",
+        nonce=b"provider-two-nonce",
+    )
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match=r"Runtime secret reference collision: provider\.managed-a\.apiKey",
+    ):
+        _render(batch)
 
 
 def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
