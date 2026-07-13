@@ -430,8 +430,10 @@ the official runtime together cover those responsibilities.
 The CLI consumes a desired-state document plus optional secret values. The
 desired state should contain only non-secret configuration such as enabled
 runtimes, command launch settings, channel projections, and provider routing
-metadata. Secret values are delivered separately and must not be cached in
-plain text.
+metadata. Secret values are delivered separately and must not be embedded in
+the manifest or general runtime config. When offline recovery is explicitly
+enabled, the CLI may retain only its root-owned, reference-scoped `0600` secret
+cache; it never persists the complete plaintext bundle as one document.
 
 At the boundary:
 

@@ -184,16 +184,20 @@ def render_runtime_source(
             "is invalid or not configured"
         ) from exc
     try:
-        bridge = HostedRuntimeBridge.model_validate(state.bridge) if state.bridge else None
+        bridge = (
+            HostedRuntimeBridge.model_validate(state.bridge) if state.bridge is not None else None
+        )
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime bridge state is invalid") from exc
     try:
         egress_engine = (
-            HostedEgressEngine.model_validate(state.egress_engine) if state.egress_engine else None
+            HostedEgressEngine.model_validate(state.egress_engine)
+            if state.egress_engine is not None
+            else None
         )
         egress_profiles = (
             HostedEgressProfiles.model_validate(state.egress_profiles)
-            if state.egress_profiles
+            if state.egress_profiles is not None
             else None
         )
     except ValidationError as exc:

@@ -1648,11 +1648,13 @@ async def test_runtime_manifest_rejects_malformed_stored_contract(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
+        ("egress_engine", {}),
         ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "sha256": "not-a-sha256"}),
         *[
             ("egress_engine", {**TEST_EGRESS_ENGINE_PIN, "url": url})
             for url in TEST_INVALID_EGRESS_ENGINE_URLS
         ],
+        ("egress_profiles", {}),
         (
             "egress_profiles",
             {
@@ -1800,9 +1802,24 @@ async def test_runtime_manifest_rejects_stored_runtime_bridge_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_rejects_stored_bridge_scalar_coercion(
+@pytest.mark.parametrize(
+    "bridge",
+    [
+        {},
+        {
+            "surfaces": [
+                {
+                    **TEST_OPENCLAW_BRIDGE["surfaces"][0],
+                    "listenPort": "28789",
+                }
+            ]
+        },
+    ],
+)
+async def test_runtime_manifest_rejects_invalid_stored_bridge(
     db_session,
     seed_user,
+    bridge,
 ):
     env = await create_env_with_project(
         db_session,
@@ -1811,14 +1828,6 @@ async def test_runtime_manifest_rejects_stored_bridge_scalar_coercion(
         machine_name="Runtime stored bridge coercion",
         agent_type="openclaw",
     )
-    bridge = {
-        "surfaces": [
-            {
-                **TEST_OPENCLAW_BRIDGE["surfaces"][0],
-                "listenPort": "28789",
-            }
-        ]
-    }
     db_session.add(
         HostedRuntimeState(
             environment_id=env.id,
