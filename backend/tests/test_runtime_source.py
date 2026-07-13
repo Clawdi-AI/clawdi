@@ -153,7 +153,9 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
-def test_runtime_source_rejects_colliding_secret_references() -> None:
+def test_runtime_source_rejects_colliding_secret_references_before_decrypt(monkeypatch) -> None:
+    from app.services import runtime_source
+
     batch = _batch()
     state = batch.rows[ENV_ID].state
     assert state is not None
@@ -191,11 +193,26 @@ def test_runtime_source_rejects_colliding_secret_references() -> None:
         nonce=b"provider-two-nonce",
     )
 
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "unused"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+
     with pytest.raises(
         RuntimeSourceError,
         match=r"Runtime secret reference collision: provider\.managed-a\.apiKey",
     ):
-        _render(batch)
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    assert decrypt_calls == []
 
 
 def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:

@@ -83,6 +83,14 @@ class RenderedRuntimeSource:
     source_revision: str
 
 
+@dataclass(frozen=True)
+class RuntimeSecretMaterial:
+    secret_ref: str
+    ciphertext: bytes
+    nonce: bytes
+    error_message: str
+
+
 async def load_runtime_source_batch(
     db: AsyncSession,
     *,
@@ -219,6 +227,7 @@ def render_runtime_source(
     providers: dict[str, Any] = {}
     secrets: dict[str, str] = {}
     secret_sources: dict[str, dict[str, str]] = {}
+    secret_materials: list[RuntimeSecretMaterial] = []
     for provider_id in tuple(runtime["provider_ids"]):
         provider = batch.providers.get((user_id, provider_id))
         if provider is None:
@@ -239,13 +248,14 @@ def render_runtime_source(
                     "provider-api-key",
                 ),
             )
-            if decrypt_secrets:
-                try:
-                    secrets[secret_ref] = decrypt(payload.encrypted_payload, payload.nonce)
-                except Exception as exc:
-                    raise RuntimeSourceError(
-                        "Hosted runtime provider secret source is invalid"
-                    ) from exc
+            secret_materials.append(
+                RuntimeSecretMaterial(
+                    secret_ref=secret_ref,
+                    ciphertext=payload.encrypted_payload,
+                    nonce=payload.nonce,
+                    error_message="Hosted runtime provider secret source is invalid",
+                )
+            )
 
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
@@ -311,12 +321,24 @@ def render_runtime_source(
                 "channel-agent-token",
             ),
         )
-        if decrypt_secrets:
+        secret_materials.append(
+            RuntimeSecretMaterial(
+                secret_ref=agent_ref,
+                ciphertext=link.encrypted_agent_token,
+                nonce=link.agent_token_nonce,
+                error_message="Hosted runtime channel secret source is invalid",
+            )
+        )
+
+    if decrypt_secrets:
+        for material in secret_materials:
             try:
-                secrets[agent_ref] = decrypt(link.encrypted_agent_token, link.agent_token_nonce)
+                secrets[material.secret_ref] = decrypt(material.ciphertext, material.nonce)
             except Exception as exc:
-                raise RuntimeSourceError("Hosted runtime channel secret source is invalid") from exc
-            secrets[placeholder_ref] = _placeholder(account.provider, account_key)
+                raise RuntimeSourceError(material.error_message) from exc
+        for binding in bindings:
+            placeholder_ref = binding["placeholderTokenSecretRef"]
+            secrets[placeholder_ref] = _placeholder(binding["provider"], binding["accountKey"])
 
     descriptor = {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
