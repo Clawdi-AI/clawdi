@@ -956,8 +956,8 @@ def _runtime_observed_health(
         )
 
     reasons: list[str] = []
-    payload = _validated_runtime_observed_payload(observation)
-    reported_at = observation.reported_at if observation is not None else None
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    observed_at = observation.observed_at if observation is not None else None
     now = datetime.now(UTC)
 
     if env.last_sync_error:
@@ -967,15 +967,27 @@ def _runtime_observed_health(
     elif now - _as_utc(env.last_sync_at) > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("daemon_stale")
 
-    observed_status = observation.status if observation is not None else None
+    observed_status = diagnostics.status if diagnostics is not None else None
     if observation is None:
         reasons.append("runtime_observed_missing")
+    elif diagnostics is None:
+        reasons.append("runtime_diagnostics_invalid")
     elif observed_status == "error":
         reasons.append("runtime_error")
     elif observed_status not in {"ok", "unknown"}:
         reasons.append("runtime_status_unknown")
 
-    supervisor_status = payload.supervisor.status if payload and payload.supervisor else None
+    if observation is not None:
+        if observation.observed_config_generation is None:
+            reasons.append("observed_config_generation_missing")
+        elif observation.observed_config_generation != state.generation:
+            reasons.append("config_generation_mismatch")
+        if observation.observed_manifest_etag is None:
+            reasons.append("observed_manifest_etag_missing")
+
+    supervisor_status = (
+        diagnostics.supervisor.status if diagnostics and diagnostics.supervisor else None
+    )
     if supervisor_status == "error":
         reasons.append("supervisor_error")
     elif supervisor_status == "unknown":
@@ -983,9 +995,9 @@ def _runtime_observed_health(
     elif supervisor_status is not None and supervisor_status != "ok":
         reasons.append("supervisor_status_invalid")
 
-    if observation is not None and reported_at is None:
-        reasons.append("runtime_reported_at_missing")
-    elif reported_at is not None and now - reported_at > _RUNTIME_OBSERVED_STALE_AFTER:
+    if observation is not None and observed_at is None:
+        reasons.append("runtime_observed_at_missing")
+    elif observed_at is not None and now - observed_at > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("runtime_observed_stale")
 
     provider_health = _runtime_observed_provider_health(state, observation)
@@ -1008,7 +1020,7 @@ def _runtime_observed_health(
     return RuntimeObservedHealthResponse(
         status=status_value,
         reasons=reasons,
-        reported_at=reported_at,
+        observed_at=observed_at,
     )
 
 
@@ -1016,14 +1028,14 @@ def _runtime_observed_provider_health(
     state: HostedRuntimeState | None,
     observation: HostedRuntimeConfigObservation | None,
 ) -> list[RuntimeObservedProviderHealthResponse]:
-    payload = _validated_runtime_observed_payload(observation)
-    if state is None or payload is None or payload.providers is None:
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    if state is None or diagnostics is None or diagnostics.providers is None:
         return []
 
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
-    for provider_key in sorted(payload.providers):
-        observed_payload = payload.providers[provider_key]
+    for provider_key in sorted(diagnostics.providers):
+        observed_payload = diagnostics.providers[provider_key]
         provider_health.append(
             RuntimeObservedProviderHealthResponse(
                 provider_id=provider_key,
@@ -1109,13 +1121,13 @@ def _enabled_runtime_names(runtimes: dict) -> list[str]:
     return sorted(enabled)
 
 
-def _validated_runtime_observed_payload(
+def _validated_runtime_observed_diagnostics(
     observation: HostedRuntimeConfigObservation | None,
 ) -> HostedRuntimeObservedV1 | None:
     if observation is None:
         return None
     try:
-        return HostedRuntimeObservedV1.model_validate(observation.payload)
+        return HostedRuntimeObservedV1.model_validate(observation.diagnostics)
     except ValidationError:
         return None
 
@@ -1126,12 +1138,9 @@ def _runtime_observed_summary(
     if observation is None:
         return None
     return RuntimeObservedConfigSummaryResponse(
-        reported_at=observation.reported_at,
-        status=observation.status,
+        observed_at=observation.observed_at,
         observed_config_generation=observation.observed_config_generation,
-        instance_id=observation.instance_id,
         observed_manifest_etag=observation.observed_manifest_etag,
-        observed_channels_etag=observation.observed_channels_etag,
     )
 
 
@@ -1143,7 +1152,7 @@ def _runtime_observed_response(
         return None
     return RuntimeObservedConfigResponse(
         **summary.model_dump(),
-        payload=_validated_runtime_observed_payload(observation),
+        diagnostics=_validated_runtime_observed_diagnostics(observation),
     )
 
 
@@ -1267,7 +1276,7 @@ def _runtime_observed_comparison_value(
     return {key: item for key, item in value.items() if key != "reportedAt"}
 
 
-def _runtime_observed_payload(value: HostedRuntimeObservedV1) -> dict[str, Any]:
+def _runtime_observed_diagnostics(value: HostedRuntimeObservedV1) -> dict[str, Any]:
     return value.model_dump(
         mode="json",
         by_alias=True,
@@ -1284,21 +1293,11 @@ def _runtime_observed_columns(value: HostedRuntimeObservedV1) -> dict[str, Any]:
         if value.boot is not None
         else None
     )
-    instance_id = (
-        applied_watch.instance_id
-        if applied_watch is not None and applied_watch.instance_id is not None
-        else value.boot.instance_id
-        if value.boot is not None
-        else None
-    )
     return {
-        "reported_at": value.reported_at,
-        "status": value.status,
+        "observed_at": value.reported_at,
         "observed_config_generation": observed_config_generation,
-        "instance_id": instance_id,
         "observed_manifest_etag": value.manifest.etag,
-        "observed_channels_etag": value.channels.etag,
-        "payload": _runtime_observed_payload(value),
+        "diagnostics": _runtime_observed_diagnostics(value),
     }
 
 
@@ -1377,8 +1376,8 @@ async def sync_heartbeat(
         if row is not None:
             hosted_state, observation = row
             observed_changed = _runtime_observed_comparison_value(
-                observation.payload if observation is not None else None
-            ) != _runtime_observed_comparison_value(_runtime_observed_payload(runtime_observed))
+                observation.diagnostics if observation is not None else None
+            ) != _runtime_observed_comparison_value(_runtime_observed_diagnostics(runtime_observed))
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
@@ -1427,15 +1426,12 @@ async def sync_heartbeat(
             insert_observation.on_conflict_do_update(
                 index_elements=[HostedRuntimeConfigObservation.environment_id],
                 set_={
-                    "reported_at": insert_observation.excluded.reported_at,
-                    "status": insert_observation.excluded.status,
+                    "observed_at": insert_observation.excluded.observed_at,
                     "observed_config_generation": (
                         insert_observation.excluded.observed_config_generation
                     ),
-                    "instance_id": insert_observation.excluded.instance_id,
                     "observed_manifest_etag": (insert_observation.excluded.observed_manifest_etag),
-                    "observed_channels_etag": (insert_observation.excluded.observed_channels_etag),
-                    "payload": insert_observation.excluded.payload,
+                    "diagnostics": insert_observation.excluded.diagnostics,
                     "updated_at": func.now(),
                 },
             )

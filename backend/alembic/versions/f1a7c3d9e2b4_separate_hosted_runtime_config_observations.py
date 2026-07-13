@@ -24,23 +24,16 @@ def upgrade() -> None:
     op.create_table(
         "hosted_runtime_config_observations",
         sa.Column("environment_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("reported_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("status", sa.String(length=16), nullable=True),
+        sa.Column("observed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("observed_config_generation", sa.Integer(), nullable=True),
-        sa.Column("instance_id", sa.String(length=200), nullable=True),
         sa.Column("observed_manifest_etag", sa.String(length=1024), nullable=True),
-        sa.Column("observed_channels_etag", sa.String(length=1024), nullable=True),
         sa.Column(
-            "payload",
+            "diagnostics",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.CheckConstraint(
-            "status IS NULL OR status IN ('ok', 'error', 'unknown')",
-            name="ck_hosted_runtime_config_observations_status",
-        ),
         sa.CheckConstraint(
             "observed_config_generation IS NULL OR observed_config_generation >= 0",
             name="ck_hosted_runtime_config_observations_generation",
@@ -55,7 +48,7 @@ def upgrade() -> None:
     bind.execute(
         sa.text(
             """
-            INSERT INTO hosted_runtime_config_observations (environment_id, payload)
+            INSERT INTO hosted_runtime_config_observations (environment_id, diagnostics)
             SELECT environment_id, observed
             FROM hosted_runtime_states
             WHERE observed IS NOT NULL
@@ -81,7 +74,7 @@ def downgrade() -> None:
         sa.text(
             """
             UPDATE hosted_runtime_states AS state
-            SET observed = observation.payload
+            SET observed = observation.diagnostics
             FROM hosted_runtime_config_observations AS observation
             WHERE observation.environment_id = state.environment_id
             """

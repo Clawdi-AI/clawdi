@@ -410,10 +410,11 @@ At the boundary:
 
 The manifest wire field remains `generation`, but it is specifically the
 desired config generation. Cloud API records daemon convergence separately as
-`observed_config_generation`, together with `observed_manifest_etag`; the ETag
-cannot be inferred from the generation. These CONFIG convergence fields are
-separate from hosted provider COMPUTE convergence fields such as desired or
-observed replica generation.
+`observed_at`, `observed_config_generation`, and `observed_manifest_etag`, plus
+the validated v1 diagnostics JSONB. The ETag cannot be inferred from the
+generation, and the generation cannot be inferred from the ETag. These CONFIG
+convergence fields are separate from hosted provider COMPUTE convergence fields
+such as desired or observed replica generation.
 
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:

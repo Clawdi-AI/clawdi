@@ -158,13 +158,10 @@ class HostedRuntimeObservedV1(_StrictObservedWireModel):
 
 
 class RuntimeObservedConfigSummaryResponse(BaseModel):
-    reported_at: datetime | None = None
-    status: RuntimeObservedStatus | None = None
+    observed_at: datetime | None = None
     observed_config_generation: int | None = None
-    instance_id: str | None = None
     observed_manifest_etag: str | None = None
-    observed_channels_etag: str | None = None
 
 
 class RuntimeObservedConfigResponse(RuntimeObservedConfigSummaryResponse):
-    payload: HostedRuntimeObservedV1 | None = None
+    diagnostics: HostedRuntimeObservedV1 | None = None

@@ -5182,34 +5182,22 @@ export interface components {
         };
         /** RuntimeObservedConfigResponse */
         RuntimeObservedConfigResponse: {
-            /** Reported At */
-            reported_at?: string | null;
-            /** Status */
-            status?: ("ok" | "error" | "unknown") | null;
+            /** Observed At */
+            observed_at?: string | null;
             /** Observed Config Generation */
             observed_config_generation?: number | null;
-            /** Instance Id */
-            instance_id?: string | null;
             /** Observed Manifest Etag */
             observed_manifest_etag?: string | null;
-            /** Observed Channels Etag */
-            observed_channels_etag?: string | null;
-            payload?: components["schemas"]["HostedRuntimeObservedV1"] | null;
+            diagnostics?: components["schemas"]["HostedRuntimeObservedV1"] | null;
         };
         /** RuntimeObservedConfigSummaryResponse */
         RuntimeObservedConfigSummaryResponse: {
-            /** Reported At */
-            reported_at?: string | null;
-            /** Status */
-            status?: ("ok" | "error" | "unknown") | null;
+            /** Observed At */
+            observed_at?: string | null;
             /** Observed Config Generation */
             observed_config_generation?: number | null;
-            /** Instance Id */
-            instance_id?: string | null;
             /** Observed Manifest Etag */
             observed_manifest_etag?: string | null;
-            /** Observed Channels Etag */
-            observed_channels_etag?: string | null;
         };
         /** RuntimeObservedDesiredResponse */
         RuntimeObservedDesiredResponse: {
@@ -5248,8 +5236,8 @@ export interface components {
              * @default []
              */
             reasons: string[];
-            /** Reported At */
-            reported_at?: string | null;
+            /** Observed At */
+            observed_at?: string | null;
         };
         /** RuntimeObservedProviderHealthResponse */
         RuntimeObservedProviderHealthResponse: {

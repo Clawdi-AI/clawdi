@@ -1959,7 +1959,6 @@ async def test_runtime_manifest_etag_ignores_heartbeat_liveness(
     observation = await db_session.get(HostedRuntimeConfigObservation, env.id)
     assert observation is not None
     assert observation.observed_config_generation == expected["generation"]
-    assert observation.instance_id == expected["instance_id"]
     assert observation.observed_manifest_etag == etag
 
 

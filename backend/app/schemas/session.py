@@ -311,7 +311,7 @@ class RuntimeObservedDesiredResponse(BaseModel):
 class RuntimeObservedHealthResponse(BaseModel):
     status: Literal["ok", "error", "stale", "unknown", "not_configured"]
     reasons: list[str] = []
-    reported_at: datetime | None = None
+    observed_at: datetime | None = None
 
 
 class RuntimeObservedProviderHealthResponse(BaseModel):

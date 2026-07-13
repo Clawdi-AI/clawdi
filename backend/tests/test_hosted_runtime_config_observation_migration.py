@@ -39,14 +39,14 @@ def test_hosted_runtime_config_observation_migration_is_single_head() -> None:
     assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
 
 
-def test_hosted_runtime_config_observation_migration_preserves_payload_and_downgrades(
+def test_hosted_runtime_config_observation_migration_preserves_diagnostics_and_compute_state(
     engine: AsyncEngine,
 ) -> None:
     migration = _load_migration()
     schema = f"hosted_runtime_observation_migration_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     empty_environment_id = uuid.uuid4()
-    observed = {
+    legacy_diagnostics = {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
         "reportedAt": "2026-07-13T00:00:00Z",
         "status": "ok",
@@ -63,7 +63,9 @@ def test_hosted_runtime_config_observation_migration_preserves_payload_and_downg
                     """
                     CREATE TABLE hosted_runtime_states (
                         environment_id uuid PRIMARY KEY,
-                        observed jsonb
+                        observed jsonb,
+                        desired_generation integer,
+                        observed_generation integer
                     )
                     """
                 )
@@ -71,16 +73,21 @@ def test_hosted_runtime_config_observation_migration_preserves_payload_and_downg
             sync_conn.execute(
                 sa.text(
                     """
-                    INSERT INTO hosted_runtime_states (environment_id, observed)
+                    INSERT INTO hosted_runtime_states (
+                        environment_id,
+                        observed,
+                        desired_generation,
+                        observed_generation
+                    )
                     VALUES
-                        (CAST(:environment_id AS uuid), CAST(:observed AS jsonb)),
-                        (CAST(:empty_environment_id AS uuid), NULL)
+                        (CAST(:environment_id AS uuid), CAST(:observed AS jsonb), 17, 13),
+                        (CAST(:empty_environment_id AS uuid), NULL, 23, 19)
                     """
                 ),
                 {
                     "environment_id": str(environment_id),
                     "empty_environment_id": str(empty_environment_id),
-                    "observed": json.dumps(observed),
+                    "observed": json.dumps(legacy_diagnostics),
                 },
             )
             migration.op = Operations(MigrationContext.configure(sync_conn))
@@ -100,40 +107,58 @@ def test_hosted_runtime_config_observation_migration_preserves_payload_and_downg
                     {"schema": schema},
                 )
             }
-            assert state_columns == {"environment_id"}
+            assert state_columns == {
+                "environment_id",
+                "desired_generation",
+                "observed_generation",
+            }
+
+            compute_state = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT desired_generation, observed_generation
+                    FROM hosted_runtime_states
+                    WHERE environment_id = :environment_id
+                    """
+                ),
+                {"environment_id": environment_id},
+            ).one()
+            assert compute_state.desired_generation == 17
+            assert compute_state.observed_generation == 13
 
             observation = sync_conn.execute(
                 sa.text(
                     """
-                    SELECT environment_id, reported_at, status, observed_config_generation,
-                           instance_id, observed_manifest_etag, observed_channels_etag, payload
+                    SELECT environment_id, observed_at, observed_config_generation,
+                           observed_manifest_etag, diagnostics
                     FROM hosted_runtime_config_observations
                     """
                 )
             ).one()
             assert observation.environment_id == environment_id
-            assert observation.payload == observed
-            assert observation.reported_at is None
-            assert observation.status is None
+            assert observation.diagnostics == legacy_diagnostics
+            assert observation.observed_at is None
             assert observation.observed_config_generation is None
-            assert observation.instance_id is None
             assert observation.observed_manifest_etag is None
-            assert observation.observed_channels_etag is None
 
             migration.downgrade()
 
             restored = sync_conn.execute(
                 sa.text(
                     """
-                    SELECT environment_id, observed
+                    SELECT environment_id, observed, desired_generation, observed_generation
                     FROM hosted_runtime_states
                     ORDER BY environment_id
                     """
                 )
             ).all()
-            restored_by_id = {row.environment_id: row.observed for row in restored}
-            assert restored_by_id[environment_id] == observed
-            assert restored_by_id[empty_environment_id] is None
+            restored_by_id = {row.environment_id: row for row in restored}
+            assert restored_by_id[environment_id].observed == legacy_diagnostics
+            assert restored_by_id[environment_id].desired_generation == 17
+            assert restored_by_id[environment_id].observed_generation == 13
+            assert restored_by_id[empty_environment_id].observed is None
+            assert restored_by_id[empty_environment_id].desired_generation == 23
+            assert restored_by_id[empty_environment_id].observed_generation == 19
             observation_table_count = sync_conn.execute(
                 sa.text(
                     """

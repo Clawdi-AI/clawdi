@@ -40,10 +40,6 @@ class HostedRuntimeConfigObservation(Base, TimestampMixin):
     __tablename__ = "hosted_runtime_config_observations"
     __table_args__ = (
         CheckConstraint(
-            "status IS NULL OR status IN ('ok', 'error', 'unknown')",
-            name="ck_hosted_runtime_config_observations_status",
-        ),
-        CheckConstraint(
             "observed_config_generation IS NULL OR observed_config_generation >= 0",
             name="ck_hosted_runtime_config_observations_generation",
         ),
@@ -54,10 +50,7 @@ class HostedRuntimeConfigObservation(Base, TimestampMixin):
         ForeignKey("hosted_runtime_states.environment_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str | None] = mapped_column(String(16))
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     observed_config_generation: Mapped[int | None] = mapped_column(Integer)
-    instance_id: Mapped[str | None] = mapped_column(String(200))
     observed_manifest_etag: Mapped[str | None] = mapped_column(String(1024))
-    observed_channels_etag: Mapped[str | None] = mapped_column(String(1024))
-    payload: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    diagnostics: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
