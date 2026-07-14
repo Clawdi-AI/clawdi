@@ -38,6 +38,7 @@ from app.routes.mcp_bridge import router as mcp_bridge_router
 from app.routes.me import router as me_router
 from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
+from app.routes.platform import router as platform_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
 from app.routes.runtime import router as runtime_router
@@ -246,7 +247,7 @@ async def request_validation_exception_handler(
 # API routers are mounted canonically under /v1 (the only
 # form in the OpenAPI schema — we serve on a dedicated API domain, so
 # versioning sits at the root). Older APIs also retain the legacy /api alias;
-# the unlaunched runtime manifest contract is canonical-only.
+# unlaunched runtime and platform contracts are canonical-only.
 #
 # Note for public_sessions_router: share routes live at
 # /v1/public/sessions/{id}/..., auth is optional (signed-in owners +
@@ -270,6 +271,7 @@ _VERSIONED_ROUTERS = (
     memories_router,
     settings_router,
     capabilities_router,
+    platform_router,
     vault_router,
     connectors_router,
     mcp_bridge_router,
@@ -281,7 +283,7 @@ _VERSIONED_ROUTERS = (
 )
 for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")
-    if _router is not runtime_router:
+    if _router not in (runtime_router, platform_router):
         app.include_router(_router, prefix="/api", include_in_schema=False)
 # Scope skill reads predate the Scope -> Project migration and only
 # exist for old binaries; legacy /api alias only.

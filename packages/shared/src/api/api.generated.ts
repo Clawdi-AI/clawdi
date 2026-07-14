@@ -1725,6 +1725,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Create Agent */
+        post: operations["platform_create_agent_v1_platform_agents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Platform Delete Agent */
+        delete: operations["platform_delete_agent_v1_platform_agents__agent_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Platform Upsert Runtime State */
+        put: operations["platform_upsert_runtime_state_v1_platform_agents__agent_id__runtime_state_put"];
+        post?: never;
+        /** Platform Delete Runtime State */
+        delete: operations["platform_delete_runtime_state_v1_platform_agents__agent_id__runtime_state_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/auth/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Mint Api Key */
+        post: operations["platform_mint_api_key_v1_platform_auth_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/auth/keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Platform Revoke Api Key */
+        delete: operations["platform_revoke_api_key_v1_platform_auth_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault": {
         parameters: {
             query?: never;
@@ -4033,6 +4119,307 @@ export interface components {
              */
             status: "ok";
         };
+        /** HostedEgressEngine */
+        HostedEgressEngine: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "mitmproxy";
+            /** Version */
+            version: string;
+            /** Url */
+            url: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** HostedEgressHeaderEqualsMatcher */
+        HostedEgressHeaderEqualsMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "equals";
+            /** Value */
+            value: string;
+            /** Prefix */
+            prefix?: string | null;
+        };
+        /** HostedEgressHeaderExistsMatcher */
+        HostedEgressHeaderExistsMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "exists";
+        };
+        /** HostedEgressHeaderSecretRefEqualsMatcher */
+        HostedEgressHeaderSecretRefEqualsMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "secretRefEquals";
+            /** Secretref */
+            secretRef: string;
+            /** Prefix */
+            prefix?: string | null;
+        };
+        /** HostedEgressHeaderSecretRefSetter */
+        HostedEgressHeaderSecretRefSetter: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "secretRef";
+            /** Secretref */
+            secretRef: string;
+            /** Prefix */
+            prefix?: string | null;
+        };
+        /** HostedEgressPathEqualsMatcher */
+        HostedEgressPathEqualsMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "equals";
+            /** Value */
+            value: string;
+        };
+        /** HostedEgressPathPrefixMatcher */
+        HostedEgressPathPrefixMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "prefix";
+            /** Value */
+            value: string;
+        };
+        /** HostedEgressPathReplace */
+        HostedEgressPathReplace: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "secretRefPrefix";
+            /** Secretref */
+            secretRef: string;
+            /** Replacementsecretref */
+            replacementSecretRef: string;
+            /** Prefix */
+            prefix?: string | null;
+            /** Suffix */
+            suffix?: string | null;
+        };
+        /** HostedEgressPathSecretRefMatcher */
+        HostedEgressPathSecretRefMatcher: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "secretRefEquals" | "secretRefPrefix";
+            /** Secretref */
+            secretRef: string;
+            /** Prefix */
+            prefix?: string | null;
+            /** Suffix */
+            suffix?: string | null;
+        };
+        /** HostedEgressProfile */
+        HostedEgressProfile: {
+            /** Id */
+            id: string;
+            /** Enabled */
+            enabled?: boolean | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "http" | "websocket" | "provider" | "passthrough" | "deny";
+            match: components["schemas"]["HostedEgressProfileMatch"];
+            rewrite?: components["schemas"]["HostedEgressProfileRewrite"] | null;
+            logging?: components["schemas"]["HostedEgressProfileLogging"] | null;
+            /** Priority */
+            priority?: number | null;
+            /** Owner */
+            owner?: string | null;
+            /** Description */
+            description?: string | null;
+        };
+        /** HostedEgressProfileLogging */
+        HostedEgressProfileLogging: {
+            /** Redactheaders */
+            redactHeaders?: string[] | null;
+            /** Redacturlpatterns */
+            redactUrlPatterns?: string[] | null;
+        };
+        /** HostedEgressProfileMatch */
+        HostedEgressProfileMatch: {
+            /** Scheme */
+            scheme?: ("http" | "https" | "ws" | "wss") | null;
+            /** Host */
+            host: string;
+            /** Pathprefix */
+            pathPrefix?: string | null;
+            /** Path */
+            path?: (components["schemas"]["HostedEgressPathEqualsMatcher"] | components["schemas"]["HostedEgressPathPrefixMatcher"] | components["schemas"]["HostedEgressPathSecretRefMatcher"]) | null;
+            /** Headers */
+            headers?: {
+                [key: string]: components["schemas"]["HostedEgressHeaderExistsMatcher"] | components["schemas"]["HostedEgressHeaderEqualsMatcher"] | components["schemas"]["HostedEgressHeaderSecretRefEqualsMatcher"];
+            } | null;
+            /** Query */
+            query?: {
+                [key: string]: components["schemas"]["HostedEgressHeaderExistsMatcher"] | components["schemas"]["HostedEgressHeaderEqualsMatcher"] | components["schemas"]["HostedEgressHeaderSecretRefEqualsMatcher"];
+            } | null;
+        };
+        /** HostedEgressProfileRewrite */
+        HostedEgressProfileRewrite: {
+            /** Upstreambaseurl */
+            upstreamBaseUrl?: string | null;
+            /** Preservepath */
+            preservePath?: boolean | null;
+            pathReplace?: components["schemas"]["HostedEgressPathReplace"] | null;
+            /** Setheaders */
+            setHeaders?: {
+                [key: string]: string | components["schemas"]["HostedEgressHeaderSecretRefSetter"];
+            } | null;
+        };
+        /** HostedEgressProfiles */
+        HostedEgressProfiles: {
+            /** Profiles */
+            profiles?: components["schemas"]["HostedEgressProfile"][] | null;
+        };
+        /** HostedRuntimeBridge */
+        HostedRuntimeBridge: {
+            /** Surfaces */
+            surfaces: components["schemas"]["HostedRuntimeBridgeSurface"][];
+        };
+        /** HostedRuntimeBridgeSurface */
+        HostedRuntimeBridgeSurface: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "control-ui";
+            /** Listenhost */
+            listenHost?: string | null;
+            /** Listenport */
+            listenPort: number;
+            /** Upstreamhost */
+            upstreamHost?: string | null;
+            /** Upstreamport */
+            upstreamPort: number;
+        };
+        /** HostedRuntimeDesiredState */
+        HostedRuntimeDesiredState: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /** Provider Ids */
+            provider_ids: string[];
+            primary_model: components["schemas"]["HostedRuntimePrimaryModel"];
+            install: components["schemas"]["HostedRuntimeInstall"];
+            run?: components["schemas"]["HostedRuntimeRunSettings"] | null;
+            /** Services */
+            services?: {
+                [key: string]: components["schemas"]["HostedRuntimeRunSettings"];
+            } | null;
+            paths: components["schemas"]["HostedRuntimePaths"];
+        };
+        /** HostedRuntimeInstall */
+        HostedRuntimeInstall: {
+            /**
+             * Source
+             * @constant
+             */
+            source: "official";
+        };
+        /** HostedRuntimeLiveSync */
+        HostedRuntimeLiveSync: {
+            /** Enabled */
+            enabled: boolean;
+            /** Agents */
+            agents: components["schemas"]["HostedRuntimeLiveSyncAgent"][];
+        };
+        /** HostedRuntimeLiveSyncAgent */
+        HostedRuntimeLiveSyncAgent: {
+            /**
+             * Agenttype
+             * @enum {string}
+             */
+            agentType: "openclaw" | "hermes" | "codex";
+            /** Environmentid */
+            environmentId: string;
+        };
+        /** HostedRuntimeLocale */
+        HostedRuntimeLocale: {
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "en" | "zh-CN" | "zh-TW" | "ja" | "ko" | "es" | "fr" | "de" | "pt";
+            /** Timezone */
+            timezone: string;
+        };
+        /** HostedRuntimePaths */
+        HostedRuntimePaths: {
+            /** Home */
+            home: string;
+            /** Workspace */
+            workspace: string;
+        };
+        /** HostedRuntimePrimaryModel */
+        HostedRuntimePrimaryModel: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
+        };
+        /** HostedRuntimeRecovery */
+        HostedRuntimeRecovery: {
+            /** Cachemanifest */
+            cacheManifest: boolean;
+            /** Allowofflineboot */
+            allowOfflineBoot: boolean;
+        };
+        /** HostedRuntimeRunSettings */
+        HostedRuntimeRunSettings: {
+            /** Command */
+            command?: string | null;
+            /** Args */
+            args?: string[] | null;
+            /** Env */
+            env?: {
+                [key: string]: string;
+            } | null;
+            /** Secretenv */
+            secretEnv?: {
+                [key: string]: string;
+            } | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Prependpath */
+            prependPath?: string[] | null;
+        };
+        /** HostedRuntimeSystem */
+        HostedRuntimeSystem: {
+            /** User */
+            user: string;
+            /** Home */
+            home: string;
+            /** Workspace */
+            workspace: string;
+            /** Persistentpaths */
+            persistentPaths: string[];
+            /** Openclawcontroluiallowedorigins */
+            openclawControlUiAllowedOrigins?: string[] | null;
+        };
         /**
          * InvitationAcceptResponse
          * @description Returned after a directed project invitation is accepted.
@@ -4247,6 +4634,102 @@ export interface components {
             page: number;
             /** Page Size */
             page_size: number;
+        };
+        /** PlatformAgentCreate */
+        PlatformAgentCreate: {
+            owner: components["schemas"]["PlatformOwner"];
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Machine Id */
+            machine_id: string;
+            /** Machine Name */
+            machine_name: string;
+            /** Agent Type */
+            agent_type: string;
+            /** Agent Version */
+            agent_version?: string | null;
+            /**
+             * Os Name
+             * @default linux
+             */
+            os_name: string;
+        };
+        /** PlatformApiKeyCreate */
+        PlatformApiKeyCreate: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Label */
+            label: string;
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /** Scopes */
+            scopes?: string[];
+        };
+        /** PlatformMutationBody */
+        PlatformMutationBody: {
+            owner: components["schemas"]["PlatformOwner"];
+        };
+        /** PlatformOwner */
+        PlatformOwner: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "clerk" | "partner_tenant";
+            /** Ref */
+            ref: string;
+        };
+        /** PlatformRuntimeStateResponse */
+        PlatformRuntimeStateResponse: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /** Deployment Id */
+            deployment_id: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Generation */
+            generation: number;
+        };
+        /** PlatformRuntimeStateUpsert */
+        PlatformRuntimeStateUpsert: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Deployment Id */
+            deployment_id: string;
+            /** App Id */
+            app_id?: string | null;
+            /** Instance Id */
+            instance_id: string;
+            /** Generation */
+            generation: number;
+            /** Cli Package Spec */
+            cli_package_spec: string;
+            locale: components["schemas"]["HostedRuntimeLocale"];
+            system: components["schemas"]["HostedRuntimeSystem"];
+            egress_engine?: components["schemas"]["HostedEgressEngine"] | null;
+            /** Runtimes */
+            runtimes: {
+                [key: string]: components["schemas"]["HostedRuntimeDesiredState"];
+            };
+            bridge?: components["schemas"]["HostedRuntimeBridge"] | null;
+            live_sync: components["schemas"]["HostedRuntimeLiveSync"];
+            recovery: components["schemas"]["HostedRuntimeRecovery"];
+            egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;
+            /** Mcp */
+            mcp?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -8903,6 +9386,226 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    platform_create_agent_v1_platform_agents_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformAgentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_delete_agent_v1_platform_agents__agent_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformMutationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_upsert_runtime_state_v1_platform_agents__agent_id__runtime_state_put: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeStateUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformRuntimeStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_delete_runtime_state_v1_platform_agents__agent_id__runtime_state_delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformMutationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_mint_api_key_v1_platform_auth_keys_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformApiKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_revoke_api_key_v1_platform_auth_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformMutationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyRevokeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

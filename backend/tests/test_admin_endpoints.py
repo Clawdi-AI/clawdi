@@ -74,6 +74,63 @@ async def test_admin_mint_rejects_wrong_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_clerk_id",
+    ["", " user_123", "user 123", "partner:phala:team_123", "x" * 201],
+)
+async def test_admin_mint_rejects_invalid_target_clerk_id(admin_client, target_clerk_id):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={"target_clerk_id": target_clerk_id, "label": "invalid-target"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/v1/admin/auth/keys", {"label": "partner-runtime"}),
+        (
+            "/v1/admin/agents",
+            {
+                "agent_id": "de9e247b-1c60-4f8a-ad7b-537b16b247a8",
+                "machine_id": "partner-agent",
+                "machine_name": "Partner Agent",
+                "agent_type": "openclaw",
+            },
+        ),
+    ],
+)
+async def test_legacy_admin_rejects_partner_principal_fields(
+    admin_client,
+    seed_user,
+    path,
+    payload,
+):
+    response = await admin_client.post(
+        path,
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "principal_kind": "partner_tenant",
+            "partner_tenant_ref": "phala_cloud:team_123",
+            **payload,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    extra_fields = {
+        error["loc"][-1]
+        for error in response.json()["detail"]
+        if error["type"] == "extra_forbidden"
+    }
+    assert extra_fields == {"principal_kind", "partner_tenant_ref"}
+
+
+@pytest.mark.asyncio
 async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
     """If `settings.admin_api_key` is empty, endpoints return 503
     regardless of header. Default OSS posture: admin endpoints are
@@ -210,6 +267,43 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
 
 
 @pytest.mark.asyncio
+async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_session, seed_user):
+    from sqlalchemy import select
+
+    from app.models.audit import ControlPlaneAuditEvent
+
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "audit-mint",
+            "managed": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    event = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "api_key.mint",
+                ControlPlaneAuditEvent.resource_id == body["id"],
+            )
+        )
+    ).scalar_one()
+    assert event.actor_type == "admin"
+    assert event.resource_type == "api_key"
+    assert event.target_user_id == seed_user.id
+    assert event.source == "api.admin"
+    assert event.details["label"] == "audit-mint"
+    assert event.details["key_prefix"] == body["key_prefix"]
+    assert event.details["managed"] is True
+    assert event.details["has_environment_binding"] is False
+    assert body["raw_key"] not in str(event.details)
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """First-time deploy path: a user who's never visited cloud-api
     directly (no row yet) clicks Deploy on the upstream SaaS
@@ -252,6 +346,8 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     user = (
         await db_session.execute(select(User).where(User.clerk_id == novel_clerk_id))
     ).scalar_one()
+    assert user.principal_kind == "clerk"
+    assert user.partner_tenant_ref is None
     assert user.email is None
     assert user.name is None
 
@@ -439,6 +535,43 @@ async def test_admin_revoke_happy_path(admin_client, db_session, seed_user):
     db_session.expire_all()
     row = (await db_session.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one()
     assert row.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_revoke_api_key_writes_control_plane_audit(admin_client, db_session, seed_user):
+    from sqlalchemy import select
+
+    from app.models.audit import ControlPlaneAuditEvent
+
+    minted_response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={"target_clerk_id": seed_user.clerk_id, "label": "audit-revoke"},
+    )
+    assert minted_response.status_code == 200, minted_response.text
+    minted = minted_response.json()
+
+    response = await admin_client.delete(
+        f"/v1/admin/auth/keys/{minted['id']}",
+        headers=_AUTH,
+    )
+    assert response.status_code == 200, response.text
+
+    event = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "api_key.revoke",
+                ControlPlaneAuditEvent.resource_id == minted["id"],
+            )
+        )
+    ).scalar_one()
+    assert event.actor_type == "admin"
+    assert event.resource_type == "api_key"
+    assert event.target_user_id == seed_user.id
+    assert event.source == "api.admin"
+    assert event.details["label"] == "audit-revoke"
+    assert event.details["key_prefix"] == minted["key_prefix"]
+    assert minted["raw_key"] not in str(event.details)
 
 
 @pytest.mark.asyncio
@@ -1321,6 +1454,7 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
 
     from sqlalchemy import select
 
+    from app.models.audit import ControlPlaneAuditEvent
     from app.models.session import AgentEnvironment, Session
 
     created = await admin_client.post(
@@ -1356,12 +1490,97 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
     assert env is None
     await db_session.refresh(session_row)
     assert session_row.environment_id is None
+    event = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "agent_environment.delete",
+                ControlPlaneAuditEvent.resource_id == str(env_id),
+            )
+        )
+    ).scalar_one()
+    assert event.actor_type == "admin"
+    assert event.resource_type == "agent_environment"
+    assert event.target_user_id == seed_user.id
+    assert event.source == "api.admin"
+    assert event.details["agent_type"] == "codex"
+    assert event.details["machine_id"] == "delete-machine-1"
 
     deleted_again = await admin_client.delete(
         f"/api/admin/environments/{env_id}",
         headers=_AUTH,
     )
     assert deleted_again.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path_template",
+    ["/v1/admin/agents/{env_id}", "/v1/admin/environments/{env_id}"],
+)
+async def test_admin_delete_environment_accepts_matching_optional_owner(
+    admin_client, db_session, seed_user, path_template
+):
+    import uuid as _uuid
+
+    from app.models.session import AgentEnvironment
+    from tests.conftest import create_env_with_project
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"delete-owner-match-{_uuid.uuid4().hex[:8]}",
+        machine_name="delete-owner-match-pod",
+        agent_type="codex",
+    )
+
+    response = await admin_client.delete(
+        path_template.format(env_id=env.id),
+        headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
+
+    assert response.status_code == 204, response.text
+    assert await db_session.get(AgentEnvironment, env.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path_template",
+    ["/v1/admin/agents/{env_id}", "/v1/admin/environments/{env_id}"],
+)
+async def test_admin_delete_environment_rejects_mismatched_optional_owner(
+    admin_client, db_session, seed_user, path_template
+):
+    import uuid as _uuid
+
+    from app.models.session import AgentEnvironment
+    from app.models.user import User
+    from tests.conftest import create_env_with_project
+
+    other = User(
+        clerk_id=f"other_delete_{_uuid.uuid4().hex[:8]}",
+        email="other-delete@x.dev",
+        name="Other Delete",
+    )
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    env = await create_env_with_project(
+        db_session,
+        user_id=other.id,
+        machine_id=f"delete-owner-mismatch-{_uuid.uuid4().hex[:8]}",
+        machine_name="delete-owner-mismatch-pod",
+        agent_type="codex",
+    )
+
+    response = await admin_client.delete(
+        path_template.format(env_id=env.id),
+        headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
+
+    assert response.status_code == 403, response.text
+    assert await db_session.get(AgentEnvironment, env.id) is not None
 
 
 @pytest.mark.asyncio

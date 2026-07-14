@@ -32,6 +32,37 @@ _EXACT_SEMVER_PATTERN = re.compile(
     rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
 )
 _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.51"
+_FORBIDDEN_TOOL_SECRET_KEYS = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "bearer",
+    "header",
+    "headers",
+    "password",
+    "secret",
+    "secrets",
+    "secretvalues",
+    "token",
+}
+
+
+def validate_no_plaintext_tool_secrets(value: object, path: str = "") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).replace("-", "_").lower()
+            if normalized in _FORBIDDEN_TOOL_SECRET_KEYS:
+                location = f" at {path}.{key}" if path else f" at {key}"
+                raise ValueError(
+                    f"mcp/tools desired state must not contain plaintext secrets{location}"
+                )
+            validate_no_plaintext_tool_secrets(
+                child,
+                f"{path}.{key}" if path else str(key),
+            )
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_no_plaintext_tool_secrets(child, f"{path}[{index}]")
 
 
 def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | None:

@@ -2118,6 +2118,97 @@ async def test_admin_delete_runtime_state_requires_admin_key(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resource_name", ["agents", "environments"])
+async def test_admin_runtime_state_accepts_matching_optional_owner(
+    admin_client,
+    db_session,
+    seed_user,
+    resource_name,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-owner-match-{uuid4().hex[:8]}",
+        machine_name="Runtime Owner Match",
+        agent_type="openclaw",
+    )
+    body = _runtime_state_body(
+        str(env.id),
+        target_clerk_id=seed_user.clerk_id,
+    )
+
+    upserted = await admin_client.put(
+        f"/v1/admin/{resource_name}/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+    assert upserted.status_code == 200, upserted.text
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.deployment_id == body["deployment_id"]
+
+    deleted = await admin_client.delete(
+        f"/v1/admin/{resource_name}/{env.id}/runtime-state",
+        headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
+    assert deleted.status_code == 204, deleted.text
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resource_name", ["agents", "environments"])
+async def test_admin_runtime_state_rejects_mismatched_optional_owner_without_mutating(
+    admin_client,
+    db_session,
+    seed_user,
+    resource_name,
+):
+    other_user = User(
+        clerk_id=f"runtime_owner_{uuid4().hex[:12]}",
+        email=f"runtime-owner-{uuid4().hex[:8]}@clawdi.local",
+        name="Runtime Owner",
+    )
+    db_session.add(other_user)
+    await db_session.commit()
+    await db_session.refresh(other_user)
+    upsert_env = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"runtime-upsert-owner-{uuid4().hex[:8]}",
+        machine_name="Runtime Upsert Owner",
+        agent_type="openclaw",
+    )
+    delete_env = await create_env_with_project(
+        db_session,
+        user_id=other_user.id,
+        machine_id=f"runtime-delete-owner-{uuid4().hex[:8]}",
+        machine_name="Runtime Delete Owner",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(delete_env.id))
+
+    upsert_response = await admin_client.put(
+        f"/v1/admin/{resource_name}/{upsert_env.id}/runtime-state",
+        headers=_AUTH,
+        json=_runtime_state_body(
+            str(upsert_env.id),
+            target_clerk_id=seed_user.clerk_id,
+        ),
+    )
+    assert upsert_response.status_code == 403, upsert_response.text
+    assert await db_session.get(HostedRuntimeState, upsert_env.id) is None
+
+    delete_response = await admin_client.delete(
+        f"/v1/admin/{resource_name}/{delete_env.id}/runtime-state",
+        headers=_AUTH,
+        params={"target_clerk_id": seed_user.clerk_id},
+    )
+    assert delete_response.status_code == 403, delete_response.text
+    assert await db_session.get(HostedRuntimeState, delete_env.id) is not None
+
+
+@pytest.mark.asyncio
 async def test_runtime_manifest_generation_advance_changes_etag_and_returns_generation(
     admin_client,
     db_session,

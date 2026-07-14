@@ -1,9 +1,9 @@
 """Canonical /v1 routing and the legacy /api alias.
 
-Every route is mounted canonically under /v1 and aliased under /api for
-clients built before the versioned-prefix migration. The alias must keep
-serving until old clients rotate; the OpenAPI schema (which the web/CLI
-typed-client codegen consumes) must only advertise /v1.
+Legacy routes are mounted canonically under /v1 and aliased under /api for
+clients built before the versioned-prefix migration. New contracts are
+canonical-only. The OpenAPI schema (which the web/CLI typed-client codegen
+consumes) must only advertise /v1.
 """
 
 import httpx
@@ -22,10 +22,14 @@ def _routes_by_path() -> dict[str, set[str]]:
     return routes
 
 
-def test_every_v1_route_has_api_legacy_alias():
+def test_every_legacy_v1_route_has_api_alias():
     routes = _routes_by_path()
     v1_paths = [
-        path for path in routes if path.startswith("/v1/") and path != "/v1/runtime/manifest"
+        path
+        for path in routes
+        if path.startswith("/v1/")
+        and path != "/v1/runtime/manifest"
+        and not path.startswith("/v1/platform/")
     ]
     assert v1_paths, "expected /v1 routes to be mounted"
     missing = [
