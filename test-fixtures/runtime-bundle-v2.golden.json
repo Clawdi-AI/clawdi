@@ -1,9 +1,9 @@
 {
 	"channelBindings": [
 		{
-			"accountKey": "clawdi_500000000000",
-			"agentTokenSecretRef": "secret://channels/telegram/clawdi_500000000000/agent-token",
-			"placeholderTokenSecretRef": "secret://channels/telegram/clawdi_500000000000/placeholder-token",
+			"accountKey": "clawdi_50000000000000000000000000000005",
+			"agentTokenSecretRef": "secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token",
+			"placeholderTokenSecretRef": "secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token",
 			"provider": "telegram"
 		}
 	],
@@ -68,8 +68,8 @@
 	"schemaVersion": "clawdi.hosted-runtime.bundle.v2",
 	"secretValues": {
 		"provider.managed.apiKey": "sk-provider-golden",
-		"secret://channels/telegram/clawdi_500000000000/agent-token": "123456789:telegram-agent-golden",
-		"secret://channels/telegram/clawdi_500000000000/placeholder-token": "999999999:eea06335e768d7a82e535465ae3b8bbd"
+		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
+		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "f1187e61d8a4111aac6e82d69ba356e76224a1e1908c4e455b1bd98dc2b63fbd"
+	"sourceRevision": "770c65d7b9903e89f31d6ba4417bf70cf2c755366d8e44fb4e20a3c4bad9d6a4"
 }

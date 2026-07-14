@@ -32,7 +32,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"f1187e61d8a4111aac6e82d69ba356e76224a1e1908c4e455b1bd98dc2b63fbd",
+			"770c65d7b9903e89f31d6ba4417bf70cf2c755366d8e44fb4e20a3c4bad9d6a4",
 		);
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
@@ -40,12 +40,12 @@ describe("hosted runtime bundle v2", () => {
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: {
 				accounts: {
-					clawdi_500000000000: {
+					clawdi_50000000000000000000000000000005: {
 						enabled: true,
 						botToken: {
 							source: "env",
 							provider: "default",
-							id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_500000000000_AGENT_TOKEN",
+							id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000000000000000000000005_AGENT_TOKEN",
 						},
 					},
 				},
@@ -146,7 +146,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"f1187e61d8a4111aac6e82d69ba356e76224a1e1908c4e455b1bd98dc2b63fbd",
+			"770c65d7b9903e89f31d6ba4417bf70cf2c755366d8e44fb4e20a3c4bad9d6a4",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
@@ -164,9 +164,11 @@ describe("hosted runtime bundle v2", () => {
 		cacheRuntimeLastGoodManifest(projected.manifest, paths, projected.secretValues);
 		const manifestCache = readFileSync(paths.manifestLastGood, "utf-8");
 		const secretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
-		expect(manifestCache).toContain("CLAWDI_CHANNEL_TELEGRAM_CLAWDI_500000000000_AGENT_TOKEN");
+		expect(manifestCache).toContain(
+			"CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000000000000000000000005_AGENT_TOKEN",
+		);
 		expect(manifestCache).not.toContain("telegram-agent-golden");
-		expect(secretCache).toContain("999999999:eea06335e768d7a82e535465ae3b8bbd");
+		expect(secretCache).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
 		expect(secretCache).not.toContain("telegram-agent-golden");
 		expect(secretCache).not.toContain("channelBindings");
 		expect(secretCache).not.toContain("sourceRevision");
@@ -184,7 +186,7 @@ describe("hosted runtime bundle v2", () => {
 			sourceRevision: "e".repeat(64),
 			secretValues: {
 				...raw.secretValues,
-				"secret://channels/telegram/clawdi_500000000000/agent-token":
+				"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token":
 					"123456789:telegram-agent-rotated",
 			},
 		};

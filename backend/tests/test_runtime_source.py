@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+import pytest
+
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.services.runtime_source import (
     RuntimeSourceBatch,
+    RuntimeSourceError,
     RuntimeSourceRow,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
@@ -23,6 +26,8 @@ PROVIDER_ROW_ID = UUID("30000000-0000-0000-0000-000000000003")
 AUTH_ROW_ID = UUID("40000000-0000-0000-0000-000000000004")
 ACCOUNT_ID = UUID("50000000-0000-0000-0000-000000000005")
 LINK_ID = UUID("60000000-0000-0000-0000-000000000006")
+PREFIX_COLLISION_ACCOUNT_ID = UUID("50000000-0000-ffff-0000-000000000007")
+PREFIX_COLLISION_LINK_ID = UUID("60000000-0000-0000-0000-000000000008")
 
 
 def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
@@ -120,6 +125,64 @@ def _batch(
     )
 
 
+def _add_managed_provider(
+    batch: RuntimeSourceBatch,
+    *,
+    provider_id: str,
+    provider_row_id: UUID,
+    auth_row_id: UUID,
+) -> None:
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = [*runtime["provider_ids"], provider_id]
+    state.runtimes = {"openclaw": runtime}
+    batch.providers[(USER_ID, provider_id)] = AiProvider(
+        id=provider_row_id,
+        owner_user_id=USER_ID,
+        provider_id=provider_id,
+        type="openai",
+        label="Second provider",
+        base_url="https://provider-two.test/v1",
+        api_mode="responses",
+        auth_type="api_key",
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+    )
+    batch.auth_payloads[(USER_ID, provider_id, "default")] = AiProviderAuthPayload(
+        id=auth_row_id,
+        owner_user_id=USER_ID,
+        provider_id=provider_id,
+        auth_profile="default",
+        kind="api_key",
+        source="managed",
+        encrypted_payload=b"provider-two-ciphertext",
+        nonce=b"provider-two-nonce",
+    )
+
+
+def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
+    account = ChannelAccount(
+        id=PREFIX_COLLISION_ACCOUNT_ID,
+        user_id=USER_ID,
+        provider="telegram",
+        name="Second bot",
+        status="active",
+        visibility="private",
+        webhook_secret_hash="second-hash",
+    )
+    link = ChannelBotAgentLink(
+        id=PREFIX_COLLISION_LINK_ID,
+        account_id=PREFIX_COLLISION_ACCOUNT_ID,
+        user_id=USER_ID,
+        agent_id=ENV_ID,
+        status="active",
+        encrypted_agent_token=b"second-channel-token",
+        agent_token_nonce=b"second-channel-nonce",
+    )
+    batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
+
+
 def _render(batch: RuntimeSourceBatch):
     return render_runtime_source(
         batch,
@@ -141,10 +204,12 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     assert initial.channel_bindings == [
         {
             "provider": "telegram",
-            "accountKey": "clawdi_500000000000",
-            "agentTokenSecretRef": ("secret://channels/telegram/clawdi_500000000000/agent-token"),
+            "accountKey": f"clawdi_{ACCOUNT_ID.hex}",
+            "agentTokenSecretRef": (
+                f"secret://channels/telegram/clawdi_{ACCOUNT_ID.hex}/agent-token"
+            ),
             "placeholderTokenSecretRef": (
-                "secret://channels/telegram/clawdi_500000000000/placeholder-token"
+                f"secret://channels/telegram/clawdi_{ACCOUNT_ID.hex}/placeholder-token"
             ),
         }
     ]
@@ -154,40 +219,11 @@ def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> No
     from app.services import runtime_source
 
     batch = _batch()
-    state = batch.rows[ENV_ID].state
-    assert state is not None
-    runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = ["managed", "managed-"]
-    runtime["primary_model"] = {"provider_id": "managed", "model": "gpt-test"}
-    state.runtimes = {"openclaw": runtime}
-
-    provider = batch.providers.pop((USER_ID, "managed"))
-    provider.provider_id = "managed"
-    auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
-    auth.provider_id = "managed"
-    batch.providers[(USER_ID, "managed")] = provider
-    batch.auth_payloads[(USER_ID, "managed", "default")] = auth
-    batch.providers[(USER_ID, "managed-")] = AiProvider(
-        id=UUID("30000000-0000-0000-0000-000000000013"),
-        owner_user_id=USER_ID,
+    _add_managed_provider(
+        batch,
         provider_id="managed-",
-        type="openai",
-        label="Trailing punctuation provider",
-        base_url="https://provider-two.test/v1",
-        api_mode="responses",
-        auth_type="api_key",
-        auth_metadata={"source": "managed", "profile": "default"},
-        managed_by="clawdi",
-    )
-    batch.auth_payloads[(USER_ID, "managed-", "default")] = AiProviderAuthPayload(
-        id=UUID("40000000-0000-0000-0000-000000000014"),
-        owner_user_id=USER_ID,
-        provider_id="managed-",
-        auth_profile="default",
-        kind="api_key",
-        source="managed",
-        encrypted_payload=b"provider-two-ciphertext",
-        nonce=b"provider-two-nonce",
+        provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),
+        auth_row_id=UUID("40000000-0000-0000-0000-000000000014"),
     )
 
     decrypt_calls: list[tuple[bytes, bytes]] = []
@@ -208,6 +244,96 @@ def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> No
     assert source.secret_values["provider.managed.apiKey"] == "provider-ciphertext"
     assert source.secret_values["provider.managed-.apiKey"] == "provider-two-ciphertext"
     assert len(decrypt_calls) == 3
+
+
+def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt(
+    monkeypatch,
+) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    _add_managed_provider(
+        batch,
+        provider_id="managed-",
+        provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),
+        auth_row_id=UUID("40000000-0000-0000-0000-000000000014"),
+    )
+    # Collision rejection must remain independent of how provider refs are projected.
+    monkeypatch.setattr(
+        runtime_source,
+        "_provider_secret_ref",
+        lambda value: f"provider.{value.rstrip('-')}.apiKey",
+    )
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "unused"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match=r"Runtime secret reference collision: provider\.managed\.apiKey",
+    ):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    assert decrypt_calls == []
+
+
+def test_runtime_source_rejects_duplicate_channel_ref_before_decrypt(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    batch.channels[ENV_ID] = (*batch.channels[ENV_ID], *batch.channels[ENV_ID])
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "unused"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match=(
+            "Runtime secret reference collision: "
+            rf"secret://channels/telegram/clawdi_{ACCOUNT_ID.hex}/agent-token"
+        ),
+    ):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    assert decrypt_calls == []
+
+
+def test_runtime_source_account_keys_use_full_uuid_and_avoid_prefix_collisions() -> None:
+    batch = _batch()
+    _add_prefix_colliding_channel(batch)
+
+    first = _render(batch)
+    second = _render(batch)
+
+    assert first.channel_bindings == second.channel_bindings
+    assert [binding["accountKey"] for binding in first.channel_bindings] == [
+        f"clawdi_{ACCOUNT_ID.hex}",
+        f"clawdi_{PREFIX_COLLISION_ACCOUNT_ID.hex}",
+    ]
+    assert all(
+        len(binding["accountKey"]) == len("clawdi_") + 32
+        and binding["accountKey"].removeprefix("clawdi_")
+        in {ACCOUNT_ID.hex, PREFIX_COLLISION_ACCOUNT_ID.hex}
+        for binding in first.channel_bindings
+    )
 
 
 def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
