@@ -4,7 +4,11 @@
  *
  *     bun --cwd apps/web run generate-deploy-api
  *
- * (requires the hosted deploy API running on :50021).
+ * The default source is the local hosted API on `:50021`. To regenerate
+ * against the live hosted contract that CI checks, run:
+ *
+ *     DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json \
+ *       bun --cwd apps/web run generate-deploy-api
  *
  * The generated file is intentionally a FILTERED subset of the hosted
  * deploy API OpenAPI surface — `scripts/filter-deploy-openapi.py` keeps only the

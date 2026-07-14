@@ -6,6 +6,10 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "scripts/filter-deploy-openapi.py"
+      - "scripts/openapi-typescript.sh"
+      - "scripts/generate-deploy-api.sh"
+      - "scripts/check-deploy-generated-api.sh"
       - "package.json"
       - "bun.lock"
       - "turbo.json"
@@ -19,6 +23,10 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "scripts/filter-deploy-openapi.py"
+      - "scripts/openapi-typescript.sh"
+      - "scripts/generate-deploy-api.sh"
+      - "scripts/check-deploy-generated-api.sh"
       - "package.json"
       - "bun.lock"
       - "turbo.json"
@@ -26,6 +34,8 @@ on:
       - "biome.json"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/client-ci.yml"
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read
@@ -41,12 +51,14 @@ env:
 
 jobs:
   changes:
+    if: github.event_name != 'schedule'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
       web: ${{ steps.filter.outputs.web }}
       cli: ${{ steps.filter.outputs.cli }}
       shared: ${{ steps.filter.outputs.shared }}
       infra: ${{ steps.filter.outputs.infra }}
+      deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
     steps:
       - uses: actions/checkout@v6
       - id: filter
@@ -67,15 +79,25 @@ jobs:
               - "biome.json"
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/client-ci.yml"
+            deploy_contract:
+              - "packages/shared/src/api/deploy.generated.ts"
+              - "scripts/filter-deploy-openapi.py"
+              - "scripts/openapi-typescript.sh"
+              - "scripts/generate-deploy-api.sh"
+              - "scripts/check-deploy-generated-api.sh"
+              - "apps/web/package.json"
+              - ".github/workflows/client-ci.yml"
 
   # Lint + format check across the whole JS/TS tree in one fast job.
   lint:
     needs: changes
     if: >-
-      needs.changes.outputs.web == 'true' ||
-      needs.changes.outputs.cli == 'true' ||
-      needs.changes.outputs.shared == 'true' ||
-      needs.changes.outputs.infra == 'true'
+      github.event_name != 'schedule' && (
+        needs.changes.outputs.web == 'true' ||
+        needs.changes.outputs.cli == 'true' ||
+        needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.infra == 'true'
+      )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
@@ -89,10 +111,12 @@ jobs:
   typecheck:
     needs: changes
     if: >-
-      needs.changes.outputs.web == 'true' ||
-      needs.changes.outputs.cli == 'true' ||
-      needs.changes.outputs.shared == 'true' ||
-      needs.changes.outputs.infra == 'true'
+      github.event_name != 'schedule' && (
+        needs.changes.outputs.web == 'true' ||
+        needs.changes.outputs.cli == 'true' ||
+        needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.infra == 'true'
+      )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     strategy:
@@ -148,9 +172,11 @@ jobs:
   cli-test:
     needs: changes
     if: >-
-      needs.changes.outputs.cli == 'true' ||
-      needs.changes.outputs.shared == 'true' ||
-      needs.changes.outputs.infra == 'true'
+      github.event_name != 'schedule' && (
+        needs.changes.outputs.cli == 'true' ||
+        needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.infra == 'true'
+      )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
@@ -175,9 +201,11 @@ jobs:
   build:
     needs: [changes, typecheck]
     if: >-
-      needs.changes.outputs.web == 'true' ||
-      needs.changes.outputs.shared == 'true' ||
-      needs.changes.outputs.infra == 'true'
+      github.event_name != 'schedule' && (
+        needs.changes.outputs.web == 'true' ||
+        needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.infra == 'true'
+      )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     steps:
@@ -191,3 +219,36 @@ jobs:
           VITE_CLAWDI_API_URL: http://localhost:8000
           CLERK_SECRET_KEY: sk_test_dummy
         run: bunx turbo build --filter=web
+
+  deploy-contract-drift:
+    needs: changes
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.changes.outputs.deploy_contract == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Hosted deploy contract matches live spec
+        env:
+          DEPLOY_OPENAPI_SOURCE: https://api.clawdi.ai/openapi.json
+          DEPLOY_CONTRACT_FETCH_MODE: warn
+        run: scripts/check-deploy-generated-api.sh
+
+  deploy-contract-drift-daily:
+    if: github.event_name == 'schedule'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Hosted deploy contract matches live spec (strict)
+        env:
+          DEPLOY_OPENAPI_SOURCE: https://api.clawdi.ai/openapi.json
+          DEPLOY_CONTRACT_FETCH_MODE: strict
+        run: scripts/check-deploy-generated-api.sh
