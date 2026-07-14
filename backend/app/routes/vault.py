@@ -1497,9 +1497,6 @@ async def _get_vault(
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-    owned = [row for row in rows if row.user_id == auth.user_id]
-    if len(owned) == 1:
-        return owned[0]
     if len(rows) > 1:
         project_rows = (
             (

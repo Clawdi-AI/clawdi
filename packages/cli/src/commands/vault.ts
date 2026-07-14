@@ -30,6 +30,7 @@ function requireAuth() {
 }
 
 interface VaultListRow {
+	id: string;
 	project_ids?: string[];
 	project_id?: string | null;
 	slug: string;
@@ -48,13 +49,21 @@ interface VaultListPage {
  * Project when the caller pins one. The endpoint is idempotent for an
  * existing slug, so this is safe before every item write.
  */
-async function ensureVault(api: ApiClient, slug: string, name = slug, projectId?: string) {
+async function ensureVault(
+	api: ApiClient,
+	slug: string,
+	name = slug,
+	projectId?: string,
+): Promise<string> {
 	const created = await api.POST("/v1/vault", {
 		body: { slug, name },
 		params: projectId ? { query: { project_id: projectId } } : { query: {} },
 	});
-	if (created.error !== undefined && created.response.status === 409) return;
-	unwrap(created);
+	if (created.error !== undefined && created.response.status === 409) {
+		const existing = await loadVault(api, slug);
+		if (existing) return existing.id;
+	}
+	return unwrap(created).id;
 }
 
 function vaultProjectIds(vault: VaultListRow): string[] {
@@ -115,14 +124,14 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	console.log(chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`));
 
-	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
+	const vaultId = await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
 	await warnIfSharedVaultWrite(api, vaultSlug);
 
 	unwrap(
 		await api.PUT("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: { project_id: targetProject.projectId },
+				query: { project_id: targetProject.projectId, vault_id: vaultId },
 			},
 			body: { section, fields: { [field]: value } },
 		}),
@@ -154,12 +163,12 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	const page = await fetchAllVaults(api, projectId);
 	const vaults = page.items;
 
-	const fetchItems = (slug: string, attachedProjectId?: string) =>
+	const fetchItems = (vault: VaultListRow, attachedProjectId?: string) =>
 		api
 			.GET("/v1/vault/{slug}/items", {
 				params: {
-					path: { slug },
-					query: attachedProjectId ? { project_id: attachedProjectId } : {},
+					path: { slug: vault.slug },
+					query: { project_id: attachedProjectId, vault_id: vault.id },
 				},
 			})
 			.then(unwrap);
@@ -179,7 +188,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		for (const v of vaults) {
 			const projectIds = vaultProjectIds(v);
 			const attachedProjectId = projectId ?? projectIds[0];
-			const items = await fetchItems(v.slug, attachedProjectId);
+			const items = await fetchItems(v, attachedProjectId);
 			if (!hasVaultItems(items)) continue;
 			out.push({
 				slug: v.slug,
@@ -210,7 +219,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 	>();
 	for (const v of vaults) {
 		const attachedProjectId = projectId ?? vaultProjectIds(v)[0];
-		const items = await fetchItems(v.slug, attachedProjectId);
+		const items = await fetchItems(v, attachedProjectId);
 		if (!hasVaultItems(items)) continue;
 		const key = attachedProjectId ?? "(unattached)";
 		const group = groups.get(key) ?? { projectId: attachedProjectId, rows: [] };
@@ -313,7 +322,10 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 
 	unwrap(
 		await api.DELETE("/v1/vault/{slug}", {
-			params: { path: { slug: vaultSlug }, query: { project_id: targetProject.projectId } },
+			params: {
+				path: { slug: vaultSlug },
+				query: { project_id: targetProject.projectId, vault_id: vault.id },
+			},
 		}),
 	);
 	const remainingCount = Math.max(projectIdsBefore.length - 1, 0);
@@ -409,7 +421,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 		}
 	}
 
-	await ensureVault(
+	const vaultId = await ensureVault(
 		api,
 		vaultSlug,
 		vaultSlug === "default" ? "Default" : vaultSlug,
@@ -421,7 +433,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 		await api.PUT("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: { project_id: targetProject.projectId },
+				query: { project_id: targetProject.projectId, vault_id: vaultId },
 			},
 			body: { section, fields },
 		}),
@@ -458,7 +470,9 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 	const api = new ApiClient();
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	const target = formatVaultTarget(vaultSlug, section, targetProject);
-	const attachedProjectIds = await loadVaultProjectIds(api, vaultSlug);
+	const vault = await loadVault(api, vaultSlug);
+	if (!vault) throw new Error(`No Vault named "${vaultSlug}" was found.`);
+	const attachedProjectIds = vaultProjectIds(vault);
 	if (attachedProjectIds.length > 1 && !opts.global) {
 		throw new Error(
 			`Refusing to delete ${normalizedKey} from shared vault "${vaultSlug}". This Vault is attached to ${attachedProjectIds.length} Projects, so deleting the key would remove it for every Project. Re-run with --global after you have confirmed that is intended.`,
@@ -482,7 +496,11 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		await api.DELETE("/v1/vault/{slug}/items", {
 			params: {
 				path: { slug: vaultSlug },
-				query: { project_id: targetProject.projectId, global_delete: Boolean(opts.global) },
+				query: {
+					project_id: targetProject.projectId,
+					vault_id: vault.id,
+					global_delete: Boolean(opts.global),
+				},
 			},
 			body: { section, fields: [field] },
 		}),

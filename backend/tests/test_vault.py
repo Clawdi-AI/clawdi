@@ -368,6 +368,11 @@ async def test_vault_canonical_alias_collision_fails_closed_for_writes_and_exact
     assert ambiguous_write.status_code == 409, ambiguous_write.text
     assert ambiguous_write.json()["detail"]["code"] == "ambiguous_vault_slug"
 
+    ambiguous_read = await cli_client.get(f"/v1/vault/prod/items?project_id={seed_project.id}")
+    assert ambiguous_read.status_code == 409, ambiguous_read.text
+    assert ambiguous_read.json()["detail"]["code"] == "ambiguous_vault_slug"
+    assert "value" not in ambiguous_read.json()["detail"]
+
     ambiguous_resolve = await cli_client.post(
         f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=prod&field=TOKEN"
     )
