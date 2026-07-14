@@ -100,9 +100,17 @@ export async function vaultResolveCommand(
 		} else if (r.status === 409) {
 			const detail = (body as { detail?: { code?: string; message?: string } }).detail;
 			console.error(chalk.red(detail?.message ?? "Vault conflict blocked."));
-			console.error(
-				chalk.gray("Re-run with --allow-conflicts to use the first project in agent order."),
-			);
+			if (detail?.code === "ambiguous_vault_reference_slug") {
+				console.error(
+					chalk.gray(
+						"Repair or rename the conflicting Vault namespace before resolving this reference.",
+					),
+				);
+			} else {
+				console.error(
+					chalk.gray("Re-run with --allow-conflicts to use the first project in agent order."),
+				);
+			}
 		} else {
 			console.error(chalk.red(`vault resolve failed (${r.status}).`));
 		}

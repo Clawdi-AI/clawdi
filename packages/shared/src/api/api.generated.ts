@@ -1846,6 +1846,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vault/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Vault Detail
+         * @description Return exact Vault metadata without scanning the paginated collection.
+         */
+        get: operations["get_vault_detail_v1_vault_detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault/{slug}": {
         parameters: {
             query?: never;
@@ -10091,10 +10111,48 @@ export interface operations {
             };
         };
     };
+    get_vault_detail_v1_vault_detail_get: {
+        parameters: {
+            query: {
+                /** @description Stable Vault identity. */
+                vault_id: string;
+                /** @description Canonical Vault slug expected for this identity. */
+                slug: string;
+                /** @description Optional attachment context. */
+                project_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_vault_v1_vault__slug__delete: {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Exact Vault identity. */
+                vault_id?: string | null;
             };
             header?: never;
             path: {
@@ -10128,6 +10186,8 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Exact Vault identity. */
+                vault_id?: string | null;
             };
             header?: never;
             path: {
@@ -10161,6 +10221,8 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Exact Vault identity. */
+                vault_id?: string | null;
             };
             header?: never;
             path: {
@@ -10198,6 +10260,8 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Exact Vault identity. */
+                vault_id?: string | null;
                 /** @description Allow deleting the account-level item when this Vault is attached to multiple Projects. */
                 global_delete?: boolean;
             };
@@ -10237,6 +10301,10 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
+                /** @description Exact source Vault identity. */
+                vault_id?: string | null;
+                /** @description Exact target Vault identity. */
+                target_vault_id?: string | null;
             };
             header?: never;
             path: {

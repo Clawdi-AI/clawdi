@@ -85,7 +85,7 @@ export function CopyKeysDialog({
 	const targetVaultItems = useMemo(
 		() => [
 			...targetVaults.map((targetVault) => ({
-				value: targetVault.slug,
+				value: targetVault.id,
 				label: targetVault.name,
 			})),
 			{ value: NEW_VAULT, label: "New vault…" },
@@ -93,8 +93,9 @@ export function CopyKeysDialog({
 		[targetVaults],
 	);
 	const effectiveChoice =
-		targetChoice || (targetVaults.length > 0 ? targetVaults[0].slug : NEW_VAULT);
+		targetChoice || (targetVaults.length > 0 ? targetVaults[0].id : NEW_VAULT);
 	const creatingNewVault = effectiveChoice === NEW_VAULT;
+	const selectedTargetVault = targetVaults.find((candidate) => candidate.id === effectiveChoice);
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		creatingNewVault && newVaultSlug.length > 0 && ownVaults.some((v) => v.slug === newVaultSlug);
@@ -127,8 +128,9 @@ export function CopyKeysDialog({
 
 	const run = useMutation({
 		mutationFn: async () => {
-			let targetSlug = effectiveChoice;
-			if (targetSlug === NEW_VAULT) {
+			let targetSlug = selectedTargetVault?.slug ?? NEW_VAULT;
+			let targetVaultId = selectedTargetVault?.id;
+			if (creatingNewVault) {
 				const name = newVaultName.trim();
 				if (!name) throw new Error("Name the new vault first");
 				targetSlug = newVaultSlug;
@@ -137,12 +139,13 @@ export function CopyKeysDialog({
 					throw new Error("A vault with that name already exists");
 				}
 				if (!writableProject) throw new Error("No writable Project available yet");
-				await unwrap(
+				const created = unwrap(
 					await api.POST("/v1/vault", {
 						params: { query: { project_id: writableProject.id, create_only: true } },
 						body: { slug: targetSlug, name },
 					}),
 				);
+				targetVaultId = created.id;
 			}
 			// Group by section — the copy endpoint works per section.
 			const bySection = new Map<string, string[]>();
@@ -164,7 +167,11 @@ export function CopyKeysDialog({
 							await api.POST("/v1/vault/{slug}/items/copy", {
 								params: {
 									path: { slug: vault.slug },
-									query: { project_id: anyProjectId ?? undefined },
+									query: {
+										project_id: anyProjectId ?? undefined,
+										vault_id: vault.id,
+										target_vault_id: targetVaultId,
+									},
 								},
 								body: { target_slug: targetSlug, section, fields },
 							}),
@@ -182,7 +189,11 @@ export function CopyKeysDialog({
 									await api.DELETE("/v1/vault/{slug}/items", {
 										params: {
 											path: { slug: vault.slug },
-											query: { project_id: anyProjectId ?? undefined, global_delete: true },
+											query: {
+												project_id: anyProjectId ?? undefined,
+												vault_id: vault.id,
+												global_delete: true,
+											},
 										},
 										body: { section, fields },
 									}),
@@ -264,7 +275,7 @@ export function CopyKeysDialog({
 								</SelectTrigger>
 								<SelectContent className="max-h-80">
 									{targetVaults.map((v) => (
-										<SelectItem key={v.slug} value={v.slug}>
+										<SelectItem key={v.id} value={v.id}>
 											<span aria-hidden className="select-none">
 												{identityFor(v.name).emoji}
 											</span>

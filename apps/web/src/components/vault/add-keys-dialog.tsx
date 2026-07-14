@@ -44,17 +44,19 @@ export function AddKeysDialog({
 	/** Pin the destination vault (vault detail page); omit for the picker. */
 	vaultSlug,
 	vaultId,
+	vaultProjectId,
 	children,
 }: {
 	vaultSlug?: string;
 	vaultId?: string;
+	vaultProjectId?: string;
 	children?: ReactElement;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [text, setText] = useState("");
-	const [vaultChoice, setVaultChoice] = useState<string>(vaultSlug ?? "");
+	const [vaultChoice, setVaultChoice] = useState<string>(vaultId ?? "");
 	const [newVaultName, setNewVaultName] = useState("");
 	const [updateExisting, setUpdateExisting] = useState(false);
 
@@ -76,17 +78,17 @@ export function AddKeysDialog({
 	);
 	const vaultItems = useMemo(
 		() => [
-			...ownVaults.map((vault) => ({ value: vault.slug, label: vault.name })),
+			...ownVaults.map((vault) => ({ value: vault.id, label: vault.name })),
 			{ value: NEW_VAULT, label: "New vault…" },
 		],
 		[ownVaults],
 	);
 	// Default destination: pinned slug, else the first vault, else create-new.
-	const effectiveChoice = vaultChoice || (ownVaults.length > 0 ? ownVaults[0].slug : NEW_VAULT);
-	const selectedVault = ownVaults.find((v) =>
-		vaultId ? v.id === vaultId && v.slug === effectiveChoice : v.slug === effectiveChoice,
-	);
-	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? undefined;
+	const effectiveChoice = vaultChoice || (ownVaults.length > 0 ? ownVaults[0].id : NEW_VAULT);
+	const selectedVault = ownVaults.find((v) => v.id === effectiveChoice);
+	const effectiveSlug = selectedVault?.slug ?? (vaultSlug && vaultId ? vaultSlug : NEW_VAULT);
+	const selectedVaultId = selectedVault?.id ?? vaultId;
+	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? vaultProjectId;
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =
 		effectiveChoice === NEW_VAULT &&
@@ -111,17 +113,17 @@ export function AddKeysDialog({
 		!projectsQuery.error &&
 		writableProject === undefined;
 	const existingItems = useQuery({
-		queryKey: ["vault-items", effectiveChoice, selectedVaultProjectId],
+		queryKey: ["vault-items", selectedVaultId, effectiveSlug, selectedVaultProjectId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/vault/{slug}/items", {
 					params: {
-						path: { slug: effectiveChoice },
-						query: { project_id: selectedVaultProjectId },
+						path: { slug: effectiveSlug },
+						query: { project_id: selectedVaultProjectId, vault_id: selectedVaultId },
 					},
 				}),
 			),
-		enabled: open && effectiveChoice !== NEW_VAULT && selectedVault !== undefined,
+		enabled: open && effectiveChoice !== NEW_VAULT && selectedVaultId !== undefined,
 	});
 	const existingDefaultKeys = useMemo(
 		() => new Set(existingItems.data?.["(default)"] ?? []),
@@ -136,7 +138,7 @@ export function AddKeysDialog({
 	const destinationPending =
 		open &&
 		effectiveChoice !== NEW_VAULT &&
-		(vaultsQuery.isLoading || selectedVault === undefined || existingItems.isLoading);
+		(vaultsQuery.isLoading || selectedVaultId === undefined || existingItems.isLoading);
 	const destinationLoadError =
 		vaultsQuery.error ?? (effectiveChoice === NEW_VAULT ? projectsQuery.error : null);
 	const canSave =
@@ -152,9 +154,10 @@ export function AddKeysDialog({
 
 	const save = useMutation({
 		mutationFn: async () => {
-			let slug = effectiveChoice;
+			let slug = effectiveSlug;
+			let targetVaultId = selectedVaultId;
 			let projectId: string | undefined;
-			if (slug === NEW_VAULT) {
+			if (effectiveChoice === NEW_VAULT) {
 				const name = newVaultName.trim();
 				if (!name) throw new Error("Name the new vault first");
 				slug = newVaultSlug;
@@ -164,12 +167,13 @@ export function AddKeysDialog({
 				}
 				if (!writableProject) throw new Error("No writable Project available yet");
 				projectId = writableProject.id;
-				await unwrap(
+				const created = unwrap(
 					await api.POST("/v1/vault", {
 						params: { query: { project_id: projectId, create_only: true } },
 						body: { slug, name },
 					}),
 				);
+				targetVaultId = created.id;
 			} else {
 				projectId = selectedVaultProjectId;
 			}
@@ -179,16 +183,21 @@ export function AddKeysDialog({
 			for (let i = 0; i < entries.length; i += 150) {
 				await unwrap(
 					await api.PUT("/v1/vault/{slug}/items", {
-						params: { path: { slug }, query: { project_id: projectId } },
+						params: {
+							path: { slug },
+							query: { project_id: projectId, vault_id: targetVaultId },
+						},
 						body: { section: "", fields: Object.fromEntries(entries.slice(i, i + 150)) },
 					}),
 				);
 			}
-			return { slug, summary: importPlan.summary };
+			return { slug, vaultId: targetVaultId, summary: importPlan.summary };
 		},
-		onSuccess: ({ slug, summary }) => {
+		onSuccess: ({ slug, vaultId: targetVaultId, summary }) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
-			qc.invalidateQueries({ queryKey: ["vault-items", slug] });
+			qc.invalidateQueries({
+				queryKey: targetVaultId ? ["vault-items", targetVaultId] : ["vault-items"],
+			});
 			const changed = summary.created + summary.updated;
 			toast.success(`${changed} ${changed === 1 ? "key" : "keys"} saved`, {
 				description:
@@ -205,9 +214,9 @@ export function AddKeysDialog({
 		if (!open) return;
 		setText("");
 		setNewVaultName("");
-		setVaultChoice(vaultSlug ?? "");
+		setVaultChoice(vaultId ?? "");
 		setUpdateExisting(false);
-	}, [open, vaultSlug]);
+	}, [open, vaultId]);
 
 	const trigger = children ?? (
 		<Button size="sm">
@@ -252,7 +261,7 @@ export function AddKeysDialog({
 									</SelectTrigger>
 									<SelectContent>
 										{ownVaults.map((v) => (
-											<SelectItem key={v.slug} value={v.slug}>
+											<SelectItem key={v.id} value={v.id}>
 												<span aria-hidden className="select-none">
 													{identityFor(v.name).emoji}
 												</span>

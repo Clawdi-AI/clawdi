@@ -250,14 +250,17 @@ function VaultCard({
 	// users every vault was empty. Fall back to the per-card fetch then.
 	const listCount: number | undefined = vault.item_count;
 	const keys = useQuery({
-		queryKey: ["vault-items", vault.slug, vault.project_ids?.[0]],
+		queryKey: ["vault-items", vault.id, vault.slug, vault.project_ids?.[0]],
 		enabled: listCount === undefined,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug: vault.slug },
-						query: { project_id: vault.project_ids?.[0] ?? undefined },
+						query: {
+							project_id: vault.project_ids?.[0] ?? undefined,
+							vault_id: vault.id,
+						},
 					},
 				}),
 			),

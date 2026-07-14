@@ -100,7 +100,7 @@ export function SplitVaultDialog({
 			for (const group of selected) {
 				setProgress(`${group.slug} (${done + 1}/${selected.length})…`);
 				try {
-					await unwrap(
+					const target = unwrap(
 						await api.POST("/v1/vault", {
 							params: { query: { project_id: personal.id, create_only: true } },
 							body: { slug: group.slug, name: group.prefix.slice(0, -1) },
@@ -122,7 +122,11 @@ export function SplitVaultDialog({
 								await api.POST("/v1/vault/{slug}/items/copy", {
 									params: {
 										path: { slug: vault.slug },
-										query: { project_id: anyProjectId ?? undefined },
+										query: {
+											project_id: anyProjectId ?? undefined,
+											vault_id: vault.id,
+											target_vault_id: target.id,
+										},
 									},
 									body: {
 										target_slug: group.slug,
@@ -139,7 +143,11 @@ export function SplitVaultDialog({
 										await api.DELETE("/v1/vault/{slug}/items", {
 											params: {
 												path: { slug: vault.slug },
-												query: { project_id: anyProjectId ?? undefined, global_delete: true },
+												query: {
+													project_id: anyProjectId ?? undefined,
+													vault_id: vault.id,
+													global_delete: true,
+												},
 											},
 											body: { section, fields },
 										}),

@@ -19,7 +19,7 @@ from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
 from app.models.project_share_link import ProjectShareLink
 from app.models.user import User
-from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment, VaultProjectSlugAlias
 from app.services.sharing import generate_share_token, hash_share_token, resolve_owner_handle
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project
@@ -574,6 +574,90 @@ async def test_agent_vault_resolve_blocks_and_allows_conflicts(cli_client, db_se
     assert body["value"] == "primary-secret"
     assert body["source_binding_type"] == "primary"
     assert body["conflicts"][0]["binding_type"] == "context"
+
+
+async def test_bulk_exact_reference_fails_on_ambiguous_lower_precedence_project(
+    cli_client, db_session, seed_user
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"vault-ambiguity-{uuid.uuid4().hex[:8]}",
+        machine_name="atlas-ambiguity",
+    )
+    context_project = Project(
+        user_id=seed_user.id,
+        name="Ambiguous Context",
+        slug=f"ambiguous-context-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(context_project)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=env.default_project_id,
+                binding_type="primary",
+                priority=0,
+                default_write_enabled=True,
+                created_by_user_id=seed_user.id,
+            ),
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=context_project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
+        ]
+    )
+    primary = Vault(user_id=seed_user.id, slug="prod", name="Primary production")
+    context_legacy = Vault(user_id=seed_user.id, slug="context-legacy", name="Context legacy")
+    db_session.add_all([primary, context_legacy])
+    await db_session.flush()
+    ciphertext, nonce = encrypt("primary-secret")
+    db_session.add_all(
+        [
+            VaultProjectAttachment(vault_id=primary.id, project_id=env.default_project_id),
+            VaultProjectAttachment(vault_id=primary.id, project_id=context_project.id),
+            VaultProjectAttachment(vault_id=context_legacy.id, project_id=context_project.id),
+            VaultProjectSlugAlias(
+                vault_id=context_legacy.id,
+                project_id=context_project.id,
+                slug="prod",
+                is_legacy=True,
+            ),
+            VaultItem(
+                vault_id=primary.id,
+                section="",
+                item_name="TOKEN",
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resolved = await cli_client.post(
+        "/v1/vault/resolve/bulk",
+        json={
+            "agent_id": str(env.id),
+            "allow_conflicts": True,
+            "references": [
+                {
+                    "reference": "clawdi://prod/TOKEN",
+                    "vault_slug": "prod",
+                    "section": "",
+                    "field": "TOKEN",
+                }
+            ],
+        },
+    )
+    assert resolved.status_code == 409, resolved.text
+    assert resolved.json()["detail"]["code"] == "ambiguous_vault_reference_slug"
+    assert resolved.json()["detail"]["project_id"] == str(context_project.id)
 
 
 async def test_web_jwt_cannot_resolve_plaintext_vault(client):
