@@ -304,6 +304,52 @@ async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_se
 
 
 @pytest.mark.asyncio
+async def test_admin_mint_api_key_rolls_back_key_when_audit_fails(
+    admin_client, engine, seed_user, monkeypatch
+):
+    """Key row and audit event share one transaction.
+
+    A key that commits while the caller gets a 500 is an untrackable,
+    unrevokable credential: the SaaS side only learns `key_id` from a
+    successful response, so it can never revoke what it never saw.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.api_key import ApiKey
+    from app.routes import admin as admin_routes
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("audit write failed")
+
+    monkeypatch.setattr(admin_routes, "record_control_plane_audit", explode)
+
+    with pytest.raises(RuntimeError):
+        await admin_client.post(
+            "/v1/admin/auth/keys",
+            headers=_AUTH,
+            json={
+                "target_clerk_id": seed_user.clerk_id,
+                "label": "orphan-check",
+                "managed": True,
+            },
+        )
+
+    # Assert through a fresh session: it only sees committed rows. A key
+    # visible here was committed before the audit event — the exact
+    # orphan this test guards against.
+    async with async_sessionmaker(engine, expire_on_commit=False)() as fresh:
+        orphan = (
+            await fresh.execute(
+                select(ApiKey).where(
+                    ApiKey.user_id == seed_user.id, ApiKey.label == "orphan-check"
+                )
+            )
+        ).scalar_one_or_none()
+    assert orphan is None
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """First-time deploy path: a user who's never visited cloud-api
     directly (no row yet) clicks Deploy on the upstream SaaS
