@@ -27,6 +27,11 @@ export function normalizeSecretValues(
 	return normalized;
 }
 
+export function canonicalSecretRefName(ref: string | null | undefined): string | null {
+	const normalized = normalizeSecretRef(ref ?? undefined);
+	return normalized?.slice("secret://".length) ?? null;
+}
+
 export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
 	const envName = envSecretRefName(ref);
 	if (envName) {

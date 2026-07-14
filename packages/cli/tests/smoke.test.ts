@@ -293,11 +293,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
 				status: "installed",
 				source: "npm",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.53",
 				registry: "https://registry.npmjs.org",
 				activePath: managedCli,
 				activeTarget: managedCliTarget,
-				version: "0.12.10-beta.51",
+				version: "0.12.10-beta.53",
 			}),
 		);
 		writeFileSync(
@@ -305,7 +305,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: "0.12.10-beta.51",
+					minimumCliVersion: "0.12.10-beta.53",
 					runtime: "openclaw",
 					deploymentId: "dep_strict_smoke",
 					environmentId: "env_strict_smoke",
@@ -322,29 +322,39 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@0.12.10-beta.51",
+						packageSpec: "clawdi@0.12.10-beta.53",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
 						openclaw: {
 							enabled: true,
 							install: { source: "official" },
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-5" },
+							providerMode: "unmanaged",
+							provider_ids: [],
 							paths: { home, workspace: join(home, "clawdi") },
 						},
 					},
-					providers: {
-						default: {
-							kind: "openai-compatible",
-							status: "error",
-							error: { code: "provider_not_found", message: "fixture provider unavailable" },
+					providers: {},
+					terminalTooling: {
+						codex: {
+							enabled: true,
+							provider_id: "codex-managed",
+							primary_model: { provider_id: "codex-managed", model: "gpt-test" },
+							provider: {
+								kind: "openai-compatible",
+								type: "openai",
+								baseUrl: "https://provider.test/v1",
+								apiMode: "openai_responses",
+								managed_by: "clawdi",
+								runtimeEnvName: "OPENAI_API_KEY",
+								apiKeySecretRef: "tool.codex.apiKey",
+							},
 						},
 					},
 					liveSync: { enabled: false, agents: [] },
 					recovery: { cacheManifest: true, allowOfflineBoot: true },
 				},
-				secretValues: {},
+				secretValues: { "tool.codex.apiKey": "sk-codex-tool" },
 			}),
 		);
 
@@ -358,6 +368,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					CLAWDI_RUN_DIR: run,
 					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
 					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: installer,
+					CLAWDI_CODEX_INSTALL_DISABLED: "1",
 				},
 			);
 			expect(result.code).toBe(0);

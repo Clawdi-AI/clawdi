@@ -150,7 +150,13 @@ describe("runtime egress profile schema", () => {
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
-					headers: {},
+					headers: {
+						authorization: {
+							type: "equals",
+							value: "clawdi-egress-placeholder",
+							prefix: "Bearer ",
+						},
+					},
 					query: {},
 				},
 				rewrite: {
@@ -280,6 +286,69 @@ describe("runtime egress profile schema", () => {
 			"hermes-provider.example.test",
 			"openclaw-provider.example.test",
 		]);
+	});
+
+	it("builds the Codex tool provider profile without runtime providers", () => {
+		const bundle = hostedManifestEgressProfiles({
+			providers: {},
+			terminalTooling: {
+				codex: {
+					enabled: true,
+					provider_id: "codex-managed",
+					provider: {
+						baseUrl: "https://ai-gateway.example.test/v1",
+						apiMode: "openai_responses",
+						managed_by: "clawdi",
+						apiKeySecretRef: "tool.codex.apiKey",
+					},
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles)).toHaveLength(1);
+		expect(providerProfiles(bundle.profiles)[0]).toMatchObject({
+			id: "managed-provider-codex-managed",
+			match: {
+				scheme: "https",
+				host: "ai-gateway.example.test",
+				headers: {
+					authorization: {
+						type: "equals",
+						value: "clawdi-egress-placeholder",
+						prefix: "Bearer ",
+					},
+				},
+			},
+			rewrite: {
+				setHeaders: {
+					authorization: {
+						secretRef: "secret://tool.codex.apiKey",
+					},
+				},
+			},
+		});
+	});
+
+	it("dedupes a shared managed runtime and Codex provider host and ref", () => {
+		const sharedProvider = {
+			baseUrl: "https://ai-gateway.example.test/v1",
+			apiMode: "openai_responses",
+			managed_by: "clawdi",
+			apiKeySecretRef: "tool.codex.apiKey",
+		};
+		const bundle = hostedManifestEgressProfiles({
+			providers: { shared: sharedProvider },
+			terminalTooling: {
+				codex: {
+					enabled: true,
+					provider_id: "shared",
+					provider: sharedProvider,
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles)).toHaveLength(1);
+		expect(providerProfiles(bundle.profiles)[0]?.id).toBe("managed-provider-shared");
 	});
 
 	it("does not derive provider egress profiles without a managed provider secret ref", () => {

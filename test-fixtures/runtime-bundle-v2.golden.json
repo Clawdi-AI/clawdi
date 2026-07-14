@@ -9,7 +9,7 @@
 	],
 	"manifest": {
 		"clawdiCli": {
-			"packageSpec": "clawdi@0.12.10-beta.51",
+			"packageSpec": "clawdi@0.12.10-beta.53",
 			"registry": "https://registry.npmjs.org",
 			"source": "npm:clawdi"
 		},
@@ -29,11 +29,11 @@
 			"enabled": true
 		},
 		"locale": { "language": "en", "timezone": "UTC" },
-		"minimumCliVersion": "0.12.10-beta.51",
+		"minimumCliVersion": "0.12.10-beta.53",
 		"providers": {
 			"managed": {
-				"apiKeySecretRef": "provider.managed.apiKey",
-				"apiMode": "responses",
+				"apiKeySecretRef": "tool.codex.apiKey",
+				"apiMode": "openai_chat",
 				"baseUrl": "https://provider.test/v1",
 				"kind": "openai-compatible",
 				"managed_by": "clawdi",
@@ -47,6 +47,7 @@
 			"openclaw": {
 				"enabled": true,
 				"install": { "source": "official" },
+				"providerMode": "configured",
 				"paths": {
 					"home": "/home/clawdi",
 					"workspace": "/home/clawdi/clawdi"
@@ -63,13 +64,29 @@
 			"persistentPaths": ["/home/clawdi"],
 			"user": "clawdi",
 			"workspace": "/home/clawdi/clawdi"
+		},
+		"terminalTooling": {
+			"codex": {
+				"enabled": true,
+				"primary_model": { "model": "gpt-test", "provider_id": "managed" },
+				"provider": {
+					"apiKeySecretRef": "tool.codex.apiKey",
+					"apiMode": "openai_responses",
+					"baseUrl": "https://provider.test/v1",
+					"kind": "openai-compatible",
+					"managed_by": "clawdi",
+					"runtimeEnvName": "OPENAI_API_KEY",
+					"type": "openai"
+				},
+				"provider_id": "managed"
+			}
 		}
 	},
 	"schemaVersion": "clawdi.hosted-runtime.bundle.v2",
 	"secretValues": {
-		"provider.managed.apiKey": "sk-provider-golden",
+		"tool.codex.apiKey": "sk-provider-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "770c65d7b9903e89f31d6ba4417bf70cf2c755366d8e44fb4e20a3c4bad9d6a4"
+	"sourceRevision": "40a7584d7613031f489606ff215523af06f681df4011cfc9ed718beefd09c848"
 }

@@ -183,34 +183,45 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.host, "shared.test")
         self.assertEqual(flow.request.path, "/managed/messages")
 
-    def test_provider_profile_overwrites_authorization_without_host_rewrite(self):
+    def managed_provider_profile(self):
+        return {
+            "id": "provider",
+            "enabled": True,
+            "kind": "provider",
+            "match": {
+                "scheme": "https",
+                "host": "gateway.test",
+                "headers": {
+                    "authorization": {
+                        "type": "equals",
+                        "value": "clawdi-egress-placeholder",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+            "rewrite": {
+                "setHeaders": {
+                    "authorization": {
+                        "type": "secretRef",
+                        "secretRef": "secret://provider-key",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+            "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
+            "priority": 10,
+        }
+
+    def test_provider_profile_rewrites_only_the_managed_placeholder(self):
         egress = self.load(
-            [
-                {
-                    "id": "provider",
-                    "enabled": True,
-                    "kind": "provider",
-                    "match": {"scheme": "https", "host": "gateway.test"},
-                    "rewrite": {
-                        "setHeaders": {
-                            "authorization": {
-                                "type": "secretRef",
-                                "secretRef": "secret://provider-key",
-                                "prefix": "Bearer ",
-                            }
-                        },
-                    },
-                    "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
-                    "priority": 10,
-                }
-            ],
+            [self.managed_provider_profile()],
             {"secret://provider-key": "real-key"},
         )
 
         flow = Flow(
             host="gateway.test",
             path="/v1/responses",
-            headers={"Authorization": "Bearer dummy"},
+            headers={"Authorization": "Bearer clawdi-egress-placeholder"},
         )
         decision = egress.apply_to_flow(flow)
 
@@ -219,6 +230,36 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.path, "/v1/responses")
         self.assertEqual(flow.request.headers["Authorization"], "Bearer real-key")
 
+    def test_provider_profile_does_not_rewrite_a_user_bearer_token(self):
+        egress = self.load(
+            [self.managed_provider_profile()],
+            {"secret://provider-key": "real-key"},
+        )
+        flow = Flow(
+            host="gateway.test",
+            path="/v1/responses",
+            headers={"Authorization": "Bearer sk-user-real-token"},
+        )
+
+        decision = egress.apply_to_flow(flow)
+
+        self.assertEqual(decision.action, "allow")
+        self.assertEqual(flow.request.host, "gateway.test")
+        self.assertEqual(flow.request.headers["Authorization"], "Bearer sk-user-real-token")
+
+    def test_provider_profile_does_not_inject_a_missing_authorization_header(self):
+        egress = self.load(
+            [self.managed_provider_profile()],
+            {"secret://provider-key": "real-key"},
+        )
+        flow = Flow(host="gateway.test", path="/v1/responses")
+
+        decision = egress.apply_to_flow(flow)
+
+        self.assertEqual(decision.action, "allow")
+        self.assertEqual(flow.request.host, "gateway.test")
+        self.assertNotIn("authorization", flow.request.headers)
+
     def test_provider_profile_restores_transparent_authority_before_forwarding(self):
         egress = self.load(
             [
@@ -226,7 +267,17 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "id": "provider",
                     "enabled": True,
                     "kind": "provider",
-                    "match": {"scheme": "https", "host": "gateway.test"},
+                    "match": {
+                        "scheme": "https",
+                        "host": "gateway.test",
+                        "headers": {
+                            "authorization": {
+                                "type": "equals",
+                                "value": "clawdi-egress-placeholder",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
                     "rewrite": {
                         "setHeaders": {
                             "authorization": {
@@ -247,7 +298,10 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             host="203.0.113.10",
             pretty_host="gateway.test",
             path="/v1/chat/completions",
-            headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
+            headers={
+                "Host": "203.0.113.10",
+                "Authorization": "Bearer clawdi-egress-placeholder",
+            },
         )
         decision = egress.apply_to_flow(flow)
 
@@ -263,7 +317,17 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "id": "provider",
                     "enabled": True,
                     "kind": "provider",
-                    "match": {"scheme": "https", "host": "gateway.test"},
+                    "match": {
+                        "scheme": "https",
+                        "host": "gateway.test",
+                        "headers": {
+                            "authorization": {
+                                "type": "equals",
+                                "value": "clawdi-egress-placeholder",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
                     "rewrite": {
                         "setHeaders": {
                             "authorization": {
@@ -283,7 +347,10 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             host="203.0.113.10",
             pretty_host="gateway.test",
             path="/v1/chat/completions",
-            headers={"Host": "203.0.113.10", "Authorization": "Bearer dummy"},
+            headers={
+                "Host": "203.0.113.10",
+                "Authorization": "Bearer clawdi-egress-placeholder",
+            },
         )
 
         egress.requestheaders(flow)

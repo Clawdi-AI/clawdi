@@ -14,6 +14,7 @@ import {
 	hostedFixtureCliPayloadPolicySchema,
 	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
+	hostedRuntimeManifestSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
@@ -22,7 +23,7 @@ import {
 } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { envSecretRefName, normalizeSecretValues } from "./secret-values";
+import { canonicalSecretRefName, envSecretRefName, normalizeSecretValues } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -60,11 +61,27 @@ const hostedRuntimeBundleV2Schema = z
 	.object({
 		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
-		manifest: hostedRuntimeManifestResponseSchema.shape.manifest,
+		manifest: hostedRuntimeManifestSchema,
 		channelBindings: z.array(runtimeBundleChannelBindingSchema),
 		secretValues: z.record(z.string(), z.string()),
 	})
-	.strict();
+	.strict()
+	.superRefine((bundle, ctx) => {
+		const runtime = bundle.manifest.runtimes[bundle.manifest.runtime];
+		if (runtime?.providerMode !== "unmanaged") return;
+		const codexSecretRef = canonicalSecretRefName(
+			bundle.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
+		);
+		for (const rawSecretRef of Object.keys(bundle.secretValues)) {
+			const secretRef = canonicalSecretRefName(rawSecretRef);
+			if (!secretRef?.startsWith("provider.") || secretRef === codexSecretRef) continue;
+			ctx.addIssue({
+				code: "custom",
+				message: "unmanaged provider mode must not include provider secret values",
+				path: ["secretValues", rawSecretRef],
+			});
+		}
+	});
 
 export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
 	const bundle = hostedRuntimeBundleV2Schema.parse(value);
@@ -474,6 +491,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		runtimes: {
 			[selectedRuntime]: {
 				enabled: runtime.enabled,
+				providerMode: runtime.providerMode,
 				install: {
 					authority: "official" as const,
 					method: "official-installer" as const,
@@ -498,6 +516,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
+			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},
 		liveSync: hosted.liveSync,
 		egressProfiles: hostedManifestEgressProfiles(hosted),
@@ -508,14 +527,13 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 	};
 }
 
-function hostedRuntimeProviderBinding(runtime: HostedRuntimeManifest["runtimes"][string]): {
-	provider_ids: string[];
-	primary_model: { provider_id: string; model: string };
-} {
-	return {
-		provider_ids: runtime.provider_ids,
-		primary_model: runtime.primary_model,
-	};
+function hostedRuntimeProviderBinding(
+	runtime: HostedRuntimeManifest["runtimes"][string],
+):
+	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
+	| { provider_ids: [] } {
+	if (runtime.providerMode === "unmanaged") return { provider_ids: [] };
+	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
 }
 
 function hostedRuntimeRunSettings(
