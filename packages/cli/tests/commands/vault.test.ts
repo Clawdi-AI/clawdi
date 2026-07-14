@@ -851,8 +851,23 @@ describe("vaultSet", () => {
 				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
-						items: [{ id: "vault-1", slug: "prod", name: "prod", project_ids: [PROJECT_ID] }],
-						total: 1,
+						items: [
+							{
+								id: "shared-vault",
+								slug: "prod",
+								name: "Shared prod",
+								project_ids: [OTHER_PROJECT_ID],
+								is_owner: false,
+							},
+							{
+								id: "vault-1",
+								slug: "prod",
+								name: "prod",
+								project_ids: [PROJECT_ID],
+								is_owner: true,
+							},
+						],
+						total: 2,
 					}),
 			},
 			{

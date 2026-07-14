@@ -31,6 +31,7 @@ function requireAuth() {
 
 interface VaultListRow {
 	id: string;
+	is_owner?: boolean;
 	project_ids?: string[];
 	project_id?: string | null;
 	slug: string;
@@ -612,7 +613,11 @@ async function loadVaultProjectIds(api: ApiClient, vaultSlug: string): Promise<s
 
 async function loadVault(api: ApiClient, vaultSlug: string): Promise<VaultListRow | null> {
 	const page = await fetchAllVaults(api);
-	const vault = page.items.find((item) => item.slug === vaultSlug);
+	// Mutation commands can see both owned and shared Vaults. A shared Vault
+	// with the same slug must never supply the UUID for an owner-only write.
+	// Older servers may omit is_owner, so preserve their former single-match
+	// behavior while preferring an explicit owned row on current servers.
+	const vault = page.items.find((item) => item.slug === vaultSlug && item.is_owner !== false);
 	return vault ?? null;
 }
 
