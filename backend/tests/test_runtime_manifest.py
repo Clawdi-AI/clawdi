@@ -29,7 +29,6 @@ from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRunt
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
-from app.routes.runtime import _runtime_manifest_issued_at
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -41,6 +40,7 @@ from app.services.audit import _sanitize_audit_details
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     expected_runtime_bundle_v2_etag,
+    runtime_manifest_issued_at,
 )
 from app.services.vault_crypto import encrypt
 from scripts.seed_dashboard_dev import _create_hosted_runtime_graph, _seed_ai_provider
@@ -184,7 +184,7 @@ def test_runtime_manifest_issued_at_falls_back_to_desired_created_at() -> None:
     created_at = datetime(2026, 7, 13, 1, 2, 3, tzinfo=UTC)
     state = SimpleNamespace(updated_at=None, created_at=created_at)
 
-    assert _runtime_manifest_issued_at(state) == created_at.isoformat()
+    assert runtime_manifest_issued_at(state) == created_at.isoformat()
 
 
 def _live_sync(environment_id: str, agent_type: str = "openclaw") -> dict:

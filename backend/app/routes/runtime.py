@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_cli_auth
 from app.core.config import settings
 from app.core.database import get_runtime_snapshot_session
-from app.models.hosted_runtime import HostedRuntimeState
 from app.services.http_cache import if_none_match_contains
 from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -19,7 +18,6 @@ from app.services.runtime_source import (
     load_runtime_source_batch,
     render_runtime_bundle,
     render_runtime_source,
-    runtime_manifest_issued_at,
     vault_key_identity,
 )
 
@@ -85,7 +83,3 @@ def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID
             status.HTTP_403_FORBIDDEN, "runtime manifest requires an environment id"
         )
     return requested_environment_id
-
-
-def _runtime_manifest_issued_at(state: HostedRuntimeState) -> str:
-    return runtime_manifest_issued_at(state)
