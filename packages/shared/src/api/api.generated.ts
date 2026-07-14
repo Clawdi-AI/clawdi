@@ -4463,58 +4463,6 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
-        /** HostedRuntimePaths */
-        HostedRuntimePaths: {
-            /** Home */
-            home: string;
-            /** Workspace */
-            workspace: string;
-        };
-        /** HostedRuntimePrimaryModel */
-        HostedRuntimePrimaryModel: {
-            /** Provider Id */
-            provider_id: string;
-            /** Model */
-            model: string;
-        };
-        /** HostedRuntimeRecovery */
-        HostedRuntimeRecovery: {
-            /** Cachemanifest */
-            cacheManifest: boolean;
-            /** Allowofflineboot */
-            allowOfflineBoot: boolean;
-        };
-        /** HostedRuntimeRunSettings */
-        HostedRuntimeRunSettings: {
-            /** Command */
-            command?: string | null;
-            /** Args */
-            args?: string[] | null;
-            /** Env */
-            env?: {
-                [key: string]: string;
-            } | null;
-            /** Secretenv */
-            secretEnv?: {
-                [key: string]: string;
-            } | null;
-            /** Cwd */
-            cwd?: string | null;
-            /** Prependpath */
-            prependPath?: string[] | null;
-        };
-        /** HostedRuntimeSystem */
-        HostedRuntimeSystem: {
-            /** User */
-            user: string;
-            /** Home */
-            home: string;
-            /** Workspace */
-            workspace: string;
-            /** Persistentpaths */
-            persistentPaths: string[];
-            /** Openclawcontroluiallowedorigins */
-            openclawControlUiAllowedOrigins?: string[] | null;
         /** HostedRuntimeObservedAppliedV2 */
         HostedRuntimeObservedAppliedV2: {
             /** Etag */
@@ -4667,6 +4615,59 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: boolean | null;
+        };
+        /** HostedRuntimePaths */
+        HostedRuntimePaths: {
+            /** Home */
+            home: string;
+            /** Workspace */
+            workspace: string;
+        };
+        /** HostedRuntimePrimaryModel */
+        HostedRuntimePrimaryModel: {
+            /** Provider Id */
+            provider_id: string;
+            /** Model */
+            model: string;
+        };
+        /** HostedRuntimeRecovery */
+        HostedRuntimeRecovery: {
+            /** Cachemanifest */
+            cacheManifest: boolean;
+            /** Allowofflineboot */
+            allowOfflineBoot: boolean;
+        };
+        /** HostedRuntimeRunSettings */
+        HostedRuntimeRunSettings: {
+            /** Command */
+            command?: string | null;
+            /** Args */
+            args?: string[] | null;
+            /** Env */
+            env?: {
+                [key: string]: string;
+            } | null;
+            /** Secretenv */
+            secretEnv?: {
+                [key: string]: string;
+            } | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Prependpath */
+            prependPath?: string[] | null;
+        };
+        /** HostedRuntimeSystem */
+        HostedRuntimeSystem: {
+            /** User */
+            user: string;
+            /** Home */
+            home: string;
+            /** Workspace */
+            workspace: string;
+            /** Persistentpaths */
+            persistentPaths: string[];
+            /** Openclawcontroluiallowedorigins */
+            openclawControlUiAllowedOrigins?: string[] | null;
         };
         /**
          * InvitationAcceptResponse
