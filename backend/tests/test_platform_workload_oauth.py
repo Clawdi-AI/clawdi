@@ -46,7 +46,17 @@ from app.services.platform_workload_auth import (
 )
 
 _ADMIN_KEY = "test-platform-admin-secret"
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
+_TEST_TOOLS = {
+    "codex": {
+        "enabled": True,
+        "provider_id": "clawdi-managed-v2",
+        "primary_model": {
+            "provider_id": "clawdi-managed-v2",
+            "model": "gpt-5.5",
+        },
+    }
+}
 
 
 @dataclass
@@ -253,6 +263,7 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
         "runtimes": {
             "openclaw": {
                 "enabled": True,
+                "providerMode": "configured",
                 "provider_ids": ["clawdi-managed-v2"],
                 "primary_model": {
                     "provider_id": "clawdi-managed-v2",
@@ -277,6 +288,7 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
             ],
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        "tools": _TEST_TOOLS,
     }
 
 
