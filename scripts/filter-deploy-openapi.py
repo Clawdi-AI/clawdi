@@ -15,16 +15,25 @@ only the surface we actually consume so:
   * adding a new endpoint requires editing the allowlist below (a
     deliberate audit point) instead of silently widening the bundle.
 
-Usage (wired up via `apps/web/package.json`):
+Usage:
 
-    curl -s http://localhost:50021/openapi.json \
-      | python3 scripts/filter-deploy-openapi.py \
-      | scripts/openapi-typescript.sh /dev/stdin \
-          -o packages/shared/src/api/deploy.generated.ts
+Local development (the default behind `bun --cwd apps/web run generate-deploy-api`):
+
+    DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
+      bun --cwd apps/web run generate-deploy-api
+
+Regenerating against the live hosted contract that CI checks:
+
+    DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json \
+      bun --cwd apps/web run generate-deploy-api
 
 To consume a new endpoint, add its path + HTTP method to
 `KEEP_OPERATIONS_BY_PATH` and rerun the generate command. Schema closure is
 auto-discovered via `$ref` walks, so referenced types come along for free.
+
+Do not use clawdi-hosted's checked-in `backend/openapi.json` as a generation
+source. It can lag the live hosted contract, which would hide exactly the drift
+this guard is meant to catch.
 """
 
 from __future__ import annotations

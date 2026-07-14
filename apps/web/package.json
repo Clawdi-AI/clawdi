@@ -14,7 +14,8 @@
 		"e2e": "playwright test",
 		"e2e:hosted": "playwright test --config=playwright.hosted.config.ts",
 		"generate-api": "../../scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o ../../packages/shared/src/api/api.generated.ts",
-		"generate-deploy-api": "curl -sf http://localhost:50021/openapi.json | python3 ../../scripts/filter-deploy-openapi.py | ../../scripts/openapi-typescript.sh /dev/stdin -o ../../packages/shared/src/api/deploy.generated.ts"
+		"generate-deploy-api": "../../scripts/generate-deploy-api.sh",
+		"generate-deploy-api:live": "DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json ../../scripts/generate-deploy-api.sh"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.6.0",
