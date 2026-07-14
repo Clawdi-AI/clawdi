@@ -20,7 +20,7 @@ async function fetchHostedProductAccessProfile(
 ): Promise<HostedProductAccessProfile> {
 	const token = await getToken();
 	const api = createClient<DeployPaths>({ baseUrl: hostedApiBaseUrl(DEPLOY_API_URL) });
-	const result = await api.GET("/me", {
+	const result = await api.GET("/v1/me", {
 		headers: token ? { Authorization: `Bearer ${token}` } : undefined,
 	});
 	if (!result.response.ok) {

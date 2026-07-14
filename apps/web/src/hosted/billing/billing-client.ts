@@ -131,8 +131,8 @@ export function useBillingClient() {
 				unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
-			getMe: async () => unwrapDeploy(await api.GET("/me")),
-			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/agent-environments")),
+			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
+			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
 
 			listDeployments: async () => unwrapDeploy(await api.GET("/v2/deployments")),
 			createDeployment: async (body: DeployRequest, idempotencyKey: string) =>

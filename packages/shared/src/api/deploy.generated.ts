@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/agent-environments": {
+    "/v1/agent-environments": {
         parameters: {
             query?: never;
             header?: never;
@@ -12,7 +12,7 @@ export interface paths {
             cookie?: never;
         };
         /** List V1 Agent Environments */
-        get: operations["list_v1_agent_environments_agent_environments_get"];
+        get: operations["list_v1_agent_environments_v1_agent_environments_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21,7 +21,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/me": {
+    "/v1/me": {
         parameters: {
             query?: never;
             header?: never;
@@ -29,7 +29,7 @@ export interface paths {
             cookie?: never;
         };
         /** Me */
-        get: operations["me_me_get"];
+        get: operations["me_v1_me_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -474,18 +474,18 @@ export interface components {
         /** V2AiProviderBindingInfo */
         V2AiProviderBindingInfo: {
             /** Provider Id */
-            provider_id: string;
+            provider_id?: string | null;
             /** Provider Ids */
             provider_ids?: string[];
             /**
              * Auth Kind
              * @enum {string}
              */
-            auth_kind: "managed" | "api_key" | "codex_oauth";
-            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef-Output"] | null;
+            auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
+            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
         };
         /** V2AiProviderPrimaryModelRef */
-        "V2AiProviderPrimaryModelRef-Output": {
+        V2AiProviderPrimaryModelRef: {
             /** Provider Id */
             provider_id: string;
             /** Model */
@@ -655,6 +655,16 @@ export interface components {
             /** Upgrade Status */
             upgrade_status?: string | null;
         };
+        /** V2DeploymentRuntimeUiRedemptionResponse */
+        V2DeploymentRuntimeUiRedemptionResponse: {
+            /** Url */
+            url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
         /** V2DeploymentTerminalSessionResponse */
         V2DeploymentTerminalSessionResponse: {
             /**
@@ -665,16 +675,6 @@ export interface components {
             deployment_id: string;
             /** Websocket Url */
             websocket_url: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-        };
-        /** V2DeploymentRuntimeUiRedemptionResponse */
-        V2DeploymentRuntimeUiRedemptionResponse: {
-            /** Url */
-            url: string;
             /**
              * Expires At
              * Format: date-time
@@ -721,7 +721,7 @@ export interface components {
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
             /** Primary Model */
-            primary_model?: string | components["schemas"]["app__v2__hosted__schemas__V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -738,20 +738,14 @@ export interface components {
             slack_app_token?: string | null;
             /** Assistant Name */
             assistant_name?: string | null;
-            /** Personality */
-            personality?: string | null;
             /** Language */
-            language?: string | null;
+            language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
             timezone?: string | null;
             /** Public Ports */
             public_ports?: number[] | null;
-            /**
-             * Runtime
-             * @default openclaw
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
+            /** Runtime */
+            runtime?: ("openclaw" | "hermes") | null;
         };
         /** V2HostedDeployRequest */
         V2HostedDeployRequest: {
@@ -761,7 +755,7 @@ export interface components {
              */
             compute_plan_slug: "compute_free" | "compute_performance";
             /** Primary Model */
-            primary_model?: string | components["schemas"]["app__v2__hosted__schemas__V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
             channel?: string | null;
             /** Telegram Bot Token */
@@ -780,24 +774,28 @@ export interface components {
             model?: string | null;
             /** Assistant Name */
             assistant_name?: string | null;
-            /** Personality */
-            personality?: string | null;
             /** Language */
-            language?: string | null;
+            language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
             timezone?: string | null;
             /** Public Ports */
             public_ports?: number[] | null;
-            /** Runtime */
-            runtime?: ("openclaw" | "hermes") | null;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "openclaw" | "hermes";
             /** Deploy Request Id */
             deploy_request_id?: string | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
             /** Provider Ids */
             provider_ids?: string[];
-            /** Ai Provider Auth Kind */
-            ai_provider_auth_kind?: ("managed" | "api_key" | "codex_oauth") | null;
+            /**
+             * Ai Provider Auth Kind
+             * @enum {string}
+             */
+            ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
             /** Ai Provider Bootstrap */
             ai_provider_bootstrap?: {
                 [key: string]: unknown;
@@ -841,24 +839,19 @@ export interface components {
              * @default false
              */
             kobb_available: boolean;
-            /** Channel */
-            channel?: string | null;
             /** Primary Model */
             primary_model?: string | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
             /**
              * Ai Provider Auth Kind
-             * @default managed
              * @enum {string}
              */
-            ai_provider_auth_kind: "managed" | "api_key" | "codex_oauth";
+            ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
             /** Ai Provider Bindings */
             ai_provider_bindings?: {
                 [key: string]: components["schemas"]["V2AiProviderBindingInfo"];
             };
-            /** Telegram Allowed Usernames */
-            telegram_allowed_usernames?: string[] | null;
             /** Telegram Bot Username */
             telegram_bot_username?: string | null;
             /** Telegram Entry Url */
@@ -871,7 +864,6 @@ export interface components {
             public_ports?: number[];
             /**
              * Runtime
-             * @default openclaw
              * @enum {string}
              */
             runtime: "openclaw" | "hermes";
@@ -933,10 +925,6 @@ export interface components {
              * @default false
              */
             upgrade_available: boolean;
-            /** Agent Version */
-            agent_version?: string | null;
-            /** App Image */
-            app_image?: string | null;
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
@@ -1024,7 +1012,7 @@ export interface components {
         /** V2RebindAgentAiProviderRequest */
         V2RebindAgentAiProviderRequest: {
             /** Primary Model */
-            primary_model?: string | components["schemas"]["app__v2__api_schemas__V2AiProviderPrimaryModelRef"] | null;
+            primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;
             /** Provider Ids */
@@ -1033,7 +1021,7 @@ export interface components {
              * Ai Provider Auth Kind
              * @enum {string}
              */
-            ai_provider_auth_kind: "managed" | "api_key" | "codex_oauth";
+            ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
             /** Ai Provider Bootstrap */
             ai_provider_bootstrap?: {
                 [key: string]: unknown;
@@ -1043,10 +1031,8 @@ export interface components {
         V2SetAgentEnabledRequest: {
             /** Enabled */
             enabled: boolean;
-            /** Personality */
-            personality?: string | null;
             /** Language */
-            language?: string | null;
+            language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
             timezone?: string | null;
         };
@@ -1165,20 +1151,6 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        /** V2AiProviderPrimaryModelRef */
-        app__v2__api_schemas__V2AiProviderPrimaryModelRef: {
-            /** Provider Id */
-            provider_id: string;
-            /** Model */
-            model: string;
-        };
-        /** V2AiProviderPrimaryModelRef */
-        app__v2__hosted__schemas__V2AiProviderPrimaryModelRef: {
-            /** Provider Id */
-            provider_id: string;
-            /** Model */
-            model: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -1188,7 +1160,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    list_v1_agent_environments_agent_environments_get: {
+    list_v1_agent_environments_v1_agent_environments_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1208,7 +1180,7 @@ export interface operations {
             };
         };
     };
-    me_me_get: {
+    me_v1_me_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1450,37 +1422,6 @@ export interface operations {
             };
         };
     };
-    create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2DeploymentRuntimeUiRedemptionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_v2_deployment_terminal_session_v2_deployments__deployment_id__terminal_post: {
         parameters: {
             query?: never;
@@ -1499,6 +1440,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2DeploymentTerminalSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2DeploymentRuntimeUiRedemptionResponse"];
                 };
             };
             /** @description Validation Error */
