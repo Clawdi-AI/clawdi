@@ -71,6 +71,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
@@ -1254,6 +1255,7 @@ function VaultRow({ vault }: { vault: VaultSummary; ownProjectId: string }) {
 			<Link
 				to="/vault/$slug"
 				params={{ slug: vault.slug }}
+				search={vaultDetailSearch(vault)}
 				aria-label={`Open vault ${vault.name}`}
 				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			/>

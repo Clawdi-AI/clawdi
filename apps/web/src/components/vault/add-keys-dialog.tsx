@@ -43,9 +43,11 @@ const NEW_VAULT = "__new__";
 export function AddKeysDialog({
 	/** Pin the destination vault (vault detail page); omit for the picker. */
 	vaultSlug,
+	vaultId,
 	children,
 }: {
 	vaultSlug?: string;
+	vaultId?: string;
 	children?: ReactElement;
 }) {
 	const api = useApi();
@@ -81,7 +83,9 @@ export function AddKeysDialog({
 	);
 	// Default destination: pinned slug, else the first vault, else create-new.
 	const effectiveChoice = vaultChoice || (ownVaults.length > 0 ? ownVaults[0].slug : NEW_VAULT);
-	const selectedVault = ownVaults.find((v) => v.slug === effectiveChoice);
+	const selectedVault = ownVaults.find((v) =>
+		vaultId ? v.id === vaultId && v.slug === effectiveChoice : v.slug === effectiveChoice,
+	);
 	const selectedVaultProjectId = selectedVault?.project_ids?.[0] ?? undefined;
 	const newVaultSlug = useMemo(() => slugFromVaultName(newVaultName), [newVaultName]);
 	const newVaultSlugTaken =

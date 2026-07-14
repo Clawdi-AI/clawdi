@@ -743,6 +743,48 @@ async def _vault_item_rows_for_exact_references(
     vault_slugs = {vault_slug for vault_slug, _section, _field in references}
     sections = {section for _vault_slug, section, _field in references}
     fields = {field for _vault_slug, _section, field in references}
+    canonical_identities = (
+        await db.execute(
+            select(VaultProjectAttachment.project_id, Vault.slug, Vault.id)
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .where(
+                VaultProjectAttachment.project_id.in_(project_ids),
+                Vault.slug.in_(vault_slugs),
+            )
+        )
+    ).all()
+    alias_identities = (
+        await db.execute(
+            select(
+                VaultProjectAttachment.project_id,
+                VaultProjectSlugAlias.slug,
+                Vault.id,
+            )
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .join(VaultProjectSlugAlias, _vault_project_slug_alias_condition())
+            .where(
+                VaultProjectAttachment.project_id.in_(project_ids),
+                VaultProjectSlugAlias.slug.in_(vault_slugs),
+            )
+        )
+    ).all()
+    vault_ids_by_namespace: dict[tuple[UUID, str], set[UUID]] = {}
+    for project_id, lookup_slug, vault_id in [*canonical_identities, *alias_identities]:
+        vault_ids = vault_ids_by_namespace.setdefault((project_id, lookup_slug), set())
+        vault_ids.add(vault_id)
+        if len(vault_ids) > 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "ambiguous_vault_reference_slug",
+                    "message": (
+                        f"Vault reference slug '{lookup_slug}' identifies multiple vaults "
+                        "in the same Project."
+                    ),
+                    "project_id": str(project_id),
+                    "vault_slug": lookup_slug,
+                },
+            )
     canonical_rows = (
         await db.execute(
             select(VaultProjectAttachment.project_id, Vault.slug, Vault, VaultItem)
@@ -794,10 +836,25 @@ async def _vault_item_rows_for_exact_references(
 
 
 def _vault_item_index(rows: list[VaultItemLookupRow]) -> VaultItemIndex:
-    return {
-        (project_id, lookup_slug, item.section, item.item_name): (vault, item)
-        for project_id, lookup_slug, vault, item in rows
-    }
+    index: VaultItemIndex = {}
+    for project_id, lookup_slug, vault, item in rows:
+        key = (project_id, lookup_slug, item.section, item.item_name)
+        existing = index.get(key)
+        if existing is not None and existing[0].id != vault.id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "ambiguous_vault_reference_slug",
+                    "message": (
+                        f"Vault reference slug '{lookup_slug}' identifies multiple vaults "
+                        "in the same Project."
+                    ),
+                    "project_id": str(project_id),
+                    "vault_slug": lookup_slug,
+                },
+            )
+        index[key] = (vault, item)
+    return index
 
 
 def _format_vault_reference(vault_slug: str, section: str, field: str) -> str:
@@ -1312,6 +1369,15 @@ async def _get_vault_write(
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
+    if len(rows) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ambiguous_vault_slug",
+                "message": f"Vault slug '{slug}' identifies multiple owned vaults.",
+                "project_id": str(project_id) if project_id is not None else None,
+            },
+        )
     return rows[0]
 
 

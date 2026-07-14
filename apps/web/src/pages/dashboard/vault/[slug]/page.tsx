@@ -13,6 +13,7 @@ import {
 	Share2,
 	Trash2,
 } from "lucide-react";
+import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -51,6 +52,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
+import { selectVaultForDetail } from "@/components/vault/vault-detail-identity";
 import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -77,6 +79,7 @@ function apiSection(section: string): string {
 
 export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const slug = decodeURIComponent(rawSlug);
+	const [vaultId] = useQueryState("vault", parseAsString);
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
@@ -86,7 +89,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		queryFn: async () =>
 			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
 	});
-	const vault: VaultSummary | null = vaults.data?.items.find((v) => v.slug === slug) ?? null;
+	const vault = selectVaultForDetail(vaults.data?.items ?? [], slug, vaultId ?? undefined);
 	const isOwner = vault?.is_owner !== false;
 	const anyProjectId = vault?.project_ids?.[0];
 
@@ -449,7 +452,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							/>
 						) : null}
 						{isOwner ? (
-							<AddKeysDialog vaultSlug={slug}>
+							<AddKeysDialog vaultSlug={slug} vaultId={vault.id}>
 								<Button
 									variant="outline"
 									size="sm"
