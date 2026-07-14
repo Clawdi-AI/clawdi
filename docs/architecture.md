@@ -229,7 +229,8 @@ Core tables verified under `backend/app/models/`:
 | `users`, `user_settings` | Clerk user mirror, profile fields, skill revision counter, user settings such as memory provider. |
 | `api_keys` | SHA-256-hashed CLI/API tokens, optionally scoped to an Agent. |
 | `agent_environments` | Stable Agent identities plus refreshable machine metadata, labels, daemon observability, and fixed Agent Project id. |
-| `hosted_runtime_states` | Runtime desired/observed state rows keyed to an Agent identity for hosted surfaces and local mock flows. |
+| `hosted_runtime_states` | Runtime desired CONFIG state keyed to an Agent identity for hosted surfaces and local mock flows. |
+| `hosted_runtime_config_observations` | Daemon-reported CONFIG convergence with `observed_at`, observed config generation, observed manifest ETag, and validated diagnostics JSONB; distinct from hosted provider COMPUTE observations. |
 | `projects`, `project_memberships`, `project_share_links`, `project_invitations`, `share_redeem_attempts` | Project ownership, viewer access, share links, directed invites, and redeem throttling/idempotency. |
 | `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` attached Projects. |
 | `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |

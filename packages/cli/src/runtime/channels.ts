@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { EgressProfileInputBundle } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
+	RuntimeBundleChannelBinding,
 	RuntimeChannelAccount,
 	RuntimeChannelCredential,
 	RuntimeChannelsLoad,
@@ -76,15 +77,60 @@ export function applyRuntimeChannelsToManifestLoad(
 	if (!channels) return load;
 	const managedLinks = managedChannelLinks(channels.channels);
 	const manifest = applyRuntimeChannelProjection(load.manifest, managedLinks);
-	const localSecretValues = {
-		...(load.localSecretValues ?? {}),
+	const secretValues = {
+		...(load.secretValues ?? {}),
 		...channelSecretValues(managedLinks, manifest.projection?.channelCredentials),
 	};
 	return {
 		...load,
 		manifest,
 		sourceManifest: load.sourceManifest ?? load.manifest,
-		localSecretValues: Object.keys(localSecretValues).length > 0 ? localSecretValues : undefined,
+		secretValues: Object.keys(secretValues).length > 0 ? secretValues : undefined,
+	};
+}
+
+export function applyRuntimeBundleChannelsToManifestLoad(
+	load: RuntimeManifestLoad,
+): RuntimeManifestLoad {
+	if (!load.channelBindings) return load;
+	const secretValues = load.secretValues ?? {};
+	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
+		managedBundleChannelLink(binding, secretValues),
+	);
+	return {
+		...load,
+		manifest: applyRuntimeChannelProjection(load.manifest, links),
+		sourceManifest: load.sourceManifest ?? load.manifest,
+	};
+}
+
+function managedBundleChannelLink(
+	binding: RuntimeBundleChannelBinding,
+	secretValues: Record<string, string>,
+): ManagedChannelLink {
+	const agentToken = secretValues[binding.agentTokenSecretRef];
+	const placeholderToken = secretValues[binding.placeholderTokenSecretRef];
+	if (!agentToken) throw new Error(`runtime bundle is missing ${binding.agentTokenSecretRef}`);
+	if (!placeholderToken) {
+		throw new Error(`runtime bundle is missing ${binding.placeholderTokenSecretRef}`);
+	}
+	return {
+		account: {
+			id: binding.accountKey,
+			provider: binding.provider,
+			name: binding.accountKey,
+			status: "active",
+			visibility: "private",
+			runtime_links: [],
+			runtime_credentials: [],
+		},
+		accountKey: binding.accountKey,
+		linkId: binding.accountKey,
+		agentId: "bundle",
+		agentToken,
+		secretRef: binding.agentTokenSecretRef,
+		placeholderSecretRef: binding.placeholderTokenSecretRef,
+		credentials: [],
 	};
 }
 

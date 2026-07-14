@@ -8,7 +8,6 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
-	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -22,12 +21,18 @@ import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { isSemverLessThan } from "../lib/semver";
 import { getCliVersion } from "../lib/version";
 import {
+	type RuntimeAppliedContentIdentity,
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+	writeRuntimeAppliedState,
+} from "../runtime/applied-state";
+import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
 } from "../runtime/auth-token";
 import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
-import { applyRuntimeChannelsToManifestLoad } from "../runtime/channels";
+import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
 	completePendingRuntimeCliUpgrade,
@@ -41,17 +46,10 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
-	withRuntimeConvergeLock,
+	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
-import {
-	loadRemoteRuntimeChannels,
-	loadRemoteRuntimeManifest,
-	type RuntimeChannelsLoad,
-	type RuntimeChannelsNotModified,
-	type RuntimeManifestLoad,
-	type RuntimeManifestNotModified,
-} from "../runtime/manifest-source";
+import { loadRemoteRuntimeManifest, type RuntimeManifestLoad } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -1199,12 +1197,16 @@ interface MinimumCliVersionGate {
 	error: string;
 }
 
-type RuntimeApplyResult = RuntimeApplyConvergedResult | RuntimeApplyGatedResult;
+type RuntimeApplyResult =
+	| RuntimeApplyConvergedResult
+	| RuntimeApplyGatedResult
+	| RuntimeApplyCliUpdateFailedResult;
 
 interface RuntimeApplyConvergedResult {
 	kind: "converged";
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
+	systemdApply: ReturnType<typeof applySystemdRuntimeUpdate>;
 }
 
 interface RuntimeApplyGatedResult {
@@ -1213,7 +1215,13 @@ interface RuntimeApplyGatedResult {
 	gate: MinimumCliVersionGate;
 }
 
+interface RuntimeApplyCliUpdateFailedResult {
+	kind: "cli_update_failed";
+	cliUpdate: RuntimeCliUpdateResult;
+}
+
 interface RuntimeApplyOptions {
+	authorityCommit?: (convergence: ReturnType<typeof convergeRuntimeManifest>) => void;
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
@@ -1258,46 +1266,51 @@ function readable(path: string): boolean {
 	}
 }
 
-function readRuntimeManifestEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
-	if (!existsSync(paths.manifestEtag)) return undefined;
-	const etag = readFileSync(paths.manifestEtag, "utf-8").trim();
-	return etag || undefined;
-}
-
-function writeRuntimeManifestEtag(
-	paths: ReturnType<typeof getRuntimePaths>,
-	etag: string | undefined,
-): void {
-	if (!etag) {
-		rmSync(paths.manifestEtag, { force: true });
-		return;
-	}
-	writePrivateFileAtomic(paths.manifestEtag, `${etag}\n`, { mode: 0o644, dirMode: 0o755 });
-}
-
 function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePaths): string | null {
-	return cacheRuntimeLastGoodManifest(
-		load.sourceManifest ?? load.manifest,
-		paths,
-		load.secretValues,
+	return cacheRuntimeLastGoodManifest(load.manifest, paths, load.secretValues);
+}
+
+export function runtimeAppliedContentIdentity(
+	load: RuntimeManifestLoad,
+): RuntimeAppliedContentIdentity {
+	return {
+		sourcePath: load.sourcePath,
+		sha256: runtimeContentSha256({
+			manifest: load.manifest,
+			secretValues: load.secretValues ?? {},
+		}),
+	};
+}
+
+function commitRuntimeAppliedState(input: {
+	load: RuntimeManifestLoad;
+	paths: RuntimePaths;
+	etag: string;
+	sourceRevision: string;
+	convergence: ReturnType<typeof convergeRuntimeManifest>;
+}): void {
+	const providerIds = runtimeSourceProviderIds(input.load.manifest);
+	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
+	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
+		{
+			schemaVersion: "clawdi.runtimeAppliedState.v2",
+			appliedAt: new Date().toISOString(),
+			instanceId: input.convergence.manifest.instanceId,
+			etag: input.etag,
+			sourceRevision: input.sourceRevision,
+			generation: input.convergence.manifest.generation,
+			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			providerIds,
+			projectedProviderIds: input.convergence.projectedProviderIds,
+		},
+		input.paths,
 	);
 }
 
-function readRuntimeChannelsEtag(paths: ReturnType<typeof getRuntimePaths>): string | undefined {
-	if (!existsSync(paths.channelsEtag)) return undefined;
-	const etag = readFileSync(paths.channelsEtag, "utf-8").trim();
-	return etag || undefined;
-}
-
-function writeRuntimeChannelsEtag(
-	paths: ReturnType<typeof getRuntimePaths>,
-	etag: string | undefined,
-): void {
-	if (!etag) {
-		rmSync(paths.channelsEtag, { force: true });
-		return;
-	}
-	writePrivateFileAtomic(paths.channelsEtag, `${etag}\n`, { mode: 0o644, dirMode: 0o755 });
+function runtimeSourceProviderIds(manifest: RuntimeManifestLoad["manifest"]): string[] {
+	const selectedRuntime = manifest.runtime;
+	if (!selectedRuntime) return [];
+	return [...new Set(manifest.runtimes[selectedRuntime]?.provider_ids ?? [])].sort();
 }
 
 function parsePositiveMs(
@@ -1731,7 +1744,15 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 		process.exitCode = 2;
 		return;
 	}
+	return withRuntimeConvergeLockAsync(paths, () => runtimeInitLocked(opts, paths, mode, bootId));
+}
 
+async function runtimeInitLocked(
+	opts: RuntimeInitOptions,
+	paths: ReturnType<typeof getRuntimePaths>,
+	mode: "hosted",
+	bootId: string,
+): Promise<void> {
 	const hostPolicy = readHostPolicy(paths.hostPolicy);
 	try {
 		ensureRuntimeStateDirs(paths);
@@ -1812,88 +1833,28 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			return;
 		}
 
-		let channelsLoad: RuntimeChannelsLoad | null = null;
 		let convergenceLoad = loaded;
-		if (loaded.source === "remote-datasource") {
-			const loadedChannels = await loadRemoteRuntimeChannels(paths);
-			if ("errors" in loadedChannels) {
-				const status = buildRuntimeBootStatus(
-					{
-						mode: loadedChannels.mode,
-						status: "error",
-						stage: loadedChannels.stage,
-						bootId,
-						runtimeMode: mode,
-						activeGeneration: null,
-						enabledRuntimes: [],
-						error: loadedChannels.errors[0],
-						errors: loadedChannels.errors,
-						exitCode: 21,
-						datasource: "RuntimeSource",
-						hostPolicy: hostPolicySummary(hostPolicy),
-					},
-					paths,
-				);
-				writeRuntimeBootStatus(status, paths);
-
-				if (opts.json || !process.stdout.isTTY) {
-					console.log(JSON.stringify(status, null, 2));
-				} else {
-					console.log(chalk.bold("clawdi runtime init"));
-					console.log(chalk.yellow(`  ${loadedChannels.mode}: ${loadedChannels.errors[0]}`));
-					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-				}
-				process.exitCode = 21;
-				return;
-			}
-			if ("notModified" in loadedChannels) {
-				const errors = ["runtime channels datasource returned 304 without If-None-Match"];
-				const status = buildRuntimeBootStatus(
-					{
-						mode: "repair",
-						status: "error",
-						stage: "network",
-						bootId,
-						runtimeMode: mode,
-						activeGeneration: null,
-						enabledRuntimes: [],
-						error: errors[0],
-						errors,
-						exitCode: 21,
-						datasource: "RuntimeSource",
-						hostPolicy: hostPolicySummary(hostPolicy),
-					},
-					paths,
-				);
-				writeRuntimeBootStatus(status, paths);
-
-				if (opts.json || !process.stdout.isTTY) {
-					console.log(JSON.stringify(status, null, 2));
-				} else {
-					console.log(chalk.bold("clawdi runtime init"));
-					console.log(chalk.yellow(`  repair: ${errors[0]}`));
-					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-				}
-				process.exitCode = 21;
-				return;
-			}
-			channelsLoad = loadedChannels;
-			convergenceLoad = applyRuntimeChannelsToManifestLoad(loaded, channelsLoad);
-		}
-
 		let applyResult: RuntimeApplyResult;
-		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		try {
-			applyResult = withRuntimeConvergeLock(paths, () =>
-				applyRuntimeDesiredState(convergenceLoad, paths, {
-					manifestIdentity: {
-						generation: convergenceLoad.manifest.generation,
-						etag: loaded.etag ?? null,
-					},
-				}),
-			);
+			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
+			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
+			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
+				authorityCommit: (convergence) =>
+					commitRuntimeAppliedState({
+						load: convergenceLoad,
+						paths,
+						etag: loaded.etag ?? `"sha256:${contentRevision}"`,
+						sourceRevision: loaded.sourceRevision ?? contentRevision,
+						convergence,
+					}),
+				manifestIdentity: {
+					generation: convergenceLoad.manifest.generation,
+					etag: loaded.etag ?? null,
+				},
+			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			const activeAppliedState = readRuntimeAppliedState(paths);
 			const status = buildRuntimeBootStatus(
 				{
 					mode: "repair",
@@ -1901,8 +1862,9 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 					stage: "final",
 					bootId,
 					runtimeMode: mode,
-					activeGeneration: convergenceLoad.manifest.generation,
-					instanceId: convergenceLoad.manifest.instanceId,
+					activeGeneration: activeAppliedState?.generation ?? null,
+					rejectedGeneration: convergenceLoad.manifest.generation,
+					instanceId: activeAppliedState?.instanceId ?? null,
 					enabledRuntimes: [],
 					error: message,
 					errors: [message],
@@ -1928,7 +1890,35 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			process.exitCode = 23;
 			return;
 		}
+		if (applyResult.kind === "cli_update_failed") {
+			const message = applyResult.cliUpdate.error ?? "CLI update failed";
+			const activeAppliedState = readRuntimeAppliedState(paths);
+			const status = buildRuntimeBootStatus(
+				{
+					mode: "repair",
+					status: "error",
+					stage: "config",
+					bootId,
+					runtimeMode: mode,
+					activeGeneration: activeAppliedState?.generation ?? null,
+					rejectedGeneration: convergenceLoad.manifest.generation,
+					instanceId: activeAppliedState?.instanceId ?? null,
+					enabledRuntimes: [],
+					error: message,
+					errors: [message],
+					exitCode: 23,
+					datasource: "RuntimeSource",
+					hostPolicy: hostPolicySummary(hostPolicy),
+				},
+				paths,
+			);
+			writeRuntimeBootStatus(status, paths);
+			if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+			process.exitCode = 23;
+			return;
+		}
 		if (applyResult.kind === "minimum_cli_version_gated") {
+			const activeAppliedState = readRuntimeAppliedState(paths);
 			const status = buildRuntimeBootStatus(
 				{
 					mode: "repair",
@@ -1938,7 +1928,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 					runtimeMode: mode,
 					activeGeneration: applyResult.gate.activeGeneration,
 					rejectedGeneration: applyResult.gate.rejectedGeneration,
-					instanceId: convergenceLoad.manifest.instanceId,
+					instanceId: activeAppliedState?.instanceId ?? null,
 					enabledRuntimes: [],
 					error: applyResult.gate.error,
 					errors: [applyResult.gate.error],
@@ -1971,31 +1961,9 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			return;
 		}
 		const { convergence } = applyResult;
-		let systemdApplyError: string | null = null;
-		// Convergence errors must not block systemd apply: unit files already
-		// changed on disk, and stops/disables for removed units have to land
-		// even when an unrelated runtime install or projection failed.
-		try {
-			applySystemdRuntimeUpdate(paths, previousSystemdUnits, readSystemdUnitSnapshot(paths));
-		} catch (error) {
-			systemdApplyError = `systemd apply failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`;
-		}
-		const runtimeErrors = [
-			...convergence.installErrors,
-			...(systemdApplyError ? [systemdApplyError] : []),
-		];
+		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
-		if (installOk && loaded.source === "remote-datasource") {
-			convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(convergenceLoad, paths);
-			writeRuntimeManifestEtag(paths, loaded.etag);
-			if (channelsLoad) {
-				writeRuntimeChannelsEtag(paths, channelsLoad.etag);
-			}
-		} else if (installOk) {
-			convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(convergenceLoad, paths);
-		}
+		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
 				mode: convergence.mode,
@@ -2003,8 +1971,9 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 				stage: "final",
 				bootId,
 				runtimeMode: mode,
-				activeGeneration: convergence.manifest.generation,
-				instanceId: convergence.manifest.instanceId,
+				activeGeneration: activeAppliedState?.generation ?? null,
+				rejectedGeneration: installOk ? null : convergence.manifest.generation,
+				instanceId: activeAppliedState?.instanceId ?? null,
 				enabledRuntimes: convergence.enabledRuntimes,
 				error: runtimeErrors[0],
 				errors: runtimeErrors,
@@ -2068,12 +2037,16 @@ async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
 ): Promise<Record<string, unknown>> {
-	const manifestEtag = opts.forceRefresh ? undefined : readRuntimeManifestEtag(paths);
-	const channelsEtag = opts.forceRefresh ? undefined : readRuntimeChannelsEtag(paths);
-	const [manifestLoad, channelsLoad] = await Promise.all([
-		loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag }),
-		loadRemoteRuntimeChannels(paths, { ifNoneMatch: channelsEtag }),
-	]);
+	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
+}
+
+async function runtimeWatchTickLocked(
+	paths: ReturnType<typeof getRuntimePaths>,
+	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+): Promise<Record<string, unknown>> {
+	const activeAppliedState = readRuntimeAppliedState(paths);
+	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
+	const manifestLoad = await loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag });
 	if ("errors" in manifestLoad) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2086,44 +2059,73 @@ async function runtimeWatchTick(
 			rejectedGeneration: manifestLoad.rejectedGeneration ?? null,
 		};
 	}
-	if ("errors" in channelsLoad) {
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			mode: channelsLoad.mode,
-			stage: channelsLoad.stage,
-			errors: channelsLoad.errors,
-			error: channelsLoad.errors[0],
-		};
-	}
-	if ("notModified" in manifestLoad && "notModified" in channelsLoad) {
+	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
+	if (
+		"notModified" in manifestLoad &&
+		activeAppliedState !== null &&
+		activeAppliedState.etag === responseManifestEtag
+	) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "not_modified",
 			sourcePath: manifestLoad.sourcePath,
-			etag: manifestLoad.etag ?? manifestEtag ?? null,
-			channelsSourcePath: channelsLoad.sourcePath,
-			channelsEtag: channelsLoad.etag ?? channelsEtag ?? null,
+			etag: responseManifestEtag,
+			sourceRevision: activeAppliedState.sourceRevision,
+			generation: activeAppliedState.generation,
+			instanceId: activeAppliedState.instanceId,
 		};
 	}
 
 	try {
-		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
-		const loaded = await runtimeWatchLoadForApply(paths, manifestLoad, channelsLoad);
+		const fresh =
+			"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
+		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh);
+		const bundleEtag = loaded.etag;
+		const sourceRevision = loaded.sourceRevision;
+		if (!bundleEtag || !sourceRevision) {
+			throw new Error("runtime bundle is missing applied authority identity");
+		}
 		const manifestIdentity = runtimeManifestIdentityForWatch(
-			manifestLoad,
-			manifestEtag,
 			loaded.manifest.generation,
+			bundleEtag,
 			paths,
 		);
-		const applyResult = withRuntimeConvergeLock(paths, () =>
-			applyRuntimeDesiredState(loaded, paths, {
-				continueOnCliUpdateError: true,
-				deferCliInstall: opts.deferCliInstall,
-				deferCliInstallReason: opts.deferCliInstallReason,
-				manifestIdentity,
-			}),
-		);
+		const applyResult = applyRuntimeDesiredState(loaded, paths, {
+			authorityCommit: (convergence) =>
+				commitRuntimeAppliedState({
+					load: loaded,
+					paths,
+					etag: bundleEtag,
+					sourceRevision,
+					convergence,
+				}),
+			continueOnCliUpdateError: true,
+			deferCliInstall: opts.deferCliInstall,
+			deferCliInstallReason: opts.deferCliInstallReason,
+			manifestIdentity,
+		});
+		if (applyResult.kind === "cli_update_failed") {
+			const error = applyResult.cliUpdate.error ?? "CLI update failed";
+			const activeAppliedState = readRuntimeAppliedState(paths);
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				stage: "cli-update",
+				errors: [error],
+				error,
+				activeGeneration: activeAppliedState?.generation ?? null,
+				rejectedGeneration: loaded.manifest.generation,
+				instanceId: activeAppliedState?.instanceId ?? null,
+				cliUpdate: applyResult.cliUpdate,
+				selfReexec: false,
+				systemdUnitsChanged: false,
+				systemdApply: {
+					applied: false,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				},
+			};
+		}
 		if (applyResult.kind === "minimum_cli_version_gated") {
 			const cliUpdateError =
 				applyResult.cliUpdate.status === "error"
@@ -2144,57 +2146,27 @@ async function runtimeWatchTick(
 				gate: applyResult.gate,
 			};
 		}
-		const { convergence, cliUpdate } = applyResult;
+		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
-		let systemdApplyResult = {
-			applied: false,
-			systemUnitsChanged: [] as string[],
-			userUnitsChanged: [] as string[],
-		};
-		let systemdApplyError: string | null = null;
-		// Convergence errors must not block systemd apply: unit files already
-		// changed on disk, and stops/disables for removed units have to land
-		// even when an unrelated runtime install or projection failed.
-		try {
-			systemdApplyResult = applySystemdRuntimeUpdate(
-				paths,
-				previousSystemdUnits,
-				readSystemdUnitSnapshot(paths),
-			);
-		} catch (error) {
-			systemdApplyError = `systemd apply failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`;
-		}
-		const errors = [
-			...(cliUpdateError ? [cliUpdateError] : []),
-			...convergence.installErrors,
-			...(systemdApplyError ? [systemdApplyError] : []),
-		];
+		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
 		let selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
-			if (convergence.installErrors.length === 0 && !systemdApplyError) {
-				convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(loaded, paths);
-				if (!("notModified" in manifestLoad)) {
-					writeRuntimeManifestEtag(paths, manifestLoad.etag);
-				}
-				if (!("notModified" in channelsLoad)) {
-					writeRuntimeChannelsEtag(paths, channelsLoad.etag);
-				}
-			}
 			const cliRollback = maybeRollbackFailedCliUpgrade(paths, manifestIdentity, errors);
 			if (cliRollback.status === "rolled_back") selfReexec = false;
+			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
 				stage: cliUpdateError ? "cli-update" : "final",
 				errors,
 				error: errors[0],
-				activeGeneration: convergence.manifest.generation,
+				activeGeneration: activeAppliedState?.generation ?? null,
+				rejectedGeneration: convergence.manifest.generation,
+				instanceId: activeAppliedState?.instanceId ?? null,
 				cliUpdate,
 				cliRollback,
 				selfReexec,
@@ -2203,27 +2175,13 @@ async function runtimeWatchTick(
 				convergence: convergence.outputs,
 			};
 		}
-		convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(loaded, paths);
-		if (!("notModified" in manifestLoad)) {
-			writeRuntimeManifestEtag(paths, manifestLoad.etag);
-		}
-		if (!("notModified" in channelsLoad)) {
-			writeRuntimeChannelsEtag(paths, channelsLoad.etag);
-		}
 		completePendingRuntimeCliUpgrade(paths, getCliVersion(), manifestIdentity);
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
 			sourcePath: loaded.sourcePath,
-			etag:
-				"notModified" in manifestLoad
-					? (manifestLoad.etag ?? manifestEtag ?? null)
-					: (manifestLoad.etag ?? null),
-			channelsSourcePath: channelsLoad.sourcePath,
-			channelsEtag:
-				"notModified" in channelsLoad
-					? (channelsLoad.etag ?? channelsEtag ?? null)
-					: (channelsLoad.etag ?? null),
+			etag: loaded.etag,
+			sourceRevision: loaded.sourceRevision,
 			generation: convergence.manifest.generation,
 			instanceId: convergence.manifest.instanceId,
 			enabledRuntimes: convergence.enabledRuntimes,
@@ -2258,14 +2216,44 @@ function applyRuntimeDesiredState(
 		});
 	} catch (error) {
 		if (!opts.continueOnCliUpdateError) throw error;
-		cliUpdate = runtimeCliUpdateError(load.manifest, paths, error);
+		return {
+			kind: "cli_update_failed",
+			cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
+		};
 	}
 	const gate = minimumCliVersionGate(load.manifest, paths);
 	if (gate) {
 		return { kind: "minimum_cli_version_gated", cliUpdate, gate };
 	}
-	const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
-	return { kind: "converged", cliUpdate, convergence };
+	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
+	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
+	let systemdApply = {
+		applied: false,
+		systemUnitsChanged: [] as string[],
+		userUnitsChanged: [] as string[],
+	};
+	const convergence = convergeRuntimeManifest(load, paths, {
+		cacheLastGood: false,
+		commitAuthority: opts.authorityCommit,
+		systemdApply: {
+			activate: () => {
+				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				try {
+					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, failedSystemdUnits);
+					return systemdApply;
+				} catch (error) {
+					throw new Error(
+						`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			},
+			rollback: () => {
+				if (!failedSystemdUnits) return;
+				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths));
+			},
+		},
+	});
+	return { kind: "converged", cliUpdate, convergence, systemdApply };
 }
 
 function minimumCliVersionGate(
@@ -2280,20 +2268,9 @@ function minimumCliVersionGate(
 		minimumCliVersion,
 		currentCliVersion,
 		rejectedGeneration: manifest.generation,
-		activeGeneration: readLastGoodManifestGeneration(paths),
-		error: `runtime desired state requires clawdi CLI >= ${minimumCliVersion}; current CLI is ${currentCliVersion}. Keeping last-good applied state while CLI self-upgrade runs.`,
+		activeGeneration: readRuntimeAppliedState(paths)?.generation ?? null,
+		error: `runtime desired state requires clawdi CLI >= ${minimumCliVersion}; current CLI is ${currentCliVersion}. Keeping the current applied state while CLI self-upgrade runs.`,
 	};
-}
-
-function readLastGoodManifestGeneration(paths: RuntimePaths): number | null {
-	try {
-		const parsed = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-		const generation = (parsed as Record<string, unknown>).generation;
-		return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
-	} catch {
-		return null;
-	}
 }
 
 function runtimeCliUpdateError(
@@ -2322,22 +2299,15 @@ function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolea
 }
 
 function runtimeManifestIdentityForWatch(
-	manifestLoad: RuntimeManifestLoad | RuntimeManifestNotModified,
-	existingEtag: string | undefined,
 	generation: number,
+	observedManifestEtag: string | null,
 	paths: RuntimePaths,
 ): RuntimeManifestIdentity {
-	const etag =
-		"notModified" in manifestLoad
-			? (manifestLoad.etag ?? existingEtag ?? null)
-			: (manifestLoad.etag ?? null);
-	const lastGoodGeneration = readLastGoodManifestGeneration(paths);
+	const appliedState = readRuntimeAppliedState(paths);
 	return {
 		generation,
-		etag,
-		previouslyApplied:
-			(existingEtag !== undefined && etag === existingEtag) ||
-			(existingEtag === undefined && lastGoodGeneration === generation),
+		etag: observedManifestEtag,
+		previouslyApplied: appliedState?.etag === observedManifestEtag,
 	};
 }
 
@@ -2361,37 +2331,12 @@ function maybeRollbackFailedCliUpgrade(
 	return rollback;
 }
 
-async function runtimeWatchLoadForApply(
-	paths: ReturnType<typeof getRuntimePaths>,
-	manifestLoad: RuntimeManifestLoad | RuntimeManifestNotModified,
-	channelsLoad: RuntimeChannelsLoad | RuntimeChannelsNotModified,
-): Promise<RuntimeManifestLoad> {
-	const loaded =
-		"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
-	const channelDesired =
-		"notModified" in channelsLoad ? await loadFullRuntimeChannelsForWatch(paths) : channelsLoad;
-	return applyRuntimeChannelsToManifestLoad(loaded, channelDesired);
-}
-
 async function loadFullRuntimeManifestForWatch(
 	paths: ReturnType<typeof getRuntimePaths>,
 ): Promise<RuntimeManifestLoad> {
 	const loaded = await loadRemoteRuntimeManifest(paths);
 	if ("notModified" in loaded) {
 		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
-	}
-	if ("errors" in loaded) {
-		throw new Error(loaded.errors.join("; "));
-	}
-	return loaded;
-}
-
-async function loadFullRuntimeChannelsForWatch(
-	paths: ReturnType<typeof getRuntimePaths>,
-): Promise<RuntimeChannelsLoad> {
-	const loaded = await loadRemoteRuntimeChannels(paths);
-	if ("notModified" in loaded) {
-		throw new Error("runtime channels datasource returned 304 without If-None-Match");
 	}
 	if ("errors" in loaded) {
 		throw new Error(loaded.errors.join("; "));

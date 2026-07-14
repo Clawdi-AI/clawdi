@@ -11,7 +11,12 @@ import {
 	providerTypeMeta,
 	toProviderId,
 } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider, AiProviderAuth, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+import type {
+	AiProvider,
+	AiProviderAuth,
+	AiProviderUpsert,
+	AiProviderUpsertAuth,
+} from "@/hosted/v2/ai-providers/types";
 
 export type AuthMethod = "api_key" | "oauth" | "none";
 
@@ -44,7 +49,7 @@ export function isAuthMethod(value: string | null): value is AuthMethod {
 	return value === "api_key" || value === "oauth" || value === "none";
 }
 
-export function authFor(method: AuthMethod): AiProviderAuth {
+export function authFor(method: AuthMethod): AiProviderUpsertAuth {
 	if (method === "api_key") return { type: "api_key", source: "managed" };
 	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
 	return { type: "none" };
@@ -76,7 +81,7 @@ export function providerAuthForSubmit({
 	authMethod: AuthMethod;
 	editingAuth: AiProviderAuth | null | undefined;
 	hasNewManagedKey: boolean;
-}): AiProviderAuth {
+}): AiProviderUpsertAuth {
 	if (authMethod !== "api_key") return authFor(authMethod);
 	if (!hasNewManagedKey) {
 		const keepable = keepableExistingApiKeyAuth(editingAuth);
@@ -207,7 +212,7 @@ export function providerFormIdentity({
 
 function keepableExistingApiKeyAuth(
 	auth: AiProviderAuth | null | undefined,
-): { kind: ApiKeyKeepKind; auth: AiProviderAuth } | null {
+): { kind: ApiKeyKeepKind; auth: AiProviderUpsertAuth } | null {
 	if (!auth) return null;
 	if (auth.type === "secret_ref" && auth.ref) return { kind: "legacy_secret_ref", auth };
 	if (auth.type !== "api_key") return null;

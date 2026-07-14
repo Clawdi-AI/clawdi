@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { readRuntimeAppliedState } from "./applied-state";
 import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
@@ -30,11 +31,52 @@ export interface RuntimeManifestLoad {
 	offline: boolean;
 	// Values supplied by the manifest datasource. Keep this deploy-surface map provider-only.
 	secretValues?: Record<string, string>;
-	// Values synthesized from separate local/runtime datasources, such as /v1/channels.
-	localSecretValues?: Record<string, string>;
+	channelBindings?: RuntimeBundleChannelBinding[];
+	sourceRevision?: string;
 	// Original datasource manifest before local runtime projections are applied.
 	sourceManifest?: RuntimeManifest;
 	etag?: string;
+}
+
+export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
+
+export interface RuntimeBundleChannelBinding {
+	provider: "telegram" | "discord";
+	accountKey: string;
+	agentTokenSecretRef: string;
+	placeholderTokenSecretRef: string;
+}
+
+const runtimeBundleChannelBindingSchema = z
+	.object({
+		provider: z.enum(["telegram", "discord"]),
+		accountKey: z.string().min(1),
+		agentTokenSecretRef: z.string().min(1),
+		placeholderTokenSecretRef: z.string().min(1),
+	})
+	.strict();
+
+const hostedRuntimeBundleV2Schema = z
+	.object({
+		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
+		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
+		manifest: hostedRuntimeManifestResponseSchema.shape.manifest,
+		channelBindings: z.array(runtimeBundleChannelBindingSchema),
+		secretValues: z.record(z.string(), z.string()),
+	})
+	.strict();
+
+export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
+	const bundle = hostedRuntimeBundleV2Schema.parse(value);
+	return {
+		manifest: hostedManifestToRuntimeManifest(bundle.manifest),
+		source: "remote-datasource",
+		sourcePath: "https://fixture.invalid/v1/runtime/manifest",
+		offline: false,
+		secretValues: normalizeSecretValues(bundle.secretValues),
+		channelBindings: bundle.channelBindings,
+		sourceRevision: bundle.sourceRevision,
+	};
 }
 
 export interface RuntimeManifestNotModified {
@@ -73,13 +115,9 @@ export interface RuntimeChannelCredential {
 	material?: unknown;
 }
 
-const RUNTIME_CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
-const runtimeChannelProviderSchema = z.enum(RUNTIME_CHANNEL_PROVIDERS);
-type RuntimeChannelProvider = z.infer<typeof runtimeChannelProviderSchema>;
-
 export interface RuntimeChannelAccount {
 	id: string;
-	provider: RuntimeChannelProvider;
+	provider: "telegram" | "discord" | "whatsapp";
 	name: string;
 	status: string;
 	visibility: "private" | "public";
@@ -92,19 +130,6 @@ export interface RuntimeChannelsLoad {
 	source: "remote-datasource";
 	sourcePath: string;
 	etag?: string;
-}
-
-export interface RuntimeChannelsNotModified {
-	source: "remote-datasource";
-	sourcePath: string;
-	notModified: true;
-	etag?: string;
-}
-
-export interface RuntimeChannelsFailure {
-	mode: "repair";
-	stage: "network" | "auth";
-	errors: string[];
 }
 
 interface ExistingManifestState {
@@ -134,84 +159,19 @@ type RuntimeSource = z.infer<typeof runtimeSourceSchema>;
 
 class RuntimeAuthError extends Error {
 	constructor(
-		readonly resource: "manifest" | "channels",
 		readonly status: number,
 		detail: string,
 	) {
 		super(
-			`runtime ${resource} authentication failed: HTTP ${status}${
+			`runtime manifest authentication failed: HTTP ${status}${
 				detail ? ` ${detail.slice(0, 200)}` : ""
 			}`,
 		);
 	}
 }
 
-const runtimeChannelAgentLinkSchema = z
-	.object({
-		id: z.string().min(1),
-		account_id: z.string().min(1),
-		agent_id: z.string().min(1),
-		status: z.string().min(1),
-		agent_token: z.string().min(1).nullable().optional(),
-	})
-	.transform((link) => ({
-		...link,
-		agent_token: link.agent_token ?? null,
-	}));
-
-const runtimeChannelCredentialSchema = z.object({
-	id: z.string().min(1),
-	account_id: z.string().min(1),
-	agent_link_id: z.string().min(1),
-	agent_id: z.string().min(1),
-	provider: z.string().min(1),
-	kind: z.string().min(1),
-	created_at: z.string().min(1).optional(),
-	jid: z.string().min(1).nullable().optional(),
-	identity_pub_key_hex: z.string().min(1).nullable().optional(),
-	material: z.unknown().optional(),
-});
-
-const runtimeChannelAccountSchema = z.object({
-	id: z.string().min(1),
-	provider: runtimeChannelProviderSchema,
-	name: z.string().min(1),
-	status: z.string().min(1),
-	visibility: z.enum(["private", "public"]).default("private"),
-	runtime_links: z.array(runtimeChannelAgentLinkSchema).default([]),
-	runtime_credentials: z.array(runtimeChannelCredentialSchema).default([]),
-});
-
-const runtimeChannelsSchema = z.array(z.unknown()).transform((accounts, ctx) => {
-	const allowedAccounts: RuntimeChannelAccount[] = [];
-	for (const [index, account] of accounts.entries()) {
-		const provider = recordValue(account)?.provider;
-		if (typeof provider === "string" && !isRuntimeChannelProvider(provider)) {
-			continue;
-		}
-		const parsed = runtimeChannelAccountSchema.safeParse(account);
-		if (!parsed.success) {
-			for (const issue of parsed.error.issues) {
-				ctx.addIssue({ ...issue, path: [index, ...issue.path] });
-			}
-			continue;
-		}
-		allowedAccounts.push(parsed.data);
-	}
-	return allowedAccounts;
-});
-
 function readJsonFile(path: string): unknown {
 	return JSON.parse(readFileSync(path, "utf-8")) as unknown;
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-	return value as Record<string, unknown>;
-}
-
-function isRuntimeChannelProvider(value: string): value is RuntimeChannelProvider {
-	return runtimeChannelProviderSchema.safeParse(value).success;
 }
 
 function zodErrors(error: z.ZodError): string[] {
@@ -223,11 +183,6 @@ function zodErrors(error: z.ZodError): string[] {
 
 function parseManifest(value: unknown): RuntimeManifest {
 	return manifestSchema.parse(value);
-}
-
-function parseManifestSafe(value: unknown): RuntimeManifest | null {
-	const result = manifestSchema.safeParse(value);
-	return result.success ? result.data : null;
 }
 
 export function normalizeManifestPayload(value: unknown): {
@@ -254,12 +209,19 @@ export function normalizeManifestPayload(value: unknown): {
 function normalizeRemoteManifestPayload(
 	value: unknown,
 	paths: RuntimePaths,
-): { manifest: RuntimeManifest; secretValues?: Record<string, string> } {
+): {
+	manifest: RuntimeManifest;
+	secretValues?: Record<string, string>;
+	channelBindings?: RuntimeBundleChannelBinding[];
+	sourceRevision?: string;
+} {
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
-	const hostedResponse = hostedRuntimeManifestResponseSchema.parse(value);
+	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
 	return {
 		manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
+		channelBindings: hostedResponse.channelBindings,
+		sourceRevision: hostedResponse.sourceRevision,
 	};
 }
 
@@ -397,7 +359,7 @@ async function fetchRuntimeManifestPayload(
 		const response = await fetch(url, {
 			method: "GET",
 			headers: {
-				accept: "application/json",
+				accept: paths.mode === "hosted" ? HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE : "application/json",
 				authorization: `Bearer ${token}`,
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
@@ -410,7 +372,7 @@ async function fetchRuntimeManifestPayload(
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
 			if (response.status === 401 || response.status === 403) {
-				throw new RuntimeAuthError("manifest", response.status, detail);
+				throw new RuntimeAuthError(response.status, detail);
 			}
 			throw new Error(
 				`runtime manifest request failed: HTTP ${response.status}${
@@ -418,82 +380,14 @@ async function fetchRuntimeManifestPayload(
 				}`,
 			);
 		}
-		return { url, raw: await response.json(), etag };
-	} finally {
-		clearTimeout(timer);
-	}
-}
-
-function runtimeChannelsUrl(source: RuntimeSource): string {
-	const url = new URL(source.url);
-	const environmentId = url.searchParams.get("environment_id");
-	const path = url.pathname.replace(/\/+$/, "");
-	const manifestSuffix = "/v1/runtime/manifest";
-	if (path.endsWith(manifestSuffix)) {
-		const prefix = path.slice(0, -manifestSuffix.length);
-		url.pathname = `${prefix}/v1/channels`;
-	} else {
-		url.pathname = new URL("v1/channels", url).pathname;
-	}
-	url.search = "";
-	if (environmentId) {
-		url.searchParams.set("environment_id", environmentId);
-	}
-	url.hash = "";
-	return url.toString();
-}
-
-async function fetchRuntimeChannelsPayload(
-	paths: RuntimePaths,
-	opts: { ifNoneMatch?: string } = {},
-): Promise<
-	| {
-			url: string;
-			raw: unknown;
-			etag?: string;
-	  }
-	| {
-			url: string;
-			notModified: true;
-			etag?: string;
-	  }
-> {
-	const source = resolveRuntimeSource(paths);
-	const token = runtimeCredential(paths);
-	if (!token) {
-		throw new Error(`missing ${runtimeAuthTokenFileLabel(paths)}`);
-	}
-	const url = runtimeChannelsUrl(source);
-	const timeoutMs =
-		Number.parseInt(process.env.CLAWDI_RUNTIME_CHANNELS_TIMEOUT_MS ?? "", 10) ||
-		source.timeoutMs ||
-		15000;
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	try {
-		const response = await fetch(url, {
-			method: "GET",
-			headers: {
-				accept: "application/json",
-				authorization: `Bearer ${token}`,
-				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
-			},
-			signal: controller.signal,
-		});
-		const etag = response.headers.get("etag") ?? undefined;
-		if (response.status === 304) {
-			return { url, notModified: true, etag };
-		}
-		if (!response.ok) {
-			const detail = await response.text().catch(() => "");
-			if (response.status === 401 || response.status === 403) {
-				throw new RuntimeAuthError("channels", response.status, detail);
+		if (paths.mode === "hosted") {
+			const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+			if (contentType !== HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE) {
+				throw new Error(
+					`runtime manifest response content-type must be ${HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE}, received ${contentType ?? "missing"}`,
+				);
 			}
-			throw new Error(
-				`runtime channels request failed: HTTP ${response.status}${
-					detail ? ` ${detail.slice(0, 200)}` : ""
-				}`,
-			);
+			if (!etag) throw new Error("runtime bundle response is missing its strong ETag");
 		}
 		return { url, raw: await response.json(), etag };
 	} finally {
@@ -528,7 +422,12 @@ export async function loadRemoteRuntimeManifest(
 		};
 	}
 
-	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
+	let normalized: {
+		manifest: RuntimeManifest;
+		secretValues?: Record<string, string>;
+		channelBindings?: RuntimeBundleChannelBinding[];
+		sourceRevision?: string;
+	};
 	try {
 		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
 	} catch (error) {
@@ -545,48 +444,6 @@ export async function loadRemoteRuntimeManifest(
 		return { ...loaded, etag: fetched.etag };
 	}
 	return loaded;
-}
-
-export async function loadRemoteRuntimeChannels(
-	paths: RuntimePaths,
-	opts: { ifNoneMatch?: string } = {},
-): Promise<RuntimeChannelsLoad | RuntimeChannelsFailure | RuntimeChannelsNotModified> {
-	let fetched: Awaited<ReturnType<typeof fetchRuntimeChannelsPayload>>;
-	try {
-		fetched = await fetchRuntimeChannelsPayload(paths, opts);
-	} catch (error) {
-		return {
-			mode: "repair",
-			stage: runtimeFetchFailureStage(error),
-			errors: [
-				`could not fetch runtime channels: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			],
-		};
-	}
-	if ("notModified" in fetched) {
-		return {
-			source: "remote-datasource",
-			sourcePath: fetched.url,
-			notModified: true,
-			etag: fetched.etag ?? opts.ifNoneMatch,
-		};
-	}
-	const parsed = runtimeChannelsSchema.safeParse(fetched.raw);
-	if (!parsed.success) {
-		return {
-			mode: "repair",
-			stage: "network",
-			errors: zodErrors(parsed.error),
-		};
-	}
-	return {
-		channels: parsed.data,
-		source: "remote-datasource",
-		sourcePath: fetched.url,
-		etag: fetched.etag,
-	};
 }
 
 function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
@@ -685,12 +542,11 @@ function hostedRuntimeServiceRunSettings(
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
-	if (!existsSync(paths.manifestLastGood)) return {};
-	const parsed = parseManifestSafe(readJsonFile(paths.manifestLastGood));
-	if (!parsed) return {};
+	const appliedState = readRuntimeAppliedState(paths);
+	if (!appliedState) return {};
 	return {
-		instanceId: parsed.instanceId,
-		generation: parsed.generation,
+		instanceId: appliedState.instanceId,
+		generation: appliedState.generation,
 	};
 }
 
@@ -1070,7 +926,12 @@ function collectSecretRefs(value: unknown, refs: Set<string>): void {
 }
 
 function validateLoadedManifest(
-	normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> },
+	normalized: {
+		manifest: RuntimeManifest;
+		secretValues?: Record<string, string>;
+		channelBindings?: RuntimeBundleChannelBinding[];
+		sourceRevision?: string;
+	},
 	paths: RuntimePaths,
 	source: RuntimeManifestLoad["source"],
 	sourcePath: string,
@@ -1082,7 +943,7 @@ function validateLoadedManifest(
 	const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		semanticErrors.push(
-			`manifest instanceId ${manifest.instanceId} does not match last-good instanceId ${existing.instanceId}`,
+			`manifest instanceId ${manifest.instanceId} does not match applied instanceId ${existing.instanceId}`,
 		);
 	}
 	if (semanticErrors.length > 0) {
@@ -1101,5 +962,7 @@ function validateLoadedManifest(
 		sourcePath,
 		offline: false,
 		secretValues: normalized.secretValues,
+		channelBindings: normalized.channelBindings,
+		sourceRevision: normalized.sourceRevision,
 	};
 }

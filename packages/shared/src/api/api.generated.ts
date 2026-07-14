@@ -2640,31 +2640,20 @@ export interface components {
             /** Default Project Id */
             default_project_id: string;
         };
-        /** AiProviderAuth */
-        AiProviderAuth: {
+        /** AiProviderAgentProfileAuth */
+        AiProviderAgentProfileAuth: {
             /**
-             * Type
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "secret_ref" | "api_key" | "oauth_profile" | "agent_profile" | "none";
-            /** Ref */
-            ref?: string | null;
-            /** Source */
-            source?: string | null;
-            /** Provider */
-            provider?: string | null;
+            type: "agent_profile";
             /** Tool */
-            tool?: string | null;
+            tool: string;
             /** Profile */
-            profile?: string | null;
+            profile: string;
         };
-        /** AiProviderAuthImportRequest */
-        AiProviderAuthImportRequest: {
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "agent_profile" | "oauth_profile";
+        /** AiProviderAgentProfileAuthImportRequest */
+        AiProviderAgentProfileAuthImportRequest: {
             /**
              * Payload
              * Format: password
@@ -2675,11 +2664,18 @@ export interface components {
              * @default default
              */
             profile: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent_profile";
             /** Tool */
-            tool?: string | null;
-            /** Provider */
-            provider?: string | null;
+            tool: string;
         };
+        AiProviderApiKeyAuth: components["schemas"]["AiProviderEnvApiKeyAuth"] | components["schemas"]["AiProviderVaultApiKeyAuth"] | components["schemas"]["AiProviderManagedApiKeyAuth"];
+        AiProviderAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderOAuthProfileAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
+        /** AiProviderAuthImportRequest */
+        AiProviderAuthImportRequest: components["schemas"]["AiProviderAgentProfileAuthImportRequest"] | components["schemas"]["AiProviderOAuthProfileAuthImportRequest"];
         /** AiProviderAuthResolveRequest */
         AiProviderAuthResolveRequest: {
             /**
@@ -2718,10 +2714,42 @@ export interface components {
             /** Provider Id */
             provider_id: string;
         };
+        /** AiProviderEnvApiKeyAuth */
+        AiProviderEnvApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "env";
+            /** Profile */
+            profile?: string | null;
+            /** Ref */
+            ref: string;
+        };
         /** AiProviderListResponse */
         AiProviderListResponse: {
             /** Providers */
             providers: components["schemas"]["AiProviderResponse"][];
+        };
+        /** AiProviderManagedApiKeyAuth */
+        AiProviderManagedApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "managed";
+            /** Profile */
+            profile?: string | null;
         };
         /** AiProviderManagedApiKeyRequest */
         AiProviderManagedApiKeyRequest: {
@@ -2789,6 +2817,14 @@ export interface components {
             /** Cache Write */
             cache_write?: number;
         };
+        /** AiProviderNoneAuth */
+        AiProviderNoneAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "none";
+        };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -2797,6 +2833,38 @@ export interface components {
             code: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
+        };
+        /** AiProviderOAuthProfileAuth */
+        AiProviderOAuthProfileAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth_profile";
+            /** Provider */
+            provider: string;
+            /** Profile */
+            profile: string;
+        };
+        /** AiProviderOAuthProfileAuthImportRequest */
+        AiProviderOAuthProfileAuthImportRequest: {
+            /**
+             * Payload
+             * Format: password
+             */
+            payload: string;
+            /**
+             * Profile
+             * @default default
+             */
+            profile: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth_profile";
+            /** Provider */
+            provider: string;
         };
         /** AiProviderOAuthStartRequest */
         AiProviderOAuthStartRequest: {
@@ -2835,7 +2903,7 @@ export interface components {
             base_url?: string | null;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth?: components["schemas"]["AiProviderAuth"] | null;
+            auth?: components["schemas"]["AiProviderUpsertAuth"] | null;
             /** Managed By */
             managed_by?: ("user" | "clawdi") | null;
             /** Runtime Env Name */
@@ -2860,7 +2928,6 @@ export interface components {
             base_url: string;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By
              * @default user
@@ -2881,6 +2948,7 @@ export interface components {
             provider_id: string;
             /** Scope */
             scope: string;
+            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Created At
              * Format: date-time
@@ -2891,6 +2959,16 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiProviderSecretRefAuth */
+        AiProviderSecretRefAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "secret_ref";
+            /** Ref */
+            ref: string;
         };
         /** AiProviderUpsert */
         AiProviderUpsert: {
@@ -2905,7 +2983,6 @@ export interface components {
             base_url: string;
             /** Api Mode */
             api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
-            auth: components["schemas"]["AiProviderAuth"];
             /**
              * Managed By
              * @default user
@@ -2922,7 +2999,9 @@ export interface components {
             models?: components["schemas"]["AiProviderModel"][] | null;
             /** Provider Id */
             provider_id: string;
+            auth: components["schemas"]["AiProviderUpsertAuth"];
         };
+        AiProviderUpsertAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
         /** AiProviderValidationResponse */
         AiProviderValidationResponse: {
             /** Valid */
@@ -2937,6 +3016,23 @@ export interface components {
              * @default []
              */
             warnings: string[];
+        };
+        /** AiProviderVaultApiKeyAuth */
+        AiProviderVaultApiKeyAuth: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "api_key";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source: "vault";
+            /** Profile */
+            profile?: string | null;
+            /** Ref */
+            ref: string;
         };
         /** ApiKeyCreate */
         ApiKeyCreate: {
@@ -4367,6 +4463,159 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /** HostedRuntimeObservedAppliedV2 */
+        HostedRuntimeObservedAppliedV2: {
+            /** Etag */
+            etag: string;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Generation */
+            generation: number;
+            /** Instanceid */
+            instanceId: string;
+            /** Appliedproviderids */
+            appliedProviderIds: string[];
+        };
+        /** HostedRuntimeObservedBootV1 */
+        HostedRuntimeObservedBootV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Mode */
+            mode: string;
+            /** Stage */
+            stage: string;
+            /** Timestamp */
+            timestamp: string;
+            /** Activegeneration */
+            activeGeneration?: number | null;
+            /** Instanceid */
+            instanceId?: string | null;
+            /** Enabledruntimes */
+            enabledRuntimes: string[];
+            /** Errors */
+            errors: string[];
+        };
+        /** HostedRuntimeObservedCliV1 */
+        HostedRuntimeObservedCliV1: {
+            /** Status */
+            status?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Packagespec */
+            packageSpec?: string | null;
+            /** Registry */
+            registry?: string | null;
+            /** Activepath */
+            activePath?: string | null;
+            /** Activetarget */
+            activeTarget?: string | null;
+            /** Version */
+            version?: string | null;
+        };
+        /** HostedRuntimeObservedProviderPayload */
+        HostedRuntimeObservedProviderPayload: {
+            [key: string]: components["schemas"]["JsonValue"];
+        };
+        /** HostedRuntimeObservedSupervisorProgramV1 */
+        HostedRuntimeObservedSupervisorProgramV1: {
+            /** Name */
+            name: string;
+            /** State */
+            state: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Description */
+            description?: string | null;
+        };
+        /** HostedRuntimeObservedSupervisorV1 */
+        HostedRuntimeObservedSupervisorV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Programs */
+            programs: components["schemas"]["HostedRuntimeObservedSupervisorProgramV1"][];
+        };
+        /** HostedRuntimeObservedSystemdUnitV1 */
+        HostedRuntimeObservedSystemdUnitV1: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "system" | "user";
+            /** Name */
+            name: string;
+            /** Activestate */
+            activeState: string;
+            /** Substate */
+            subState: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Error */
+            error?: string | null;
+        };
+        /** HostedRuntimeObservedSystemdV1 */
+        HostedRuntimeObservedSystemdV1: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Unitcount */
+            unitCount: number;
+            /** Units */
+            units: components["schemas"]["HostedRuntimeObservedSystemdUnitV1"][];
+        };
+        /** HostedRuntimeObservedV2 */
+        HostedRuntimeObservedV2: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: "clawdi.hostedRuntimeObserved.v2";
+            /**
+             * Reportedat
+             * Format: date-time
+             */
+            reportedAt: string;
+            /**
+             * Runtimemode
+             * @constant
+             */
+            runtimeMode: "hosted";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "unknown";
+            /** Activecliversion */
+            activeCliVersion: string | null;
+            applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
+            cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
+            supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
+            /** Providers */
+            providers?: {
+                [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
+            } | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
+            /** Truncated */
+            truncated?: boolean | null;
+        };
         /** HostedRuntimePaths */
         HostedRuntimePaths: {
             /** Home */
@@ -4502,6 +4751,7 @@ export interface components {
              */
             created_at: string;
         };
+        JsonValue: unknown;
         /**
          * MemberResponse
          * @description Returned by GET /v1/projects/{project_id}/members.
@@ -4703,8 +4953,6 @@ export interface components {
             owner: components["schemas"]["PlatformOwner"];
             /** Deployment Id */
             deployment_id: string;
-            /** App Id */
-            app_id?: string | null;
             /** Instance Id */
             instance_id: string;
             /** Generation */
@@ -4895,14 +5143,39 @@ export interface components {
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
         };
+        /** RuntimeObservedConfigResponse */
+        RuntimeObservedConfigResponse: {
+            /** Observed At */
+            observed_at?: string | null;
+            /** Observed Config Generation */
+            observed_config_generation?: number | null;
+            /** Observed Manifest Etag */
+            observed_manifest_etag?: string | null;
+            /** Observed Source Revision */
+            observed_source_revision?: string | null;
+            diagnostics?: components["schemas"]["HostedRuntimeObservedV2"] | null;
+        };
+        /** RuntimeObservedConfigSummaryResponse */
+        RuntimeObservedConfigSummaryResponse: {
+            /** Observed At */
+            observed_at?: string | null;
+            /** Observed Config Generation */
+            observed_config_generation?: number | null;
+            /** Observed Manifest Etag */
+            observed_manifest_etag?: string | null;
+            /** Observed Source Revision */
+            observed_source_revision?: string | null;
+        };
         /** RuntimeObservedDesiredResponse */
         RuntimeObservedDesiredResponse: {
             /** Deployment Id */
             deployment_id: string;
             /** Instance Id */
             instance_id: string;
-            /** Generation */
-            generation: number;
+            /** Desired Config Generation */
+            desired_config_generation: number;
+            /** Desired Source Revision */
+            desired_source_revision?: string | null;
             /** Provider Id */
             provider_id?: string | null;
             /** Enabled Runtimes */
@@ -4932,8 +5205,8 @@ export interface components {
              * @default []
              */
             reasons: string[];
-            /** Reported At */
-            reported_at?: string | null;
+            /** Observed At */
+            observed_at?: string | null;
         };
         /** RuntimeObservedProviderHealthResponse */
         RuntimeObservedProviderHealthResponse: {
@@ -4953,19 +5226,13 @@ export interface components {
             desired?: {
                 [key: string]: unknown;
             } | null;
-            /** Observed */
-            observed?: {
-                [key: string]: unknown;
-            } | null;
+            observed?: components["schemas"]["HostedRuntimeObservedProviderPayload"] | null;
         };
         /** RuntimeObservedResponse */
         RuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
             desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
-            /** Observed */
-            observed?: {
-                [key: string]: unknown;
-            } | null;
+            observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
              * Provider Health
@@ -5005,6 +5272,7 @@ export interface components {
         RuntimeObservedSummaryItemResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
             desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
+            observed?: components["schemas"]["RuntimeObservedConfigSummaryResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
              * Provider Health
@@ -5681,10 +5949,7 @@ export interface components {
             queue_depth?: number | null;
             /** Dropped Count Delta */
             dropped_count_delta?: number | null;
-            /** Runtime Observed */
-            runtime_observed?: {
-                [key: string]: unknown;
-            } | null;
+            runtime_observed?: components["schemas"]["HostedRuntimeObservedV2"] | null;
         };
         /**
          * UnshareResponse

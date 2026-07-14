@@ -83,7 +83,6 @@ class PlatformApiKeyCreate(PlatformMutationBody):
 
 class PlatformRuntimeStateUpsert(PlatformMutationBody):
     deployment_id: str = Field(min_length=1, max_length=200)
-    app_id: str | None = Field(default=None, min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
     cli_package_spec: str = Field(min_length=1, max_length=200)

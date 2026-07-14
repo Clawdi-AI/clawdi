@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { components } from "@clawdi/shared/api";
+import { getCliVersion } from "../lib/version";
+import { readRuntimeAppliedState } from "./applied-state";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { readRuntimeBootStatus } from "./state";
+import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import {
 	isGeneratedRuntimeSystemdFile,
 	runtimeUserName,
@@ -12,35 +15,45 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
+type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"];
+type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
+type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
+type HostedRuntimeObservedProviderPayload =
+	components["schemas"]["HostedRuntimeObservedProviderPayload"];
+type HostedRuntimeObservedProviders = Record<string, HostedRuntimeObservedProviderPayload>;
+type HostedRuntimeObservedSystemd = components["schemas"]["HostedRuntimeObservedSystemdV1"];
+type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObservedSystemdUnitV1"];
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
 
 export function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
-): JsonRecord | null {
+): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
 	const boot = readRuntimeBootStatus(paths);
-	const manifestEtag = readTrimmed(paths.manifestEtag);
-	const channelsEtag = readTrimmed(paths.channelsEtag);
+	const appliedState = readRuntimeAppliedState(paths);
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
 	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
+	const appliedAuthority = appliedState
+		? {
+				etag: appliedState.etag,
+				sourceRevision: appliedState.sourceRevision,
+				generation: appliedState.generation,
+				instanceId: appliedState.instanceId,
+				appliedProviderIds: [...appliedState.providerIds],
+			}
+		: null;
 
-	const observed: JsonRecord = {
-		schemaVersion: "clawdi.hostedRuntimeObserved.v1",
+	const observed: HostedRuntimeObserved = {
+		schemaVersion: "clawdi.hostedRuntimeObserved.v2",
 		reportedAt: new Date().toISOString(),
 		runtimeMode: paths.mode,
-		status: observedStatus(boot.status, watchStatus, systemd, providers),
-		manifest: {
-			etag: manifestEtag,
-			lastGoodExists: existsSync(paths.manifestLastGood),
-		},
-		channels: {
-			etag: channelsEtag,
-		},
+		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedAuthority !== null),
+		activeCliVersion: getCliVersion(),
+		applied: appliedAuthority,
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
-		watch: summarizeWatchStatus(watchStatus),
 		cli: summarizeCliBootstrap(cliBootstrap),
 	};
 	if (systemd) observed.systemd = systemd;
@@ -49,15 +62,6 @@ export function readHostedRuntimeObserved(
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;
 	return observed;
-}
-
-function readTrimmed(path: string): string | null {
-	try {
-		const value = readFileSync(path, "utf-8").trim();
-		return value || null;
-	} catch {
-		return null;
-	}
 }
 
 function readJsonRecord(path: string): JsonRecord | null {
@@ -73,35 +77,25 @@ function readJsonRecord(path: string): JsonRecord | null {
 function observedStatus(
 	bootStatus: { status: string; errors?: string[] } | undefined,
 	watchStatus: JsonRecord | null,
-	systemd: JsonRecord | null,
-	providers: JsonRecord | null,
+	systemd: HostedRuntimeObservedSystemd | null,
+	providers: HostedRuntimeObservedProviders | null,
+	hasAppliedAuthority: boolean,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (watchEvent?.status === "error") return "error";
 	if (bootStatus?.status === "error") return "error";
 	if (systemd?.status === "error") return "error";
-	if (
-		providers &&
-		Object.values(providers).some((provider) => recordValue(provider)?.status === "error")
-	) {
+	if (providers && Object.values(providers).some((provider) => provider.status === "error")) {
 		return "error";
 	}
+	if (!hasAppliedAuthority) return "unknown";
 	if (systemd?.status === "unknown") return "unknown";
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
 }
 
-function summarizeBootStatus(status: {
-	status: string;
-	mode: string;
-	stage: string;
-	timestamp: string;
-	activeGeneration: number | null;
-	instanceId?: string | null;
-	enabledRuntimes: string[];
-	errors: string[];
-}): JsonRecord {
+function summarizeBootStatus(status: RuntimeBootStatus): HostedRuntimeObservedBoot {
 	return {
 		status: status.status,
 		mode: status.mode,
@@ -114,23 +108,6 @@ function summarizeBootStatus(status: {
 	};
 }
 
-function summarizeWatchStatus(status: JsonRecord | null): JsonRecord | null {
-	if (!status) return null;
-	const event = recordValue(status.event);
-	return {
-		status: stringValue(event?.status),
-		stage: stringValue(event?.stage),
-		etag: stringValue(event?.etag),
-		channelsEtag: stringValue(event?.channelsEtag),
-		generation: numberValue(event?.generation),
-		instanceId: stringValue(event?.instanceId),
-		selfReexec: booleanValue(event?.selfReexec),
-		error: stringValue(event?.error),
-		errors: arrayValue(event?.errors),
-		cliUpdate: summarizeCliUpdate(recordValue(event?.cliUpdate)),
-	};
-}
-
 function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 	const event = recordValue(watchStatus?.event);
 	if (event?.status !== "error") return null;
@@ -139,19 +116,7 @@ function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 	);
 }
 
-function summarizeCliUpdate(value: JsonRecord | null): JsonRecord | null {
-	if (!value) return null;
-	return {
-		status: stringValue(value.status),
-		packageSpec: stringValue(value.packageSpec),
-		registry: stringValue(value.registry),
-		activePath: stringValue(value.activePath),
-		activeTarget: stringValue(value.activeTarget),
-		version: stringValue(value.version),
-	};
-}
-
-function summarizeCliBootstrap(value: JsonRecord | null): JsonRecord | null {
+function summarizeCliBootstrap(value: JsonRecord | null): HostedRuntimeObservedCli | null {
 	if (!value) return null;
 	return {
 		status: stringValue(value.status),
@@ -164,11 +129,16 @@ function summarizeCliBootstrap(value: JsonRecord | null): JsonRecord | null {
 	};
 }
 
-function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
+function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProviders | null {
 	const providerStatus = readJsonRecord(paths.providerHealthStatus);
 	const statusProviders = recordValue(providerStatus?.providers);
 	if (statusProviders && Object.keys(statusProviders).length > 0) {
-		return statusProviders;
+		const observed: HostedRuntimeObservedProviders = {};
+		for (const [providerId, value] of Object.entries(statusProviders)) {
+			const provider = recordValue(value);
+			if (provider) observed[providerId] = provider;
+		}
+		if (Object.keys(observed).length > 0) return observed;
 	}
 
 	const manifest = readJsonRecord(paths.manifestLastGood);
@@ -180,7 +150,7 @@ function readProviderObserved(paths: RuntimePaths): JsonRecord | null {
 		...(readJsonRecord(paths.managedSecretFile) ?? {}),
 		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
 	};
-	const observed: JsonRecord = {};
+	const observed: HostedRuntimeObservedProviders = {};
 	for (const providerId of Object.keys(providers).sort()) {
 		const provider = recordValue(providers[providerId]);
 		if (!provider) continue;
@@ -248,7 +218,7 @@ function isOpenAiCompatibleMode(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
-function readSystemdObserved(paths: RuntimePaths): JsonRecord | null {
+function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd | null {
 	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
 		systemdUnitStatus("system", unit, paths),
 	);
@@ -295,7 +265,7 @@ function systemdUnitStatus(
 	scope: "system" | "user",
 	unit: string,
 	paths: RuntimePaths,
-): JsonRecord {
+): HostedRuntimeObservedSystemdUnit {
 	const result =
 		scope === "system"
 			? runSystemctl(["show", unit, "--property=ActiveState", "--property=SubState"])
@@ -389,7 +359,7 @@ function parseSystemctlShow(output: string): Record<string, string> {
 	);
 }
 
-function systemdUnitsStatus(units: JsonRecord[]): ObservedStatus {
+function systemdUnitsStatus(units: HostedRuntimeObservedSystemdUnit[]): ObservedStatus {
 	if (units.some((unit) => unit.status === "error")) return "error";
 	if (units.some((unit) => unit.status === "unknown")) return "unknown";
 	return "ok";
@@ -412,14 +382,6 @@ function recordValue(value: unknown): JsonRecord | null {
 
 function stringValue(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
-}
-
-function numberValue(value: unknown): number | null {
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function booleanValue(value: unknown): boolean | null {
-	return typeof value === "boolean" ? value : null;
 }
 
 function arrayValue(value: unknown): unknown[] {

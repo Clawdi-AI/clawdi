@@ -240,7 +240,6 @@ async def _create_hosted_runtime_graph(
             HostedRuntimeState(
                 environment_id=env.id,
                 deployment_id=DEV_V2_DEPLOYMENT_ID,
-                app_id=DEV_V2_APP_ID,
                 instance_id=f"{DEV_V2_DEPLOYMENT_ID}-{runtime}",
                 generation=3,
                 cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,
@@ -302,7 +301,6 @@ async def _create_hosted_runtime_graph(
                 egress_profiles={},
                 mcp={"enabled": True},
                 tools={"channels": True, "aiProviders": True},
-                observed={"status": "running", "runtime": runtime},
             ),
         ]
     )
@@ -411,7 +409,6 @@ def _try_add_vault_items(vault: Vault, names: list[str]) -> list[VaultItem]:
 def _seed_ai_provider(user: User) -> AiProvider:
     return AiProvider(
         owner_user_id=user.id,
-        scope="account_global",
         provider_id=DEV_V2_PROVIDER_ID,
         type="openrouter",
         label="OpenRouter Dev",
@@ -420,7 +417,7 @@ def _seed_ai_provider(user: User) -> AiProvider:
         models=[{"id": "openai/gpt-4o-mini"}],
         capabilities={"chat": True, "responses": False, "tools": True, "vision": True},
         auth_type="api_key",
-        auth_ref="OPENROUTER_API_KEY",
+        auth_ref="env:OPENROUTER_API_KEY",
         auth_metadata={"source": "env"},
         managed_by="user",
         runtime_env_name="OPENROUTER_API_KEY",

@@ -32,8 +32,7 @@ export interface RuntimePaths {
 	egressEngineMaintainedRoot: string;
 	cacheRoot: string;
 	manifestLastGood: string;
-	manifestEtag: string;
-	channelsEtag: string;
+	appliedState: string;
 	managedSecretCacheFile: string;
 	runConfigRoot: string;
 	egressProfileRoot: string;
@@ -144,8 +143,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressEngineMaintainedRoot: join(serviceStateRoot, "maintained", "egress-engine", "mitmproxy"),
 		cacheRoot,
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
-		manifestEtag: join(cacheRoot, "manifest.etag"),
-		channelsEtag: join(cacheRoot, "channels.etag"),
+		appliedState: join(serviceStateRoot, "status", "runtime-applied.json"),
 		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(serviceStateRoot, "config", "run"),
 		egressProfileRoot: join(serviceStateRoot, "config", "egress"),

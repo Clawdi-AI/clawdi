@@ -28,6 +28,7 @@ can land in this file under the same auth dep.
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -819,29 +820,8 @@ async def _admin_upsert_runtime_state(
     ).scalar_one_or_none()
     existing_state = state
     previous_generation = state.generation if state is not None else None
-    system_state = body.system.model_dump(exclude_none=True, mode="json")
-    live_sync_state = body.live_sync.model_dump(mode="json")
-    recovery_state = body.recovery.model_dump(mode="json")
-    bridge_state = (
-        body.bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-        if body.bridge is not None
-        else None
-    )
-    egress_engine_state = (
-        body.egress_engine.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-        if body.egress_engine is not None
-        else None
-    )
-    egress_profiles_state = (
-        body.egress_profiles.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-        if body.egress_profiles is not None
-        else None
-    )
-    runtime_state = {
-        name: runtime.model_dump(exclude_none=True, mode="json")
-        for name, runtime in body.runtimes.items()
-    }
-    changed_fields = _runtime_state_changed_fields(existing_state, body)
+    desired_state = _runtime_state_values(body)
+    changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
     if existing_state is not None and body.generation <= existing_state.generation:
         current_generation = existing_state.generation
         if body.generation < current_generation:
@@ -874,21 +854,8 @@ async def _admin_upsert_runtime_state(
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
 
-    state.deployment_id = body.deployment_id
-    state.app_id = body.app_id
-    state.instance_id = body.instance_id
-    state.generation = body.generation
-    state.cli_package_spec = body.cli_package_spec
-    state.locale = body.locale.model_dump()
-    state.system = system_state
-    state.runtimes = runtime_state
-    state.bridge = bridge_state
-    state.live_sync = live_sync_state
-    state.recovery = recovery_state
-    state.egress_engine = egress_engine_state
-    state.egress_profiles = egress_profiles_state
-    state.mcp = body.mcp
-    state.tools = body.tools
+    for field, value in desired_state.items():
+        setattr(state, field, value)
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -900,13 +867,12 @@ async def _admin_upsert_runtime_state(
         source="api.admin",
         details={
             "deployment_id": body.deployment_id,
-            "app_id": body.app_id,
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
             "cli_package_spec": body.cli_package_spec,
             "locale": body.locale.model_dump(),
-            "enabled_runtimes": _enabled_runtime_names(runtime_state),
+            "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
             "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
@@ -987,7 +953,6 @@ async def _admin_delete_runtime_state(
         details.update(
             {
                 "deployment_id": state.deployment_id,
-                "app_id": state.app_id,
                 "instance_id": state.instance_id,
                 "generation": state.generation,
                 "cli_package_spec": state.cli_package_spec,
@@ -1091,54 +1056,43 @@ def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
     )
 
 
+def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
+    def optional_wire_value(field: str) -> Any:
+        value = getattr(body, field)
+        if value is None:
+            return None
+        return value.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+
+    return {
+        "deployment_id": body.deployment_id,
+        "instance_id": body.instance_id,
+        "generation": body.generation,
+        "cli_package_spec": body.cli_package_spec,
+        "locale": body.locale.model_dump(mode="json"),
+        "system": body.system.model_dump(exclude_none=True, mode="json"),
+        "egress_engine": optional_wire_value("egress_engine"),
+        "runtimes": {
+            name: runtime.model_dump(exclude_none=True, mode="json")
+            for name, runtime in body.runtimes.items()
+        },
+        "bridge": optional_wire_value("bridge"),
+        "live_sync": body.live_sync.model_dump(mode="json"),
+        "recovery": body.recovery.model_dump(mode="json"),
+        "egress_profiles": optional_wire_value("egress_profiles"),
+        "mcp": body.mcp,
+        "tools": body.tools,
+    }
+
+
 def _runtime_state_changed_fields(
     state: HostedRuntimeState | None,
-    body: AdminRuntimeStateUpsert,
+    desired_state: dict[str, Any],
 ) -> list[str]:
-    fields = [
-        "deployment_id",
-        "app_id",
-        "instance_id",
-        "generation",
-        "cli_package_spec",
-        "locale",
-        "system",
-        "egress_engine",
-        "runtimes",
-        "bridge",
-        "live_sync",
-        "recovery",
-        "egress_profiles",
-        "mcp",
-        "tools",
+    return [
+        field
+        for field, value in desired_state.items()
+        if state is None or getattr(state, field) != value
     ]
-    if state is None:
-        return fields
-    changed: list[str] = []
-    for field in fields:
-        if field == "locale":
-            body_value = body.locale.model_dump()
-        elif field == "system":
-            body_value = body.system.model_dump(exclude_none=True, mode="json")
-        elif field == "runtimes":
-            body_value = {
-                name: runtime.model_dump(exclude_none=True, mode="json")
-                for name, runtime in body.runtimes.items()
-            }
-        elif field in {"bridge", "egress_engine", "egress_profiles"}:
-            field_value = getattr(body, field)
-            body_value = (
-                field_value.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-                if field_value is not None
-                else None
-            )
-        elif field in {"live_sync", "recovery"}:
-            body_value = getattr(body, field).model_dump(mode="json")
-        else:
-            body_value = getattr(body, field)
-        if getattr(state, field) != body_value:
-            changed.append(field)
-    return changed
 
 
 def _admin_channel_update_audit_details(

@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -27,8 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
 from app.core.config import settings
-from app.core.database import get_session
-from app.models.hosted_runtime import HostedRuntimeState
+from app.core.database import get_session, runtime_snapshot_session
+from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
@@ -37,6 +37,13 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.runtime import HostedRuntimeDesiredState
+from app.schemas.runtime_observed import (
+    HostedRuntimeObserved,
+    HostedRuntimeObservedProviderPayload,
+    HostedRuntimeObservedV2,
+    RuntimeObservedConfigResponse,
+    RuntimeObservedConfigSummaryResponse,
+)
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
@@ -72,6 +79,13 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
+from app.services.runtime_source import (
+    RuntimeSourceError,
+    expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
@@ -91,6 +105,7 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
+_RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -401,29 +416,77 @@ async def list_environment_runtime_observed(
     )
     env_ids = [env.id for env in envs]
     states_by_env: dict[UUID, HostedRuntimeState] = {}
+    source_revisions: dict[UUID, str] = {}
+    source_errors: set[UUID] = set()
+    desired_cli_specs: dict[UUID, str] = {}
+    observations_by_env: dict[UUID, HostedRuntimeConfigObservation] = {}
     if env_ids:
-        states = (
+        async with runtime_snapshot_session() as source_db:
+            source_batch = await load_runtime_source_batch(
+                source_db,
+                environment_ids=env_ids,
+                owner_user_id=auth.user_id,
+            )
+            states_by_env = {
+                environment_id: row.state for environment_id, row in source_batch.rows.items()
+            }
+            key_identity = vault_key_identity(settings.vault_encryption_key)
+            for environment_id in source_batch.rows:
+                try:
+                    rendered = render_runtime_source(
+                        source_batch,
+                        environment_id=environment_id,
+                        public_api_url=settings.public_api_url,
+                        vault_key_identity=key_identity,
+                        decrypt_secrets=False,
+                    )
+                except RuntimeSourceError:
+                    source_errors.add(environment_id)
+                    continue
+                source_revisions[environment_id] = rendered.source_revision
+                desired_cli_specs[environment_id] = rendered.manifest["clawdiCli"]["packageSpec"]
+        observations = (
             (
                 await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+                    select(HostedRuntimeConfigObservation).where(
+                        HostedRuntimeConfigObservation.environment_id.in_(env_ids)
+                    )
                 )
             )
             .scalars()
             .all()
         )
-        states_by_env = {state.environment_id: state for state in states}
+        observations_by_env = {
+            observation.environment_id: observation for observation in observations
+        }
     counts = RuntimeObservedSummaryCountsResponse()
     items: list[RuntimeObservedSummaryItemResponse] = []
     for env in envs:
         state = states_by_env.get(env.id)
-        health = _runtime_observed_health(env, state)
+        observation = observations_by_env.get(env.id)
+        health = _runtime_observed_health(
+            env,
+            state,
+            observation,
+            desired_source_revision=source_revisions.get(env.id),
+            desired_source_error=env.id in source_errors,
+            desired_cli_package_spec=desired_cli_specs.get(env.id),
+        )
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
                 environment=_env_to_response(env, state),
-                desired=_runtime_observed_desired(state) if state is not None else None,
+                desired=(
+                    _runtime_observed_desired(
+                        state,
+                        source_revision=source_revisions.get(env.id),
+                    )
+                    if state is not None
+                    else None
+                ),
+                observed=_runtime_observed_summary(observation),
                 health=health,
-                provider_health=_runtime_observed_provider_health(state),
+                provider_health=_runtime_observed_provider_health(state, observation),
             )
         )
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
@@ -762,17 +825,55 @@ async def get_environment_runtime_observed(
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
-    state = (
+    source_revision = None
+    source_error = False
+    desired_cli_package_spec = None
+    async with runtime_snapshot_session() as source_db:
+        source_batch = await load_runtime_source_batch(
+            source_db,
+            environment_ids=[environment_id],
+            owner_user_id=auth.user_id,
+        )
+        source_row = source_batch.rows.get(environment_id)
+        state = source_row.state if source_row is not None else None
+        if state is not None:
+            try:
+                rendered = render_runtime_source(
+                    source_batch,
+                    environment_id=environment_id,
+                    public_api_url=settings.public_api_url,
+                    vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                    decrypt_secrets=False,
+                )
+            except RuntimeSourceError:
+                source_error = True
+            else:
+                source_revision = rendered.source_revision
+                desired_cli_package_spec = rendered.manifest["clawdiCli"]["packageSpec"]
+    observation = (
         await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment_id)
+            select(HostedRuntimeConfigObservation).where(
+                HostedRuntimeConfigObservation.environment_id == environment_id
+            )
         )
     ).scalar_one_or_none()
     return RuntimeObservedResponse(
         environment=_env_to_response(env, state),
-        desired=_runtime_observed_desired(state) if state is not None else None,
-        observed=state.observed if state is not None else None,
-        health=_runtime_observed_health(env, state),
-        provider_health=_runtime_observed_provider_health(state),
+        desired=(
+            _runtime_observed_desired(state, source_revision=source_revision)
+            if state is not None
+            else None
+        ),
+        observed=_runtime_observed_response(observation),
+        health=_runtime_observed_health(
+            env,
+            state,
+            observation,
+            desired_source_revision=source_revision,
+            desired_source_error=source_error,
+            desired_cli_package_spec=desired_cli_package_spec,
+        ),
+        provider_health=_runtime_observed_provider_health(state, observation),
     )
 
 
@@ -900,12 +1001,15 @@ async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
 
 def _runtime_observed_desired(
     state: HostedRuntimeState,
+    *,
+    source_revision: str | None = None,
 ) -> RuntimeObservedDesiredResponse:
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     return RuntimeObservedDesiredResponse(
         deployment_id=state.deployment_id,
         instance_id=state.instance_id,
-        generation=state.generation,
+        desired_config_generation=state.generation,
+        desired_source_revision=source_revision,
         provider_id=primary_provider_id or (provider_ids[0] if provider_ids else None),
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
@@ -917,6 +1021,11 @@ def _runtime_observed_desired(
 def _runtime_observed_health(
     env: AgentEnvironment,
     state: HostedRuntimeState | None,
+    observation: HostedRuntimeConfigObservation | None,
+    *,
+    desired_source_revision: str | None = None,
+    desired_source_error: bool = False,
+    desired_cli_package_spec: str | None = None,
 ) -> RuntimeObservedHealthResponse:
     if state is None:
         return RuntimeObservedHealthResponse(
@@ -925,9 +1034,12 @@ def _runtime_observed_health(
         )
 
     reasons: list[str] = []
-    observed = state.observed if isinstance(state.observed, dict) else None
-    reported_at = _observed_reported_at(observed)
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    observed_at = observation.observed_at if observation is not None else None
     now = datetime.now(UTC)
+
+    if desired_source_error:
+        reasons.append("desired_source_invalid")
 
     if env.last_sync_error:
         reasons.append("daemon_error")
@@ -936,16 +1048,64 @@ def _runtime_observed_health(
     elif now - _as_utc(env.last_sync_at) > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("daemon_stale")
 
-    observed_status = observed.get("status") if observed is not None else None
-    if observed is None:
+    observed_status = diagnostics.status if diagnostics is not None else None
+    if observation is None:
         reasons.append("runtime_observed_missing")
+    elif diagnostics is None:
+        reasons.append("runtime_diagnostics_invalid")
     elif observed_status == "error":
         reasons.append("runtime_error")
     elif observed_status not in {"ok", "unknown"}:
         reasons.append("runtime_status_unknown")
 
-    supervisor = observed.get("supervisor") if observed is not None else None
-    supervisor_status = supervisor.get("status") if isinstance(supervisor, dict) else None
+    if observation is not None:
+        if observation.observed_config_generation is None:
+            reasons.append("observed_config_generation_missing")
+        elif observation.observed_config_generation != state.generation:
+            reasons.append("config_generation_mismatch")
+        if not observation.observed_manifest_etag or not observation.observed_manifest_etag.strip():
+            reasons.append("observed_manifest_etag_missing")
+        if not desired_source_error and observation.observed_source_revision is None:
+            reasons.append("observed_source_revision_missing")
+        elif not desired_source_error and desired_source_revision is None:
+            reasons.append("desired_source_revision_missing")
+        elif (
+            not desired_source_error
+            and observation.observed_source_revision != desired_source_revision
+        ):
+            reasons.append("source_revision_mismatch")
+
+    if diagnostics is not None and not desired_source_error:
+        if desired_source_revision is not None and observation is not None:
+            expected_etag = expected_runtime_bundle_v2_etag(desired_source_revision)
+            if (
+                observation.observed_manifest_etag
+                and observation.observed_manifest_etag != expected_etag
+            ):
+                reasons.append("observed_manifest_etag_mismatch")
+
+        desired_cli_version = _clawdi_cli_version(desired_cli_package_spec or "")
+        if desired_cli_version is None:
+            reasons.append("desired_cli_version_invalid")
+        elif diagnostics.active_cli_version is None:
+            reasons.append("active_cli_version_missing")
+        elif diagnostics.active_cli_version != desired_cli_version:
+            reasons.append("active_cli_version_mismatch")
+
+        desired_provider_ids, _ = _runtime_desired_provider_binding(state.runtimes)
+        applied_provider_ids = (
+            diagnostics.applied.applied_provider_ids if diagnostics.applied else []
+        )
+        missing_provider_ids = sorted(set(desired_provider_ids) - set(applied_provider_ids))
+        extra_provider_ids = sorted(set(applied_provider_ids) - set(desired_provider_ids))
+        if missing_provider_ids:
+            reasons.append("applied_provider_ids_missing_desired")
+        if extra_provider_ids:
+            reasons.append("applied_provider_ids_extra")
+
+    supervisor_status = (
+        diagnostics.supervisor.status if diagnostics and diagnostics.supervisor else None
+    )
     if supervisor_status == "error":
         reasons.append("supervisor_error")
     elif supervisor_status == "unknown":
@@ -953,12 +1113,12 @@ def _runtime_observed_health(
     elif supervisor_status is not None and supervisor_status != "ok":
         reasons.append("supervisor_status_invalid")
 
-    if observed is not None and reported_at is None:
-        reasons.append("runtime_reported_at_missing")
-    elif reported_at is not None and now - reported_at > _RUNTIME_OBSERVED_STALE_AFTER:
+    if observation is not None and observed_at is None:
+        reasons.append("runtime_observed_at_missing")
+    elif observed_at is not None and now - observed_at > _RUNTIME_OBSERVED_STALE_AFTER:
         reasons.append("runtime_observed_stale")
 
-    provider_health = _runtime_observed_provider_health(state)
+    provider_health = _runtime_observed_provider_health(state, observation)
     if any(provider.status == "error" for provider in provider_health):
         reasons.append("provider_error")
     elif any(provider.status == "unknown" for provider in provider_health):
@@ -978,24 +1138,34 @@ def _runtime_observed_health(
     return RuntimeObservedHealthResponse(
         status=status_value,
         reasons=reasons,
-        reported_at=reported_at,
+        observed_at=observed_at,
     )
 
 
 def _runtime_observed_provider_health(
     state: HostedRuntimeState | None,
+    observation: HostedRuntimeConfigObservation | None,
 ) -> list[RuntimeObservedProviderHealthResponse]:
-    if state is None or not isinstance(state.observed, dict):
-        return []
-    raw_providers = state.observed.get("providers")
-    if not isinstance(raw_providers, dict):
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    if state is None or diagnostics is None:
         return []
 
     provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
-    for provider_key in sorted(str(key) for key in raw_providers):
-        observed = raw_providers.get(provider_key)
-        observed_payload = observed if isinstance(observed, dict) else None
+    observed_providers = diagnostics.providers or {}
+    for provider_key in sorted(set(provider_ids) | set(observed_providers)):
+        observed_payload = observed_providers.get(provider_key)
+        if observed_payload is None:
+            provider_health.append(
+                RuntimeObservedProviderHealthResponse(
+                    provider_id=provider_key,
+                    status="unknown",
+                    reasons=["provider_observation_missing"],
+                    desired={"selected": True, "primary": provider_key == primary_provider_id},
+                    observed=None,
+                )
+            )
+            continue
         provider_health.append(
             RuntimeObservedProviderHealthResponse(
                 provider_id=provider_key,
@@ -1009,6 +1179,13 @@ def _runtime_observed_provider_health(
             )
         )
     return provider_health
+
+
+def _clawdi_cli_version(package_spec: str) -> str | None:
+    prefix = "clawdi@"
+    if not package_spec.startswith(prefix) or len(package_spec) == len(prefix):
+        return None
+    return package_spec[len(prefix) :]
 
 
 def _runtime_desired_provider_binding(
@@ -1026,15 +1203,18 @@ def _runtime_desired_provider_binding(
     return runtime.provider_ids, runtime.primary_model.provider_id
 
 
-def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
+def _runtime_observed_provider_status(
+    observed: HostedRuntimeObservedProviderPayload | None,
+) -> str:
     if observed is None:
         return "unknown"
-    if observed.get("status") == "not_configured" or observed.get("configured") is False:
+    payload = observed.root
+    if payload.get("status") == "not_configured" or payload.get("configured") is False:
         return "not_configured"
     reasons = _runtime_observed_provider_reasons(observed)
     if reasons:
         return "error"
-    raw_status = observed.get("status")
+    raw_status = payload.get("status")
     if raw_status == "ok":
         return "ok"
     if raw_status == "unknown":
@@ -1044,14 +1224,17 @@ def _runtime_observed_provider_status(observed: dict[str, Any] | None) -> str:
     return "unknown"
 
 
-def _runtime_observed_provider_reasons(observed: dict[str, Any] | None) -> list[str]:
+def _runtime_observed_provider_reasons(
+    observed: HostedRuntimeObservedProviderPayload | None,
+) -> list[str]:
     if observed is None:
         return ["provider_observed_missing"]
 
+    payload = observed.root
     reasons: list[str] = []
-    raw_status = observed.get("status")
+    raw_status = payload.get("status")
     if raw_status == "error":
-        raw_reasons = observed.get("reasons")
+        raw_reasons = payload.get("reasons")
         if isinstance(raw_reasons, list):
             reasons.extend(str(reason) for reason in raw_reasons if isinstance(reason, str))
         if not reasons:
@@ -1059,9 +1242,9 @@ def _runtime_observed_provider_reasons(observed: dict[str, Any] | None) -> list[
     elif raw_status not in {"ok", "unknown", "not_configured"}:
         reasons.append("provider_status_invalid")
 
-    if observed.get("configured") is False:
+    if payload.get("configured") is False:
         reasons.append("provider_not_configured")
-    if observed.get("secretAvailable") is False:
+    if payload.get("secretAvailable") is False:
         reasons.append("provider_secret_missing")
 
     return sorted(set(reasons))
@@ -1075,16 +1258,40 @@ def _enabled_runtime_names(runtimes: dict) -> list[str]:
     return sorted(enabled)
 
 
-def _observed_reported_at(observed: dict[str, Any] | None) -> datetime | None:
-    if observed is None:
-        return None
-    value = observed.get("reportedAt")
-    if not isinstance(value, str):
+def _validated_runtime_observed_diagnostics(
+    observation: HostedRuntimeConfigObservation | None,
+) -> HostedRuntimeObservedV2 | None:
+    if observation is None:
         return None
     try:
-        return _as_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
-    except ValueError:
+        return _RUNTIME_OBSERVED_ADAPTER.validate_python(observation.diagnostics)
+    except ValidationError:
         return None
+
+
+def _runtime_observed_summary(
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedConfigSummaryResponse | None:
+    if observation is None:
+        return None
+    return RuntimeObservedConfigSummaryResponse(
+        observed_at=observation.observed_at,
+        observed_config_generation=observation.observed_config_generation,
+        observed_manifest_etag=observation.observed_manifest_etag,
+        observed_source_revision=observation.observed_source_revision,
+    )
+
+
+def _runtime_observed_response(
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedConfigResponse | None:
+    summary = _runtime_observed_summary(observation)
+    if summary is None:
+        return None
+    return RuntimeObservedConfigResponse(
+        **summary.model_dump(),
+        diagnostics=_validated_runtime_observed_diagnostics(observation),
+    )
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -1164,30 +1371,86 @@ class SyncHeartbeatRequest(BaseModel):
     # boundary defense, not a regression for correct clients.
     queue_depth: int | None = Field(default=None, ge=0)
     dropped_count_delta: int | None = Field(default=None, ge=0)
-    runtime_observed: dict[str, Any] | None = None
+    runtime_observed: HostedRuntimeObserved | None = None
+
+    @field_validator("runtime_observed", mode="before")
+    @classmethod
+    def bound_runtime_observed(cls, value: object) -> object:
+        return _bounded_runtime_observed(value)
 
 
-def _bounded_runtime_observed(value: dict[str, Any] | None) -> dict[str, Any] | None:
+def _bounded_runtime_observed(value: object) -> object:
     if value is None:
         return None
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    if len(encoded.encode("utf-8")) <= _MAX_RUNTIME_OBSERVED_BYTES:
+    if not isinstance(value, dict):
+        return value
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        encoded_size = len(encoded.encode("utf-8"))
+    except (TypeError, UnicodeEncodeError, ValueError) as exc:
+        raise ValueError("runtime_observed must be valid UTF-8 JSON") from exc
+    if encoded_size <= _MAX_RUNTIME_OBSERVED_BYTES:
         return value
     return {
-        "schemaVersion": "clawdi.hostedRuntimeObserved.v1",
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
         "reportedAt": datetime.now(UTC).isoformat(),
+        "runtimeMode": "hosted",
         "status": "error",
+        "activeCliVersion": None,
+        "applied": None,
+        "boot": None,
+        "cli": None,
         "error": "runtime observed payload exceeded size limit",
         "truncated": True,
     }
 
 
 def _runtime_observed_comparison_value(
-    value: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if value is None:
-        return None
+    value: JsonValue,
+) -> JsonValue:
+    if not isinstance(value, dict):
+        return value
     return {key: item for key, item in value.items() if key != "reportedAt"}
+
+
+def _runtime_observed_diagnostics(
+    value: HostedRuntimeObservedV2,
+) -> dict[str, Any]:
+    return value.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_unset=True,
+    )
+
+
+def _runtime_observed_columns(
+    value: HostedRuntimeObservedV2,
+    *,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    applied = value.applied
+    return {
+        "observed_at": observed_at,
+        "observed_config_generation": applied.generation if applied else None,
+        "observed_manifest_etag": applied.etag if applied else None,
+        "observed_source_revision": applied.source_revision if applied else None,
+        "diagnostics": _runtime_observed_diagnostics(value),
+    }
+
+
+def _runtime_observation_changed(
+    observation: HostedRuntimeConfigObservation | None,
+    values: dict[str, Any],
+) -> bool:
+    if observation is None:
+        return True
+    return (
+        observation.observed_config_generation != values["observed_config_generation"]
+        or observation.observed_manifest_etag != values["observed_manifest_etag"]
+        or observation.observed_source_revision != values["observed_source_revision"]
+        or _runtime_observed_comparison_value(observation.diagnostics)
+        != _runtime_observed_comparison_value(values["diagnostics"])
+    )
 
 
 @router.post("/agents/{agent_id}/sync-heartbeat", status_code=status.HTTP_204_NO_CONTENT)
@@ -1246,18 +1509,30 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
-    runtime_observed = _bounded_runtime_observed(body.runtime_observed)
+    runtime_observed = body.runtime_observed
     hosted_state = None
+    observation = None
+    runtime_observed_values = None
     observed_changed = False
     if runtime_observed is not None:
-        hosted_state = (
+        runtime_observed_values = _runtime_observed_columns(
+            runtime_observed,
+            observed_at=now,
+        )
+        row = (
             await db.execute(
-                select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
+                select(HostedRuntimeState, HostedRuntimeConfigObservation)
+                .outerjoin(
+                    HostedRuntimeConfigObservation,
+                    HostedRuntimeConfigObservation.environment_id
+                    == HostedRuntimeState.environment_id,
+                )
+                .where(HostedRuntimeState.environment_id == agent_id)
             )
-        ).scalar_one_or_none()
-        observed_changed = hosted_state is not None and _runtime_observed_comparison_value(
-            hosted_state.observed
-        ) != _runtime_observed_comparison_value(runtime_observed)
+        ).first()
+        if row is not None:
+            hosted_state, observation = row
+            observed_changed = _runtime_observation_changed(observation, runtime_observed_values)
     has_state_change = (
         env.last_sync_error != new_error
         or (new_revision is not None and env.last_revision_seen != new_revision)
@@ -1296,8 +1571,28 @@ async def sync_heartbeat(
     # rollout — it has done its job once an actual heartbeat arrives.
     if not env.sync_enabled:
         env.sync_enabled = True
-    if hosted_state is not None and runtime_observed is not None:
-        hosted_state.observed = runtime_observed
+    if hosted_state is not None and runtime_observed_values is not None:
+        insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
+            environment_id=agent_id,
+            **runtime_observed_values,
+        )
+        await db.execute(
+            insert_observation.on_conflict_do_update(
+                index_elements=[HostedRuntimeConfigObservation.environment_id],
+                set_={
+                    "observed_at": insert_observation.excluded.observed_at,
+                    "observed_config_generation": (
+                        insert_observation.excluded.observed_config_generation
+                    ),
+                    "observed_manifest_etag": (insert_observation.excluded.observed_manifest_etag),
+                    "observed_source_revision": (
+                        insert_observation.excluded.observed_source_revision
+                    ),
+                    "diagnostics": insert_observation.excluded.diagnostics,
+                    "updated_at": func.now(),
+                },
+            )
+        )
     await db.commit()
 
 

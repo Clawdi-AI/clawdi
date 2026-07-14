@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type AiProviderAuth,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
@@ -9,8 +10,86 @@ import {
 	isProviderAuthProfileId,
 	validateAiProviderCatalog,
 } from "./ai-provider";
+import type { components } from "./api/api.generated";
+
+type GeneratedAiProviderAuth = components["schemas"]["AiProviderAuth"];
+
+function sharedAuthToGenerated(auth: AiProviderAuth): GeneratedAiProviderAuth {
+	return auth;
+}
+
+function generatedAuthToShared(auth: GeneratedAiProviderAuth): AiProviderAuth {
+	return auth;
+}
 
 describe("validateAiProviderCatalog", () => {
+	test("keeps the shared auth union aligned with the generated API union", () => {
+		const auth = {
+			type: "api_key",
+			source: "managed",
+			profile: "work_team",
+		} satisfies AiProviderAuth;
+
+		expect(generatedAuthToShared(sharedAuthToGenerated(auth))).toEqual(auth);
+	});
+
+	test.each([
+		{ type: "secret_ref", ref: "env:OPENAI_API_KEY" },
+		{ type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
+		{
+			type: "api_key",
+			source: "vault",
+			ref: "clawdi://providers/openai",
+			profile: "work_team",
+		},
+		{ type: "api_key", source: "managed", profile: "personal" },
+		{ type: "oauth_profile", provider: "codex", profile: "default" },
+		{ type: "agent_profile", tool: "codex", profile: "default" },
+		{ type: "none" },
+	] satisfies AiProviderAuth[])("accepts strict auth variant %#", (auth) => {
+		const result = validateAiProviderCatalog(
+			{
+				schema_version: 1,
+				providers: [
+					{
+						id: "auth-conformance",
+						type: "custom_openai_compatible",
+						base_url: "http://127.0.0.1:1234/v1",
+						api_mode: "openai_chat",
+						auth,
+					},
+				],
+			},
+			{ allowNoAuthPublic: false },
+		);
+
+		expect(result.errors).toEqual([]);
+	});
+
+	test.each([
+		{ type: "secret_ref", ref: "env:OPENAI_API_KEY", source: "env" },
+		{ type: "api_key", source: "managed", ref: "env:OPENAI_API_KEY" },
+		{ type: "api_key", source: "managed", profiel: "default" },
+		{ type: "agent_profile", tool: "codex", profile: "default", ref: "env:KEY" },
+		{ type: "none", profile: "default" },
+	])("rejects extra or cross-variant auth field %#", (auth) => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "auth-conformance",
+					type: "custom_openai_compatible",
+					base_url: "http://127.0.0.1:1234/v1",
+					api_mode: "openai_chat",
+					auth,
+				},
+			],
+		});
+
+		expect(result.valid).toBe(false);
+		expect(result.errors.some((error) => error.includes("unexpected field"))).toBe(true);
+	});
+
 	test("returns validation errors instead of throwing for malformed catalog entries", () => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
@@ -96,7 +175,7 @@ describe("validateAiProviderCatalog", () => {
 					},
 				},
 			],
-		});
+		} as never);
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(

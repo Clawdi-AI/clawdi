@@ -14,6 +14,12 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.runtime_observed import (
+    HostedRuntimeObservedProviderPayload,
+    RuntimeObservedConfigResponse,
+    RuntimeObservedConfigSummaryResponse,
+)
+
 # Lone UTF-16 surrogates (U+D800..U+DFFF) are valid Python `str`
 # but cannot be encoded as UTF-8, so asyncpg rejects the bound
 # parameter and 500s the whole batch. The CLI used to truncate
@@ -294,7 +300,8 @@ class EnvironmentResponse(AgentResponse):
 class RuntimeObservedDesiredResponse(BaseModel):
     deployment_id: str
     instance_id: str
-    generation: int
+    desired_config_generation: int
+    desired_source_revision: str | None = None
     provider_id: str | None = None
     enabled_runtimes: list[str]
     has_mcp: bool = False
@@ -305,7 +312,7 @@ class RuntimeObservedDesiredResponse(BaseModel):
 class RuntimeObservedHealthResponse(BaseModel):
     status: Literal["ok", "error", "stale", "unknown", "not_configured"]
     reasons: list[str] = []
-    reported_at: datetime | None = None
+    observed_at: datetime | None = None
 
 
 class RuntimeObservedProviderHealthResponse(BaseModel):
@@ -313,13 +320,13 @@ class RuntimeObservedProviderHealthResponse(BaseModel):
     status: Literal["ok", "error", "unknown", "not_configured"]
     reasons: list[str] = []
     desired: dict[str, Any] | None = None
-    observed: dict[str, Any] | None = None
+    observed: HostedRuntimeObservedProviderPayload | None = None
 
 
 class RuntimeObservedResponse(BaseModel):
     environment: EnvironmentResponse
     desired: RuntimeObservedDesiredResponse | None = None
-    observed: dict[str, Any] | None = None
+    observed: RuntimeObservedConfigResponse | None = None
     health: RuntimeObservedHealthResponse
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 
@@ -335,6 +342,7 @@ class RuntimeObservedSummaryCountsResponse(BaseModel):
 class RuntimeObservedSummaryItemResponse(BaseModel):
     environment: EnvironmentResponse
     desired: RuntimeObservedDesiredResponse | None = None
+    observed: RuntimeObservedConfigSummaryResponse | None = None
     health: RuntimeObservedHealthResponse
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
 

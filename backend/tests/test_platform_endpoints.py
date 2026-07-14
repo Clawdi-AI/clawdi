@@ -85,7 +85,6 @@ def _agent_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, object]
 def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
     return {
         "deployment_id": "deployment-1",
-        "app_id": "app-1",
         "instance_id": "instance-1",
         "generation": 1,
         "cli_package_spec": _TEST_CLI_PACKAGE_SPEC,
@@ -408,7 +407,7 @@ async def test_platform_runtime_state_enforces_generation_contract(
     conflict = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("generation-conflict"),
-        json={**initial_body, "app_id": "app-2"},
+        json={**initial_body, "instance_id": "instance-conflict"},
     )
     assert conflict.status_code == 409, conflict.text
     assert conflict.json() == {"detail": {"code": "generation_conflict", "current_generation": 2}}
@@ -416,7 +415,7 @@ async def test_platform_runtime_state_enforces_generation_contract(
     state = await db_session.get(HostedRuntimeState, agent_id)
     assert state is not None
     assert state.generation == 2
-    assert state.app_id == "app-1"
+    assert state.instance_id == initial_body["instance_id"]
 
 
 @pytest.mark.asyncio

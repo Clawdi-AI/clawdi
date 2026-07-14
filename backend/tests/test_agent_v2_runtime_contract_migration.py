@@ -14,8 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "d8f2a1c4b6e9"
-HEAD_REVISION = "f3a1c7d9e2b4"
-HEAD_DOWN_REVISION = "a26c40c6965e"
+HEAD_REVISION = "f1a7c3d9e2b4"
+HEAD_DOWN_REVISION = "f3a1c7d9e2b4"
 MIGRATION_FILENAME = f"{REVISION}_finalize_agent_v2_runtime_contract.py"
 
 
@@ -31,7 +31,7 @@ def _load_migration():
     return migration
 
 
-def test_agent_v2_runtime_contract_migration_is_single_head() -> None:
+def test_agent_v2_runtime_contract_migration_precedes_config_observation_migration() -> None:
     backend_dir = Path(__file__).parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
@@ -39,6 +39,8 @@ def test_agent_v2_runtime_contract_migration_is_single_head() -> None:
 
     assert scripts.get_heads() == [HEAD_REVISION]
     assert scripts.get_revision(HEAD_REVISION).down_revision == HEAD_DOWN_REVISION
+    assert scripts.get_revision(HEAD_DOWN_REVISION).down_revision == "a26c40c6965e"
+    assert scripts.get_revision("a26c40c6965e").down_revision == REVISION
     assert scripts.get_revision(REVISION).down_revision == "c4e8f1a2b3d5"
 
 
