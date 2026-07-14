@@ -221,6 +221,10 @@ async def admin_mint_api_key(
             scopes=body.scopes,
             environment_id=env_uuid,
             managed=body.managed,
+            # Key row and its audit event must land in one transaction:
+            # a key that exists without the caller learning its id is an
+            # untrackable, unrevokable credential.
+            commit=False,
         )
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
