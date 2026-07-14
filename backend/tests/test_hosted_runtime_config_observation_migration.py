@@ -56,7 +56,7 @@ def test_agent_v2_final_schema_migration_is_single_head() -> None:
     scripts = ScriptDirectory.from_config(config)
 
     assert scripts.get_heads() == [REVISION]
-    assert scripts.get_revision(REVISION).down_revision == "d8f2a1c4b6e9"
+    assert scripts.get_revision(REVISION).down_revision == "f3a1c7d9e2b4"
 
 
 def test_agent_v2_final_schema_migration_is_additive_for_rolling_deploys(

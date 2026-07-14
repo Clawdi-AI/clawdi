@@ -904,7 +904,6 @@ def _assign_runtime_state(
     body: PlatformRuntimeStateUpsert,
 ) -> None:
     state.deployment_id = body.deployment_id
-    state.app_id = body.app_id
     state.instance_id = body.instance_id
     state.generation = body.generation
     state.cli_package_spec = body.cli_package_spec
@@ -935,7 +934,6 @@ def _runtime_state_changed_fields(
 ) -> list[str]:
     fields = [
         "deployment_id",
-        "app_id",
         "instance_id",
         "generation",
         "cli_package_spec",

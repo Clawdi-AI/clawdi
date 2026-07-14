@@ -4953,8 +4953,6 @@ export interface components {
             owner: components["schemas"]["PlatformOwner"];
             /** Deployment Id */
             deployment_id: string;
-            /** App Id */
-            app_id?: string | null;
             /** Instance Id */
             instance_id: string;
             /** Generation */
