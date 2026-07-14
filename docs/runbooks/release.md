@@ -121,9 +121,30 @@ releases.
    Hosted rollout uses that same exact package spec in the Cloud manifest. The
    runtime never resolves an npm dist-tag.
 
+   Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
+   Clawdi CLI release. For `0.12.10-beta.53`, verify the audited exact package
+   and executable before activating Hosted:
+
+   ```bash
+   test "$(npm view @openai/codex@0.142.4 version)" = "0.142.4"
+   npx --yes @openai/codex@0.142.4 --version | grep -F '0.142.4'
+   ```
+
+   A Hosted Codex version change therefore requires a new exact Clawdi CLI
+   release and the same registry/pairing smoke gate; it is not an image,
+   manifest, environment override, or npm dist-tag setting.
+
+   Managed provider egress rewrites require the public
+   `Bearer clawdi-egress-placeholder` authorization value as an explicit intent
+   marker. Requests with a user token or no authorization header are not
+   rewritten, which prevents accidental BYOK or unmanaged credential
+   replacement. This is not process or security isolation: any pod process that
+   deliberately sends the public marker can opt in, and resulting usage is
+   charged to that deployment user's wallet.
+
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version
-   `0.12.10-beta.51`, and the Cloud manifest contract are all deployed. Validate
+   `0.12.10-beta.53`, and the Cloud manifest contract are all deployed. Validate
    one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
    enabling v2. Do not add compatibility fields, aliases, or fallback package
    channels.

@@ -10,6 +10,24 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.53
+
+Package: `clawdi@0.12.10-beta.53`
+
+### Changed
+
+- Added explicit unmanaged provider convergence for runtime-only OpenClaw and
+  Hermes deployments, including exact empty-provider health and safe removal of
+  only Clawdi-owned runtime projections.
+- Decoupled the fixed Hosted Codex terminal tool from runtime provider choice.
+  The CLI now maintains its single default config and process-scoped managed
+  egress shim without leaking provider material into unmanaged runtime units.
+  Hosted Codex is installed and verified at the audited exact
+  `@openai/codex@0.142.4` version.
+- Restricted managed provider egress credential replacement to requests carrying
+  the exact Clawdi placeholder marker, so user bearer tokens and unauthenticated
+  requests to the same host remain untouched.
+
 ## Clawdi CLI v0.12.10-beta.52
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.52

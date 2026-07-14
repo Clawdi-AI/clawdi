@@ -1,3 +1,4 @@
+import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
 
 type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -5,6 +6,7 @@ type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 interface HostedRuntimeManifestProjection {
 	egressProfiles?: unknown;
 	providers?: unknown;
+	terminalTooling?: unknown;
 }
 
 interface HostedProviderProjection {
@@ -126,15 +128,28 @@ export function managedProviderEgressProfiles(
 ): HostedEgressProfile[] {
 	const profiles: HostedEgressProfile[] = [];
 	const seenMatches = new Set<string>();
-	for (const [providerId, provider] of providerProjectionEntries(hosted.providers)) {
+	for (const [providerId, provider] of managedProviderProjectionEntries(hosted)) {
 		const profile = managedProviderEgressProfileForProvider(providerId, provider);
 		if (!profile) continue;
-		const matchKey = `${profile.match.scheme}:${profile.match.host}`;
+		const secretRef = normalizeSecretRef(provider.apiKeySecretRef);
+		const matchKey = `${profile.match.scheme}:${profile.match.host}:${secretRef ?? ""}`;
 		if (seenMatches.has(matchKey)) continue;
 		seenMatches.add(matchKey);
 		profiles.push(profile);
 	}
 	return profiles;
+}
+
+function managedProviderProjectionEntries(
+	hosted: HostedRuntimeManifestProjection,
+): Array<[string, HostedProviderProjection]> {
+	const entries = providerProjectionEntries(hosted.providers);
+	const terminalTooling = recordValue(hosted.terminalTooling);
+	const codex = recordValue(terminalTooling?.codex);
+	const provider = providerProjectionValue(codex?.provider);
+	const providerId = cleanString(typeof codex?.provider_id === "string" ? codex.provider_id : null);
+	if (providerId && provider) entries.push([providerId, provider]);
+	return entries;
 }
 
 function managedProviderEgressProfileForProvider(
@@ -164,7 +179,13 @@ function managedProviderEgressProfileForProvider(
 		match: {
 			scheme: parsed.protocol.replace(/:$/, "") as "http" | "https" | "ws" | "wss",
 			host: parsed.host.toLowerCase(),
-			headers: {},
+			headers: {
+				authorization: {
+					type: "equals",
+					value: MANAGED_EGRESS_PLACEHOLDER_VALUE,
+					prefix: "Bearer ",
+				},
+			},
 			query: {},
 		},
 		rewrite: {
@@ -212,9 +233,31 @@ function providerProjectionEntries(value: unknown): Array<[string, HostedProvide
 		});
 }
 
+function providerProjectionValue(value: unknown): HostedProviderProjection | null {
+	const provider = recordValue(value);
+	if (!provider) return null;
+	return {
+		baseUrl: nullableString(provider.baseUrl),
+		apiMode: nullableString(provider.apiMode),
+		apiKeySecretRef: nullableString(provider.apiKeySecretRef),
+		managed_by: nullableString(provider.managed_by),
+		status: nullableString(provider.status),
+	};
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
 function cleanString(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
 	return trimmed || null;
+}
+
+function nullableString(value: unknown): string | null | undefined {
+	return value === null || typeof value === "string" ? value : undefined;
 }
 
 function cleanBaseUrl(value: string | null | undefined): string | null {

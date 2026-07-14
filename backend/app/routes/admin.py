@@ -1080,7 +1080,11 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),
         "mcp": body.mcp,
-        "tools": body.tools,
+        "tools": (
+            body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+            if body.tools is not None
+            else None
+        ),
     }
 
 

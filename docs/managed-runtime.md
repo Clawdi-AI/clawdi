@@ -293,14 +293,16 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns installer URL and args |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
-| `runtimes.<name>.provider_ids` | Required non-empty unique runtime provider selection |
-| `runtimes.<name>.primary_model.{provider_id,model}` | Required primary model whose provider belongs to `provider_ids` |
+| `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
+| `runtimes.<name>.provider_ids` | Configured mode requires a non-empty unique selection; unmanaged mode requires an exact empty list |
+| `runtimes.<name>.primary_model.{provider_id,model}` | Required only in configured mode and its provider must belong to `provider_ids`; absent in unmanaged mode |
 | `runtimes.<name>.paths.{home,workspace}` | Required canonical runtime paths; missing values and legacy `stateDir` are rejected |
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
-| `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids` |
-| `mcp`, `tools` | Runtime MCP/tool projection input |
+| `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
+| `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
+| `mcp`, `tools` | Existing runtime MCP/tool projection input; unrelated tool fields remain pass-through and do not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
@@ -319,12 +321,55 @@ healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
 This strict typing claim applies only to the Hosted fields modeled in this
 release. `egressEngine` and `egressProfiles` use closed schemas matching the
 Hosted CLI wire and are validated at admin write and manifest read boundaries.
-Invalid stored egress JSON fails closed with `409`. `mcp` and `tools` remain
-explicit pass-through projections; this work does not broaden, alias, remove,
-or remodel those surfaces. The normalized generic
+Invalid stored egress JSON fails closed with `409`. `terminalTooling.codex` is
+the one typed terminal-tool subset in this release. It does not declare MCP and
+does not participate in runtime `provider_ids`, runtime primary-model selection,
+source-level applied provider IDs, or runtime provider health. `mcp` and
+unrelated `tools` fields retain their existing pass-through behavior. `mcp` and
+`tools` remain explicit pass-through projections. The normalized generic
 `clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
 default install args, and arbitrary provider projection data such as singular
 `model` for non-Hosted inputs.
+
+### Runtime Provider Ownership And Terminal Codex
+
+Agent v2 requires exactly one selected OpenClaw or Hermes runtime. Provider
+intent is also explicit: `configured` means Clawdi owns the selected runtime
+provider projection, while `unmanaged` means Clawdi projects no runtime provider
+metadata, secret reference, environment variable, or primary model. Empty
+provider state never implies a mode. Runtime-only deployments therefore render
+`providerMode: "unmanaged"`, `provider_ids: []`, no `primary_model`, and
+`providers: {}`. Health is exact only when the source-level applied provider set
+is also empty.
+
+Hosted Codex is a separate terminal tool plane. Its fixed provider reference is
+materialized under `terminalTooling.codex` from the same repeatable-read batch as
+runtime providers. When both consumers use the same provider, Cloud resolves
+and decrypts that provider auth payload once. The CLI uses the terminal-tool
+reference to own exactly one Hosted Codex default configuration at
+`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and a managed command
+shim. The shim exports the process-scoped egress placeholder and executes the
+real Codex with the original arguments; it never adds `--profile`. Managed,
+BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
+terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
+environment.
+
+This mode controls default configuration ownership, not pod-wide network
+isolation. Egress matching is domain based, so another pod process could call a
+tool-plane gateway deliberately; the credential remains deployment-scoped and
+charges that deployment user's wallet.
+
+Platform provider and tool credentials are stored as encrypted provider auth
+payloads and projected through bundle secret references. They are not user
+Vault items, do not use `clawdi://` references, and do not depend on Vault
+attach, share, delete, or resolve operations. User Vault participation remains
+explicit through the existing user-facing provider and `clawdi run` flows. The
+unmanaged provider discriminator does not reject an independently, explicitly
+selected user Vault-backed run or service secret reference; it only prevents
+provider-plane material from being inferred or projected into the runtime.
+The backend's existing low-level encryption helper and key reuse is legacy
+infrastructure; it is not a runtime Vault contract and this release does not
+change its ciphertext format or key.
 
 Remote Hosted CLI policy is exact-version only. Values such as npm dist-tags,
 bare package names, build-metadata versions such as `clawdi@1.2.3+build.1`, and
@@ -685,7 +730,7 @@ The exact-only Hosted package, fixture-only bootstrap tgz, strict
 provider/install fields, and preserved generic desired-state behavior described
 above are the CLI boundary. The Hosted rollout writer selects
 `cli_package_spec`; Cloud validates and persists it, requires the exact version
-to be at least the Cloud-owned `0.12.10-beta.51` protocol floor, and owns the
+to be at least the Cloud-owned `0.12.10-beta.53` protocol floor, and owns the
 public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
 `clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
 revalidated on every read and fails closed with `409` when invalid or below the

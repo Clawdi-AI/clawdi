@@ -4215,6 +4215,17 @@ export interface components {
              */
             status: "ok";
         };
+        /** HostedCodexTool */
+        HostedCodexTool: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /** Provider Id */
+            provider_id: string;
+            primary_model: components["schemas"]["HostedRuntimePrimaryModel"];
+        };
         /** HostedEgressEngine */
         HostedEgressEngine: {
             /**
@@ -4410,16 +4421,13 @@ export interface components {
             /** Upstreamport */
             upstreamPort: number;
         };
-        /** HostedRuntimeDesiredState */
-        HostedRuntimeDesiredState: {
+        /** HostedRuntimeConfiguredDesiredState */
+        HostedRuntimeConfiguredDesiredState: {
             /**
              * Enabled
              * @constant
              */
             enabled: true;
-            /** Provider Ids */
-            provider_ids: string[];
-            primary_model: components["schemas"]["HostedRuntimePrimaryModel"];
             install: components["schemas"]["HostedRuntimeInstall"];
             run?: components["schemas"]["HostedRuntimeRunSettings"] | null;
             /** Services */
@@ -4427,6 +4435,14 @@ export interface components {
                 [key: string]: components["schemas"]["HostedRuntimeRunSettings"];
             } | null;
             paths: components["schemas"]["HostedRuntimePaths"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            providerMode: "configured";
+            /** Provider Ids */
+            provider_ids: string[];
+            primary_model: components["schemas"]["HostedRuntimePrimaryModel"];
         };
         /** HostedRuntimeInstall */
         HostedRuntimeInstall: {
@@ -4668,6 +4684,34 @@ export interface components {
             persistentPaths: string[];
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+        };
+        /** HostedRuntimeTools */
+        HostedRuntimeTools: {
+            codex: components["schemas"]["HostedCodexTool"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** HostedRuntimeUnmanagedDesiredState */
+        HostedRuntimeUnmanagedDesiredState: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            install: components["schemas"]["HostedRuntimeInstall"];
+            run?: components["schemas"]["HostedRuntimeRunSettings"] | null;
+            /** Services */
+            services?: {
+                [key: string]: components["schemas"]["HostedRuntimeRunSettings"];
+            } | null;
+            paths: components["schemas"]["HostedRuntimePaths"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            providerMode: "unmanaged";
+            /** Provider Ids */
+            provider_ids: string[];
         };
         /**
          * InvitationAcceptResponse
@@ -4964,7 +5008,7 @@ export interface components {
             egress_engine?: components["schemas"]["HostedEgressEngine"] | null;
             /** Runtimes */
             runtimes: {
-                [key: string]: components["schemas"]["HostedRuntimeDesiredState"];
+                [key: string]: components["schemas"]["HostedRuntimeConfiguredDesiredState"] | components["schemas"]["HostedRuntimeUnmanagedDesiredState"];
             };
             bridge?: components["schemas"]["HostedRuntimeBridge"] | null;
             live_sync: components["schemas"]["HostedRuntimeLiveSync"];
@@ -4974,10 +5018,7 @@ export interface components {
             mcp?: {
                 [key: string]: unknown;
             } | null;
-            /** Tools */
-            tools?: {
-                [key: string]: unknown;
-            } | null;
+            tools: components["schemas"]["HostedRuntimeTools"];
         };
         /** ProjectCreate */
         ProjectCreate: {

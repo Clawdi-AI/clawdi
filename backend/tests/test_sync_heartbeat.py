@@ -30,11 +30,16 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
-from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeConfigObservation
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOLS,
+    canonical_hosted_runtime_state,
+    ensure_canonical_codex_tool_provider,
+)
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
 _TEST_SYSTEM = {
     "user": "clawdi",
     "home": "/home/clawdi",
@@ -43,10 +48,19 @@ _TEST_SYSTEM = {
 }
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _canonical_codex_tool_graph(
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+
+
 def _test_runtimes(provider_id: str = "clawdi-managed") -> dict:
     return {
         "openclaw": {
             "enabled": True,
+            "providerMode": "configured",
             "provider_ids": [provider_id],
             "primary_model": {"provider_id": provider_id, "model": "gpt-5.5"},
             "install": {"source": "official"},
@@ -60,7 +74,7 @@ def _runtime_observed(
     source_revision: str = "a" * 64,
     reported_at: str | None = None,
     status: str = "ok",
-    active_cli_version: str | None = "0.12.10-beta.51",
+    active_cli_version: str | None = "0.12.10-beta.53",
     applied: bool = True,
     manifest_etag: str | None = None,
     applied_generation: int = 4,
@@ -467,7 +481,7 @@ async def test_bound_key_heartbeat_updates_hosted_runtime_config_observation(
     env_bound_cli_client, db_session: AsyncSession
 ):
     client, bound_id, _other_id = env_bound_cli_client
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(bound_id),
         deployment_id="dep-observed",
         instance_id="iid-observed",
@@ -517,7 +531,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     db_session: AsyncSession,
 ):
     env_id = await _create_env(client)
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(env_id),
         deployment_id="dep-observed-api",
         instance_id="iid-observed-api",
@@ -529,7 +543,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
         mcp={"enabled": True},
-        tools={"catalog": "clawdi-default"},
+        tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     db_session.add(state)
     await db_session.commit()
@@ -591,7 +605,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-observed-v2",
             instance_id="iid-observed-v2",
@@ -618,7 +632,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
     assert observation.observed_config_generation == 4
     assert observation.observed_manifest_etag == expected_runtime_bundle_v2_etag(source_revision)
     assert observation.observed_source_revision == source_revision
-    assert observation.diagnostics["activeCliVersion"] == "0.12.10-beta.51"
+    assert observation.diagnostics["activeCliVersion"] == "0.12.10-beta.53"
     healthy = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
     assert healthy["health"] == {
         "status": "ok",
@@ -688,7 +702,7 @@ async def test_v2_health_requires_expected_etag_and_exact_source_provider_set(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-observed-v2-equality",
             instance_id="iid-observed-v2-equality",
@@ -730,7 +744,7 @@ async def test_runtime_observed_health_uses_typed_config_generation(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-config-convergence",
             instance_id="iid-config-convergence",
@@ -785,7 +799,7 @@ async def test_sync_heartbeat_repairs_non_object_diagnostics(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-legacy-json-value",
             instance_id="iid-legacy-json-value",
@@ -832,7 +846,7 @@ async def test_config_generation_and_manifest_etag_are_stored_independently(
     db_session: AsyncSession,
 ):
     env_id = await _create_env(client)
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(env_id),
         deployment_id="dep-config-etag-independent",
         instance_id="iid-config-etag-independent",
@@ -885,7 +899,7 @@ async def test_runtime_observed_endpoint_safely_degrades_invalid_stored_diagnost
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-legacy-diagnostics",
             instance_id="iid-legacy-diagnostics",
@@ -948,7 +962,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
     db_session: AsyncSession,
 ):
     env_id = await _create_env(client)
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(env_id),
         deployment_id="dep-observed-dedupe",
         instance_id="iid-observed-dedupe",
@@ -995,7 +1009,7 @@ async def test_runtime_observed_endpoint_surfaces_supervisor_errors(
     db_session: AsyncSession,
 ):
     env_id = await _create_env(client)
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(env_id),
         deployment_id="dep-supervisor-error",
         instance_id="iid-supervisor-error",
@@ -1045,7 +1059,7 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
     db_session: AsyncSession,
 ):
     env_id = await _create_env(client)
-    state = HostedRuntimeState(
+    state = canonical_hosted_runtime_state(
         environment_id=uuid.UUID(env_id),
         deployment_id="dep-provider-error",
         instance_id="iid-provider-error",
@@ -1140,7 +1154,7 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
     missing_state_env_id = await _create_env(client)
     db_session.add_all(
         [
-            HostedRuntimeState(
+            canonical_hosted_runtime_state(
                 environment_id=uuid.UUID(ok_env_id),
                 deployment_id="dep-summary-ok",
                 instance_id="iid-summary-ok",
@@ -1152,7 +1166,7 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
                 recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 runtimes=_test_runtimes(),
             ),
-            HostedRuntimeState(
+            canonical_hosted_runtime_state(
                 environment_id=uuid.UUID(error_env_id),
                 deployment_id="dep-summary-error",
                 instance_id="iid-summary-error",
@@ -1232,7 +1246,7 @@ async def test_sync_heartbeat_rejects_malformed_observed_scalar(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-observed-strict",
             instance_id="iid-observed-strict",
@@ -1265,7 +1279,7 @@ async def test_sync_heartbeat_bounds_oversized_observed_payload(
 ):
     env_id = await _create_env(client)
     db_session.add(
-        HostedRuntimeState(
+        canonical_hosted_runtime_state(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-observed-bounded",
             instance_id="iid-observed-bounded",

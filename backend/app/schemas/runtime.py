@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 HostedRuntimeLanguage = Literal[
     "en",
@@ -31,7 +31,7 @@ _EXACT_SEMVER_PATTERN = re.compile(
     rf"({_SEMVER_CORE_IDENTIFIER})(?:-({_SEMVER_PRERELEASE_IDENTIFIER}"
     rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
 )
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.51"
+_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.53"
 _FORBIDDEN_TOOL_SECRET_KEYS = {
     "apikey",
     "api_key",
@@ -45,6 +45,8 @@ _FORBIDDEN_TOOL_SECRET_KEYS = {
     "secretvalues",
     "token",
 }
+_UNMANAGED_PROVIDER_ENV_NAMES = {"CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"}
+_MANAGED_EGRESS_PLACEHOLDER_VALUE = "clawdi-egress-placeholder"
 
 
 def validate_no_plaintext_tool_secrets(value: object, path: str = "") -> None:
@@ -535,30 +537,53 @@ class HostedRuntimePrimaryModel(BaseModel):
         return value
 
 
-class HostedRuntimeDesiredState(BaseModel):
+class HostedCodexTool(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: Literal[True]
-    provider_ids: list[str] = Field(min_length=1)
+    provider_id: str = Field(min_length=1, max_length=80)
     primary_model: HostedRuntimePrimaryModel
+
+    @model_validator(mode="after")
+    def _validate_primary_model_provider(self) -> "HostedCodexTool":
+        if self.primary_model.provider_id != self.provider_id:
+            raise ValueError("Codex tool primary_model.provider_id must match provider_id")
+        return self
+
+
+class HostedCodexProviderProjection(BaseModel):
+    """Typed Cloud-owned provider projection for the fixed Hosted Codex tool."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: Literal["openai-compatible"]
+    baseUrl: str = Field(min_length=1, max_length=1000)
+    apiMode: Literal["openai_responses"]
+    managed_by: Literal["clawdi"]
+    runtimeEnvName: Literal["OPENAI_API_KEY"]
+    apiKeySecretRef: Literal["tool.codex.apiKey"]
+
+
+class HostedRuntimeTools(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    codex: HostedCodexTool
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_no_plaintext_secrets(cls, value: object) -> object:
+        validate_no_plaintext_tool_secrets(value)
+        return value
+
+
+class _HostedRuntimeDesiredStateBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Literal[True]
     install: HostedRuntimeInstall
     run: HostedRuntimeRunSettings | None = None
     services: dict[str, HostedRuntimeRunSettings] | None = None
     paths: HostedRuntimePaths
-
-    @field_validator("provider_ids")
-    @classmethod
-    def _validate_provider_ids(cls, value: list[str]) -> list[str]:
-        if any(
-            not provider_id or provider_id != provider_id.strip() or len(provider_id) > 80
-            for provider_id in value
-        ):
-            raise ValueError(
-                "provider_ids must contain canonical non-empty strings up to 80 characters"
-            )
-        if len(set(value)) != len(value):
-            raise ValueError("provider_ids must not contain duplicates")
-        return value
 
     @field_validator("services")
     @classmethod
@@ -575,11 +600,78 @@ class HostedRuntimeDesiredState(BaseModel):
             raise ValueError("runtime service names must be canonical")
         return value
 
+
+def _validate_runtime_provider_ids(value: list[str]) -> list[str]:
+    if any(
+        not provider_id or provider_id != provider_id.strip() or len(provider_id) > 80
+        for provider_id in value
+    ):
+        raise ValueError(
+            "provider_ids must contain canonical non-empty strings up to 80 characters"
+        )
+    if len(set(value)) != len(value):
+        raise ValueError("provider_ids must not contain duplicates")
+    return value
+
+
+class HostedRuntimeConfiguredDesiredState(_HostedRuntimeDesiredStateBase):
+    providerMode: Literal["configured"]
+    provider_ids: list[str] = Field(min_length=1)
+    primary_model: HostedRuntimePrimaryModel
+
+    @field_validator("provider_ids")
+    @classmethod
+    def _validate_provider_ids(cls, value: list[str]) -> list[str]:
+        return _validate_runtime_provider_ids(value)
+
     @model_validator(mode="after")
-    def _validate_primary_model_provider(self) -> "HostedRuntimeDesiredState":
+    def _validate_primary_model_provider(self) -> "HostedRuntimeConfiguredDesiredState":
         if self.primary_model.provider_id not in self.provider_ids:
             raise ValueError("primary_model.provider_id must be present in provider_ids")
         return self
+
+
+class HostedRuntimeUnmanagedDesiredState(_HostedRuntimeDesiredStateBase):
+    providerMode: Literal["unmanaged"]
+    provider_ids: list[str] = Field(max_length=0)
+
+    @model_validator(mode="after")
+    def _validate_no_runtime_provider_inputs(self) -> "HostedRuntimeUnmanagedDesiredState":
+        settings = [("run", self.run)]
+        settings.extend(
+            (f"services.{name}", service) for name, service in (self.services or {}).items()
+        )
+        for location, run_settings in settings:
+            if run_settings is None:
+                continue
+            env = run_settings.env or {}
+            secret_env = run_settings.secretEnv or {}
+            forbidden_names = sorted(
+                _UNMANAGED_PROVIDER_ENV_NAMES.intersection({*env, *secret_env})
+            )
+            if forbidden_names:
+                raise ValueError(
+                    f"unmanaged {location} must not include provider env: "
+                    f"{', '.join(forbidden_names)}"
+                )
+            if any(value == _MANAGED_EGRESS_PLACEHOLDER_VALUE for value in env.values()):
+                raise ValueError(f"unmanaged {location} must not include provider placeholder env")
+            for secret_ref in (*env.values(), *secret_env.values()):
+                normalized = secret_ref.removeprefix("secret://")
+                if normalized.startswith("provider."):
+                    raise ValueError(f"unmanaged {location} must not include provider secret refs")
+        return self
+
+
+HostedRuntimeDesiredState = Annotated[
+    HostedRuntimeConfiguredDesiredState | HostedRuntimeUnmanagedDesiredState,
+    Field(discriminator="providerMode"),
+]
+_HOSTED_RUNTIME_DESIRED_STATE_ADAPTER = TypeAdapter(HostedRuntimeDesiredState)
+
+
+def validate_hosted_runtime_desired_state(value: object) -> HostedRuntimeDesiredState:
+    return _HOSTED_RUNTIME_DESIRED_STATE_ADAPTER.validate_python(value)
 
 
 class HostedRuntimeLocale(BaseModel):

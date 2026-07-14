@@ -26,17 +26,19 @@ from app.models.session import AgentEnvironment
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
     _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
+    HostedCodexProviderProjection,
     HostedEgressEngine,
     HostedEgressProfiles,
     HostedRuntimeBridge,
-    HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeName,
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
+    HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_bridge,
+    validate_hosted_runtime_desired_state,
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
@@ -48,6 +50,9 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
+_CODEX_TOOL_SECRET_REF = "tool.codex.apiKey"
+_CODEX_TOOL_API_MODE = "openai_responses"
+_CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
 
 
 class RuntimeSourceError(ValueError):
@@ -214,6 +219,10 @@ def render_runtime_source(
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime egress state is invalid") from exc
     try:
+        tools = HostedRuntimeTools.model_validate(state.tools)
+    except ValidationError as exc:
+        raise RuntimeSourceError("Hosted runtime tools state is invalid") from exc
+    try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
         raise RuntimeSourceError(
@@ -231,14 +240,44 @@ def render_runtime_source(
     secrets: dict[str, str] = {}
     secret_sources: dict[str, dict[str, str]] = {}
     secret_materials: list[RuntimeSecretMaterial] = []
-    for provider_id in tuple(runtime["provider_ids"]):
+    codex_tool = tools.codex
+    provider_ids = set(runtime["provider_ids"])
+    provider_ids.add(codex_tool.provider_id)
+    provider_material: dict[str, dict[str, Any]] = {}
+    for provider_id in sorted(provider_ids):
         provider = batch.providers.get((user_id, provider_id))
         if provider is None:
-            providers[provider_id] = _unhealthy_provider(provider_id, runtime_name)
+            if provider_id == codex_tool.provider_id:
+                raise RuntimeSourceError("Hosted Codex tool provider is missing or archived")
+            consumer = runtime_name if provider_id in runtime["provider_ids"] else "codex tool"
+            provider_material[provider_id] = _unhealthy_provider(provider_id, consumer)
             continue
         payload = _selected_auth_payload(batch, provider)
-        secret_ref = _provider_secret_ref(provider_id) if payload is not None else None
-        providers[provider_id] = _provider_entry(provider, secret_ref=secret_ref)
+        if provider_id == codex_tool.provider_id and (
+            provider.managed_by != "clawdi"
+            or payload is None
+            or payload.kind != "api_key"
+            or payload.source != "managed"
+        ):
+            raise RuntimeSourceError(
+                "Hosted Codex tool provider must use a Clawdi-managed provider auth payload"
+            )
+        secret_ref = (
+            _CODEX_TOOL_SECRET_REF
+            if payload is not None and provider_id == codex_tool.provider_id
+            else _provider_secret_ref(provider_id)
+            if payload is not None
+            else None
+        )
+        provider_entry = _provider_entry(provider, secret_ref=secret_ref)
+        if provider_id == codex_tool.provider_id and (
+            provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
+            or provider_entry.get("runtimeEnvName") != _MANAGED_PROVIDER_RUNTIME_ENV
+        ):
+            raise RuntimeSourceError(
+                "Hosted Codex tool provider must use a supported managed OpenAI projection"
+            )
+        provider_material[provider_id] = provider_entry
         if payload is not None and secret_ref is not None:
             _add_secret_source(
                 secret_sources,
@@ -248,7 +287,11 @@ def render_runtime_source(
                     payload.encrypted_payload,
                     payload.nonce,
                     vault_key_identity,
-                    "provider-api-key",
+                    (
+                        "tool-codex-api-key"
+                        if provider_id == codex_tool.provider_id
+                        else "provider-api-key"
+                    ),
                 ),
             )
             secret_materials.append(
@@ -259,6 +302,32 @@ def render_runtime_source(
                     error_message="Hosted runtime provider secret source is invalid",
                 )
             )
+
+    providers = {
+        provider_id: provider_material[provider_id] for provider_id in runtime["provider_ids"]
+    }
+    tool_projection = tools.model_dump(
+        exclude={"codex"},
+        exclude_none=True,
+        exclude_unset=True,
+        mode="json",
+    )
+    codex_provider_input = {
+        **provider_material[codex_tool.provider_id],
+        "apiMode": _CODEX_TOOL_API_MODE,
+    }
+    try:
+        codex_provider = HostedCodexProviderProjection.model_validate(
+            codex_provider_input
+        ).model_dump(exclude_none=True, mode="json")
+    except ValidationError as exc:
+        raise RuntimeSourceError("Hosted Codex tool provider projection is invalid") from exc
+    terminal_tooling = {
+        "codex": {
+            **codex_tool.model_dump(mode="json"),
+            "provider": codex_provider,
+        }
+    }
 
     manifest: dict[str, Any] = {
         "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
@@ -294,8 +363,9 @@ def render_runtime_source(
         )
     if state.mcp:
         manifest["mcp"] = state.mcp
-    if state.tools:
-        manifest["tools"] = state.tools
+    if tool_projection:
+        manifest["tools"] = tool_projection
+    manifest["terminalTooling"] = terminal_tooling
 
     bindings: list[dict[str, str]] = []
     channel_rows = batch.channels.get(environment_id, ())
@@ -374,7 +444,7 @@ def _runtime(value: dict | None) -> tuple[HostedRuntimeName, dict[str, Any]]:
     if name not in _SUPPORTED_RUNTIMES:
         raise RuntimeSourceError(f"unsupported enabled runtime: {name}")
     try:
-        desired = HostedRuntimeDesiredState.model_validate(raw)
+        desired = validate_hosted_runtime_desired_state(raw)
     except ValidationError as exc:
         raise RuntimeSourceError(f"hosted runtime state for {name} is invalid") from exc
     runtime_name: HostedRuntimeName = "hermes" if name == "hermes" else "openclaw"
@@ -443,13 +513,13 @@ def _provider_entry(provider: AiProvider, *, secret_ref: str | None) -> dict[str
     return result
 
 
-def _unhealthy_provider(provider_id: str, runtime_name: str) -> dict[str, Any]:
+def _unhealthy_provider(provider_id: str, consumer: str) -> dict[str, Any]:
     return {
         "kind": "openai-compatible",
         "status": "error",
         "error": {
             "code": "provider_not_found",
-            "message": f"provider required by {runtime_name} is missing or archived",
+            "message": f"provider required by {consumer} is missing or archived",
         },
     }
 

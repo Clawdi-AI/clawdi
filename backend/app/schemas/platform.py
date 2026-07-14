@@ -15,6 +15,7 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeRecovery,
     HostedRuntimeSystem,
+    HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_bridge,
     validate_no_plaintext_tool_secrets,
@@ -95,7 +96,7 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
     mcp: dict[str, Any] | None = None
-    tools: dict[str, Any] | None = None
+    tools: HostedRuntimeTools
 
     @field_validator("cli_package_spec")
     @classmethod
@@ -125,7 +126,7 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
         validate_hosted_runtime_bridge(runtime, self.bridge)
         return self
 
-    @field_validator("mcp", "tools")
+    @field_validator("mcp")
     @classmethod
     def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None:

@@ -11,6 +11,7 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
+from app.schemas.runtime import HostedCodexProviderProjection
 from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
@@ -48,7 +49,7 @@ def _batch(
         deployment_id="dep_test",
         instance_id="hri_test",
         generation=7,
-        cli_package_spec="clawdi@0.12.10-beta.51",
+        cli_package_spec="clawdi@0.12.10-beta.53",
         locale={"language": "en", "timezone": "UTC"},
         system={
             "user": "clawdi",
@@ -59,6 +60,7 @@ def _batch(
         runtimes={
             "openclaw": {
                 "enabled": True,
+                "providerMode": "configured",
                 "provider_ids": ["managed"],
                 "primary_model": {"provider_id": "managed", "model": "gpt-test"},
                 "install": {"source": "official"},
@@ -75,6 +77,13 @@ def _batch(
             "agents": [{"agentType": "openclaw", "environmentId": str(ENV_ID)}],
         },
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        tools={
+            "codex": {
+                "enabled": True,
+                "provider_id": "managed",
+                "primary_model": {"provider_id": "managed", "model": "gpt-test"},
+            }
+        },
     )
     state.created_at = now
     provider = AiProvider(
@@ -84,7 +93,7 @@ def _batch(
         type="openai",
         label=provider_label,
         base_url="https://provider.test/v1",
-        api_mode="responses",
+        api_mode="openai_chat",
         auth_type="api_key",
         auth_metadata={"source": "managed", "profile": "default"},
         managed_by="clawdi",
@@ -215,6 +224,100 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
+def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs(
+    monkeypatch,
+) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["providerMode"] = "unmanaged"
+    runtime["provider_ids"] = []
+    runtime.pop("primary_model")
+    state.runtimes = {"openclaw": runtime}
+    batch.channels.clear()
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "sk-codex-tool"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="platform-key-generation-1",
+        decrypt_secrets=True,
+    )
+    bundle = render_runtime_bundle(source)
+
+    assert source.manifest["providers"] == {}
+    assert source.manifest["runtimes"]["openclaw"]["providerMode"] == "unmanaged"
+    assert source.manifest["terminalTooling"]["codex"]["provider_id"] == "managed"
+    assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
+        "openai_responses"
+    )
+    assert source.secret_values == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert decrypt_calls == [(b"provider-ciphertext", b"provider-nonce")]
+    assert "clawdi://" not in json.dumps(bundle)
+
+
+def test_codex_tool_projection_pydantic_contract_rejects_openai_chat() -> None:
+    with pytest.raises(ValueError):
+        HostedCodexProviderProjection.model_validate(
+            {
+                "kind": "openai-compatible",
+                "baseUrl": "https://provider.test/v1",
+                "apiMode": "openai_chat",
+                "managed_by": "clawdi",
+                "runtimeEnvName": "OPENAI_API_KEY",
+                "apiKeySecretRef": "tool.codex.apiKey",
+            }
+        )
+
+
+def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None:
+    source = _render(_batch())
+
+    assert source.manifest["providers"]["managed"]["apiMode"] == "openai_chat"
+    assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
+        "openai_responses"
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing_provider",
+        "user_owned",
+        "missing_payload",
+        "payload_kind",
+        "payload_source",
+        "api_mode",
+    ],
+)
+def test_codex_tool_provider_fails_closed_without_platform_credential(failure: str) -> None:
+    batch = _batch()
+    if failure == "missing_provider":
+        batch.providers.clear()
+    elif failure == "user_owned":
+        batch.providers[(USER_ID, "managed")].managed_by = "user"
+    elif failure == "missing_payload":
+        batch.auth_payloads.clear()
+    elif failure == "payload_kind":
+        batch.auth_payloads[(USER_ID, "managed", "default")].kind = "oauth_profile"
+    elif failure == "payload_source":
+        batch.auth_payloads[(USER_ID, "managed", "default")].source = "vault"
+    else:
+        batch.providers[(USER_ID, "managed")].api_mode = "anthropic_messages"
+
+    with pytest.raises(RuntimeSourceError, match="Hosted Codex tool provider"):
+        _render(batch)
+
+
 def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> None:
     from app.services import runtime_source
 
@@ -241,7 +344,7 @@ def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> No
         vault_key_identity="vault-key-generation-1",
         decrypt_secrets=True,
     )
-    assert source.secret_values["provider.managed.apiKey"] == "provider-ciphertext"
+    assert source.secret_values["tool.codex.apiKey"] == "provider-ciphertext"
     assert source.secret_values["provider.managed-.apiKey"] == "provider-two-ciphertext"
     assert len(decrypt_calls) == 3
 
@@ -263,6 +366,11 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
         runtime_source,
         "_provider_secret_ref",
         lambda value: f"provider.{value.rstrip('-')}.apiKey",
+    )
+    monkeypatch.setattr(
+        runtime_source,
+        "_CODEX_TOOL_SECRET_REF",
+        "provider.managed.apiKey",
     )
     decrypt_calls: list[tuple[bytes, bytes]] = []
 

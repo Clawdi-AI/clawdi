@@ -1356,7 +1356,7 @@ export function hostedAiProviderCatalog(
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
 	const primaryModel =
-		options.primaryModelOverride ?? hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
+		options.primaryModelOverride ?? hostedRuntimePrimaryModel(manifest, runtimeName);
 	if (!primaryModel) return null;
 	const entries = rawEntries
 		.map(([id, raw]) => {
@@ -1413,40 +1413,18 @@ function hostedProviderEntries(
 	if (!runtimeName) {
 		return Object.entries(providers).sort(([left], [right]) => left.localeCompare(right));
 	}
-	const runtime = manifest?.runtimes?.[runtimeName];
-	if (runtime) {
-		const providerIds = runtime.provider_ids?.filter((id) => Object.hasOwn(providers, id));
-		if (providerIds && providerIds.length > 0) {
-			return providerIds.map((providerId) => [providerId, providers[providerId]]);
-		}
-	}
-	if (Object.hasOwn(providers, runtimeName)) {
-		return [[runtimeName, providers[runtimeName]]];
-	}
-	if (Object.hasOwn(providers, "default")) {
-		return [["default", providers.default]];
-	}
-	return [];
+	const providerIds = manifest?.runtimes?.[runtimeName]?.provider_ids ?? [];
+	return providerIds
+		.filter((providerId) => Object.hasOwn(providers, providerId))
+		.map((providerId) => [providerId, providers[providerId]]);
 }
 
 function hostedRuntimePrimaryModel(
 	manifest: RuntimeManifest,
 	runtimeName: string | undefined,
-	rawEntries: Array<[string, unknown]>,
 ): AgentPrimaryModel | null {
 	const runtime = runtimeName ? manifest.runtimes[runtimeName] : undefined;
-	const primary = runtime?.primary_model;
-	if (primary) return primary;
-	for (const [providerId, raw] of rawEntries) {
-		const provider = recordValue(raw);
-		const model = provider ? stringValue(provider.model) : null;
-		if (model) return { provider_id: providerId, model };
-	}
-	const firstProvider = rawEntries[0];
-	if (!firstProvider) return null;
-	const provider = recordValue(firstProvider[1]);
-	const model = hostedProviderModels(provider ?? {}, null)[0]?.id;
-	return model ? { provider_id: firstProvider[0], model } : null;
+	return runtime?.primary_model ?? null;
 }
 
 function hostedProviderModels(
@@ -1513,8 +1491,8 @@ function managedGatewayPrimaryModelTarget(
 	if (!providers) return null;
 	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
 	if (rawEntries.length === 0) return null;
-	const currentPrimary = hostedRuntimePrimaryModel(manifest, runtimeName, rawEntries);
-	const selectedProviderId = currentPrimary?.provider_id ?? rawEntries[0]?.[0] ?? null;
+	const currentPrimary = hostedRuntimePrimaryModel(manifest, runtimeName);
+	const selectedProviderId = currentPrimary?.provider_id ?? null;
 	if (!selectedProviderId) return null;
 	const selectedProvider = rawEntries.find(
 		([providerId]) => providerId === selectedProviderId,
@@ -1714,17 +1692,9 @@ function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 	return type === "api_key" || type === "secret_ref";
 }
 
-const HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES = new Set(["CLAWDI_MANAGED_OPENAI_API_KEY"]);
-
 function hostedProviderRuntimeEnvName(providerId: string, input: Record<string, unknown>): string {
 	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
-	if (raw && isEnvKey(raw) && !HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw)) return raw;
-	if (
-		HOSTED_PROVIDER_FORBIDDEN_AGENT_ENV_NAMES.has(raw ?? "") &&
-		isOpenAiCompatibleMode(hostedProviderApiMode(input))
-	) {
-		return "OPENAI_API_KEY";
-	}
+	if (raw && isEnvKey(raw)) return raw;
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
 
@@ -1983,9 +1953,10 @@ interface HostedAiProviderProjectionResult {
 }
 
 const CODEX_MANAGED_PROVIDER_ID = "clawdi-managed";
-const CODEX_MANAGED_PROVIDER_STATE_FILE = "clawdi-managed-provider.json";
+const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
 const CODEX_MANAGED_ENV_KEY = "OPENAI_API_KEY";
-const CODEX_NPM_PACKAGE_SPEC = "@openai/codex@latest";
+const CODEX_NPM_PACKAGE_VERSION = "0.142.4";
+const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {
 	providerId: string;
@@ -2098,7 +2069,14 @@ function applyHostedAiProviderProjection(
 			primaryModelOverride: managedPrimaryModelOverrides[name],
 		}),
 	);
+	assertHostedProviderProjectionMode(name, manifest, projectionInput);
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
+	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
+		if (name === "openclaw") {
+			applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
+		}
+		return { path: null, revision: null, providerIds: [...previousProviderIds] };
+	}
 	if (name === "hermes") {
 		return applyHostedHermesAiProviderProjection(
 			observation,
@@ -2148,71 +2126,62 @@ function applyHostedCodexManagedProviderProjection(
 
 	const codexHome = hostedCodexHome(home);
 	makeRuntimeUserPrivateDir(codexHome);
-	const configPath = join(codexHome, "config.toml");
-	const statePath = join(codexHome, CODEX_MANAGED_PROVIDER_STATE_FILE);
+	const configPath = join(codexHome, CODEX_MANAGED_PROVIDER_CONFIG_FILE);
 	const configContent = hostedCodexManagedConfigToml(provider);
-	const statePayload = hostedCodexManagedProviderState(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
-	writePrivateFileAtomic(statePath, `${JSON.stringify(statePayload, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o700,
-	});
 	makeRuntimeUserOwned(configPath);
-	makeRuntimeUserOwned(statePath);
 	makeRuntimeUserPrivateDir(codexHome);
 
 	return {
 		path: configPath,
 		providerIds: [CODEX_MANAGED_PROVIDER_ID],
 		revision: revisionHash({
-			codexManagedProviderProjection: "config.toml",
+			codexManagedProviderProjection: CODEX_MANAGED_PROVIDER_CONFIG_FILE,
 			configContent,
 			codexCli,
-			statePayload,
 		}),
 	};
 }
 
-function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManagedProvider | null {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers) return null;
-	const entries: Array<{
-		priority: number;
-		providerId: string;
-		provider: HostedCodexManagedProvider;
-	}> = [];
-	for (const [providerId, raw] of Object.entries(providers)) {
-		const provider = recordValue(raw);
-		if (!provider) continue;
-		if (provider.managed_by === "user") continue;
-		const runtimeEnvName = stringValue(provider.runtimeEnvName);
-		if (runtimeEnvName !== CODEX_MANAGED_ENV_KEY) continue;
-		const baseUrl = stringValue(provider.baseUrl);
-		if (!baseUrl?.trim()) continue;
-		entries.push({
-			priority: hostedCodexManagedProviderPriority(providerId),
-			providerId,
-			provider: {
-				providerId,
-				baseUrl: baseUrl.trim(),
-				model: stringValue(provider.model),
-				apiMode: stringValue(provider.apiMode),
-				apiKeySecretRef: stringValue(provider.apiKeySecretRef),
-			},
-		});
+function assertHostedProviderProjectionMode(
+	runtimeName: string,
+	manifest: RuntimeManifest,
+	projectionInput: HostedAiProviderProjectionInput | null,
+): void {
+	const providerMode = manifest.runtimes[runtimeName]?.providerMode;
+	if (providerMode === "unmanaged" && projectionInput) {
+		throw new Error(`runtime ${runtimeName} unmanaged provider mode has a provider projection`);
 	}
-	if (entries.length === 0) return null;
-	entries.sort(
-		(left, right) =>
-			left.priority - right.priority || left.providerId.localeCompare(right.providerId),
-	);
-	return entries[0]?.provider ?? null;
 }
 
-function hostedCodexManagedProviderPriority(providerId: string): number {
-	if (providerId === "openclaw") return 0;
-	if (providerId === "hermes") return 1;
-	return 2;
+function hostedCodexManagedProvider(manifest: RuntimeManifest): HostedCodexManagedProvider | null {
+	const terminalTooling = recordValue(manifest.projection?.terminalTooling);
+	const codex = recordValue(terminalTooling?.codex);
+	const provider = recordValue(codex?.provider);
+	const primaryModel = recordValue(codex?.primary_model);
+	const providerId = stringValue(codex?.provider_id);
+	const baseUrl = stringValue(provider?.baseUrl);
+	const apiMode = stringValue(provider?.apiMode);
+	if (
+		codex?.enabled !== true ||
+		!provider ||
+		provider.managed_by !== "clawdi" ||
+		apiMode !== "openai_responses" ||
+		stringValue(provider.runtimeEnvName) !== CODEX_MANAGED_ENV_KEY ||
+		normalizeSecretRef(stringValue(provider.apiKeySecretRef)) !== "secret://tool.codex.apiKey" ||
+		!providerId ||
+		stringValue(primaryModel?.provider_id) !== providerId ||
+		!baseUrl
+	) {
+		return null;
+	}
+	return {
+		providerId,
+		baseUrl,
+		model: stringValue(primaryModel?.model),
+		apiMode,
+		apiKeySecretRef: stringValue(provider.apiKeySecretRef),
+	};
 }
 
 function hostedCodexHome(home: string): string {
@@ -2240,31 +2209,21 @@ function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): str
 	return lines.join("\n");
 }
 
-function hostedCodexManagedProviderState(
-	provider: HostedCodexManagedProvider,
-): Record<string, unknown> {
-	return {
-		schemaVersion: "clawdi.hostedCodexManagedProvider.v1",
-		managedBy: "clawdi hosted runtime",
-		provider: {
-			baseUrl: provider.baseUrl,
-			model: provider.model,
-			apiMode: provider.apiMode,
-			runtimeEnvName: CODEX_MANAGED_ENV_KEY,
-			apiKeySecretRef: provider.apiKeySecretRef,
-		},
-	};
-}
-
 function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | null {
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
-	const packageSpec = hostedCodexPackageSpec();
 	const npmPrefix = join(paths.serviceStateRoot, "codex", "npm");
 	const npmCache = join(paths.serviceStateRoot, "codex", "npm-cache");
 	const realBin = join(npmPrefix, "bin", "codex");
 	const commandPath = join(runtimeManagedBinDir(paths), "codex");
-	if (!executableExists(realBin)) {
-		installHostedCodexCli(packageSpec, npmPrefix, npmCache);
+	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
+	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION || !executableExists(realBin)) {
+		installHostedCodexCli(CODEX_NPM_PACKAGE_SPEC, npmPrefix, npmCache);
+		installedVersion = hostedCodexInstalledVersion(npmPrefix);
+	}
+	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION) {
+		throw new Error(
+			`Codex npm install produced version ${installedVersion ?? "unknown"}; expected ${CODEX_NPM_PACKAGE_VERSION}`,
+		);
 	}
 	if (!executableExists(realBin)) {
 		throw new Error(`Codex npm install did not create ${realBin}`);
@@ -2274,17 +2233,28 @@ function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | nul
 		commandPath,
 		npmCache,
 		npmPrefix,
-		packageSpec,
+		packageSpec: CODEX_NPM_PACKAGE_SPEC,
+		packageVersion: installedVersion,
 		realBin,
 	};
 }
 
-function hostedCodexPackageSpec(): string {
-	const packageSpec = process.env.CLAWDI_CODEX_PACKAGE_SPEC?.trim() || CODEX_NPM_PACKAGE_SPEC;
-	if (packageSpec === "@openai/codex" || packageSpec.startsWith("@openai/codex@")) {
-		return packageSpec;
+function hostedCodexInstalledVersion(npmPrefix: string): string | null {
+	const packageJsonPath = join(
+		npmPrefix,
+		"lib",
+		"node_modules",
+		"@openai",
+		"codex",
+		"package.json",
+	);
+	try {
+		const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || !("version" in parsed)) return null;
+		return typeof parsed.version === "string" ? parsed.version : null;
+	} catch {
+		return null;
 	}
-	throw new Error("CLAWDI_CODEX_PACKAGE_SPEC must be @openai/codex or @openai/codex@...");
 }
 
 function installHostedCodexCli(packageSpec: string, npmPrefix: string, npmCache: string): void {
@@ -2337,10 +2307,19 @@ function installHostedCodexCli(packageSpec: string, npmPrefix: string, npmCache:
 function writeHostedCodexCommandShim(commandPath: string, realBin: string): void {
 	const binDir = dirname(commandPath);
 	makeRootReadableDir(binDir);
-	writePrivateFileAtomic(commandPath, `#!/usr/bin/env sh\nexec ${shellQuote(realBin)} "$@"\n`, {
-		mode: 0o755,
-		dirMode: 0o755,
-	});
+	writePrivateFileAtomic(
+		commandPath,
+		[
+			"#!/usr/bin/env sh",
+			`export ${CODEX_MANAGED_ENV_KEY}=${shellQuote(MANAGED_EGRESS_PLACEHOLDER_VALUE)}`,
+			`exec ${shellQuote(realBin)} "$@"`,
+			"",
+		].join("\n"),
+		{
+			mode: 0o755,
+			dirMode: 0o755,
+		},
+	);
 	makeRootOwned(commandPath);
 }
 
@@ -2357,7 +2336,7 @@ function applyHostedHermesAiProviderProjection(
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (!projectionInput) {
-		removeHermesModelProviderPlugin(home);
+		if (previousProviderIds.length > 0) removeHermesModelProviderPlugin(home);
 		const deletedProviderIds = existingHermesProviderIds(
 			configPath,
 			staleProviderIds(new Set(previousProviderIds), new Set()),
@@ -5129,8 +5108,7 @@ export function runtimeLiveSnapshotPaths(
 		join(home, ".hermes", "config.yaml"),
 		join(home, ".hermes", "SOUL.md"),
 		hermesModelProviderPluginDir(home),
-		join(hostedCodexHome(home), "config.toml"),
-		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_STATE_FILE),
+		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 	]);
 	for (const agent of MANAGED_LIVE_SYNC_AGENTS) {
 		result.add(join(paths.localEnvironments, `${agent}.json`));
@@ -5329,7 +5307,6 @@ function validateRuntimeProjectionPlan(input: {
 	const codexProvider = hostedCodexManagedProvider(manifest);
 	if (codexProvider) {
 		hostedCodexManagedConfigToml(codexProvider);
-		hostedCodexManagedProviderState(codexProvider);
 	}
 
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
@@ -5363,6 +5340,9 @@ function validateRuntimeProjectionPlan(input: {
 				primaryModelOverride: managedPrimaryModelOverrides?.[name],
 			}),
 		);
+		assertHostedProviderProjectionMode(name, manifest, projectionInput);
+		const configuredProjectionUnavailable =
+			manifest.runtimes[name]?.providerMode === "configured" && !projectionInput;
 		const projectionRequiresInstalledModelProbe =
 			projectionInput?.catalog.providers.some((provider) => provider.managed_by === "clawdi") &&
 			managedPrimaryModelOverrides === undefined;
@@ -5382,7 +5362,7 @@ function validateRuntimeProjectionPlan(input: {
 						openClawProviderIdsFromPatch(file.content),
 					),
 				);
-			} else {
+			} else if (!configuredProjectionUnavailable) {
 				JSON.stringify(openClawProviderDeletePatch(previousProjectedProviderIds.openclaw ?? []));
 			}
 			JSON.stringify(openClawGatewayHostedPatch(manifest));
@@ -5402,7 +5382,10 @@ function validateRuntimeProjectionPlan(input: {
 					projectionInput.primaryModel,
 				);
 				hermesConfig = renderHermesConfig(hermesConfig, yamlFile.content);
-			} else if ((previousProjectedProviderIds.hermes ?? []).length > 0) {
+			} else if (
+				!configuredProjectionUnavailable &&
+				(previousProjectedProviderIds.hermes ?? []).length > 0
+			) {
 				hermesConfig = renderHermesConfig(
 					hermesConfig,
 					hermesProviderDeletePatch(previousProjectedProviderIds.hermes ?? []),
@@ -5550,7 +5533,10 @@ export function convergeRuntimeManifest(
 	// generation-owned live configuration and is created only after Plan succeeds.
 	mkdirSync(paths.runRoot, { recursive: true });
 	let codexCli: Record<string, string> | null = null;
-	if (hostedCodexManagedProvider(manifest)) {
+	if (
+		hostedCodexManagedProvider(manifest) ||
+		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
+	) {
 		try {
 			codexCli = ensureHostedCodexCli(paths);
 		} catch (error) {
@@ -5943,8 +5929,12 @@ export function convergeRuntimeManifest(
 		}
 
 		const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
-		writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
-		projections.push(mcpProjection);
+		if (hostedMcpProjectionDeclared(manifest)) {
+			writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest));
+			projections.push(mcpProjection);
+		} else {
+			rmSync(mcpProjection, { force: true });
+		}
 		const systemdUnits = writeSystemdUnits(
 			runtimeSystemdUserPrograms,
 			egressSystemdProgram,

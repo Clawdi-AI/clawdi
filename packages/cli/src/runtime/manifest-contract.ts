@@ -6,6 +6,7 @@ import {
 	runtimeRunSettingsSchema,
 	runtimeServiceNameSchema,
 } from "./run-config";
+import { canonicalSecretRefName } from "./secret-values";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
@@ -60,6 +61,7 @@ const installSchema = z.object({
 
 const runtimeSchema = z.object({
 	enabled: z.boolean(),
+	providerMode: z.enum(["configured", "unmanaged"]).optional(),
 	updateChannel: z.string().min(1).optional(),
 	install: installSchema.optional(),
 	run: runtimeRunSettingsSchema.optional(),
@@ -183,6 +185,7 @@ const runtimeProjectionSchema = z.object({
 	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
 	mcp: z.unknown().optional(),
 	tools: z.unknown().optional(),
+	terminalTooling: z.unknown().optional(),
 });
 
 const runtimeDesiredStateShape = {
@@ -240,6 +243,50 @@ const hostedControlPlaneSchema = z
 	.strict();
 
 const hostedRuntimeRunSettingsSchema = runtimeRunSettingsSchema.strict();
+type HostedRuntimeRunSettings = z.infer<typeof hostedRuntimeRunSettingsSchema>;
+
+function validateUnmanagedRunSettings(
+	location: string,
+	settings: HostedRuntimeRunSettings | undefined,
+	ctx: z.RefinementCtx,
+): void {
+	if (!settings) return;
+	const env = settings.env ?? {};
+	const secretEnv = settings.secretEnv ?? {};
+	for (const envName of ["CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"]) {
+		if (envName in env || envName in secretEnv) {
+			ctx.addIssue({
+				code: "custom",
+				message: `unmanaged ${location} must not include provider env`,
+				path: [location, envName in env ? "env" : "secretEnv", envName],
+			});
+		}
+	}
+	for (const [envName, value] of Object.entries(env)) {
+		if (value === "clawdi-egress-placeholder") {
+			ctx.addIssue({
+				code: "custom",
+				message: `unmanaged ${location} must not include provider placeholder env`,
+				path: [location, "env", envName],
+			});
+		}
+	}
+	for (const [source, values] of [
+		["env", env],
+		["secretEnv", secretEnv],
+	] as const) {
+		for (const [envName, value] of Object.entries(values)) {
+			const secretRef = canonicalSecretRefName(value);
+			if (secretRef?.startsWith("provider.")) {
+				ctx.addIssue({
+					code: "custom",
+					message: `unmanaged ${location} must not include provider secret refs`,
+					path: [location, source, envName],
+				});
+			}
+		}
+	}
+}
 
 const urlOriginSchema = z.string().refine((value) => {
 	try {
@@ -270,20 +317,25 @@ const hostedProviderIdsSchema = z
 		message: "must contain unique provider ids",
 	});
 
-const hostedRuntimeEntrySchema = z
+const hostedRuntimeEntryBaseShape = {
+	enabled: z.boolean(),
+	install: hostedRuntimeInstallSchema,
+	run: hostedRuntimeRunSettingsSchema.optional(),
+	services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
+	paths: z
+		.object({
+			home: z.string().min(1),
+			workspace: z.string().min(1),
+		})
+		.strict(),
+};
+
+const hostedConfiguredRuntimeEntrySchema = z
 	.object({
-		enabled: z.boolean(),
-		install: hostedRuntimeInstallSchema,
-		run: hostedRuntimeRunSettingsSchema.optional(),
-		services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
+		...hostedRuntimeEntryBaseShape,
+		providerMode: z.literal("configured"),
 		provider_ids: hostedProviderIdsSchema,
 		primary_model: hostedPrimaryModelSchema,
-		paths: z
-			.object({
-				home: z.string().min(1),
-				workspace: z.string().min(1),
-			})
-			.strict(),
 	})
 	.strict()
 	.superRefine((runtime, ctx) => {
@@ -298,6 +350,25 @@ const hostedRuntimeEntrySchema = z
 			});
 		}
 	});
+
+const hostedUnmanagedRuntimeEntrySchema = z
+	.object({
+		...hostedRuntimeEntryBaseShape,
+		providerMode: z.literal("unmanaged"),
+		provider_ids: z.array(z.string()).length(0),
+	})
+	.strict()
+	.superRefine((runtime, ctx) => {
+		validateUnmanagedRunSettings("run", runtime.run, ctx);
+		for (const [name, service] of Object.entries(runtime.services)) {
+			validateUnmanagedRunSettings(`services.${name}`, service, ctx);
+		}
+	});
+
+const hostedRuntimeEntrySchema = z.discriminatedUnion("providerMode", [
+	hostedConfiguredRuntimeEntrySchema,
+	hostedUnmanagedRuntimeEntrySchema,
+]);
 
 const hostedProviderCapabilitiesSchema = z
 	.object({
@@ -388,7 +459,51 @@ const hostedProviderSchema = z
 				path: [],
 			});
 		}
+		if (provider.managed_by === "clawdi" && provider.runtimeEnvName !== "OPENAI_API_KEY") {
+			ctx.addIssue({
+				code: "custom",
+				message: "Clawdi-managed runtime providers require OPENAI_API_KEY",
+				path: ["runtimeEnvName"],
+			});
+		}
 	});
+
+const hostedCodexToolSchema = z
+	.object({
+		enabled: z.literal(true),
+		provider_id: z.string().min(1),
+		primary_model: hostedPrimaryModelSchema,
+		provider: hostedProviderSchema,
+	})
+	.strict()
+	.superRefine((tool, ctx) => {
+		if (tool.primary_model.provider_id !== tool.provider_id) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Codex tool primary model provider must match provider_id",
+				path: ["primary_model", "provider_id"],
+			});
+		}
+		if (
+			tool.provider.managed_by !== "clawdi" ||
+			tool.provider.apiMode !== "openai_responses" ||
+			canonicalSecretRefName(tool.provider.apiKeySecretRef) !== "tool.codex.apiKey" ||
+			tool.provider.runtimeEnvName !== "OPENAI_API_KEY" ||
+			tool.provider.status === "error"
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Codex tool requires a healthy Clawdi-managed provider secret reference",
+				path: ["provider"],
+			});
+		}
+	});
+
+const hostedTerminalToolingSchema = z
+	.object({
+		codex: hostedCodexToolSchema,
+	})
+	.strict();
 
 const hostedRuntimeBridgeSchema = z
 	.object({
@@ -465,6 +580,7 @@ export const hostedRuntimeManifestSchema = z
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: z.unknown().optional(),
 		tools: z.unknown().optional(),
+		terminalTooling: hostedTerminalToolingSchema,
 		recovery: z
 			.object({
 				cacheManifest: z.boolean(),
@@ -568,7 +684,23 @@ export const hostedRuntimeManifestResponseSchema = z
 		manifest: hostedRuntimeManifestSchema,
 		secretValues: z.record(z.string().min(1), z.string()).default({}),
 	})
-	.strict();
+	.strict()
+	.superRefine((response, ctx) => {
+		const runtime = response.manifest.runtimes[response.manifest.runtime];
+		if (runtime?.providerMode !== "unmanaged") return;
+		const codexSecretRef = canonicalSecretRefName(
+			response.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
+		);
+		for (const rawSecretRef of Object.keys(response.secretValues)) {
+			const secretRef = canonicalSecretRefName(rawSecretRef);
+			if (!secretRef?.startsWith("provider.") || secretRef === codexSecretRef) continue;
+			ctx.addIssue({
+				code: "custom",
+				message: "unmanaged provider mode must not include provider secret values",
+				path: ["secretValues", rawSecretRef],
+			});
+		}
+	});
 
 const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestSchema.safeExtend({
 	clawdiCli: hostedFixtureCliPayloadPolicySchema,

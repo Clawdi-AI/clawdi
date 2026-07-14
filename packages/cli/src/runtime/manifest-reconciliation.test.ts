@@ -23,6 +23,7 @@ import {
 } from "./manifest";
 import {
 	hostedRuntimeManifestFixtureResponseSchema,
+	hostedRuntimeManifestResponseSchema,
 	hostedRuntimeManifestSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
@@ -40,9 +41,25 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.53";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_WORKSPACE = "/home/clawdi/clawdi";
+const TEST_HOSTED_CODEX_TOOLING = {
+	codex: {
+		enabled: true,
+		provider_id: "codex-managed",
+		primary_model: { provider_id: "codex-managed", model: "gpt-test" },
+		provider: {
+			kind: "openai-compatible",
+			type: "openai",
+			baseUrl: "https://provider.test/v1",
+			apiMode: "openai_responses",
+			managed_by: "clawdi",
+			runtimeEnvName: "OPENAI_API_KEY",
+			apiKeySecretRef: "tool.codex.apiKey",
+		},
+	},
+};
 
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -121,7 +138,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@0.12.10-beta.51",
+			packageSpec: "clawdi@0.12.10-beta.53",
 			registry: "https://registry.npmjs.org",
 		},
 		providers: {
@@ -131,12 +148,14 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 				error: { code: "provider_not_found", message: "fixture provider unavailable" },
 			},
 		},
+		terminalTooling: structuredClone(TEST_HOSTED_CODEX_TOOLING),
 		liveSync: { enabled: false, agents: [] },
 		recovery: { cacheManifest: true, allowOfflineBoot: true },
 		runtimes: {
 			openclaw: {
 				enabled: true,
 				install: { source: "official" },
+				providerMode: "configured",
 				provider_ids: ["default"],
 				primary_model: { provider_id: "default", model: "gpt-test" },
 				paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
@@ -156,6 +175,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 	return {
 		enabled: true,
 		install: { source: "official" },
+		providerMode: "configured",
 		provider_ids: ["default"],
 		primary_model: { provider_id: "default", model: "gpt-test" },
 		...overrides,
@@ -329,6 +349,178 @@ describe("runtime manifest reconciliation invariants", () => {
 			provider_ids: ["default"],
 			primary_model: { provider_id: "default", model: "gpt-test" },
 		});
+	});
+
+	test("accepts explicit unmanaged provider mode without provider state", () => {
+		const runtime = hostedRuntimeFixture({
+			providerMode: "unmanaged",
+			provider_ids: [],
+		});
+		delete runtime.primary_model;
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				providers: {},
+				runtimes: { openclaw: runtime },
+			}),
+		);
+		const normalized = hostedManifestToRuntimeManifest(parsed);
+		expect(normalized.runtimes.openclaw).toMatchObject({
+			providerMode: "unmanaged",
+			provider_ids: [],
+		});
+		expect(normalized.runtimes.openclaw.primary_model).toBeUndefined();
+		expect(normalized.projection?.providers).toEqual({});
+	});
+
+	test.each([
+		[
+			"unmanaged provider ids",
+			hostedRuntimeFixture({ providerMode: "unmanaged", provider_ids: ["default"] }),
+		],
+		[
+			"unmanaged primary model",
+			hostedRuntimeFixture({ providerMode: "unmanaged", provider_ids: [] }),
+		],
+		[
+			"configured empty provider ids",
+			hostedRuntimeFixture({ providerMode: "configured", provider_ids: [] }),
+		],
+		[
+			"missing provider mode",
+			(() => {
+				const runtime = hostedRuntimeFixture();
+				delete runtime.providerMode;
+				return runtime;
+			})(),
+		],
+	])("rejects mixed provider contract: %s", (_name, runtime) => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test.each([
+		["run provider env", { run: { env: { OPENAI_API_KEY: "configured" } } }],
+		["run placeholder", { run: { env: { TOKEN: "clawdi-egress-placeholder" } } }],
+		[
+			"run provider secret ref",
+			{ run: { secretEnv: { OPENAI_API_KEY: "provider.clawdi-managed-v2.apiKey" } } },
+		],
+		[
+			"service provider secret ref",
+			{ services: { helper: { secretEnv: { TOKEN: "secret://provider.runtime.apiKey" } } } },
+		],
+	])("rejects unmanaged runtime %s", (_name, overrides) => {
+		const runtime = hostedRuntimeFixture({
+			providerMode: "unmanaged",
+			provider_ids: [],
+			primary_model: undefined,
+			...overrides,
+		});
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(false);
+	});
+
+	test("allows an explicit user Vault-backed service secret ref in unmanaged mode", () => {
+		const runtime = hostedRuntimeFixture({
+			providerMode: "unmanaged",
+			provider_ids: [],
+			services: { helper: { secretEnv: { TOKEN: "clawdi://default/key" } } },
+		});
+		delete runtime.primary_model;
+
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } }),
+			).success,
+		).toBe(true);
+	});
+
+	test("rejects terminal Codex without its fixed process env contract", () => {
+		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
+		terminalTooling.codex.provider.runtimeEnvName = "CLAWDI_MANAGED_OPENAI_API_KEY";
+		const manifest = hostedManifestFixture({ terminalTooling });
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test("rejects the legacy managed runtime env-name rewrite contract", () => {
+		const provider = {
+			...TEST_HOSTED_CODEX_TOOLING.codex.provider,
+			runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+			apiKeySecretRef: "provider.default.apiKey",
+		};
+		const manifest = hostedManifestFixture({ providers: { default: provider } });
+
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test("rejects terminal Codex with a runtime-provider secret ref", () => {
+		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
+		terminalTooling.codex.provider.apiKeySecretRef = "provider.codex-managed.apiKey";
+		const manifest = hostedManifestFixture({ terminalTooling });
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test.each([
+		"openai_chat",
+		"anthropic_messages",
+		"google_generate_content",
+	])("rejects terminal Codex without the fixed responses API mode (%s)", (apiMode) => {
+		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
+		terminalTooling.codex.provider.apiMode = apiMode;
+		const manifest = hostedManifestFixture({ terminalTooling });
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test("rejects terminal Codex without an API mode", () => {
+		const { apiMode: _apiMode, ...provider } = TEST_HOSTED_CODEX_TOOLING.codex.provider;
+		const terminalTooling = {
+			codex: { ...TEST_HOSTED_CODEX_TOOLING.codex, provider },
+		};
+		const manifest = hostedManifestFixture({ terminalTooling });
+		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+	});
+
+	test.each([
+		"provider.stale.apiKey",
+		"secret://provider.stale.apiKey",
+	])("rejects provider secret value %s in unmanaged mode", (secretRef) => {
+		const runtime = hostedRuntimeFixture({
+			providerMode: "unmanaged",
+			provider_ids: [],
+		});
+		delete runtime.primary_model;
+		const manifest = hostedManifestFixture({
+			providers: {},
+			runtimes: { openclaw: runtime },
+		});
+		expect(
+			hostedRuntimeManifestResponseSchema.safeParse({
+				manifest,
+				secretValues: { [secretRef]: "secret" },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts either Codex tool secret-ref alias in unmanaged mode", () => {
+		const runtime = hostedRuntimeFixture({ providerMode: "unmanaged", provider_ids: [] });
+		delete runtime.primary_model;
+		const manifest = hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } });
+		const codexRef = TEST_HOSTED_CODEX_TOOLING.codex.provider.apiKeySecretRef;
+		expect(codexRef).toBeDefined();
+		for (const secretRef of [codexRef, `secret://${codexRef}`]) {
+			expect(
+				hostedRuntimeManifestResponseSchema.safeParse({
+					manifest,
+					secretValues: { [secretRef]: "secret" },
+				}).success,
+			).toBe(true);
+		}
 	});
 
 	test.each([
@@ -617,6 +809,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					openclaw: {
 						enabled: true,
 						install: { source: "official" },
+						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						paths: { home: paths.userHome, workspace },
@@ -718,19 +911,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "wrong source",
 			clawdiCli: {
 				source: "npm:other",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.53",
 				registry: "https://registry.npmjs.org",
 			},
 		},
 		{
 			name: "missing registry",
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.51" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.53" },
 		},
 		{
 			name: "non-official registry",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.53",
 				registry: "https://registry.example.test",
 			},
 		},
@@ -738,7 +931,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "dead managed flags",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.53",
 				registry: "https://registry.npmjs.org",
 				managedConfig: true,
 				userEditableConfig: false,
@@ -767,7 +960,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"clawdi@0.12.10-beta.51",
+		"clawdi@0.12.10-beta.53",
 		"clawdi@1.2.3-rc-1.2",
 		"clawdi@1.2.3",
 	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
@@ -823,7 +1016,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		"clawdi@01.2.3",
 		"./clawdi.tgz",
 		"/tmp/clawdi.tgz",
-		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.51.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.53.tgz",
 		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
@@ -863,12 +1056,13 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.51",
+					packageSpec: "clawdi@0.12.10-beta.53",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
 					openclaw: {
 						enabled: true,
+						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						install: { source: "official" },
@@ -904,6 +1098,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						apiKeySecretRef: "secret://providers/default/api-key",
 					},
 				},
+				terminalTooling: TEST_HOSTED_CODEX_TOOLING,
 				liveSync: {
 					enabled: true,
 					agents: [{ agentType: "openclaw", environmentId: "env_normalize" }],
@@ -999,7 +1194,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.51",
+					packageSpec: "clawdi@0.12.10-beta.53",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1009,6 +1204,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						error: { code: "provider_not_found", message: "provider is missing" },
 					},
 				},
+				terminalTooling: TEST_HOSTED_CODEX_TOOLING,
 				liveSync: { enabled: false, agents: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
@@ -1083,7 +1279,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.53",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -1122,7 +1318,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.51",
+					packageSpec: "clawdi@0.12.10-beta.53",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1132,12 +1328,14 @@ describe("runtime manifest reconciliation invariants", () => {
 						error: { code: "provider_not_found", message: "provider is missing" },
 					},
 				},
+				terminalTooling: TEST_HOSTED_CODEX_TOOLING,
 				liveSync: { enabled: false, agents: [] },
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 				runtimes: {
 					openclaw: {
 						enabled: true,
 						install: { source: "official" },
+						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
@@ -1146,6 +1344,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					hermes: {
 						enabled: true,
 						install: { source: "official" },
+						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
@@ -1240,6 +1439,8 @@ describe("runtime manifest reconciliation invariants", () => {
 				openclaw: {
 					enabled: true,
 					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["default"],
+					primary_model: { provider_id: "default", model: "gpt-test" },
 					services: {},
 				},
 			},
@@ -1295,6 +1496,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				openclaw: {
 					enabled: true,
 					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["default"],
 					primary_model: { provider_id: "default", model: "gpt-live" },
 					services: {},
 				},
@@ -1322,6 +1524,71 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(projection?.catalog.providers[0]?.models).toEqual([
 			{ id: "gpt-live", api_mode: "openai_chat" },
 		]);
+	});
+
+	test.each([
+		"openclaw",
+		"default",
+	])("does not infer strict hosted provider bindings from the %s provider key", (providerKey) => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["default"],
+					services: {},
+				},
+			},
+			{
+				projection: {
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					providers: {
+						[providerKey]: {
+							type: "custom_openai_compatible",
+							baseUrl: "https://api.example.test/v1",
+							model: "gpt-inferred",
+							models: [{ id: "gpt-inferred" }],
+							apiMode: "openai_chat",
+						},
+					},
+				},
+			},
+		);
+
+		expect(hostedAiProviderCatalog(manifest, "openclaw")).toBeNull();
+	});
+
+	test("does not infer a strict hosted primary model from the first provider", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["default"],
+					services: {},
+				},
+			},
+			{
+				projection: {
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					providers: {
+						default: {
+							type: "custom_openai_compatible",
+							baseUrl: "https://api.example.test/v1",
+							model: "gpt-inferred",
+							models: [{ id: "gpt-inferred" }],
+							apiMode: "openai_chat",
+						},
+					},
+				},
+			},
+		);
+
+		expect(hostedAiProviderCatalog(manifest, "openclaw")).toBeNull();
 	});
 
 	test("preserves hosted provider model alias and cost metadata", () => {
@@ -1389,6 +1656,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				openclaw: {
 					enabled: true,
 					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["default"],
 					services: {},
 				},
 			},
