@@ -40,7 +40,11 @@ describe("stripe checkout logic", () => {
 			plan_slug: "compute_performance",
 			billing_term_months: 12,
 			ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
-			deploy_config: { compute_plan_slug: "compute_performance" },
+			deploy_config: {
+				compute_plan_slug: "compute_performance",
+				runtime: "hermes",
+				ai_provider_auth_kind: "unmanaged",
+			},
 		};
 
 		expect(buildHostedCheckoutFallbackRequest(request)).toEqual({

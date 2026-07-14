@@ -18,13 +18,11 @@ describe("buildHostedDeployRequest", () => {
 		expect("personality" in request).toBe(false);
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_performance",
-			channel: null,
 			runtime: "openclaw",
 			language: "en",
 			timezone: "America/Los_Angeles",
 			ai_provider_auth_kind: "managed",
 			config: {
-				channel: null,
 				runtime: "openclaw",
 				language: "en",
 				timezone: "America/Los_Angeles",
@@ -71,5 +69,30 @@ describe("buildHostedDeployRequest", () => {
 		});
 		expect("provider_ids" in (request.config ?? {})).toBe(false);
 		expect("ai_provider_id" in (request.config ?? {})).toBe(false);
+	});
+
+	test("serializes explicit unmanaged deploys without provider material", () => {
+		const request = buildHostedDeployRequest({
+			computePlanSlug: "compute_free",
+			runtime: "hermes",
+			persona: {
+				language: "",
+				timezone: "",
+			},
+			aiFields: { ai_provider_auth_kind: "unmanaged" },
+		});
+
+		expect(request).toEqual({
+			compute_plan_slug: "compute_free",
+			runtime: "hermes",
+			language: null,
+			timezone: null,
+			ai_provider_auth_kind: "unmanaged",
+			config: {
+				runtime: "hermes",
+				language: null,
+				timezone: null,
+			},
+		});
 	});
 });
