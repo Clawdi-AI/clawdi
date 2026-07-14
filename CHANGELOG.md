@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.52
+
+Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.52
+
+Package: `clawdi@0.12.10-beta.52`
+
+### Changed
+
+- Finalized the immutable Agent v2 CLI bundle with a single applied-state
+  authority and fail-closed hosted runtime convergence.
+
 ## Clawdi CLI v0.12.10-beta.51
 
 Release: https://github.com/Clawdi-AI/clawdi/releases/tag/clawdi-cli-v0.12.10-beta.51
