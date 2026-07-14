@@ -135,6 +135,7 @@ import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hos
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	dedupeProviderIds,
 	firstModelForProvider,
@@ -178,6 +179,7 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
+type AiBindingMode = "unmanaged" | "configured";
 type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type TermChangeConfirmation = {
 	clientSecret: string;
@@ -1218,35 +1220,50 @@ function AiProviderTab({
 	);
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
 	const binding = ci?.ai_provider_bindings?.[runtime];
-	const legacyProviderRef = binding?.provider_id ?? ci?.ai_provider_id ?? null;
+	const currentAuthKind = binding?.auth_kind ?? ci?.ai_provider_auth_kind ?? "managed";
+	const initialMode: AiBindingMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
+	const legacyProviderRef =
+		currentAuthKind === "unmanaged" ? null : (binding?.provider_id ?? ci?.ai_provider_id ?? null);
 	const rawProviderRefs =
-		binding?.provider_ids && binding.provider_ids.length > 0
-			? binding.provider_ids
-			: legacyProviderRef
-				? [legacyProviderRef]
-				: [MANAGED_PROVIDER_ID];
+		currentAuthKind === "unmanaged"
+			? []
+			: binding?.provider_ids && binding.provider_ids.length > 0
+				? binding.provider_ids
+				: legacyProviderRef
+					? [legacyProviderRef]
+					: [MANAGED_PROVIDER_ID];
 	const primaryProviderRef =
-		primaryModelProviderId(binding?.primary_model) ??
-		legacyProviderRef ??
-		rawProviderRefs[0] ??
-		MANAGED_PROVIDER_ID;
+		currentAuthKind === "unmanaged"
+			? MANAGED_PROVIDER_ID
+			: (primaryModelProviderId(binding?.primary_model) ??
+				legacyProviderRef ??
+				rawProviderRefs[0] ??
+				MANAGED_PROVIDER_ID);
 	const initialPrimaryChoice =
-		agentChoiceFromProviderRef(primaryProviderRef, list) ??
-		(isManagedProviderId(primaryProviderRef)
+		currentAuthKind === "unmanaged"
 			? MANAGED_AI_CHOICE
-			: unresolvedProviderChoice(primaryProviderRef));
-	const initialProviderChoices = normalizeSelectedProviderIds(
-		rawProviderRefs
-			.map((providerRef) => agentChoiceFromProviderRef(providerRef, list))
-			.filter((choice): choice is string => Boolean(choice)),
-		initialPrimaryChoice,
-	);
+			: (agentChoiceFromProviderRef(primaryProviderRef, list) ??
+				(isManagedProviderId(primaryProviderRef)
+					? MANAGED_AI_CHOICE
+					: unresolvedProviderChoice(primaryProviderRef)));
+	const initialProviderChoices =
+		currentAuthKind === "unmanaged"
+			? []
+			: normalizeSelectedProviderIds(
+					rawProviderRefs
+						.map((providerRef) => agentChoiceFromProviderRef(providerRef, list))
+						.filter((choice): choice is string => Boolean(choice)),
+					initialPrimaryChoice,
+				);
 	const currentModel =
-		primaryModelValue(binding?.primary_model) ||
-		primaryModelValue(ci?.primary_model) ||
-		firstModelForProvider(initialPrimaryChoice, list);
+		currentAuthKind === "unmanaged"
+			? ""
+			: primaryModelValue(binding?.primary_model) ||
+				primaryModelValue(ci?.primary_model) ||
+				firstModelForProvider(initialPrimaryChoice, list);
 
 	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
+	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
 	const [primaryModel, setPrimaryModel] = useState<string>(
 		currentModel || MANAGED_PRIMARY_MODEL_FALLBACK,
@@ -1259,6 +1276,7 @@ function AiProviderTab({
 	// the new truth. This is React's "adjust state during render" idiom, which
 	// replaces an effect that re-ran on every keystroke.
 	const bindingIdentity = JSON.stringify([
+		initialMode,
 		initialProviderChoices,
 		initialPrimaryChoice,
 		currentModel,
@@ -1266,6 +1284,7 @@ function AiProviderTab({
 	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
 	if (bindingIdentity !== syncedIdentity) {
 		setSyncedIdentity(bindingIdentity);
+		setBindingMode(initialMode);
 		setSelectedProviders(initialProviderChoices);
 		setPrimaryProviderChoice(initialPrimaryChoice);
 		setPrimaryModel(currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
@@ -1276,11 +1295,14 @@ function AiProviderTab({
 	);
 	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
 	const dirty =
-		selectedIdentity !== initialSelectedIdentity ||
-		primaryProviderChoice !== initialPrimaryChoice ||
-		primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
+		bindingMode !== initialMode ||
+		(bindingMode === "configured" &&
+			(selectedIdentity !== initialSelectedIdentity ||
+				primaryProviderChoice !== initialPrimaryChoice ||
+				primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK)));
 
 	function setPrimaryProvider(choice: string) {
+		setBindingMode("configured");
 		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list);
 		const nextCatalog = modelIdsForProvider(choice, list);
 		const fallback = firstModelForProvider(choice, list);
@@ -1301,6 +1323,7 @@ function AiProviderTab({
 	}
 
 	function toggleProvider(choice: string) {
+		setBindingMode("configured");
 		const selected = selectedProviders.includes(choice);
 		let next =
 			choice === MANAGED_AI_CHOICE && selectedProviders.some(isUnresolvedProviderChoice)
@@ -1321,6 +1344,19 @@ function AiProviderTab({
 	}
 
 	function apply() {
+		if (bindingMode === "unmanaged") {
+			const body: RebindAgentAiProviderRequest = { ai_provider_auth_kind: "unmanaged" };
+			setProvider.mutate(
+				{ id: deployment.id, agentType: runtime, body },
+				{
+					onSuccess: () =>
+						toast.success("Provider updated", {
+							description: "This runtime now expects provider setup inside the agent.",
+						}),
+				},
+			);
+			return;
+		}
 		const selectedChoices = normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice);
 		const providerRefs = selectedChoices
 			.map((choice) => agentProviderRefFromChoice(choice, customProviders))
@@ -1388,14 +1424,29 @@ function AiProviderTab({
 			<div className="flex flex-col gap-2">
 				<button
 					type="button"
+					onClick={() => setBindingMode("unmanaged")}
+					className={selectableCard(bindingMode === "unmanaged")}
+				>
+					<div className="flex items-center justify-between gap-2">
+						<span className="text-sm font-medium">{authCardLabel("unmanaged")}</span>
+						{bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
+					</div>
+					<p className="mt-0.5 text-sm text-muted-foreground">
+						Remove the hosted provider binding and configure model access inside the runtime.
+					</p>
+				</button>
+				<button
+					type="button"
 					onClick={() => toggleProvider(MANAGED_AI_CHOICE)}
-					className={selectableCard(selectedProviders.includes(MANAGED_AI_CHOICE))}
+					className={selectableCard(
+						bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE),
+					)}
 				>
 					<div className="flex items-center justify-between gap-2">
 						<span className="text-sm font-medium">Managed by Clawdi</span>
-						{primaryProviderChoice === MANAGED_AI_CHOICE ? (
+						{bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
 							<Badge variant="secondary">Primary</Badge>
-						) : selectedProviders.includes(MANAGED_AI_CHOICE) ? (
+						) : bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE) ? (
 							<Badge variant="outline">Bound</Badge>
 						) : null}
 					</div>
@@ -1412,20 +1463,23 @@ function AiProviderTab({
 						title="Couldn't load providers"
 					/>
 				) : null}
-				{selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
-					<button key={choice} type="button" disabled className={selectableCard(true)}>
-						<div className="flex items-center justify-between gap-2">
-							<span className="text-sm font-medium">Provider unavailable</span>
-							<Badge variant="secondary">In use</Badge>
-						</div>
-						<p className="mt-0.5 text-sm text-muted-foreground">
-							This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could not
-							be loaded. Choose Managed by Clawdi to replace it.
-						</p>
-					</button>
-				))}
+				{bindingMode === "configured"
+					? selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
+							<button key={choice} type="button" disabled className={selectableCard(true)}>
+								<div className="flex items-center justify-between gap-2">
+									<span className="text-sm font-medium">Provider unavailable</span>
+									<Badge variant="secondary">In use</Badge>
+								</div>
+								<p className="mt-0.5 text-sm text-muted-foreground">
+									This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could
+									not be loaded. Choose Managed by Clawdi to replace it.
+								</p>
+							</button>
+						))
+					: null}
 				{customProviders.map((p) => {
-					const selected = selectedProviders.includes(p.provider_id);
+					const selected =
+						bindingMode === "configured" && selectedProviders.includes(p.provider_id);
 					return (
 						<button
 							key={p.provider_id}
@@ -1443,7 +1497,7 @@ function AiProviderTab({
 									{providerCatalogDescription(p)}
 								</span>
 							</span>
-							{primaryProviderChoice === p.provider_id ? (
+							{bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
 								<Badge variant="secondary">Primary</Badge>
 							) : selected ? (
 								<Badge variant="outline">Bound</Badge>
@@ -1463,18 +1517,25 @@ function AiProviderTab({
 				</Button>
 			</div>
 
-			<AgentPrimaryModelPicker
-				providers={list}
-				customProviders={customProviders}
-				selectedProviderChoices={normalizeSelectedProviderIds(
-					selectedProviders,
-					primaryProviderChoice,
-				)}
-				primaryProviderChoice={primaryProviderChoice}
-				primaryModel={primaryModel}
-				onPrimaryProviderChange={setPrimaryProvider}
-				onPrimaryModelChange={setPrimaryModel}
-			/>
+			{bindingMode === "unmanaged" ? (
+				<p className="text-sm text-muted-foreground">
+					This runtime now carries no hosted provider binding. Configure models inside the agent
+					after it starts.
+				</p>
+			) : (
+				<AgentPrimaryModelPicker
+					providers={list}
+					customProviders={customProviders}
+					selectedProviderChoices={normalizeSelectedProviderIds(
+						selectedProviders,
+						primaryProviderChoice,
+					)}
+					primaryProviderChoice={primaryProviderChoice}
+					primaryModel={primaryModel}
+					onPrimaryProviderChange={setPrimaryProvider}
+					onPrimaryModelChange={setPrimaryModel}
+				/>
+			)}
 
 			<div className="flex items-center gap-2">
 				<Button
@@ -1482,9 +1543,11 @@ function AiProviderTab({
 					disabled={
 						!dirty ||
 						setProvider.isPending ||
-						(providers.isLoading &&
+						(bindingMode === "configured" &&
+							providers.isLoading &&
 							selectedProviders.some((choice) => choice !== MANAGED_AI_CHOICE)) ||
-						(!!providers.error &&
+						(bindingMode === "configured" &&
+							!!providers.error &&
 							selectedProviders.some(
 								(choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice),
 							))

@@ -9,6 +9,7 @@ import type {
 	RebindAgentAiProviderRequest,
 	SetAgentEnabledRequest,
 } from "@/hosted/billing/contracts";
+import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
 import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
 import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
@@ -104,8 +105,8 @@ export function useSetAgentLanguageTimezone() {
 		}) => {
 			const body: SetAgentEnabledRequest = {
 				enabled: true,
-				language: vars.language || null,
-				timezone: vars.timezone || null,
+				language: normalizeHostedLanguage(vars.language),
+				timezone: vars.timezone.trim() || null,
 			};
 			return client.setAgentLanguageTimezone(vars.id, vars.agentType, body);
 		},

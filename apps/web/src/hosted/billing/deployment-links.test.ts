@@ -22,7 +22,6 @@ function deployment(envs: Record<string, string> | null): HostedDeployment {
 					whatsapp_mux_enabled: false,
 					imessage_mux_enabled: false,
 					kobb_available: false,
-					channel: null,
 					primary_model: null,
 					ai_provider_id: null,
 					ai_provider_auth_kind: "managed",

@@ -27,10 +27,21 @@ export const LANGUAGE_OPTIONS = [
 	{ code: "pt", label: "Português" },
 ] as const;
 
+export type HostedLanguage = (typeof LANGUAGE_OPTIONS)[number]["code"];
+
+const HOSTED_LANGUAGE_CODES = new Set<HostedLanguage>(
+	LANGUAGE_OPTIONS.map((option) => option.code),
+);
+
 export const LANGUAGE_SELECT_ITEMS = [
 	{ value: "default", label: "Default" },
 	...LANGUAGE_OPTIONS.map((option) => ({ value: option.code, label: option.label })),
 ] as const;
+
+export function normalizeHostedLanguage(value: string | null | undefined): HostedLanguage | null {
+	if (!value) return null;
+	return HOSTED_LANGUAGE_CODES.has(value as HostedLanguage) ? (value as HostedLanguage) : null;
+}
 
 // Static IANA timezone list keeps SSR and client markup deterministic.
 const TIMEZONE_OPTIONS = `

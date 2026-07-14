@@ -2,7 +2,16 @@
 
 import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { useLocation, useRouter } from "@tanstack/react-router";
-import { CalendarClock, Cpu, Plus, RefreshCw, Rocket, Sparkles, Zap } from "lucide-react";
+import {
+	CalendarClock,
+	Cpu,
+	Plus,
+	RefreshCw,
+	Rocket,
+	Settings2,
+	Sparkles,
+	Zap,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
@@ -45,7 +54,10 @@ import type {
 	Plan,
 } from "@/hosted/billing/contracts";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
-import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
+import {
+	buildHostedDeployRequest,
+	type DeployAiFields,
+} from "@/hosted/billing/deploy/deploy-request";
 import {
 	browserTimezone,
 	LANGUAGE_OPTIONS,
@@ -84,6 +96,7 @@ import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/r
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	dedupeProviderIds,
 	firstModelForProvider,
@@ -109,6 +122,7 @@ import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
+type AiAccessMode = "unmanaged" | "configured";
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 type NativeDeployCheckout = {
 	clientSecret: string;
@@ -311,7 +325,8 @@ export function DeployWizard() {
 		null,
 	);
 
-	const [runtime, setRuntime] = useState<HostedRuntime>("hermes");
+	const [runtime, setRuntime] = useState<HostedRuntime | null>(null);
+	const [aiAccessMode, setAiAccessMode] = useState<AiAccessMode>("unmanaged");
 	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
 	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
@@ -359,13 +374,14 @@ export function DeployWizard() {
 			? !!perfPlan && !!perfOfferSelection
 			: !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const canSubmit = planReady && !submitting;
+	const canSubmit = planReady && runtime !== null && !submitting;
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
 			providerId,
 			dataUpdatedAt: aiProviders.dataUpdatedAt,
 		};
+		setAiAccessMode("configured");
 		setAiProviderChoices([providerId]);
 		setPrimaryProvider(providerId);
 	}
@@ -472,6 +488,7 @@ export function DeployWizard() {
 	}
 
 	function setPrimaryProvider(choice: string) {
+		setAiAccessMode("configured");
 		const providers = aiProviders.data?.providers ?? [];
 		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers);
 		const nextCatalog = modelIdsForProvider(choice, providers);
@@ -493,6 +510,7 @@ export function DeployWizard() {
 	}
 
 	function toggleAiProviderChoice(choice: string) {
+		setAiAccessMode("configured");
 		const selected = aiProviderChoices.includes(choice);
 		let next = selected
 			? aiProviderChoices.filter((item) => item !== choice)
@@ -509,7 +527,10 @@ export function DeployWizard() {
 		}
 	}
 
-	function aiDeployFields(): Partial<DeployRequest> | null {
+	function aiDeployFields(): DeployAiFields | null {
+		if (aiAccessMode === "unmanaged") {
+			return { ai_provider_auth_kind: "unmanaged" };
+		}
 		const selectedChoices = normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice);
 		const providerRefs = selectedChoices
 			.map((choice) => providerRefFromChoice(choice, providerList))
@@ -536,7 +557,7 @@ export function DeployWizard() {
 			.filter((choice) => choice !== MANAGED_AI_CHOICE)
 			.map((choice) => providerList.find((provider) => provider.provider_id === choice))
 			.filter((provider): provider is AiProvider => Boolean(provider));
-		const body: Partial<DeployRequest> = {
+		const body: DeployAiFields = {
 			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
 			ai_provider_auth_kind: primaryKind,
 			provider_ids: providerRefs,
@@ -561,7 +582,10 @@ export function DeployWizard() {
 		return body;
 	}
 
-	function buildDeployRequest(aiFields: Partial<DeployRequest>): DeployRequest {
+	function buildDeployRequest(aiFields: DeployAiFields): DeployRequest {
+		if (!runtime) {
+			throw new Error("Choose a runtime before deploying.");
+		}
 		const computePlanSlug: ComputePlanSlug =
 			compute === "performance" ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_FREE_SLUG;
 		return buildHostedDeployRequest({
@@ -632,6 +656,12 @@ export function DeployWizard() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
+			if (!runtime) {
+				toast.error("Choose a runtime", {
+					description: "Select OpenClaw or Hermes before deploying.",
+				});
+				return;
+			}
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			const deployConfig = buildDeployRequest(aiFields);
@@ -697,14 +727,17 @@ export function DeployWizard() {
 	}
 
 	const deployLabel = compute === "performance" ? "Continue to checkout" : "Deploy agent";
-	const selectedProviderCount = normalizeSelectedProviderIds(
-		aiProviderChoices,
-		primaryProviderChoice,
-	).length;
-	const aiSummary = `${providerChoiceLabel(primaryProviderChoice, providerList)}${
-		selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
-	}`;
-	const runtimeSummary = runtimeDisplayName(runtime);
+	const selectedProviderCount =
+		aiAccessMode === "configured"
+			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
+			: 0;
+	const aiSummary =
+		aiAccessMode === "unmanaged"
+			? authCardLabel("unmanaged")
+			: `${providerChoiceLabel(primaryProviderChoice, providerList)}${
+					selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
+				}`;
+	const runtimeSummary = runtime ? runtimeDisplayName(runtime) : null;
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Free"} compute`,
 		aiSummary,
@@ -773,6 +806,11 @@ export function DeployWizard() {
 							description={runtimeBlurb("openclaw")}
 						/>
 					</div>
+					{runtime ? null : (
+						<p className="text-xs text-muted-foreground">
+							Choose a runtime before you deploy. The hosted API no longer applies a default.
+						</p>
+					)}
 				</SettingsSection>
 
 				<SettingsSection
@@ -781,7 +819,25 @@ export function DeployWizard() {
 				>
 					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={aiProviderChoices.includes(MANAGED_AI_CHOICE)}
+							selected={aiAccessMode === "unmanaged"}
+							onClick={() => setAiAccessMode("unmanaged")}
+							icon={
+								<IconChip tint="bg-muted text-muted-foreground">
+									<Settings2 />
+								</IconChip>
+							}
+							title={authCardLabel("unmanaged")}
+							description="Deploy first, then configure model access inside the runtime."
+							badge={
+								<Badge variant={aiAccessMode === "unmanaged" ? "secondary" : "outline"}>
+									{aiAccessMode === "unmanaged" ? "Default" : "Optional"}
+								</Badge>
+							}
+						/>
+						<EntityChoiceCard
+							selected={
+								aiAccessMode === "configured" && aiProviderChoices.includes(MANAGED_AI_CHOICE)
+							}
 							onClick={() => toggleAiProviderChoice(MANAGED_AI_CHOICE)}
 							icon={
 								<IconChip tint="bg-primary/10 text-primary">
@@ -792,7 +848,9 @@ export function DeployWizard() {
 							description="AI Credits from your wallet."
 							badge={
 								<Badge variant="secondary">
-									{primaryProviderChoice === MANAGED_AI_CHOICE ? "Primary" : "Managed"}
+									{aiAccessMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE
+										? "Primary"
+										: "Managed"}
 								</Badge>
 							}
 						/>
@@ -811,7 +869,9 @@ export function DeployWizard() {
 						{providerList.map((provider) => (
 							<EntityChoiceCard
 								key={provider.provider_id}
-								selected={aiProviderChoices.includes(provider.provider_id)}
+								selected={
+									aiAccessMode === "configured" && aiProviderChoices.includes(provider.provider_id)
+								}
 								onClick={() => toggleAiProviderChoice(provider.provider_id)}
 								icon={<ProviderTypeChip type={provider.type} />}
 								title={provider.label ?? provider.provider_id}
@@ -831,18 +891,25 @@ export function DeployWizard() {
 							onClick={() => setAddProviderOpen(true)}
 						/>
 					</div>
-					<PrimaryModelPicker
-						providers={aiProviders.data?.providers ?? []}
-						customProviders={providerList}
-						selectedProviderChoices={normalizeSelectedProviderIds(
-							aiProviderChoices,
-							primaryProviderChoice,
-						)}
-						primaryProviderChoice={primaryProviderChoice}
-						primaryModel={primaryModel}
-						onPrimaryProviderChange={setPrimaryProvider}
-						onPrimaryModelChange={setPrimaryModel}
-					/>
+					{aiAccessMode === "unmanaged" ? (
+						<p className="mt-4 text-sm text-muted-foreground">
+							This deploy sends no hosted provider binding. Configure models inside the agent after
+							provisioning.
+						</p>
+					) : (
+						<PrimaryModelPicker
+							providers={aiProviders.data?.providers ?? []}
+							customProviders={providerList}
+							selectedProviderChoices={normalizeSelectedProviderIds(
+								aiProviderChoices,
+								primaryProviderChoice,
+							)}
+							primaryProviderChoice={primaryProviderChoice}
+							primaryModel={primaryModel}
+							onPrimaryProviderChange={setPrimaryProvider}
+							onPrimaryModelChange={setPrimaryModel}
+						/>
+					)}
 				</SettingsSection>
 
 				<SettingsSection
