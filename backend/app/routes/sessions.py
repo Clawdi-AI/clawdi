@@ -36,7 +36,7 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import HostedRuntimeDesiredState
+from app.schemas.runtime import validate_hosted_runtime_desired_state
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
@@ -1004,7 +1004,7 @@ def _runtime_observed_desired(
     *,
     source_revision: str | None = None,
 ) -> RuntimeObservedDesiredResponse:
-    provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
+    _, provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     return RuntimeObservedDesiredResponse(
         deployment_id=state.deployment_id,
         instance_id=state.instance_id,
@@ -1092,16 +1092,19 @@ def _runtime_observed_health(
         elif diagnostics.active_cli_version != desired_cli_version:
             reasons.append("active_cli_version_mismatch")
 
-        desired_provider_ids, _ = _runtime_desired_provider_binding(state.runtimes)
-        applied_provider_ids = (
-            diagnostics.applied.applied_provider_ids if diagnostics.applied else []
-        )
-        missing_provider_ids = sorted(set(desired_provider_ids) - set(applied_provider_ids))
-        extra_provider_ids = sorted(set(applied_provider_ids) - set(desired_provider_ids))
-        if missing_provider_ids:
-            reasons.append("applied_provider_ids_missing_desired")
-        if extra_provider_ids:
-            reasons.append("applied_provider_ids_extra")
+        provider_mode, desired_provider_ids, _ = _runtime_desired_provider_binding(state.runtimes)
+        if provider_mode is None:
+            reasons.append("desired_provider_contract_invalid")
+        else:
+            applied_provider_ids = (
+                diagnostics.applied.applied_provider_ids if diagnostics.applied else []
+            )
+            missing_provider_ids = sorted(set(desired_provider_ids) - set(applied_provider_ids))
+            extra_provider_ids = sorted(set(applied_provider_ids) - set(desired_provider_ids))
+            if missing_provider_ids:
+                reasons.append("applied_provider_ids_missing_desired")
+            if extra_provider_ids:
+                reasons.append("applied_provider_ids_extra")
 
     supervisor_status = (
         diagnostics.supervisor.status if diagnostics and diagnostics.supervisor else None
@@ -1150,7 +1153,7 @@ def _runtime_observed_provider_health(
     if state is None or diagnostics is None:
         return []
 
-    provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
+    _, provider_ids, primary_provider_id = _runtime_desired_provider_binding(state.runtimes)
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
     observed_providers = diagnostics.providers or {}
     for provider_key in sorted(set(provider_ids) | set(observed_providers)):
@@ -1190,17 +1193,19 @@ def _clawdi_cli_version(package_spec: str) -> str | None:
 
 def _runtime_desired_provider_binding(
     runtimes: dict | None,
-) -> tuple[list[str], str | None]:
+) -> tuple[str | None, list[str], str | None]:
     if not isinstance(runtimes, dict) or len(runtimes) != 1:
-        return [], None
+        return None, [], None
     runtime_name, raw_runtime = next(iter(runtimes.items()))
     if runtime_name not in {"hermes", "openclaw"}:
-        return [], None
+        return None, [], None
     try:
-        runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
+        runtime = validate_hosted_runtime_desired_state(raw_runtime)
     except ValidationError:
-        return [], None
-    return runtime.provider_ids, runtime.primary_model.provider_id
+        return None, [], None
+    primary_model = getattr(runtime, "primary_model", None)
+    primary_provider_id = primary_model.provider_id if primary_model is not None else None
+    return runtime.providerMode, runtime.provider_ids, primary_provider_id
 
 
 def _runtime_observed_provider_status(

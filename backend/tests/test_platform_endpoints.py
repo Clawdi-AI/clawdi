@@ -25,7 +25,7 @@ from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {
     "user": "clawdi",
@@ -36,6 +36,16 @@ _TEST_SYSTEM = {
 _TEST_RUNTIME_PATHS = {
     "home": "/home/clawdi",
     "workspace": "/home/clawdi/clawdi",
+}
+_TEST_TOOLS = {
+    "codex": {
+        "enabled": True,
+        "provider_id": "clawdi-managed-v2",
+        "primary_model": {
+            "provider_id": "clawdi-managed-v2",
+            "model": "gpt-5.5",
+        },
+    }
 }
 
 
@@ -93,6 +103,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
         "runtimes": {
             "openclaw": {
                 "enabled": True,
+                "providerMode": "configured",
                 "provider_ids": ["clawdi-managed-v2"],
                 "primary_model": {
                     "provider_id": "clawdi-managed-v2",
@@ -114,6 +125,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
             ],
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        "tools": _TEST_TOOLS,
     }
 
 
@@ -291,6 +303,9 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     )
     assert runtime.status_code == 200, runtime.text
     assert runtime.json()["environment_id"] == str(agent_id)
+    runtime_state = await db_session.get(HostedRuntimeState, agent_id)
+    assert runtime_state is not None
+    assert runtime_state.tools == _TEST_TOOLS
 
     minted = await platform_client.post(
         "/v1/platform/auth/keys",
@@ -370,6 +385,102 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         assert event.details["workload_sub"] is None
         assert event.details["credential_id"] is None
         assert event.details["token_jti"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tools",
+    [
+        None,
+        {},
+        {"codex": {"enabled": True}},
+        {
+            "codex": {
+                "enabled": True,
+                "provider_id": "managed",
+                "primary_model": {"provider_id": "other", "model": "gpt-5.5"},
+            }
+        },
+    ],
+)
+async def test_platform_runtime_state_requires_typed_codex_tool(
+    platform_client,
+    seed_user,
+    tools,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key=f"typed-codex-agent-{uuid.uuid4()}",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    if tools is None:
+        body.pop("tools")
+    else:
+        body["tools"] = tools
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(f"typed-codex-runtime-{uuid.uuid4()}"),
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_name", ["openclaw", "hermes"])
+async def test_platform_runtime_only_state_is_explicitly_unmanaged(
+    platform_client,
+    db_session,
+    seed_user,
+    runtime_name,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key=f"runtime-only-agent-{runtime_name}-{uuid.uuid4()}",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    configured_runtime = next(iter(body["runtimes"].values()))
+    runtime = {key: value for key, value in configured_runtime.items() if key != "primary_model"}
+    runtime.update({"providerMode": "unmanaged", "provider_ids": []})
+    body["runtimes"] = {runtime_name: runtime}
+    if runtime_name == "hermes":
+        body["bridge"] = {
+            "surfaces": [
+                {
+                    "name": "hermes",
+                    "kind": "control-ui",
+                    "listenPort": 28793,
+                    "upstreamHost": "127.0.0.1",
+                    "upstreamPort": 9119,
+                }
+            ]
+        }
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(f"runtime-only-state-{runtime_name}-{uuid.uuid4()}"),
+        json=body,
+    )
+
+    assert response.status_code == 200, response.text
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    persisted_runtime = state.runtimes[runtime_name]
+    assert persisted_runtime["providerMode"] == "unmanaged"
+    assert persisted_runtime["provider_ids"] == []
+    assert "primary_model" not in persisted_runtime
+    assert state.tools == _TEST_TOOLS
 
 
 @pytest.mark.asyncio

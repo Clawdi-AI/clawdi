@@ -23,6 +23,11 @@ The runtime image supplies stable operating-system capabilities. The Clawdi CLI
 owns runtime-local module paths, generated configuration, permissions,
 privilege dropping, and lifecycle behavior.
 
+Provider ownership modes, terminal Codex provider selection, secret references,
+egress profiles, and generated Codex configuration or command shims are desired-state
+business logic. They are materialized by Cloud and reconciled by the CLI; none
+of them may be baked into the stable runtime image or its entrypoints.
+
 Hosted mode is an explicit CLI contract selected by
 `CLAWDI_RUNTIME_MODE=hosted`; it is not inferred from image files. The hosted
 command policy is built into the CLI. Deployment must provide
@@ -61,7 +66,7 @@ For transparent egress:
 ## Cloud Hosted Authority
 
 The Hosted rollout writer selects an exact CLI package spec. Cloud validates
-and persists it, enforces the Cloud-owned `0.12.10-beta.51` minimum, fixes the
+and persists it, enforces the Cloud-owned `0.12.10-beta.53` minimum, fixes the
 package source and official registry, and owns the public manifest projection.
 Remote Hosted state cannot provide a floating package, installer URL, installer
 args, source, or registry. Bootstrap tgz input is fixture-only, while generic

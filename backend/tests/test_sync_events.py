@@ -26,6 +26,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
 
@@ -252,6 +253,31 @@ async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
         assert queue.empty()
     finally:
         sync_events.unsubscribe(user_id, queue)
+
+
+def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
+    state = HostedRuntimeState(
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "unmanaged",
+                "provider_ids": [],
+                "install": {"source": "official"},
+                "services": {},
+                "paths": {"home": "/home/clawdi", "workspace": "/home/clawdi/clawdi"},
+            }
+        },
+        tools={
+            "codex": {
+                "enabled": True,
+                "provider_id": "codex-managed",
+                "primary_model": {"provider_id": "codex-managed", "model": "gpt-5.5"},
+            }
+        },
+    )
+
+    assert sync_events._runtime_state_may_use_provider(state, "codex-managed") is True
+    assert sync_events._runtime_state_may_use_provider(state, "unrelated") is False
 
 
 @pytest.mark.asyncio

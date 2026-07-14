@@ -31,6 +31,14 @@ payloads, and active Telegram/Discord links with set-based queries inside one
 `REPEATABLE READ READ ONLY` snapshot. The endpoint and runtime health summary
 use the same pure materializer. Summary rendering does not decrypt secrets.
 
+The runtime provider plane has an explicit `configured | unmanaged`
+discriminator. Runtime `providers` remains an exact projection of runtime
+`provider_ids`; unmanaged renders both as empty and omits the runtime primary
+model. Hosted Codex is a distinct typed `terminalTooling.codex` projection. Its
+provider material is resolved from the same snapshot and deduplicated with a
+shared configured runtime provider, but it is excluded from runtime provider
+identity, observations, and health. Terminal Codex does not imply MCP.
+
 `sourceRevision` hashes the effective public descriptor plus secret-reference
 keyed encrypted-source identities. Because the v2 media-type renderer is
 immutable, its strong HTTP ETag is derived as `"sha256:<sourceRevision>"`.

@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.models.agent_project_binding import AgentProjectBinding  # noqa: E402
-from app.models.ai_provider import AiProvider  # noqa: E402
+from app.models.ai_provider import AiProvider, AiProviderAuthPayload  # noqa: E402
 from app.models.channel import (  # noqa: E402
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -72,7 +72,8 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+DEV_V2_CODEX_PROVIDER_ID = "clawdi-managed-v2"
+DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -253,6 +254,7 @@ async def _create_hosted_runtime_graph(
                 runtimes={
                     runtime: {
                         "enabled": True,
+                        "providerMode": "configured",
                         "provider_ids": [DEV_V2_PROVIDER_ID],
                         "primary_model": {
                             "provider_id": DEV_V2_PROVIDER_ID,
@@ -300,7 +302,18 @@ async def _create_hosted_runtime_graph(
                 recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 egress_profiles={},
                 mcp={"enabled": True},
-                tools={"channels": True, "aiProviders": True},
+                tools={
+                    "codex": {
+                        "enabled": True,
+                        "provider_id": DEV_V2_CODEX_PROVIDER_ID,
+                        "primary_model": {
+                            "provider_id": DEV_V2_CODEX_PROVIDER_ID,
+                            "model": "gpt-5.5",
+                        },
+                    },
+                    "channels": True,
+                    "aiProviders": True,
+                },
             ),
         ]
     )
@@ -422,6 +435,35 @@ def _seed_ai_provider(user: User) -> AiProvider:
         managed_by="user",
         runtime_env_name="OPENROUTER_API_KEY",
     )
+
+
+def _seed_codex_provider_graph(
+    user: User,
+) -> tuple[AiProvider, AiProviderAuthPayload]:
+    ciphertext, nonce = encrypt("dev-hosted-codex-platform-credential")
+    provider = AiProvider(
+        owner_user_id=user.id,
+        provider_id=DEV_V2_CODEX_PROVIDER_ID,
+        type="custom_openai_compatible",
+        label="Clawdi Managed Codex",
+        base_url="https://ai-gateway.invalid/v1",
+        api_mode="openai_chat",
+        models=[{"id": "gpt-5.5"}],
+        auth_type="api_key",
+        auth_metadata={"source": "managed"},
+        managed_by="clawdi",
+        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+    )
+    payload = AiProviderAuthPayload(
+        owner_user_id=user.id,
+        provider_id=DEV_V2_CODEX_PROVIDER_ID,
+        auth_profile="default",
+        kind="api_key",
+        source="managed",
+        encrypted_payload=ciphertext,
+        nonce=nonce,
+    )
+    return provider, payload
 
 
 def _seed_channel_graph(
@@ -644,7 +686,8 @@ async def seed(clerk_id: str, agent_type: str) -> None:
         except (RuntimeError, ValueError) as exc:
             print(f"skipped vault items: {exc}", file=sys.stderr)
 
-        db.add(_seed_ai_provider(user))
+        codex_provider, codex_payload = _seed_codex_provider_graph(user)
+        db.add_all([_seed_ai_provider(user), codex_provider, codex_payload])
         channel_account, channel_link, channel_binding, channel_message = _seed_channel_graph(
             user=user,
             agent=hosted_openclaw_env,

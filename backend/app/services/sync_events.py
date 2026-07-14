@@ -77,7 +77,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.schemas.runtime import HostedRuntimeDesiredState
+from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desired_state
 
 log = logging.getLogger(__name__)
 
@@ -332,10 +332,16 @@ def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str)
     if runtime_name not in {"hermes", "openclaw"}:
         return False
     try:
-        runtime = HostedRuntimeDesiredState.model_validate(raw_runtime)
+        runtime = validate_hosted_runtime_desired_state(raw_runtime)
     except ValidationError:
         return False
-    return provider_id in runtime.provider_ids
+    if provider_id in runtime.provider_ids:
+        return True
+    try:
+        tools = HostedRuntimeTools.model_validate(state.tools)
+    except ValidationError:
+        return False
+    return provider_id == tools.codex.provider_id
 
 
 async def bump_skills_revision(
