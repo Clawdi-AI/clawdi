@@ -685,7 +685,7 @@ The exact-only Hosted package, fixture-only bootstrap tgz, strict
 provider/install fields, and preserved generic desired-state behavior described
 above are the CLI boundary. The Hosted rollout writer selects
 `cli_package_spec`; Cloud validates and persists it, requires the exact version
-to be at least the Cloud-owned `0.12.10-beta.51` protocol floor, and owns the
+to be at least the Cloud-owned `0.12.10-beta.52` protocol floor, and owns the
 public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
 `clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
 revalidated on every read and fails closed with `409` when invalid or below the

@@ -472,7 +472,7 @@ def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_s
                 ),
                 {
                     "environment_id": str(environment_id),
-                    "cli_package_spec": "clawdi@0.12.10-beta.51",
+                    "cli_package_spec": "clawdi@0.12.10-beta.52",
                     "locale": '{"language":"en","timezone":"UTC"}',
                     "system": '{"home":"/home/clawdi"}',
                     "live_sync": '{"enabled":false,"agents":[]}',
@@ -539,7 +539,7 @@ def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_s
             assert columns_after == columns_before
             assert state_after == state_before
             assert state_after.environment_id == environment_id
-            assert state_after.cli_package_spec == "clawdi@0.12.10-beta.51"
+            assert state_after.cli_package_spec == "clawdi@0.12.10-beta.52"
             assert state_after.locale == {"language": "en", "timezone": "UTC"}
             assert state_after.system == {"home": "/home/clawdi"}
             assert state_after.live_sync == {"enabled": False, "agents": []}

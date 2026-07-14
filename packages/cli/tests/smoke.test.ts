@@ -293,11 +293,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
 				status: "installed",
 				source: "npm",
-				packageSpec: "clawdi@0.12.10-beta.51",
+				packageSpec: "clawdi@0.12.10-beta.52",
 				registry: "https://registry.npmjs.org",
 				activePath: managedCli,
 				activeTarget: managedCliTarget,
-				version: "0.12.10-beta.51",
+				version: "0.12.10-beta.52",
 			}),
 		);
 		writeFileSync(
@@ -305,7 +305,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: "0.12.10-beta.51",
+					minimumCliVersion: "0.12.10-beta.52",
 					runtime: "openclaw",
 					deploymentId: "dep_strict_smoke",
 					environmentId: "env_strict_smoke",
@@ -322,7 +322,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@0.12.10-beta.51",
+						packageSpec: "clawdi@0.12.10-beta.52",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {

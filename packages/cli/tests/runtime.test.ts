@@ -189,7 +189,7 @@ const TEST_HOSTED_LOCALE = {
 	language: "en" as const,
 	timezone: "UTC",
 };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.51";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.52";
 
 function hostedRequiredState() {
 	return {

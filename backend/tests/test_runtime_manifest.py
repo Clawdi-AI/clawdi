@@ -126,7 +126,7 @@ TEST_HERMES_BRIDGE = {
     ]
 }
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "tools")
-TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.52"
 
 
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
@@ -348,7 +348,7 @@ async def _runtime_state_audit_count(db: AsyncSession, environment_id) -> int:
 @pytest.mark.parametrize(
     ("cli_package_spec", "accepted"),
     [
-        ("clawdi@0.12.10-beta.51", True),
+        ("clawdi@0.12.10-beta.52", True),
         ("clawdi@1.2.3-rc-1.2", True),
         ("clawdi@1.2.3-beta..1", False),
         ("clawdi@1.2.3-beta.", False),
@@ -554,7 +554,6 @@ async def test_admin_runtime_state_rejects_invalid_or_below_floor_cli_package_sp
 @pytest.mark.parametrize(
     "cli_package_spec",
     [
-        "clawdi@0.12.10-beta.51",
         "clawdi@0.12.10-beta.52",
         "clawdi@0.12.10-rc.1",
         "clawdi@0.12.10",
@@ -641,7 +640,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
-    assert manifest["minimumCliVersion"] == "0.12.10-beta.51"
+    assert manifest["minimumCliVersion"] == "0.12.10-beta.52"
     assert manifest["runtime"] == "openclaw"
     assert set(manifest["runtimes"]) == {"openclaw"}
     assert manifest["locale"] == TEST_LOCALE
@@ -785,7 +784,7 @@ async def test_stale_runtime_state_generation_returns_current_generation_without
             json={
                 **body,
                 "generation": 6,
-                "cli_package_spec": "clawdi@0.12.10-beta.52",
+                "cli_package_spec": "clawdi@0.12.10-beta.53",
             },
         )
 
@@ -824,7 +823,7 @@ async def test_equal_generation_material_conflict_returns_current_generation_wit
         response = await admin_client.put(
             f"/v1/admin/environments/{environment_id}/runtime-state",
             headers=_AUTH,
-            json={**body, "cli_package_spec": "clawdi@0.12.10-beta.52"},
+            json={**body, "cli_package_spec": "clawdi@0.12.10-beta.53"},
         )
 
         assert response.status_code == 409, response.text
@@ -1036,7 +1035,7 @@ async def test_cli_package_spec_change_updates_etag_audit_and_invalidation(
 
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
     try:
-        updated_spec = "clawdi@0.12.10-beta.52"
+        updated_spec = "clawdi@0.12.10-beta.53"
         updated = await admin_client.put(
             f"/v1/admin/environments/{env.id}/runtime-state",
             headers=_AUTH,
@@ -1174,7 +1173,7 @@ async def test_agent_v2_manifest_cli_package_and_protocol_are_cloud_owned(
         "packageSpec": TEST_CLI_PACKAGE_SPEC,
         "registry": "https://registry.npmjs.org",
     }
-    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.51"
+    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.52"
 
 
 @pytest.mark.asyncio
@@ -1201,7 +1200,7 @@ async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
             "locale": TEST_LOCALE,
             "system": TEST_SYSTEM,
             "runtimes": _runtime_state(),
-            "minimumCliVersion": "0.12.10-beta.51",
+            "minimumCliVersion": "0.12.10-beta.52",
         },
     )
 

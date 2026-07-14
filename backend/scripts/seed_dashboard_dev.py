@@ -72,7 +72,7 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.52"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 

@@ -48,7 +48,7 @@ def _batch(
         deployment_id="dep_test",
         instance_id="hri_test",
         generation=7,
-        cli_package_spec="clawdi@0.12.10-beta.51",
+        cli_package_spec="clawdi@0.12.10-beta.52",
         locale={"language": "en", "timezone": "UTC"},
         system={
             "user": "clawdi",

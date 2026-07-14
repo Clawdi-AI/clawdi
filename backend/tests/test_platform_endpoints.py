@@ -25,7 +25,7 @@ from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.51"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.52"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {
     "user": "clawdi",

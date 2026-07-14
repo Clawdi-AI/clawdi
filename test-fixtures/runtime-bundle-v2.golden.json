@@ -9,7 +9,7 @@
 	],
 	"manifest": {
 		"clawdiCli": {
-			"packageSpec": "clawdi@0.12.10-beta.51",
+			"packageSpec": "clawdi@0.12.10-beta.52",
 			"registry": "https://registry.npmjs.org",
 			"source": "npm:clawdi"
 		},
@@ -29,7 +29,7 @@
 			"enabled": true
 		},
 		"locale": { "language": "en", "timezone": "UTC" },
-		"minimumCliVersion": "0.12.10-beta.51",
+		"minimumCliVersion": "0.12.10-beta.52",
 		"providers": {
 			"managed": {
 				"apiKeySecretRef": "provider.managed.apiKey",
@@ -71,5 +71,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "770c65d7b9903e89f31d6ba4417bf70cf2c755366d8e44fb4e20a3c4bad9d6a4"
+	"sourceRevision": "77243c333e33c7dd3edb97c79e2297158fc291332cfb056a36b2a01e2ca0ab3a"
 }
