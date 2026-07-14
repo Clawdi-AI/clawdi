@@ -148,6 +148,14 @@ class Settings(BaseSettings):
     # comparison.
     admin_api_key: str = ""
 
+    # Legacy shared-root auth remains available only for the six canonical
+    # /v1/platform mutations while cohorts move to workload OAuth.
+    platform_legacy_admin_auth_enabled: bool = True
+    # This authorization server is independent from tenant -> Hosted OAuth.
+    platform_workload_issuer: str = "clawdi-cloud-platform"
+    # Exact RFC 7523 assertion audience. Empty derives from PUBLIC_API_URL.
+    platform_workload_token_endpoint: str = ""
+
     composio_api_key: str = ""
     composio_api_base_url: str = "https://backend.composio.dev"
 

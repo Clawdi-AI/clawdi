@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
+from app.core.auth import invalidate_api_key_auth_cache
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -29,6 +29,7 @@ from app.schemas.platform import (
     PlatformRuntimeStateResponse,
     PlatformRuntimeStateUpsert,
 )
+from app.schemas.platform_oauth import PlatformOAuthErrorResponse, PlatformOAuthTokenResponse
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -43,6 +44,14 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.platform_workload_auth import (
+    PlatformMutationAuth,
+    PlatformOAuthProtocolError,
+    PlatformWorkloadKeyResolver,
+    get_platform_workload_key_resolver,
+    issue_platform_workload_token,
+    require_platform_mutation_auth,
+)
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_runtime_manifest_changed,
@@ -55,6 +64,112 @@ IdempotencyKey = Annotated[
     Header(alias="Idempotency-Key", min_length=1, max_length=200),
 ]
 
+_OAUTH_NO_STORE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+}
+_OAUTH_TOKEN_REQUEST_SCHEMA = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/x-www-form-urlencoded": {
+                "schema": {
+                    "type": "object",
+                    "required": [
+                        "grant_type",
+                        "client_id",
+                        "scope",
+                        "client_assertion_type",
+                        "client_assertion",
+                    ],
+                    "properties": {
+                        "grant_type": {"type": "string"},
+                        "client_id": {"type": "string"},
+                        "scope": {"type": "string"},
+                        "client_assertion_type": {"type": "string"},
+                        "client_assertion": {"type": "string"},
+                    },
+                }
+            }
+        },
+    }
+}
+
+
+def _oauth_error_response(exc: PlatformOAuthProtocolError) -> JSONResponse:
+    headers = dict(_OAUTH_NO_STORE_HEADERS)
+    body = PlatformOAuthErrorResponse(
+        error=exc.error,
+        error_description=exc.description,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=body.model_dump(),
+        headers=headers,
+    )
+
+
+def _oauth_form_value(form: Any, name: str) -> str:
+    values = form.getlist(name)
+    if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
+        raise PlatformOAuthProtocolError(
+            error="invalid_request",
+            description=f"{name} must be provided exactly once",
+        )
+    return values[0]
+
+
+@router.post(
+    "/oauth/token",
+    response_model=PlatformOAuthTokenResponse,
+    responses={
+        400: {"model": PlatformOAuthErrorResponse},
+        401: {"model": PlatformOAuthErrorResponse},
+        503: {"model": PlatformOAuthErrorResponse},
+    },
+    openapi_extra=_OAUTH_TOKEN_REQUEST_SCHEMA,
+)
+async def platform_workload_oauth_token(
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    resolver: PlatformWorkloadKeyResolver = Depends(get_platform_workload_key_resolver),
+) -> PlatformOAuthTokenResponse | Response:
+    if request.headers.getlist("authorization") or request.headers.getlist("x-admin-key"):
+        return _oauth_error_response(
+            PlatformOAuthProtocolError(
+                error="invalid_request",
+                description="client authentication must use client_assertion form fields only",
+            )
+        )
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != (
+        "application/x-www-form-urlencoded"
+    ):
+        return _oauth_error_response(
+            PlatformOAuthProtocolError(
+                error="invalid_request",
+                description="content type must be application/x-www-form-urlencoded",
+            )
+        )
+    try:
+        form = await request.form()
+        issued = await issue_platform_workload_token(
+            db,
+            resolver,
+            grant_type=_oauth_form_value(form, "grant_type"),
+            client_id=_oauth_form_value(form, "client_id"),
+            scope=_oauth_form_value(form, "scope"),
+            client_assertion_type=_oauth_form_value(form, "client_assertion_type"),
+            client_assertion=_oauth_form_value(form, "client_assertion"),
+        )
+    except PlatformOAuthProtocolError as exc:
+        return _oauth_error_response(exc)
+    response = PlatformOAuthTokenResponse(
+        access_token=issued.access_token,
+        expires_in=issued.expires_in,
+        scope=issued.scope,
+    )
+    return JSONResponse(content=response.model_dump(), headers=_OAUTH_NO_STORE_HEADERS)
+
 
 def _audit_details(
     *,
@@ -65,12 +180,15 @@ def _audit_details(
     result: str,
     request_id: str,
     idempotency_key: str,
+    workload_sub: str | None,
+    credential_id: str | None,
+    token_jti: str | None,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "workload_sub": None,
-        "credential_id": None,
-        "token_jti": None,
+        "workload_sub": workload_sub,
+        "credential_id": credential_id,
+        "token_jti": token_jti,
         "owner": owner.model_dump(mode="json"),
         "resource": {"type": resource_type, "id": resource_id},
         "action": action,
@@ -95,6 +213,7 @@ def _record_platform_audit(
     environment_id: UUID | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
+    auth = getattr(request.state, "platform_mutation_auth", None)
     record_control_plane_audit(
         db,
         actor_type="platform",
@@ -112,6 +231,13 @@ def _record_platform_audit(
             result=result,
             request_id=str(request.state.request_id),
             idempotency_key=idempotency_key,
+            workload_sub=auth.client_id if auth is not None else None,
+            credential_id=(
+                str(auth.credential_id)
+                if auth is not None and auth.credential_id is not None
+                else None
+            ),
+            token_jti=auth.token_jti if auth is not None else None,
             details=details,
         ),
     )
@@ -373,7 +499,7 @@ async def platform_create_agent(
     body: PlatformAgentCreate,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:agents:create")),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse | Response:
     action = "agent_environment.create"
@@ -465,7 +591,7 @@ async def platform_delete_agent(
     body: PlatformMutationBody,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:agents:delete")),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
     action = "agent_environment.delete"
@@ -536,7 +662,9 @@ async def platform_upsert_runtime_state(
     body: PlatformRuntimeStateUpsert,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-state:write")
+    ),
     db: AsyncSession = Depends(get_session),
 ) -> PlatformRuntimeStateResponse | Response:
     action = "hosted_runtime_state.upsert"
@@ -674,7 +802,9 @@ async def platform_delete_runtime_state(
     body: PlatformMutationBody,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-state:write")
+    ),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
     action = "hosted_runtime_state.delete"
@@ -752,7 +882,7 @@ async def platform_mint_api_key(
     body: PlatformApiKeyCreate,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:mint")),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyCreated | Response:
     action = "api_key.mint"
@@ -838,7 +968,7 @@ async def platform_revoke_api_key(
     body: PlatformMutationBody,
     request: Request,
     idempotency_key: IdempotencyKey,
-    _: None = Depends(require_admin_api_key),
+    _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:revoke")),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyRevokeResponse | Response:
     action = "api_key.revoke"
