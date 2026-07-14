@@ -1725,6 +1725,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Workload Oauth Token */
+        post: operations["platform_workload_oauth_token_v1_platform_oauth_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/platform/agents": {
         parameters: {
             query?: never;
@@ -4923,6 +4940,28 @@ export interface components {
         /** PlatformMutationBody */
         PlatformMutationBody: {
             owner: components["schemas"]["PlatformOwner"];
+        };
+        /** PlatformOAuthErrorResponse */
+        PlatformOAuthErrorResponse: {
+            /** Error */
+            error: string;
+            /** Error Description */
+            error_description: string;
+        };
+        /** PlatformOAuthTokenResponse */
+        PlatformOAuthTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default Bearer
+             * @constant
+             */
+            token_type: "Bearer";
+            /** Expires In */
+            expires_in: number;
+            /** Scope */
+            scope: string;
         };
         /** PlatformOwner */
         PlatformOwner: {
@@ -9655,12 +9694,70 @@ export interface operations {
             };
         };
     };
+    platform_workload_oauth_token_v1_platform_oauth_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    grant_type: string;
+                    client_id: string;
+                    scope: string;
+                    client_assertion_type: string;
+                    client_assertion: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOAuthTokenResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOAuthErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOAuthErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOAuthErrorResponse"];
+                };
+            };
+        };
+    };
     platform_create_agent_v1_platform_agents_post: {
         parameters: {
             query?: never;
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -9697,6 +9794,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 agent_id: string;
@@ -9733,6 +9831,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 agent_id: string;
@@ -9771,6 +9870,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 agent_id: string;
@@ -9807,6 +9907,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -9843,6 +9944,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 key_id: string;

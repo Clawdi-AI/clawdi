@@ -14,6 +14,7 @@ from app.models import (  # noqa: F401 - register models
     hosted_runtime,
     memory,
     platform_idempotency,
+    platform_workload_auth,
     project,
     project_invitation,
     project_membership,
