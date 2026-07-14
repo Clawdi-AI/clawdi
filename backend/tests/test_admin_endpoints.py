@@ -341,9 +341,7 @@ async def test_admin_mint_api_key_rolls_back_key_when_audit_fails(
     async with async_sessionmaker(engine, expire_on_commit=False)() as fresh:
         orphan = (
             await fresh.execute(
-                select(ApiKey).where(
-                    ApiKey.user_id == seed_user.id, ApiKey.label == "orphan-check"
-                )
+                select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "orphan-check")
             )
         ).scalar_one_or_none()
     assert orphan is None
