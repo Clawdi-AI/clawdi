@@ -5,11 +5,14 @@ import { useLocation, useRouter } from "@tanstack/react-router";
 import {
 	CalendarClock,
 	Cpu,
+	CreditCard,
 	Plus,
 	RefreshCw,
 	Rocket,
 	Settings2,
 	Sparkles,
+	TriangleAlert,
+	WalletCards,
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +24,7 @@ import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SettingsSection } from "@/components/settings-section";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +75,12 @@ import {
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
 import {
+	type DeployPaymentMethod,
+	type WalletActivationFailure,
+	walletActivationFailure,
+	walletPaymentDisabledReason,
+} from "@/hosted/billing/deploy/deploy-wallet.logic";
+import {
 	browserLanguage,
 	browserTimezone,
 	LANGUAGE_OPTIONS,
@@ -79,16 +89,25 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import {
+	billingTermLabel,
+	billingTermSuffix,
+	creditsToUsd,
+	formatCents,
+	formatCentsCompact,
+} from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
+	useActivateWalletCompute,
 	useCheckout,
 	useCheckoutReturnRefresh,
 	useCreateDeployment,
 	useHostedDeployments,
 	usePlans,
+	useWallet,
+	useWalletComputeQuote,
 } from "@/hosted/billing/hooks";
 import {
 	type IdempotencyAttempt,
@@ -107,6 +126,8 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
 import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -143,6 +164,13 @@ type NativeDeployCheckout = {
 	previousDeploymentIds: string[];
 	request: CheckoutRequest;
 	summary: StripeCheckoutSummary;
+	tierLabel: "Basic" | "Performance";
+};
+type PaidDeploySelection = {
+	billingTermMonths: number;
+	computePlanSlug: ComputePlanSlug;
+	offer: BillingOffer;
+	plan: Plan;
 	tierLabel: "Basic" | "Performance";
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
@@ -352,10 +380,13 @@ export function DeployWizard() {
 	const channels = useChannels();
 	const createDeployment = useCreateDeployment();
 	const checkout = useCheckout();
+	const activateWalletCompute = useActivateWalletCompute();
+	const wallet = useWallet();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const walletDeployAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
 		null,
@@ -377,6 +408,9 @@ export function DeployWizard() {
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
+	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
+	const [topUpOpen, setTopUpOpen] = useState(false);
+	const [walletFailure, setWalletFailure] = useState<WalletActivationFailure | null>(null);
 
 	// Default language + timezone to the browser's after mount (avoids an SSR
 	// mismatch). Both stay explicitly unsettable back to the runtime default.
@@ -417,6 +451,33 @@ export function DeployWizard() {
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
 	const basicOffers = basicPlan ? explicitPlanOffers(basicPlan) : [];
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
+	const paidSelection: PaidDeploySelection | null =
+		compute === "performance" && perfPlan && perfOfferSelection
+			? {
+					billingTermMonths: perfOfferSelection.billingTermMonths,
+					computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
+					offer: perfOfferSelection.offer,
+					plan: perfPlan,
+					tierLabel: "Performance",
+				}
+			: compute === "basic" && basicSelection.mode === "checkout"
+				? {
+						billingTermMonths: basicSelection.billingTermMonths,
+						computePlanSlug: COMPUTE_BASIC_SLUG,
+						offer: basicSelection.offer,
+						plan: basicSelection.plan,
+						tierLabel: "Basic",
+					}
+				: null;
+	const walletDisabledReason = walletPaymentDisabledReason(paidSelection?.billingTermMonths ?? 1);
+	const walletQuoteRequest =
+		paidSelection && paymentMethod === "wallet" && !walletDisabledReason
+			? ({
+					plan_slug: paidSelection.computePlanSlug,
+					billing_term_months: 1,
+				} as const)
+			: null;
+	const walletQuote = useWalletComputeQuote(walletQuoteRequest);
 	const basicUnavailable =
 		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
 
@@ -431,7 +492,10 @@ export function DeployWizard() {
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const canSubmit = planReady && !submitting;
+	const canSubmit =
+		planReady &&
+		!submitting &&
+		(!paidSelection || paymentMethod === "card" || walletQuote.isSuccess);
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -485,6 +549,14 @@ export function DeployWizard() {
 		}
 		setTerm(selectedOffer.billingTermMonths);
 	}, [basicOfferSelection, compute, includedSlotUsed, perfOfferSelection, term]);
+
+	useEffect(() => {
+		if (paymentMethod === "wallet" && walletDisabledReason) setPaymentMethod("card");
+	}, [paymentMethod, walletDisabledReason]);
+
+	useEffect(() => {
+		setWalletFailure(null);
+	}, [paidSelection?.billingTermMonths, paidSelection?.computePlanSlug, paymentMethod]);
 
 	// Don't let the selection silently degrade to managed: if the chosen
 	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
@@ -705,33 +777,70 @@ export function DeployWizard() {
 		});
 	}
 
+	function handleWalletTopupComplete(status: "succeeded" | "processing") {
+		if (status !== "succeeded") return;
+		setWalletFailure(null);
+		void Promise.allSettled([wallet.refetch(), walletQuote.refetch()]);
+	}
+
 	async function onDeploy() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
-			const paidSelection =
-				compute === "performance" && perfPlan && perfOfferSelection
-					? {
-							billingTermMonths: perfOfferSelection.billingTermMonths,
-							computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
-							offer: perfOfferSelection.offer,
-							plan: perfPlan,
-							tierLabel: "Performance" as const,
-						}
-					: compute === "basic" && basicSelection.mode === "checkout"
-						? {
-								billingTermMonths: basicSelection.billingTermMonths,
-								computePlanSlug: COMPUTE_BASIC_SLUG,
-								offer: basicSelection.offer,
-								plan: basicSelection.plan,
-								tierLabel: "Basic" as const,
-							}
-						: null;
-
 			if (paidSelection) {
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
+				if (paymentMethod === "wallet") {
+					const fingerprint = idempotencyFingerprint({
+						plan_slug: paidSelection.computePlanSlug,
+						billing_term_months: 1,
+						deploy_config: deployConfig,
+					});
+					walletDeployAttemptRef.current = idempotencyAttemptFor(
+						walletDeployAttemptRef.current,
+						"wallet-compute-deploy",
+						fingerprint,
+						newIdempotencyKey,
+					);
+					const previousDeploymentIds = (deployments.data ?? []).map((deployment) => deployment.id);
+					try {
+						await activateWalletCompute.mutateAsync({
+							plan_slug: paidSelection.computePlanSlug,
+							billing_term_months: 1,
+							deploy_config: {
+								...deployConfig,
+								deploy_request_id: walletDeployAttemptRef.current.key,
+							},
+						});
+						setWalletFailure(null);
+						const refreshedDeployments = await refreshCheckoutReturn().catch(() => undefined);
+						const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
+						toast.success("Wallet payment complete", {
+							description: `${paidSelection.tierLabel} compute is provisioning now.`,
+						});
+						if (deploymentId) {
+							void router.navigate({
+								href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+							});
+						} else {
+							void router.navigate({ href: "/" });
+						}
+					} catch (error) {
+						const failure = walletActivationFailure(error);
+						setWalletFailure(failure);
+						if (failure.kind === "insufficient") setTopUpOpen(true);
+						toast.error(
+							failure.kind === "insufficient"
+								? "Wallet balance too low"
+								: failure.kind === "conflict"
+									? "Wallet funding conflict"
+									: "Couldn’t fund compute from Wallet",
+							{ description: failure.description },
+						);
+					}
+					return;
+				}
 				const body: CheckoutRequest = {
 					plan_slug: paidSelection.computePlanSlug,
 					billing_term_months: paidSelection.billingTermMonths,
@@ -795,10 +904,13 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel =
-		compute === "performance" || (compute === "basic" && basicSelection.mode === "checkout")
-			? "Continue to checkout"
-			: "Deploy agent";
+	const deployLabel = paidSelection
+		? paymentMethod === "wallet"
+			? walletQuote.data
+				? `Pay ${formatCents(walletQuote.data.first_charge_cents)} from wallet & deploy`
+				: "Getting wallet quote…"
+			: "Continue to checkout"
+		: "Deploy agent";
 	const selectedProviderCount =
 		aiAccessMode === "configured"
 			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
@@ -1087,6 +1199,163 @@ export function DeployWizard() {
 								/>
 							</div>
 						) : null}
+						{paidSelection ? (
+							<div className="flex flex-col gap-3">
+								<div>
+									<div className="text-sm font-medium">Payment method</div>
+									<p className="text-xs text-muted-foreground">
+										Choose how this deployment renews. You can review the charge before paying.
+									</p>
+								</div>
+								<div className="grid gap-2 sm:grid-cols-2">
+									<EntityChoiceCard
+										selected={paymentMethod === "card"}
+										onClick={() => setPaymentMethod("card")}
+										icon={
+											<IconChip tint="bg-muted text-muted-foreground">
+												<CreditCard />
+											</IconChip>
+										}
+										title="Card subscription"
+										description="Pay securely with Stripe and manage the subscription from billing settings."
+										badge={<Badge variant="secondary">Monthly or Annual</Badge>}
+									/>
+									<EntityChoiceCard
+										selected={paymentMethod === "wallet"}
+										onClick={walletDisabledReason ? undefined : () => setPaymentMethod("wallet")}
+										icon={
+											<IconChip tint="bg-identity-6-bg text-identity-6-fg">
+												<WalletCards />
+											</IconChip>
+										}
+										title="Wallet balance"
+										description={
+											walletDisabledReason ??
+											"Pay the first month now from AI Credits, then renew monthly from Wallet."
+										}
+										badge={<Badge variant="outline">Monthly only</Badge>}
+										disabled={walletDisabledReason !== null}
+									/>
+								</div>
+
+								{paymentMethod === "wallet" ? (
+									walletQuote.isLoading ? (
+										<div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2">
+											<Skeleton className="h-10 w-full" />
+											<Skeleton className="h-10 w-full" />
+											<Skeleton className="h-10 w-full" />
+											<Skeleton className="h-10 w-full" />
+										</div>
+									) : walletQuote.error ? (
+										<Alert variant="destructive">
+											<TriangleAlert />
+											<AlertTitle>Couldn’t quote Wallet payment</AlertTitle>
+											<AlertDescription className="flex flex-col items-start gap-3">
+												<span>{normalizeBillingError(walletQuote.error)}</span>
+												<Button
+													size="sm"
+													variant="outline"
+													onClick={() => void walletQuote.refetch()}
+												>
+													<RefreshCw data-icon="inline-start" /> Retry quote
+												</Button>
+											</AlertDescription>
+										</Alert>
+									) : walletQuote.data ? (
+										<div className="flex flex-col gap-3 rounded-lg border p-3">
+											<div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+												<div>
+													<div className="text-xs text-muted-foreground">Monthly price</div>
+													<div className="font-medium tabular-nums">
+														{formatCents(walletQuote.data.monthly_price_cents)}
+													</div>
+												</div>
+												<div>
+													<div className="text-xs text-muted-foreground">Due now</div>
+													<div className="font-medium tabular-nums">
+														{formatCents(walletQuote.data.first_charge_cents)}
+													</div>
+												</div>
+												<div>
+													<div className="text-xs text-muted-foreground">Renews</div>
+													<div className="font-medium">
+														{new Date(walletQuote.data.period_end).toLocaleDateString()}
+													</div>
+												</div>
+												<div>
+													<div className="text-xs text-muted-foreground">Current balance</div>
+													<div className="font-medium tabular-nums">
+														{creditsToUsd(
+															decimalCredits(walletQuote.data.balance_credits),
+															walletQuote.data.points_per_usd,
+														)}
+													</div>
+												</div>
+												<div>
+													<div className="text-xs text-muted-foreground">After this charge</div>
+													<div className="font-medium tabular-nums">
+														{creditsToUsd(
+															decimalCredits(walletQuote.data.post_charge_balance_estimate_credits),
+															walletQuote.data.points_per_usd,
+														)}
+													</div>
+												</div>
+											</div>
+											{walletQuote.data.warnings?.includes("open_refund_debt") ? (
+												<p className="text-xs text-destructive">
+													A wallet refund is still settling, so this charge may be blocked.
+												</p>
+											) : walletQuote.data.warnings?.includes("low_coverage") ? (
+												<p className="text-xs text-warning-muted-foreground">
+													The remaining balance may not cover the next monthly renewal.
+												</p>
+											) : null}
+										</div>
+									) : null
+								) : null}
+
+								{walletFailure ? (
+									<Alert
+										variant={walletFailure.kind === "insufficient" ? "default" : "destructive"}
+									>
+										<TriangleAlert />
+										<AlertTitle>
+											{walletFailure.kind === "insufficient"
+												? "Top up to deploy"
+												: walletFailure.kind === "retryable"
+													? "Wallet response needs a retry"
+													: "Wallet payment didn’t complete"}
+										</AlertTitle>
+										<AlertDescription className="flex flex-col items-start gap-3">
+											<span>
+												{walletFailure.description}
+												{walletFailure.shortfallCredits !== null && walletQuote.data
+													? ` Shortfall: ${creditsToUsd(walletFailure.shortfallCredits, walletQuote.data.points_per_usd)}.`
+													: ""}
+											</span>
+											{walletFailure.kind === "insufficient" ? (
+												<Button
+													size="sm"
+													onClick={() => setTopUpOpen(true)}
+													disabled={!wallet.data}
+												>
+													<WalletCards data-icon="inline-start" /> Top up Wallet
+												</Button>
+											) : walletFailure.kind === "retryable" ? (
+												<Button
+													size="sm"
+													variant="outline"
+													onClick={() => runAction(onDeploy)}
+													disabled={submitting}
+												>
+													<RefreshCw data-icon="inline-start" /> Retry wallet payment
+												</Button>
+											) : null}
+										</AlertDescription>
+									</Alert>
+								) : null}
+							</div>
+						) : null}
 						<ComputeStatusLine
 							compute={compute}
 							includedSlotPending={includedSlotPending}
@@ -1194,6 +1463,14 @@ export function DeployWizard() {
 						: Promise.reject(new Error("Missing checkout request."))
 				}
 			/>
+			{wallet.data ? (
+				<TopUpDialog
+					open={topUpOpen}
+					onOpenChange={setTopUpOpen}
+					wallet={wallet.data}
+					onComplete={handleWalletTopupComplete}
+				/>
+			) : null}
 		</div>
 	);
 }

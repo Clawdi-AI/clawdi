@@ -37,10 +37,12 @@ export function TopUpDialog({
 	open,
 	onOpenChange,
 	wallet,
+	onComplete,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	wallet: WalletState;
+	onComplete?: (status: "succeeded" | "processing") => void;
 }) {
 	const topUp = useTopUp();
 	const qc = useQueryClient();
@@ -101,6 +103,7 @@ export function TopUpDialog({
 				closeDialog: () => close(false),
 				toastSuccess: toast.success,
 				toastError: toast.error,
+				onComplete,
 				startPayment: (nextClientSecret) => {
 					setClientSecret(nextClientSecret);
 					setStep("pay");
@@ -122,6 +125,7 @@ export function TopUpDialog({
 			},
 			closeDialog: () => close(false),
 			toastSuccess: toast.success,
+			onComplete,
 		});
 	}
 

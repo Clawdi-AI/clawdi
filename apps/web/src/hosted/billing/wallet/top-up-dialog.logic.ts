@@ -11,6 +11,7 @@ export interface TopupCompletionControls {
 	resetAttempt: () => void;
 	closeDialog: () => void;
 	toastSuccess: TopupToast;
+	onComplete?: (status: TopupCompletionStatus) => void;
 }
 
 export interface TopupStartResultControls extends TopupCompletionControls {
@@ -29,6 +30,7 @@ export function completeTopup(
 ): void {
 	invalidateWalletActivity(controls.queryClient);
 	controls.resetAttempt();
+	controls.onComplete?.(status);
 	if (status === "succeeded") {
 		controls.toastSuccess("Top-up complete", {
 			description: "Your credits will appear in a moment.",
