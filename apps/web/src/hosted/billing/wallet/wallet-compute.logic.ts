@@ -1,10 +1,17 @@
-import type { HostedDeployment, WalletState } from "@/hosted/billing/contracts";
-import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
+import type { HostedDeployment, Plan, WalletState } from "@/hosted/billing/contracts";
+import {
+	COMPUTE_BASIC_SLUG,
+	computeTierLabel,
+	pendingComputePlanSlug,
+	resolveBasicPlan,
+	resolvePerformancePlan,
+} from "@/hosted/billing/subscription/subscription-utils";
 
 export type WalletFundedDeployment = {
 	deploymentId: string;
 	name: string;
 	planLabel: "Basic" | "Performance";
+	pendingPlanLabel: "Basic" | "Performance" | null;
 	priceCents: number;
 	renews: boolean;
 	nextRenewalAt: string | null;
@@ -27,16 +34,25 @@ export function decimalCredits(value: string | number | null | undefined): numbe
 export function walletComputeCoverage(
 	wallet: Pick<WalletState, "balance_credits" | "points_per_usd" | "auto_reload_enabled">,
 	deployments: readonly HostedDeployment[] | undefined,
+	plans?: Plan[],
 ): WalletComputeCoverage {
 	const funded: WalletFundedDeployment[] = [];
 	for (const deployment of deployments ?? []) {
 		const subscription = deployment.compute_subscription;
 		if (subscription?.funding_source !== "wallet") continue;
+		const pendingPlanSlug = pendingComputePlanSlug(subscription);
+		const pendingPlan =
+			pendingPlanSlug === COMPUTE_BASIC_SLUG
+				? resolveBasicPlan(plans)
+				: pendingPlanSlug
+					? resolvePerformancePlan(plans)
+					: undefined;
 		funded.push({
 			deploymentId: deployment.id,
 			name: deployment.name,
 			planLabel: computeTierLabel(deployment.config_info?.compute_plan_slug),
-			priceCents: Math.max(0, subscription.price_cents ?? 0),
+			pendingPlanLabel: pendingPlanSlug ? computeTierLabel(pendingPlanSlug) : null,
+			priceCents: Math.max(0, pendingPlan?.price_cents ?? subscription.price_cents ?? 0),
 			renews: !subscription.cancel_at_period_end && subscription.status !== "canceled",
 			nextRenewalAt: subscription.current_period_end ?? null,
 			status: subscription.payment_state,

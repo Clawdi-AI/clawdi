@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment, WalletState } from "@/hosted/billing/contracts";
+import type { HostedDeployment, Plan, WalletState } from "@/hosted/billing/contracts";
 import { decimalCredits, walletComputeCoverage } from "./wallet-compute.logic";
 
 const wallet: WalletState = {
@@ -53,6 +53,20 @@ function deployment(
 	};
 }
 
+function plan(slug: string, priceCents: number): Plan {
+	return {
+		slug,
+		name: slug,
+		price_cents: priceCents,
+		points_per_usd: 100,
+		signup_grant_credits: 0,
+		subscription_grant_credits: 0,
+		vcpu: 1,
+		ram_gb: 1,
+		disk_size: 10,
+	};
+}
+
 describe("walletComputeCoverage", () => {
 	test("sums wallet deployments, orders renewals, and warns below one month", () => {
 		const result = walletComputeCoverage(wallet, [
@@ -86,6 +100,24 @@ describe("walletComputeCoverage", () => {
 		expect(result.deployments[0]?.renews).toBe(false);
 		expect(result.totalMonthlyCents).toBe(0);
 		expect(result.coverageMonths).toBeNull();
+	});
+
+	test("uses the scheduled plan price for the next wallet renewal", () => {
+		const pending = deployment("pending", "compute_performance", 1_900, "2026-08-15T00:00:00Z");
+		if (pending.compute_subscription) {
+			pending.compute_subscription.pending_plan_slug = "compute_basic";
+		}
+		const result = walletComputeCoverage(
+			wallet,
+			[pending],
+			[plan("compute_basic", 900), plan("compute_performance", 1_900)],
+		);
+		expect(result.totalMonthlyCents).toBe(900);
+		expect(result.deployments[0]).toMatchObject({
+			planLabel: "Performance",
+			pendingPlanLabel: "Basic",
+			priceCents: 900,
+		});
 	});
 });
 

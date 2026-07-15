@@ -9,7 +9,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 import { getStripe } from "@/hosted/billing/stripe";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
@@ -51,6 +51,7 @@ function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
 export function WalletPage() {
 	const wallet = useWallet();
 	const deployments = useHostedDeployments();
+	const plans = usePlans();
 	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
@@ -157,6 +158,7 @@ export function WalletPage() {
 			<ComputeCommitmentCard
 				wallet={w}
 				deployments={deployments.data}
+				plans={plans.data}
 				isLoading={deployments.isLoading}
 				error={deployments.error}
 				onRetry={() => void deployments.refetch()}

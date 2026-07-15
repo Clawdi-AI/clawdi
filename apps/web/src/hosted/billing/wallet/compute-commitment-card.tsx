@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
-import type { HostedDeployment, WalletState } from "@/hosted/billing/contracts";
+import type { HostedDeployment, Plan, WalletState } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatCents, formatCentsCompact } from "@/hosted/billing/format";
 import { walletComputeCoverage } from "@/hosted/billing/wallet/wallet-compute.logic";
@@ -25,17 +25,19 @@ function coverageLabel(months: number | null): string {
 export function ComputeCommitmentCard({
 	wallet,
 	deployments,
+	plans,
 	isLoading,
 	error,
 	onRetry,
 }: {
 	wallet: WalletState;
 	deployments: readonly HostedDeployment[] | undefined;
+	plans?: Plan[];
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
 }) {
-	const coverage = walletComputeCoverage(wallet, deployments);
+	const coverage = walletComputeCoverage(wallet, deployments, plans);
 
 	return (
 		<Card data-hosted="true">
@@ -113,6 +115,9 @@ export function ComputeCommitmentCard({
 												{deploymentDisplayName(deployment.name)}
 											</span>
 											<Badge variant="outline">{deployment.planLabel}</Badge>
+											{deployment.pendingPlanLabel ? (
+												<Badge variant="outline">Next: {deployment.pendingPlanLabel}</Badge>
+											) : null}
 										</div>
 										<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
 											<CalendarClock className="size-3.5" aria-hidden />
