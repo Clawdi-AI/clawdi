@@ -44,6 +44,9 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				: null;
 	const destructive = state.paymentState === "unpaid";
 	const bannerDescription = [
+		state.fallbackOccurredAt && state.fallbackPlanLabel
+			? `This agent fell back from ${state.fallbackPlanLabel} because payment failed on ${formatShortDate(state.fallbackOccurredAt)}.`
+			: null,
 		state.description,
 		collectionFailureMessage(state.failureCode),
 		riskLabel,

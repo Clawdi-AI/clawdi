@@ -39,6 +39,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
 	buildHostedCheckoutFallbackRequest,
 	CHECKOUT_ELEMENTS_UI_MODE,
@@ -57,6 +58,7 @@ import type {
 	ComputePlanSlug,
 	DeployRequest,
 	Plan,
+	WalletComputeActivateResult,
 } from "@/hosted/billing/contracts";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
@@ -76,6 +78,7 @@ import {
 } from "@/hosted/billing/deploy/deploy-request";
 import {
 	type DeployPaymentMethod,
+	resolveWalletDeploymentId,
 	type WalletActivationFailure,
 	walletActivationFailure,
 	walletPaymentDisabledReason,
@@ -384,6 +387,7 @@ function computeStatusLine({
 export function DeployWizard() {
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const billingClient = useBillingClient();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
@@ -814,8 +818,9 @@ export function DeployWizard() {
 						newIdempotencyKey,
 					);
 					const previousDeploymentIds = (deployments.data ?? []).map((deployment) => deployment.id);
+					let activation: WalletComputeActivateResult;
 					try {
-						await activateWalletCompute.mutateAsync({
+						activation = await activateWalletCompute.mutateAsync({
 							plan_slug: paidSelection.computePlanSlug,
 							billing_term_months: 1,
 							deploy_config: {
@@ -823,21 +828,6 @@ export function DeployWizard() {
 								deploy_request_id: walletDeployAttemptRef.current.key,
 							},
 						});
-						forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
-						walletDeployAttemptRef.current = null;
-						setWalletFailure(null);
-						const refreshedDeployments = await refreshCheckoutReturn().catch(() => undefined);
-						const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
-						toast.success("Wallet payment complete", {
-							description: `${paidSelection.tierLabel} compute is provisioning now.`,
-						});
-						if (deploymentId) {
-							void router.navigate({
-								href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-							});
-						} else {
-							void router.navigate({ href: "/" });
-						}
 					} catch (error) {
 						const failure = walletActivationFailure(error);
 						setWalletFailure(failure);
@@ -850,7 +840,28 @@ export function DeployWizard() {
 									: "Couldn’t fund compute from Wallet",
 							{ description: failure.description },
 						);
+						return;
 					}
+
+					forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+					walletDeployAttemptRef.current = null;
+					setWalletFailure(null);
+					let deploymentId = await resolveWalletDeploymentId(
+						activation,
+						billingClient.getDeploymentByRequest,
+					).catch(() => null);
+					if (!deploymentId) {
+						const refreshedDeployments = await refreshCheckoutReturn().catch(() => undefined);
+						deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
+					}
+					toast.success("Wallet payment complete", {
+						description: `${paidSelection.tierLabel} compute is provisioning now.`,
+					});
+					void router.navigate({
+						href: deploymentId
+							? agentSectionHref(deploymentId, "overview", "source=on-clawdi")
+							: "/",
+					});
 					return;
 				}
 				const body: CheckoutRequest = {

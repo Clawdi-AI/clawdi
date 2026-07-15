@@ -10,6 +10,12 @@
  */
 
 import { toast } from "sonner";
+import type {
+	WalletComputeConflictError,
+	WalletComputeErrorDetail,
+	WalletComputeInsufficientError,
+	WalletComputeUpstreamError,
+} from "@/hosted/billing/contracts";
 
 export class BillingApiError extends Error {
 	constructor(
@@ -61,6 +67,52 @@ export function billingErrorDetail(error: unknown): Record<string, unknown> | nu
 	} catch {
 		return null;
 	}
+}
+
+function isWalletComputeInsufficientDetail(
+	value: Record<string, unknown>,
+): value is WalletComputeInsufficientError["detail"] {
+	return (
+		value.code === "insufficient_wallet_balance" &&
+		typeof value.required_credits === "string" &&
+		typeof value.available_credits === "string" &&
+		typeof value.shortfall_credits === "string"
+	);
+}
+
+function isWalletComputeUpstreamDetail(
+	value: Record<string, unknown>,
+): value is WalletComputeUpstreamError["detail"] {
+	return (
+		(value.code === "wallet_balance_refresh_failed" ||
+			value.code === "wallet_compute_charge_failed" ||
+			value.code === "wallet_compute_upstream_failed") &&
+		value.retryable === true &&
+		(value.failure_code === undefined ||
+			value.failure_code === null ||
+			typeof value.failure_code === "string")
+	);
+}
+
+function isWalletComputeConflictDetail(
+	value: Record<string, unknown>,
+): value is Exclude<WalletComputeConflictError["detail"], string> {
+	return (
+		value.code === "deploy_request_funding_conflict" ||
+		value.code === "idempotency_key_reused" ||
+		value.code === "open_refund_debt" ||
+		(typeof value.code === "string" && value.retryable === true)
+	);
+}
+
+/** Generated wallet-compute business error detail, validated at the HTTP boundary. */
+export function walletComputeErrorDetail(error: unknown): WalletComputeErrorDetail | null {
+	const detail = billingErrorDetail(error);
+	if (!detail) return null;
+	if (isWalletComputeInsufficientDetail(detail)) return detail;
+	if (isWalletComputeUpstreamDetail(detail)) return detail;
+	if (isWalletComputeConflictDetail(detail)) return detail;
+	return null;
 }
 
 /**

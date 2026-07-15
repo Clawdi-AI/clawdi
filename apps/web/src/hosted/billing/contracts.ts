@@ -24,6 +24,8 @@ export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
 export type DeploymentDetailsInfo = Schemas["V2HostedDeploymentDetailsInfo"];
 export type HostedDeployment = Schemas["V2HostedDeploymentResponse"];
+export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestStatusResponse"];
+export type HostedFundingEvent = Schemas["V2HostedFundingEventInfo"];
 export type RuntimeUiRedemption = Schemas["V2DeploymentRuntimeUiRedemptionResponse"];
 export type HostedUser = Schemas["V1UserResponse"];
 export type HostedConfigRequest = Schemas["V2HostedConfigRequest"];
@@ -48,6 +50,13 @@ export type WalletComputeQuoteRequest = Schemas["V2WalletComputeQuoteRequest"];
 export type WalletComputeQuote = Schemas["V2WalletComputeQuoteResponse"];
 export type WalletComputeRetryRequest = Schemas["V2WalletComputeRetryRequest"];
 export type WalletComputeRetryResult = Schemas["V2WalletComputeRetryResponse"];
+export type WalletComputeConflictError = Schemas["V2WalletComputeConflictErrorResponse"];
+export type WalletComputeInsufficientError = Schemas["V2WalletComputeInsufficientErrorResponse"];
+export type WalletComputeUpstreamError = Schemas["V2WalletComputeUpstreamErrorResponse"];
+export type WalletComputeErrorDetail =
+	| WalletComputeConflictError["detail"]
+	| WalletComputeInsufficientError["detail"]
+	| WalletComputeUpstreamError["detail"];
 export type WalletLedgerEntry = Schemas["V2WalletLedgerItemResponse"];
 export type WalletLedgerPage = Schemas["V2WalletLedgerResponse"];
 export type WalletLedgerStatus = WalletLedgerEntry["status"];

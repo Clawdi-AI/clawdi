@@ -54,7 +54,12 @@ describe("wallet plan change logic", () => {
 	test("classifies a plan-change shortfall", () => {
 		const failure = walletPlanChangeFailure(
 			new BillingApiError(402, "insufficient", {
-				detail: { shortfall_credits: "2500.5" },
+				detail: {
+					code: "insufficient_wallet_balance",
+					required_credits: "7000.0",
+					available_credits: "4499.5",
+					shortfall_credits: "2500.5",
+				},
 			}),
 		);
 		expect(failure).toEqual({ kind: "insufficient", shortfallCredits: 2500.5 });

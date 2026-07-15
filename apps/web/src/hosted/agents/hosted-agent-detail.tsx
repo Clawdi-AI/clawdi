@@ -2152,6 +2152,8 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const isPaidCompute = fundingMode === "subscription";
 	const isStripeFunded = fundingSource === "stripe";
 	const isWalletFunded = fundingSource === "wallet";
+	const isWalletFallback =
+		!currentSubscription && deployment.last_funding_event?.funding_source === "wallet";
 	const walletSubscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2598,6 +2600,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								<Badge variant="outline" className="font-normal text-muted-foreground">
 									{isWalletFunded ? "Wallet" : "Card"}
 								</Badge>
+							) : isWalletFallback ? (
+								<Badge variant="outline" className="font-normal text-muted-foreground">
+									Wallet fallback
+								</Badge>
 							) : null}
 						</div>
 						<p className="mt-1 text-xs text-muted-foreground">
@@ -2644,7 +2650,14 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								) : null}
 							</div>
 						) : null}
-						{isIncludedBasic ? (
+						{isWalletFallback ? (
+							<div className="flex w-full flex-col gap-2 text-xs text-muted-foreground lg:w-72">
+								<p>
+									Use the Wallet recovery banner above to top up and retry the previous paid compute
+									subscription.
+								</p>
+							</div>
+						) : isIncludedBasic ? (
 							<div className="flex w-full flex-col gap-2 lg:w-64">
 								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
 								<Button

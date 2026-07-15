@@ -10,9 +10,15 @@ import {
 function deployment(
 	computeSubscription: HostedDeployment["compute_subscription"],
 	computePlanSlug?: ComputePlanSlug,
-): Pick<HostedDeployment, "compute_subscription" | "config_info"> {
+	overrides: Partial<Pick<HostedDeployment, "last_funding_event" | "status">> = {},
+): Pick<
+	HostedDeployment,
+	"compute_subscription" | "config_info" | "last_funding_event" | "status"
+> {
 	return {
 		compute_subscription: computeSubscription,
+		last_funding_event: null,
+		status: "running",
 		config_info: computePlanSlug
 			? {
 					compute_plan_slug: computePlanSlug,
@@ -26,6 +32,7 @@ function deployment(
 					runtime: "hermes",
 				}
 			: null,
+		...overrides,
 	};
 }
 
@@ -96,6 +103,52 @@ describe("computeDunningState", () => {
 		expect(state?.description).toContain("fell back to included Basic");
 		expect(state?.description).toContain("otherwise it stopped");
 		expect(state?.ctaTarget).toBe("wallet");
+	});
+
+	test("renders the persisted wallet fallback trace after the subscription detaches", () => {
+		const fallback = {
+			type: "compute_subscription_fallback" as const,
+			funding_source: "wallet" as const,
+			occurred_at: "2026-07-18T12:00:00Z",
+			prior_plan_slug: "compute_performance",
+			subscription_id: 42,
+		};
+		const running = computeDunningState(
+			deployment(null, "compute_basic", { last_funding_event: fallback }),
+		);
+		expect(running).toMatchObject({
+			paymentState: "unpaid",
+			fundingSource: "wallet",
+			ctaTarget: "wallet",
+			subscriptionId: 42,
+			fallbackOccurredAt: "2026-07-18T12:00:00Z",
+			fallbackPlanLabel: "Performance compute",
+		});
+		expect(running?.description).toContain("now using included Basic");
+
+		const stopped = computeDunningState(
+			deployment(null, "compute_basic", {
+				last_funding_event: fallback,
+				status: "stopped",
+			}),
+		);
+		expect(stopped?.description).toContain("included Basic slot was occupied");
+	});
+
+	test("ignores an old fallback trace after wallet recovery", () => {
+		expect(
+			computeDunningState(
+				deployment(subscription({ funding_source: "wallet" }), "compute_performance", {
+					last_funding_event: {
+						type: "compute_subscription_fallback",
+						funding_source: "wallet",
+						occurred_at: "2026-07-18T12:00:00Z",
+						prior_plan_slug: "compute_performance",
+						subscription_id: 42,
+					},
+				}),
+			),
+		).toBeNull();
 	});
 
 	test("routes action-required subscriptions to the hosted invoice when present", () => {

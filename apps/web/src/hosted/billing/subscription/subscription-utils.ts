@@ -72,15 +72,10 @@ export function computeFundingSource(
 	return "unknown";
 }
 
-/**
- * Additive subscription metadata readers. Hosted main does not expose these
- * fields yet, so callers stay disabled until the deployment projection grows
- * them; no guessed deployment-to-subscription mapping is safe.
- */
 export function computeSubscriptionId(
 	subscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): number | null {
-	if (!subscription || !("subscription_id" in subscription)) return null;
+	if (!subscription) return null;
 	return typeof subscription.subscription_id === "number" &&
 		Number.isInteger(subscription.subscription_id) &&
 		subscription.subscription_id > 0
@@ -91,7 +86,7 @@ export function computeSubscriptionId(
 export function pendingComputePlanSlug(
 	subscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): ComputePlanSlug | null {
-	if (!subscription || !("pending_plan_slug" in subscription)) return null;
+	if (!subscription) return null;
 	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||
 		subscription.pending_plan_slug === COMPUTE_PERFORMANCE_SLUG
 		? subscription.pending_plan_slug

@@ -160,6 +160,12 @@ export function useBillingClient() {
 
 			listDeployments: async (): Promise<HostedDeployment[]> =>
 				unwrapDeploy(await api.GET("/v2/deployments")),
+			getDeploymentByRequest: async (deployRequestId: string) =>
+				unwrapDeploy(
+					await api.GET("/v2/deployments/by-request/{deploy_request_id}", {
+						params: { path: { deploy_request_id: deployRequestId } },
+					}),
+				),
 			createDeployment: async (body: DeployRequest, idempotencyKey: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments", {

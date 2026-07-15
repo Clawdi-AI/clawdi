@@ -1,5 +1,5 @@
 import type { ComputePlanSlug, WalletComputePlanChangeResult } from "@/hosted/billing/contracts";
-import { BillingApiError, billingErrorDetail, isNetworkError } from "@/hosted/billing/errors";
+import { BillingApiError, isNetworkError, walletComputeErrorDetail } from "@/hosted/billing/errors";
 import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
@@ -25,9 +25,12 @@ export function walletPlanResultTarget(
 }
 
 export function walletPlanChangeFailure(error: unknown): WalletPlanChangeFailure {
-	const detail = billingErrorDetail(error);
+	const detail = walletComputeErrorDetail(error);
 	if (error instanceof BillingApiError && error.status === 402) {
-		const value = detail?.shortfall_credits;
+		const value =
+			detail && typeof detail !== "string" && "shortfall_credits" in detail
+				? detail.shortfall_credits
+				: null;
 		return {
 			kind: "insufficient",
 			shortfallCredits: typeof value === "string" ? decimalCredits(value) : null,
@@ -38,7 +41,11 @@ export function walletPlanChangeFailure(error: unknown): WalletPlanChangeFailure
 	}
 	if (
 		isNetworkError(error) ||
-		(error instanceof BillingApiError && error.status >= 500 && detail?.retryable === true)
+		(error instanceof BillingApiError &&
+			error.status >= 500 &&
+			detail !== null &&
+			typeof detail !== "string" &&
+			"retryable" in detail)
 	) {
 		return { kind: "retryable", shortfallCredits: null };
 	}

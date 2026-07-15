@@ -5,7 +5,10 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 
 type ComputeSubscription = NonNullable<HostedDeployment["compute_subscription"]>;
-type DunningDeployment = Pick<HostedDeployment, "compute_subscription" | "config_info">;
+type DunningDeployment = Pick<
+	HostedDeployment,
+	"compute_subscription" | "config_info" | "last_funding_event" | "status"
+>;
 export type ComputePaymentState = ComputeSubscription["payment_state"];
 
 export type ComputeDunningState = {
@@ -20,6 +23,8 @@ export type ComputeDunningState = {
 	nextPaymentAttemptAt: string | null;
 	serviceRiskAt: string | null;
 	failureCode: string | null;
+	fallbackOccurredAt: string | null;
+	fallbackPlanLabel: string | null;
 	tileLabel: string;
 	tileTitle: string;
 	tileTextClass: string;
@@ -50,7 +55,41 @@ export function collectionFailureMessage(code: string | null): string | null {
 
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
 	const subscription = subscriptionForDunning(deployment);
-	if (!subscription || subscription.payment_state === "ok") return null;
+	if (!subscription) {
+		const fallback = deployment.last_funding_event;
+		if (fallback?.type !== "compute_subscription_fallback") return null;
+		const walletRecovery = fallback.funding_source === "wallet";
+		const fallbackPlanLabel =
+			fallback.prior_plan_slug === "compute_performance"
+				? "Performance compute"
+				: fallback.prior_plan_slug === "compute_basic"
+					? "Basic compute"
+					: "paid compute";
+		const stopped = deployment.status.toLowerCase() === "stopped";
+		return {
+			paymentState: "unpaid",
+			fundingSource: fallback.funding_source,
+			recoveryAction: walletRecovery ? "top_up" : "fix_payment",
+			title: walletRecovery ? "Wallet compute funding ended" : "Compute funding ended",
+			description: stopped
+				? "The included Basic slot was occupied, so this agent stopped. Restore paid funding to start it again."
+				: "This agent is now using included Basic. Restore paid funding to re-activate its previous compute plan.",
+			ctaTarget: walletRecovery ? "wallet" : "portal",
+			invoiceUrl: null,
+			subscriptionId: fallback.subscription_id,
+			nextPaymentAttemptAt: null,
+			serviceRiskAt: null,
+			failureCode: null,
+			fallbackOccurredAt: fallback.occurred_at,
+			fallbackPlanLabel,
+			tileLabel: walletRecovery ? "Wallet funding ended" : "Compute funding ended",
+			tileTitle: stopped
+				? `${fallbackPlanLabel} stopped after its funding ended.`
+				: `${fallbackPlanLabel} fell back to included Basic after its funding ended.`,
+			tileTextClass: "text-destructive",
+		};
+	}
+	if (subscription.payment_state === "ok") return null;
 	const computeName = deployment.config_info
 		? `${computeTierLabel(deployment.config_info.compute_plan_slug)} compute`
 		: "paid compute";
@@ -72,6 +111,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		nextPaymentAttemptAt,
 		serviceRiskAt,
 		failureCode: subscription.last_collection_failure_code ?? null,
+		fallbackOccurredAt: null,
+		fallbackPlanLabel: null,
 	};
 
 	if (walletRecovery && subscription.payment_state === "past_due") {
