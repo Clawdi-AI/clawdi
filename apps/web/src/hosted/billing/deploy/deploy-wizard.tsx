@@ -99,9 +99,11 @@ import {
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	explicitPlanOffers,
 	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -300,7 +302,9 @@ function computeStatusLine({
 			return {
 				tone: "destructive",
 				message:
-					"The Basic plan isn’t available from the billing service. Retry plans before deploying.",
+					basicSelection.reason === "offers_missing"
+						? "Paid Basic checkout isn’t available from the billing service. Retry plans or choose Performance."
+						: "The Basic plan isn’t available from the billing service. Retry plans before deploying.",
 			};
 		}
 		if (includedSlotPending) {
@@ -391,7 +395,7 @@ export function DeployWizard() {
 	const includedSlotUsed = usesActiveIncludedBasicSlot(deployments.data);
 	const includedSlotPending = deployments.isLoading;
 	const basicOfferSelection = useMemo(
-		() => (basicPlan ? selectOfferForTerm(basicPlan, term) : null),
+		() => (basicPlan ? selectExplicitOfferForTerm(basicPlan, term) : null),
 		[basicPlan, term],
 	);
 	const basicSelection = useMemo(
@@ -411,7 +415,7 @@ export function DeployWizard() {
 	const basicOffer = basicOfferSelection?.offer ?? null;
 	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
-	const basicOffers = basicPlan ? planOffers(basicPlan) : [];
+	const basicOffers = basicPlan ? explicitPlanOffers(basicPlan) : [];
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
 	const basicUnavailable =
 		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
@@ -632,10 +636,10 @@ export function DeployWizard() {
 		return body;
 	}
 
-	function buildDeployRequest<TPlanSlug extends ComputePlanSlug>(
+	function buildDeployRequest(
 		aiFields: DeployAiFields,
-		computePlanSlug: TPlanSlug,
-	): DeployRequest<TPlanSlug> {
+		computePlanSlug: ComputePlanSlug,
+	): DeployRequest {
 		return buildHostedDeployRequest({
 			computePlanSlug,
 			runtime,
@@ -729,7 +733,7 @@ export function DeployWizard() {
 			if (paidSelection) {
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
 				const body: CheckoutRequest = {
-					plan_slug: paidSelection.plan.slug,
+					plan_slug: paidSelection.computePlanSlug,
 					billing_term_months: paidSelection.billingTermMonths,
 					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 					deploy_config: deployConfig,
@@ -1035,8 +1039,10 @@ export function DeployWizard() {
 											? "Checking slot"
 											: deployments.error
 												? "Slot unavailable"
-												: includedSlotUsed && basicOffer
-													? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo additional`
+												: includedSlotUsed
+													? basicOffer
+														? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo additional`
+														: "Additional unavailable"
 													: "First slot free"}
 									</Badge>
 								}

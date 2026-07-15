@@ -59,8 +59,8 @@ function plan(priceCents: number): Plan {
 		points_per_usd: 100,
 		signup_grant_credits: 0,
 		subscription_grant_credits: 0,
-		vcpu: 1,
-		ram_gb: 2,
+		vcpu: 2,
+		ram_gb: 4,
 		disk_size: 20,
 		offers: [
 			{
@@ -133,14 +133,37 @@ describe("resolveBasicDeploySelection", () => {
 				basicPlan: undefined,
 				billingTermMonths: 1,
 			}),
-		).toEqual({ mode: "unavailable" });
+		).toEqual({ mode: "unavailable", reason: "plan_missing" });
 		expect(
 			resolveBasicDeploySelection({
 				includedSlotUsed: true,
 				basicPlan: undefined,
 				billingTermMonths: 1,
 			}),
-		).toEqual({ mode: "unavailable" });
+		).toEqual({ mode: "unavailable", reason: "plan_missing" });
+	});
+
+	test("requires a real API offer only when the included slot is occupied", () => {
+		const basicWithoutOffers = { ...basic, offers: [] };
+
+		expect(
+			resolveBasicDeploySelection({
+				includedSlotUsed: false,
+				basicPlan: basicWithoutOffers,
+				billingTermMonths: 1,
+			}),
+		).toEqual({
+			mode: "direct",
+			computePlanSlug: "compute_basic",
+			plan: basicWithoutOffers,
+		});
+		expect(
+			resolveBasicDeploySelection({
+				includedSlotUsed: true,
+				basicPlan: basicWithoutOffers,
+				billingTermMonths: 1,
+			}),
+		).toEqual({ mode: "unavailable", reason: "offers_missing" });
 	});
 });
 

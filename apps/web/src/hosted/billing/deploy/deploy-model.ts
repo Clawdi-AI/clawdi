@@ -1,8 +1,8 @@
-import type { HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, HostedDeployment, Plan } from "@/hosted/billing/contracts";
 import {
 	COMPUTE_BASIC_SLUG,
 	computeFundingMode,
-	selectOfferForTerm,
+	selectExplicitOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { occupiesComputeSlot } from "@/hosted/deployment-status";
 
@@ -16,11 +16,12 @@ export type BasicDeploySelection =
 			mode: "checkout";
 			billingTermMonths: number;
 			computePlanSlug: typeof COMPUTE_BASIC_SLUG;
-			offer: ReturnType<typeof selectOfferForTerm>["offer"];
+			offer: BillingOffer;
 			plan: Plan;
 	  }
 	| {
 			mode: "unavailable";
+			reason: "plan_missing" | "offers_missing";
 	  };
 
 export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | undefined): boolean {
@@ -46,12 +47,13 @@ export function resolveBasicDeploySelection({
 	basicPlan: Plan | undefined;
 	billingTermMonths: number;
 }): BasicDeploySelection {
-	if (!basicPlan) return { mode: "unavailable" };
+	if (!basicPlan) return { mode: "unavailable", reason: "plan_missing" };
 	if (!includedSlotUsed) {
 		return { mode: "direct", computePlanSlug: COMPUTE_BASIC_SLUG, plan: basicPlan };
 	}
 
-	const selection = selectOfferForTerm(basicPlan, billingTermMonths);
+	const selection = selectExplicitOfferForTerm(basicPlan, billingTermMonths);
+	if (!selection) return { mode: "unavailable", reason: "offers_missing" };
 	return {
 		mode: "checkout",
 		billingTermMonths: selection.billingTermMonths,

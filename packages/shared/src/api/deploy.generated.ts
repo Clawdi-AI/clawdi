@@ -521,8 +521,11 @@ export interface components {
         };
         /** V2ComputeCheckoutRequest */
         V2ComputeCheckoutRequest: {
-            /** Plan Slug */
-            plan_slug: string;
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
             /**
              * Billing Term Months
              * @default 1
@@ -753,7 +756,7 @@ export interface components {
              * Compute Plan Slug
              * @enum {string}
              */
-            compute_plan_slug: "compute_free" | "compute_performance";
+            compute_plan_slug: "compute_basic" | "compute_performance";
             /** Primary Model */
             primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
@@ -808,7 +811,7 @@ export interface components {
              * Compute Plan Slug
              * @enum {string}
              */
-            compute_plan_slug: "compute_free" | "compute_performance";
+            compute_plan_slug: "compute_basic" | "compute_performance";
             /**
              * Mux Enabled
              * @default false
@@ -1223,7 +1226,9 @@ export interface operations {
     create_v2_deployment_v2_deployments_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

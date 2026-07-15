@@ -10,6 +10,7 @@ import {
 	isComputeSubscriptionTermChangeable,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 
@@ -50,18 +51,18 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 }
 
 describe("compute plan resolvers", () => {
-	test("resolvePerformancePlan prefers the canonical slug before price fallback", () => {
-		const priceFallback = plan({ slug: "legacy_paid", price_cents: 1900 });
+	test("resolvePerformancePlan selects only the canonical slug", () => {
+		const otherPaid = plan({ slug: "legacy_paid", price_cents: 1900 });
 		const canonical = plan({ slug: COMPUTE_PERFORMANCE_SLUG, price_cents: 0 });
 
-		expect(resolvePerformancePlan([priceFallback, canonical])).toBe(canonical);
+		expect(resolvePerformancePlan([otherPaid, canonical])).toBe(canonical);
 	});
 
-	test("resolvePerformancePlan falls back to the first paid plan when the slug is absent", () => {
+	test("resolvePerformancePlan does not infer Performance from a positive price", () => {
 		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 900 });
 		const paid = plan({ slug: "paid", price_cents: 1900 });
 
-		expect(resolvePerformancePlan([basic, paid])).toBe(paid);
+		expect(resolvePerformancePlan([basic, paid])).toBeUndefined();
 	});
 
 	test("resolvePerformancePlan never treats compute_basic as the positive-price fallback", () => {
@@ -153,6 +154,31 @@ describe("selectOfferForTerm", () => {
 			},
 			billingTermMonths: 1,
 		});
+	});
+});
+
+describe("selectExplicitOfferForTerm", () => {
+	test("selects only offers advertised by the plans API", () => {
+		const annual = offer(12, 8_640);
+		const selected = selectExplicitOfferForTerm(
+			plan({
+				slug: COMPUTE_BASIC_SLUG,
+				price_cents: 900,
+				offers: [offer(1, 900), annual],
+			}),
+			12,
+		);
+
+		expect(selected).toEqual({ offer: annual, billingTermMonths: 12 });
+	});
+
+	test("returns null instead of synthesizing a purchasable offer", () => {
+		expect(
+			selectExplicitOfferForTerm(
+				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 900, offers: [] }),
+				1,
+			),
+		).toBeNull();
 	});
 });
 

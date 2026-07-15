@@ -19,9 +19,11 @@ import type { Plan } from "@/hosted/billing/contracts";
 import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
+	explicitPlanOffers,
 	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -78,7 +80,7 @@ export function PlanComparison({
 	const performanceOffer = performanceOfferSelection?.offer ?? null;
 	const performanceBillingTermMonths = performanceOfferSelection?.billingTermMonths ?? term;
 	const basicOfferSelection = useMemo(
-		() => (basic ? selectOfferForTerm(basic, term) : null),
+		() => (basic ? selectExplicitOfferForTerm(basic, term) : null),
 		[basic, term],
 	);
 	const basicOffer = basicOfferSelection?.offer ?? null;
@@ -99,7 +101,7 @@ export function PlanComparison({
 	);
 	const subscriptionGrantCredits = Math.max(0, performance?.subscription_grant_credits ?? 0);
 	const basicSubscriptionGrantCredits = Math.max(0, basic?.subscription_grant_credits ?? 0);
-	const basicOffers = basic ? planOffers(basic) : [];
+	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
 	const annualOffer = performanceOffers.find((o) => o.billing_term_months === 12);

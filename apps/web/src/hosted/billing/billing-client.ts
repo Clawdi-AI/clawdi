@@ -5,7 +5,6 @@ import createClient from "openapi-fetch";
 import { useMemo } from "react";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
-	BillingDeployPaths,
 	CheckoutRequest,
 	ComputeFixPaymentRequest,
 	ComputeSubscriptionCancelRequest,
@@ -82,7 +81,7 @@ function runtimeAgentType(agentType: string): RuntimeAgentType {
 export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const api = createClient<BillingDeployPaths>({
+		const api = createClient<DeployPaths>({
 			baseUrl: ROOT_BASE_URL,
 			fetch: fetchWithTimeout,
 		});

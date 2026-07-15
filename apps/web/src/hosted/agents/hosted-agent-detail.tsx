@@ -112,11 +112,13 @@ import {
 	COMPUTE_PERFORMANCE_SLUG,
 	computeFundingMode,
 	computeTierLabel,
+	explicitPlanOffers,
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionTermChangeable,
 	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -2142,15 +2144,34 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				? perfPlan
 				: undefined;
 	const billingPlan = isIncludedBasic ? perfPlan : currentPaidPlan;
-	const billingOffers = useMemo(() => (billingPlan ? planOffers(billingPlan) : []), [billingPlan]);
+	const billingUsesExplicitBasicOffers = !isIncludedBasic && computePlanSlug === COMPUTE_BASIC_SLUG;
+	const billingOffers = useMemo(
+		() =>
+			billingPlan
+				? billingUsesExplicitBasicOffers
+					? explicitPlanOffers(billingPlan)
+					: planOffers(billingPlan)
+				: [],
+		[billingPlan, billingUsesExplicitBasicOffers],
+	);
 	const billingOfferSelection = useMemo(
-		() => (billingPlan ? selectOfferForTerm(billingPlan, term) : null),
-		[billingPlan, term],
+		() =>
+			billingPlan
+				? billingUsesExplicitBasicOffers
+					? selectExplicitOfferForTerm(billingPlan, term)
+					: selectOfferForTerm(billingPlan, term)
+				: null,
+		[billingPlan, billingUsesExplicitBasicOffers, term],
 	);
 	const selectedBillingTerm = billingOfferSelection?.billingTermMonths ?? term;
 	const currentOfferSelection = useMemo(
-		() => (currentPaidPlan ? selectOfferForTerm(currentPaidPlan, currentBillingTerm) : null),
-		[currentPaidPlan, currentBillingTerm],
+		() =>
+			currentPaidPlan
+				? computePlanSlug === COMPUTE_BASIC_SLUG
+					? selectExplicitOfferForTerm(currentPaidPlan, currentBillingTerm)
+					: selectOfferForTerm(currentPaidPlan, currentBillingTerm)
+				: null,
+		[computePlanSlug, currentPaidPlan, currentBillingTerm],
 	);
 	const currentOffer =
 		currentOfferSelection?.billingTermMonths === currentBillingTerm
@@ -2233,7 +2254,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		}
 		try {
 			const body: CheckoutRequest = {
-				plan_slug: perfPlan.slug,
+				plan_slug: COMPUTE_PERFORMANCE_SLUG,
 				billing_term_months: perfOfferSelection.billingTermMonths,
 				ui_mode: "hosted",
 				upgrade_deployment_id: deployment.id,

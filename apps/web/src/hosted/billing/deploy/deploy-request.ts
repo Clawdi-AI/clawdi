@@ -19,17 +19,17 @@ export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> &
 		>
 	>;
 
-export function buildHostedDeployRequest<TPlanSlug extends ComputePlanSlug>({
+export function buildHostedDeployRequest({
 	computePlanSlug,
 	runtime,
 	persona,
 	aiFields,
 }: {
-	computePlanSlug: TPlanSlug;
+	computePlanSlug: ComputePlanSlug;
 	runtime: HostedRuntime;
 	persona: DeployPersona;
 	aiFields: DeployAiFields;
-}): DeployRequest<TPlanSlug> {
+}): DeployRequest {
 	const language = normalizeHostedLanguage(persona.language);
 	const timezone = persona.timezone.trim() || null;
 	const { ai_provider_auth_kind, ...restAiFields } = aiFields;

@@ -17,14 +17,15 @@ const DEPLOY_API = "http://127.0.0.1:8001";
 
 const basicPlan = {
 	slug: "compute_basic",
-	name: "Basic",
+	name: "Compute Basic",
 	price_cents: 900,
 	points_per_usd: 100,
 	signup_grant_credits: 500,
 	subscription_grant_credits: 0,
-	vcpu: 1,
-	ram_gb: 2,
+	vcpu: 2,
+	ram_gb: 4,
 	disk_size: 20,
+	instance_type: null,
 	offers: [
 		{
 			billing_term_months: 1,
@@ -34,23 +35,24 @@ const basicPlan = {
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 9_000,
-			effective_monthly_price_cents: 750,
-			discount_percent: 17,
+			price_cents: 8_640,
+			effective_monthly_price_cents: 720,
+			discount_percent: 20,
 		},
 	],
 };
 
 const performancePlan = {
 	slug: "compute_performance",
-	name: "Performance",
+	name: "Compute Performance",
 	price_cents: 1_900,
 	points_per_usd: 100,
 	signup_grant_credits: 500,
 	subscription_grant_credits: 500,
 	vcpu: 4,
 	ram_gb: 8,
-	disk_size: 80,
+	disk_size: 40,
+	instance_type: "tdx.large",
 	offers: [
 		{
 			billing_term_months: 1,
@@ -60,9 +62,9 @@ const performancePlan = {
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 19_000,
-			effective_monthly_price_cents: 1_583,
-			discount_percent: 17,
+			price_cents: 18_000,
+			effective_monthly_price_cents: 1_500,
+			discount_percent: 21,
 		},
 	],
 };
@@ -100,7 +102,7 @@ const paidBasicDeployment = {
 		status: "active",
 		payment_state: "ok",
 		billing_term_months: 12,
-		price_cents: 9_000,
+		price_cents: 8_640,
 		currency: "usd",
 		cancel_at_period_end: false,
 	},
@@ -233,14 +235,14 @@ test("paid-funded Basic leaves the included slot available for direct compute_ba
 	await stubHostedApi(page, {
 		createRequests,
 		deployments: [paidBasicDeployment],
-		plans: [basicPlan, performancePlan],
+		plans: [{ ...basicPlan, offers: [] }, performancePlan],
 	});
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
 	await expect(page.getByText("First slot free", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText(/First active agent free · then \$9\/mo per additional agent/),
+		page.getByText(/First active agent free · paid additional agents unavailable/),
 	).toBeVisible();
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
@@ -276,11 +278,11 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await annualTerm.click();
 	await expect(
 		page.getByText(
-			/First active agent free · then \$7.5\/mo, billed \$90\/yr per additional agent/,
+			/First active agent free · then \$7.2\/mo, billed \$86.4\/yr per additional agent/,
 		),
 	).toBeVisible();
 	await expect(
-		page.getByText(/additional Basic agent at \$7.5\/mo, billed \$90\/yr/),
+		page.getByText(/additional Basic agent at \$7.2\/mo, billed \$86.4\/yr/),
 	).toBeVisible();
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 

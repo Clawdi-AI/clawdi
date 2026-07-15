@@ -40,10 +40,7 @@ export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
 }
 
 export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefined {
-	return (
-		plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG) ??
-		plans?.find((plan) => plan.slug !== COMPUTE_BASIC_SLUG && plan.price_cents > 0)
-	);
+	return plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG);
 }
 
 export function isBasicCompute(planSlug: string | null | undefined): boolean {
@@ -82,6 +79,17 @@ export function planOffers(plan: Plan): BillingOffer[] {
 					discount_percent: 0,
 				},
 			];
+}
+
+/** Offers explicitly advertised by the plans API; an empty list is not purchasable. */
+export function explicitPlanOffers(plan: Plan): BillingOffer[] {
+	return plan.offers ?? [];
+}
+
+export function selectExplicitOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer | null {
+	const offers = explicitPlanOffers(plan);
+	const offer = offers.find((candidate) => candidate.billing_term_months === term) ?? offers[0];
+	return offer ? { offer, billingTermMonths: offer.billing_term_months } : null;
 }
 
 export function selectOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer {
