@@ -6,7 +6,7 @@ import {
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 
 describe("buildHostedDeployRequest", () => {
-	test("serializes the default wizard state with explicit openclaw and managed AI", () => {
+	test("serializes the default wizard state with explicit hermes and managed AI", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_free",
 			runtime: DEFAULT_DEPLOY_RUNTIME,
@@ -19,7 +19,7 @@ describe("buildHostedDeployRequest", () => {
 
 		expect(request).toEqual({
 			compute_plan_slug: "compute_free",
-			runtime: "openclaw",
+			runtime: "hermes",
 			language: null,
 			timezone: null,
 			ai_provider_id: null,
@@ -30,7 +30,7 @@ describe("buildHostedDeployRequest", () => {
 				model: "gpt-5.5",
 			},
 			config: {
-				runtime: "openclaw",
+				runtime: "hermes",
 				language: null,
 				timezone: null,
 			},

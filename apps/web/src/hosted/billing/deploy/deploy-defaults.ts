@@ -1,5 +1,5 @@
 import type { DeployAiFields } from "@/hosted/billing/deploy/deploy-request";
-import { DEFAULT_HOSTED_RUNTIME, type HostedRuntime } from "@/hosted/runtimes";
+import type { HostedRuntime } from "@/hosted/runtimes";
 import {
 	MANAGED_AI_CHOICE,
 	MANAGED_PRIMARY_MODEL_FALLBACK,
@@ -9,7 +9,9 @@ import {
 
 export type DeployWizardAiAccessMode = "unmanaged" | "configured";
 
-export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = DEFAULT_HOSTED_RUNTIME;
+// Deploy-form pre-selection. Independent from the config-interpretation
+// fallback in runtimes.ts (which stays openclaw for existing deployment records).
+export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = "hermes";
 export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode = "configured";
 export const DEFAULT_DEPLOY_AI_PROVIDER_CHOICES = [MANAGED_AI_CHOICE] as const;
 export const DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE = MANAGED_AI_CHOICE;

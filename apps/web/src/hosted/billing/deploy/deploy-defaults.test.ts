@@ -11,8 +11,8 @@ import {
 import { MANAGED_AI_CHOICE, MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers/model-binding";
 
 describe("deploy wizard defaults", () => {
-	test("default to the historical openclaw runtime and managed AI mode", () => {
-		expect(DEFAULT_DEPLOY_RUNTIME).toBe("openclaw");
+	test("default to the hermes runtime and managed AI mode", () => {
+		expect(DEFAULT_DEPLOY_RUNTIME).toBe("hermes");
 		expect(DEFAULT_DEPLOY_AI_ACCESS_MODE).toBe("configured");
 		expect(DEFAULT_DEPLOY_AI_PROVIDER_CHOICES).toEqual([MANAGED_AI_CHOICE]);
 		expect(DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE).toBe(MANAGED_AI_CHOICE);
