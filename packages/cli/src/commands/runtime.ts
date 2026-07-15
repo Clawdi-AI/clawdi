@@ -1563,7 +1563,10 @@ function applySystemdRuntimeUpdate(
 		});
 	}
 	runtimeUserSystemctl(paths, ["daemon-reload"]);
-	if (user.present.length > 0) runtimeUserSystemctl(paths, ["enable", "--now", ...user.present]);
+	if (user.present.length > 0) {
+		runtimeUserSystemctl(paths, ["reset-failed", ...user.present], { allowNonZero: true });
+		runtimeUserSystemctl(paths, ["enable", "--now", ...user.present]);
+	}
 	if (user.removed.length > 0) {
 		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
 	}
