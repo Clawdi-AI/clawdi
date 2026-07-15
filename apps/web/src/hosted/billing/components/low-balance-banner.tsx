@@ -11,19 +11,20 @@ import { creditsToUsd } from "@/hosted/billing/format";
  * Low-balance / payment-attention banner.
  *
  * Shows when the managed-AI balance is low, or an auto-reload attempt needs
- * action (SCA) or was declined. Always leads with the reassuring narrative —
- * the agent keeps running; only managed AI pauses — and offers the top-up /
- * auto-reload deep links.
+ * action (SCA) or was declined. Copy accounts for the shared balance funding
+ * both managed AI and wallet compute, and offers top-up / auto-reload links.
  *
  * Returns null when there's nothing to surface, so callers can render it
  * unconditionally at the top of any page.
  */
 export function LowBalanceBanner({
 	wallet,
+	hasWalletCompute = false,
 	onTopUp,
 	onAutoReload,
 }: {
 	wallet: WalletState | undefined;
+	hasWalletCompute?: boolean;
 	onTopUp?: () => void;
 	onAutoReload?: () => void;
 }) {
@@ -36,11 +37,14 @@ export function LowBalanceBanner({
 			? "Your bank needs to confirm a top-up"
 			: "Your AI Credits are running low";
 
+	const consequence = hasWalletCompute
+		? "Managed AI and wallet-funded compute can be interrupted if the balance stays low."
+		: "Managed AI can pause if the balance stays low.";
 	const body = declined
-		? "We couldn’t charge your saved card. Top up manually or update your payment method — your agent keeps running."
+		? `We couldn’t charge your saved card. Top up manually or update your payment method. ${consequence}`
 		: needsAction
-			? "A top-up is waiting on confirmation from your bank. Managed AI may pause until it clears, but your agent keeps running."
-			: `You have about ${creditsToUsd(wallet.balance_credits, wallet.points_per_usd)} of managed AI left. Top up or turn on auto-reload so it doesn’t pause — your agent keeps running either way.`;
+			? `A top-up is waiting on confirmation from your bank. ${consequence}`
+			: `You have about ${creditsToUsd(wallet.balance_credits, wallet.points_per_usd)} left. Top up or turn on auto-reload. ${consequence}`;
 
 	return (
 		<Alert data-hosted="true" variant={declined ? "destructive" : "default"}>

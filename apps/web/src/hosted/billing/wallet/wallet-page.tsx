@@ -9,10 +9,11 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 import { getStripe } from "@/hosted/billing/stripe";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
+import { ComputeCommitmentCard } from "@/hosted/billing/wallet/compute-commitment-card";
 import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
@@ -28,7 +29,7 @@ import { shouldShowX402Card } from "@/hosted/billing/wallet/x402-card.logic";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Your AI Credits balance, top-ups, and auto-reload.";
+const DESCRIPTION = "One balance for managed AI, wallet-funded compute, top-ups, and auto-reload.";
 const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
@@ -49,6 +50,7 @@ function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
 
 export function WalletPage() {
 	const wallet = useWallet();
+	const deployments = useHostedDeployments();
 	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
@@ -128,6 +130,10 @@ export function WalletPage() {
 	}
 
 	const w = wallet.data;
+	const walletComputeCount =
+		deployments.data?.filter(
+			(deployment) => deployment.compute_subscription?.funding_source === "wallet",
+		).length ?? 0;
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
@@ -137,11 +143,24 @@ export function WalletPage() {
 
 			<LowBalanceBanner
 				wallet={w}
+				hasWalletCompute={walletComputeCount > 0}
 				onTopUp={() => setTopUpOpen(true)}
 				onAutoReload={scrollToAutoReload}
 			/>
 
-			<BalanceCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
+			<BalanceCard
+				wallet={w}
+				hasWalletCompute={walletComputeCount > 0}
+				onTopUp={() => setTopUpOpen(true)}
+			/>
+
+			<ComputeCommitmentCard
+				wallet={w}
+				deployments={deployments.data}
+				isLoading={deployments.isLoading}
+				error={deployments.error}
+				onRetry={() => void deployments.refetch()}
+			/>
 
 			<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
 				<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />

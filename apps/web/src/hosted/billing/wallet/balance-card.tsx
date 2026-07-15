@@ -13,9 +13,17 @@ import { relativeTime } from "@/lib/utils";
  * Balance hero. The dollar figure is the loudest thing on the wallet page; the
  * credits and conversion rate sit underneath as supporting context. When the
  * balance trips the low threshold the figure goes warning-toned and an inline
- * chip explains the consequence (managed AI pauses, the agent keeps running).
+ * chip explains the consequence for managed AI and wallet-funded compute.
  */
-export function BalanceCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp: () => void }) {
+export function BalanceCard({
+	wallet,
+	hasWalletCompute = false,
+	onTopUp,
+}: {
+	wallet: WalletState;
+	hasWalletCompute?: boolean;
+	onTopUp: () => void;
+}) {
 	const low = isLowBalance(wallet.balance_credits, wallet.points_per_usd);
 	return (
 		<Card data-hosted="true">
@@ -67,8 +75,8 @@ export function BalanceCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp:
 						</span>
 						{low ? (
 							<span className="inline-flex items-center gap-1 font-medium text-warning-muted-foreground">
-								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up so managed AI
-								doesn’t pause
+								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up before
+								{hasWalletCompute ? " AI or compute is interrupted" : " managed AI pauses"}
 							</span>
 						) : null}
 					</div>

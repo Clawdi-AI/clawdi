@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ComputePlanSlug, HostedDeployment } from "@/hosted/billing/contracts";
-import { computeDunningState, computeDunningTileStatus } from "./compute-dunning.logic";
+import {
+	computeDunningState,
+	computeDunningTileStatus,
+	dunningDeadlineCountdown,
+} from "./compute-dunning.logic";
 
 function deployment(
 	computeSubscription: HostedDeployment["compute_subscription"],
@@ -29,6 +33,7 @@ function subscription(
 ): NonNullable<HostedDeployment["compute_subscription"]> {
 	return {
 		status: "active",
+		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 1,
 		price_cents: 1_900,
@@ -48,6 +53,48 @@ describe("computeDunningState", () => {
 	test("returns null for healthy subscriptions", () => {
 		expect(computeDunningState(deployment(null))).toBeNull();
 		expect(computeDunningState(deployment(subscription()))).toBeNull();
+	});
+
+	test("branches on the recovery hint for wallet grace and never uses Stripe recovery", () => {
+		const state = computeDunningState(
+			deployment(
+				subscription({
+					status: "past_due",
+					funding_source: "wallet",
+					payment_state: "past_due",
+					recovery_action: "top_up",
+					dunning_deadline_at: "2026-07-18T12:00:00Z",
+					last_collection_failure_code: "insufficient_balance",
+				}),
+				"compute_performance",
+			),
+		);
+
+		expect(state).toMatchObject({
+			fundingSource: "wallet",
+			recoveryAction: "top_up",
+			ctaTarget: "wallet",
+			serviceRiskAt: "2026-07-18T12:00:00Z",
+			failureCode: "insufficient_balance",
+		});
+		expect(state?.description).toContain("72-hour grace period");
+		expect(state?.description).not.toContain("Stripe");
+	});
+
+	test("explains wallet terminal fallback", () => {
+		const state = computeDunningState(
+			deployment(
+				subscription({
+					status: "unpaid",
+					funding_source: "wallet",
+					payment_state: "unpaid",
+					recovery_action: "top_up",
+				}),
+			),
+		);
+		expect(state?.description).toContain("fell back to included Basic");
+		expect(state?.description).toContain("otherwise it stopped");
+		expect(state?.ctaTarget).toBe("wallet");
 	});
 
 	test("routes action-required subscriptions to the hosted invoice when present", () => {
@@ -110,5 +157,13 @@ describe("computeDunningState", () => {
 		expect(state?.paymentState).toBe("unpaid");
 		expect(state?.tileTextClass).toBe("text-destructive");
 		expect(state?.ctaTarget).toBe("portal");
+	});
+});
+
+describe("dunningDeadlineCountdown", () => {
+	test("formats remaining grace time and the expired state", () => {
+		const now = Date.parse("2026-07-15T12:00:00Z");
+		expect(dunningDeadlineCountdown("2026-07-18T14:00:00Z", now)).toBe("3d 2h remaining");
+		expect(dunningDeadlineCountdown("2026-07-15T11:59:00Z", now)).toBe("Grace period ended");
 	});
 });

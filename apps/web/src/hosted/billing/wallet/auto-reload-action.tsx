@@ -65,8 +65,8 @@ export function AutoReloadActionConfirm({
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>
 						{declined
-							? "Update your card or top up manually. Auto-reload pauses after repeated declines — your agent keeps running."
-							: "Your bank is still confirming the last auto-reload. It’ll resume once cleared — your agent keeps running."}
+							? "Update your card or top up manually. Auto-reload pauses after repeated declines; managed AI and wallet-funded compute still use the remaining balance."
+							: "Your bank is still confirming the last auto-reload. Managed AI and wallet-funded compute still use the remaining balance until it clears."}
 					</span>
 					{onTopUp ? (
 						<Button size="sm" onClick={onTopUp}>
@@ -85,8 +85,8 @@ export function AutoReloadActionConfirm({
 			<AlertDescription className="flex flex-col items-start gap-3">
 				<span>
 					{declined
-						? "Your saved card was declined. Retry with a card to complete this top-up — your agent keeps running."
-						: "Your bank asked to confirm this top-up. Complete it here to finish — your agent keeps running."}
+						? "Your saved card was declined. Retry with a card to complete this top-up before the remaining balance runs out."
+						: "Your bank asked to confirm this top-up. Complete it here before the remaining balance runs out."}
 				</span>
 				{confirming ? (
 					<div className="w-full">

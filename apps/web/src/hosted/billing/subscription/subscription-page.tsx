@@ -13,7 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
-import { InvoicesSection } from "@/hosted/billing/subscription/invoices-section";
+import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -105,7 +105,7 @@ export function SubscriptionPage() {
 				</CardContent>
 			</Card>
 
-			<InvoicesSection />
+			<BillingHistorySection />
 
 			<PlanComparison term={term} onTermChange={setTerm} />
 		</div>

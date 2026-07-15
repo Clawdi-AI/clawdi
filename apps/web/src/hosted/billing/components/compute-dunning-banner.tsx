@@ -1,26 +1,43 @@
 "use client";
 
-import { CreditCard, ExternalLink, TriangleAlert } from "lucide-react";
+import { CreditCard, ExternalLink, RefreshCw, TriangleAlert, WalletCards } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { normalizeBillingError } from "@/hosted/billing/errors";
-import { useFixPayment } from "@/hosted/billing/hooks";
+import { BillingApiError, normalizeBillingError } from "@/hosted/billing/errors";
+import { useFixPayment, useRetryWalletCompute, useWallet } from "@/hosted/billing/hooks";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { formatShortDate } from "@/lib/format";
-import { computeDunningState } from "./compute-dunning.logic";
+import { computeDunningState, dunningDeadlineCountdown } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
 	const state = computeDunningState(deployment);
 	const fixPayment = useFixPayment();
+	const retryWallet = useRetryWalletCompute();
+	const wallet = useWallet();
+	const [topUpOpen, setTopUpOpen] = useState(false);
+	const [now, setNow] = useState(() => Date.now());
+
+	useEffect(() => {
+		if (!state?.serviceRiskAt || state.ctaTarget !== "wallet") return;
+		const interval = window.setInterval(() => setNow(Date.now()), 60_000);
+		return () => window.clearInterval(interval);
+	}, [state?.ctaTarget, state?.serviceRiskAt]);
+
 	if (!state) return null;
 
-	const riskLabel = state.nextPaymentAttemptAt
-		? `Next retry: ${formatShortDate(state.nextPaymentAttemptAt)}.`
-		: state.serviceRiskAt && state.paymentState !== "unpaid"
-			? `Service is at risk after ${formatShortDate(state.serviceRiskAt)}.`
-			: null;
+	const countdown =
+		state.ctaTarget === "wallet" ? dunningDeadlineCountdown(state.serviceRiskAt, now) : null;
+	const riskLabel = countdown
+		? `Grace deadline: ${formatShortDate(state.serviceRiskAt)} (${countdown}).`
+		: state.nextPaymentAttemptAt
+			? `Next retry: ${formatShortDate(state.nextPaymentAttemptAt)}.`
+			: state.serviceRiskAt && state.paymentState !== "unpaid"
+				? `Service is at risk after ${formatShortDate(state.serviceRiskAt)}.`
+				: null;
 	const destructive = state.paymentState === "unpaid";
 
 	async function handleFixPayment() {
@@ -46,37 +63,83 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 		}
 	}
 
+	async function handleWalletRetry() {
+		if (!state?.subscriptionId) return;
+		try {
+			await retryWallet.mutateAsync({ subscription_id: state.subscriptionId });
+			toast.success("Wallet payment recovered", {
+				description: "Paid compute is active again.",
+			});
+		} catch (error) {
+			if (error instanceof BillingApiError && error.status === 402) setTopUpOpen(true);
+			toast.error("Couldn’t retry wallet payment", {
+				description:
+					error instanceof BillingApiError && error.status === 409
+						? "Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again."
+						: normalizeBillingError(error),
+			});
+		}
+	}
+
 	return (
-		<Alert
-			data-hosted="true"
-			variant={destructive ? "destructive" : "default"}
-			className={destructive ? undefined : "border-warning/30 bg-warning-muted"}
-		>
-			<TriangleAlert />
-			<AlertTitle>{state.title}</AlertTitle>
-			<AlertDescription className="flex flex-col items-start gap-3">
-				<span>
-					{state.description}
-					{riskLabel ? ` ${riskLabel}` : ""}
-				</span>
-				<Button
-					size="sm"
-					variant={destructive ? "destructive" : "default"}
-					onClick={() => {
-						void handleFixPayment();
-					}}
-					disabled={fixPayment.isPending && state.ctaTarget === "portal"}
-				>
-					{fixPayment.isPending && state.ctaTarget === "portal" ? (
-						<Spinner />
-					) : state.ctaTarget === "invoice" ? (
-						<ExternalLink data-icon="inline-start" />
+		<>
+			<Alert
+				data-hosted="true"
+				variant={destructive ? "destructive" : "default"}
+				className={destructive ? undefined : "border-warning/30 bg-warning-muted"}
+			>
+				<TriangleAlert />
+				<AlertTitle>{state.title}</AlertTitle>
+				<AlertDescription className="flex flex-col items-start gap-3">
+					<span>
+						{state.description}
+						{state.failureCode ? ` Failure: ${state.failureCode.replaceAll("_", " ")}.` : ""}
+						{riskLabel ? ` ${riskLabel}` : ""}
+					</span>
+					{state.ctaTarget === "wallet" ? (
+						<div className="flex flex-wrap gap-2">
+							<Button
+								size="sm"
+								variant={destructive ? "destructive" : "default"}
+								onClick={() => setTopUpOpen(true)}
+								disabled={!wallet.data}
+							>
+								<WalletCards data-icon="inline-start" /> Top up
+							</Button>
+							{state.subscriptionId ? (
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => void handleWalletRetry()}
+									disabled={retryWallet.isPending}
+								>
+									{retryWallet.isPending ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+									Retry payment
+								</Button>
+							) : null}
+						</div>
 					) : (
-						<CreditCard data-icon="inline-start" />
+						<Button
+							size="sm"
+							variant={destructive ? "destructive" : "default"}
+							onClick={() => void handleFixPayment()}
+							disabled={fixPayment.isPending && state.ctaTarget === "portal"}
+						>
+							{fixPayment.isPending && state.ctaTarget === "portal" ? (
+								<Spinner />
+							) : state.ctaTarget === "invoice" ? (
+								<ExternalLink data-icon="inline-start" />
+							) : (
+								<CreditCard data-icon="inline-start" />
+							)}
+							Fix payment
+						</Button>
 					)}
-					Fix payment
-				</Button>
-			</AlertDescription>
-		</Alert>
+				</AlertDescription>
+			</Alert>
+			{wallet.data ? (
+				<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={wallet.data} />
+			) : null}
+		</>
 	);
 }
