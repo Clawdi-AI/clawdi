@@ -151,7 +151,9 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	const agentTiles = page.getByTestId("app-sidebar-agent-tiles");
 	await expect(agentTiles).toBeVisible();
 	const agentTile = page.getByTestId("app-sidebar-agent-tile").filter({ hasText: "Smoke Codex" });
-	await expect(agentTile).toHaveCount(1);
+	// A cold parallel Vite graph can defer the mocked agents fetch beyond the
+	// suite-wide 5s assertion default even though the response is healthy.
+	await expect(agentTile).toHaveCount(1, { timeout: 15_000 });
 	await expectNoBrowserErrors(page, browserErrors, "dashboard render");
 
 	await agentTile.locator("a").hover();
