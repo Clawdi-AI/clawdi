@@ -8,6 +8,7 @@ import {
 function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	return {
 		status: "active",
+		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 1,
 		price_cents: 900,

@@ -49,6 +49,8 @@ export function isBasicCompute(planSlug: string | null | undefined): boolean {
 
 export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
 
+export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
+
 export function computeFundingMode(
 	planSlug: string | null | undefined,
 	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
@@ -56,6 +58,44 @@ export function computeFundingMode(
 	if (computeSubscription) return "subscription";
 	if (isBasicCompute(planSlug)) return "included_basic";
 	return "unknown";
+}
+
+export function computeFundingSource(
+	planSlug: string | null | undefined,
+	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+): ComputeFundingSource {
+	if (computeSubscription?.funding_source === "wallet") return "wallet";
+	// Additive rollout compatibility: subscriptions from the pre-wallet
+	// deployment projection had no funding_source and were necessarily Stripe.
+	if (computeSubscription) return "stripe";
+	if (isBasicCompute(planSlug) && !computeSubscription) return "included_basic";
+	return "unknown";
+}
+
+/**
+ * Additive subscription metadata readers. Hosted main does not expose these
+ * fields yet, so callers stay disabled until the deployment projection grows
+ * them; no guessed deployment-to-subscription mapping is safe.
+ */
+export function computeSubscriptionId(
+	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+): number | null {
+	if (!subscription || !("subscription_id" in subscription)) return null;
+	return typeof subscription.subscription_id === "number" &&
+		Number.isInteger(subscription.subscription_id) &&
+		subscription.subscription_id > 0
+		? subscription.subscription_id
+		: null;
+}
+
+export function pendingComputePlanSlug(
+	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+): ComputePlanSlug | null {
+	if (!subscription || !("pending_plan_slug" in subscription)) return null;
+	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||
+		subscription.pending_plan_slug === COMPUTE_PERFORMANCE_SLUG
+		? subscription.pending_plan_slug
+		: null;
 }
 
 export function computeTierLabel(

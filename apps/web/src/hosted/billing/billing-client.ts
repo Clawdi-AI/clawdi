@@ -15,6 +15,10 @@ import type {
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
+	WalletComputeActivateRequest,
+	WalletComputePlanChangeRequest,
+	WalletComputeQuoteRequest,
+	WalletComputeRetryRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
@@ -63,7 +67,7 @@ export function unwrapDeploy<T>(result: DeployResult<T>): T {
 	if (result.error !== undefined || !result.response.ok) {
 		const detail =
 			result.error === undefined ? result.response.statusText : extractApiDetail(result.error);
-		throw new BillingApiError(result.response.status, detail);
+		throw new BillingApiError(result.response.status, detail, result.error);
 	}
 	return result.data as T;
 }
@@ -112,6 +116,12 @@ export function useBillingClient() {
 				unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
 			getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
+			getBillingHistory: async (limit = 20, cursor?: string | null) =>
+				unwrapDeploy(
+					await api.GET("/v2/subscription/billing-history", {
+						params: { query: { limit, cursor } },
+					}),
+				),
 			checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/subscription/checkout", {
@@ -133,6 +143,16 @@ export function useBillingClient() {
 				unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 			resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
+			quoteWalletCompute: async (body: WalletComputeQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/quote", { body })),
+			activateWalletCompute: async (body: WalletComputeActivateRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/activate", { body })),
+			retryWalletCompute: async (body: WalletComputeRetryRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/retry", { body })),
+			quoteWalletPlanChange: async (body: WalletComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/quote", { body })),
+			changeWalletPlan: async (body: WalletComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/change", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),

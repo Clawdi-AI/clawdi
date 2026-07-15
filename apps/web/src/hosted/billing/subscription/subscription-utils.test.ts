@@ -4,10 +4,13 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	computeFundingMode,
+	computeFundingSource,
+	computeSubscriptionId,
 	computeTierLabel,
 	isBasicCompute,
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionTermChangeable,
+	pendingComputePlanSlug,
 	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectExplicitOfferForTerm,
@@ -42,6 +45,7 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	return {
 		status: "active",
+		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 1,
 		price_cents: 900,
@@ -101,6 +105,24 @@ describe("compute funding", () => {
 	test("does not infer included funding for Performance without subscription state", () => {
 		expect(computeFundingMode(COMPUTE_PERFORMANCE_SLUG, subscription())).toBe("subscription");
 		expect(computeFundingMode(COMPUTE_PERFORMANCE_SLUG, null)).toBe("unknown");
+	});
+
+	test("distinguishes Stripe and Wallet subscription funding", () => {
+		expect(computeFundingSource(COMPUTE_BASIC_SLUG, subscription())).toBe("stripe");
+		expect(
+			computeFundingSource(COMPUTE_BASIC_SLUG, { ...subscription(), funding_source: "wallet" }),
+		).toBe("wallet");
+	});
+
+	test("reads additive wallet subscription metadata only when valid", () => {
+		const withMetadata = {
+			...subscription(),
+			subscription_id: 42,
+			pending_plan_slug: COMPUTE_BASIC_SLUG,
+		};
+		expect(computeSubscriptionId(withMetadata)).toBe(42);
+		expect(pendingComputePlanSlug(withMetadata)).toBe(COMPUTE_BASIC_SLUG);
+		expect(computeSubscriptionId(subscription())).toBeNull();
 	});
 });
 

@@ -163,6 +163,7 @@ describe("deploymentToTiles", () => {
 			deployment({
 				compute_subscription: {
 					status: "past_due",
+					funding_source: "stripe",
 					payment_state: "requires_action",
 					billing_term_months: 1,
 					price_cents: 1_900,
@@ -192,6 +193,7 @@ describe("deploymentToTiles", () => {
 				failure_reason: "startup_probe_failing; restart_count=2; container failed readiness probe",
 				compute_subscription: {
 					status: "past_due",
+					funding_source: "stripe",
 					payment_state: "requires_action",
 					billing_term_months: 1,
 					price_cents: 1_900,

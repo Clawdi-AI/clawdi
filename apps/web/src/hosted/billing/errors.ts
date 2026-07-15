@@ -16,6 +16,8 @@ export class BillingApiError extends Error {
 		public status: number,
 		/** Parsed `detail` string (or the raw status text). */
 		public detail: string,
+		/** Original OpenAPI error payload when the client returned one. */
+		public payload?: unknown,
 	) {
 		super(`Billing API ${status}: ${detail}`);
 		this.name = "BillingApiError";
@@ -23,17 +25,41 @@ export class BillingApiError extends Error {
 
 	static async fromResponse(response: Response): Promise<BillingApiError> {
 		let detail = response.statusText;
+		let payload: unknown;
 		try {
-			const body = (await response.json()) as { detail?: unknown };
-			if (typeof body?.detail === "string") {
+			const body: unknown = await response.json();
+			payload = body;
+			if (hasDetail(body) && typeof body.detail === "string") {
 				detail = body.detail;
-			} else if (body?.detail != null) {
+			} else if (hasDetail(body) && body.detail != null) {
 				detail = JSON.stringify(body.detail);
 			}
 		} catch {
 			// Non-JSON body (proxy/gateway error page) — keep statusText.
 		}
-		return new BillingApiError(response.status, detail);
+		return new BillingApiError(response.status, detail, payload);
+	}
+}
+
+function hasDetail(value: unknown): value is { detail: unknown } {
+	return typeof value === "object" && value !== null && "detail" in value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Structured FastAPI detail object, when one was returned. */
+export function billingErrorDetail(error: unknown): Record<string, unknown> | null {
+	if (!(error instanceof BillingApiError)) return null;
+	if (hasDetail(error.payload) && isRecord(error.payload.detail)) return error.payload.detail;
+	if (isRecord(error.payload)) return error.payload;
+	try {
+		const parsed: unknown = JSON.parse(error.detail);
+		if (hasDetail(parsed) && isRecord(parsed.detail)) return parsed.detail;
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
 	}
 }
 
@@ -124,7 +150,7 @@ export function isInsufficientBalanceError(error: unknown): boolean {
  */
 export function normalizeBillingError(error: unknown): string {
 	if (isInsufficientBalanceError(error)) {
-		return "Your AI Credits balance is too low. Top up or enable auto-reload to keep using managed AI — your agent keeps running.";
+		return "Your AI Credits balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"

@@ -4,6 +4,7 @@ import {
 	keepPreviousData,
 	type QueryClient,
 	type UseQueryOptions,
+	useInfiniteQuery,
 	useMutation,
 	useQuery,
 	useQueryClient,
@@ -20,6 +21,10 @@ import type {
 	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
+	WalletComputeActivateRequest,
+	WalletComputePlanChangeRequest,
+	WalletComputeQuoteRequest,
+	WalletComputeRetryRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
@@ -81,6 +86,7 @@ function subscriptionFromAction(
 				: "ok";
 	return {
 		...(previous ?? {}),
+		funding_source: next.funding_source ?? previous?.funding_source ?? "stripe",
 		status: next.status,
 		payment_state: paymentState,
 		billing_term_months: next.billing_term_months,
@@ -260,6 +266,77 @@ export function useComputeInvoices(limit = 12) {
 	});
 }
 
+export function useComputeBillingHistory(limit = 20) {
+	const client = useBillingClient();
+	return useInfiniteQuery({
+		queryKey: billingKeys.billingHistory(limit),
+		queryFn: ({ pageParam }) => client.getBillingHistory(limit, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (lastPage) =>
+			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		enabled: isDeployApiConfigured(),
+		retry: billingQueryRetry,
+		staleTime: 60_000,
+	});
+}
+
+export function useWalletComputeQuote(body: WalletComputeQuoteRequest | null) {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.walletComputeQuote(
+			body?.plan_slug ?? "unselected",
+			body?.billing_term_months ?? 1,
+		),
+		queryFn: () => {
+			if (!body) throw new Error("Wallet compute quote requires a plan.");
+			return client.quoteWalletCompute(body);
+		},
+		enabled: isDeployApiConfigured() && body !== null,
+		staleTime: 15_000,
+	});
+}
+
+function invalidateWalletCompute(qc: QueryClient): void {
+	qc.invalidateQueries({ queryKey: billingKeys.wallet });
+	qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	qc.invalidateQueries({ queryKey: ["billing", "history"] });
+	qc.invalidateQueries({ queryKey: ["agents"] });
+}
+
+export function useActivateWalletCompute() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: WalletComputeActivateRequest) => client.activateWalletCompute(body),
+		onSuccess: () => invalidateWalletCompute(qc),
+	});
+}
+
+export function useRetryWalletCompute() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: WalletComputeRetryRequest) => client.retryWalletCompute(body),
+		onSuccess: () => invalidateWalletCompute(qc),
+	});
+}
+
+export function useQuoteWalletPlanChange() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (body: WalletComputePlanChangeRequest) => client.quoteWalletPlanChange(body),
+	});
+}
+
+export function useChangeWalletPlan() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: WalletComputePlanChangeRequest) => client.changeWalletPlan(body),
+		onSuccess: () => invalidateWalletCompute(qc),
+	});
+}
+
 export function useResumeSubscription() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
@@ -322,13 +399,47 @@ export function useUsage() {
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
-export function useHostedDeployments({ enabled = true }: { enabled?: boolean } = {}) {
+export function shouldPollWalletDunningFor(
+	deployments: readonly HostedDeployment[] | undefined,
+	targetId: string | null | undefined,
+): boolean {
+	const target = targetId?.toLowerCase();
+	if (!target) return false;
+	return (deployments ?? []).some((deployment) => {
+		const matchesTarget =
+			deployment.id.toLowerCase() === target ||
+			Object.values(deployment.config_info?.clawdi_cloud_environments ?? {}).some(
+				(environmentId) => environmentId?.toLowerCase() === target,
+			);
+		if (!matchesTarget) return false;
+		const subscription = deployment.compute_subscription;
+		if (subscription?.payment_state !== "past_due") return false;
+		return (
+			subscription.recovery_action === "top_up" ||
+			(!subscription.recovery_action && subscription.funding_source === "wallet")
+		);
+	});
+}
+
+export function useHostedDeployments({
+	enabled = true,
+	pollWalletDunningFor = null,
+}: {
+	enabled?: boolean;
+	pollWalletDunningFor?: string | null;
+} = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.deployments,
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
-		refetchInterval: (q) => (shouldPollDeployments(q.state.data) ? 10_000 : false),
+		refetchInterval: (q) => {
+			if (shouldPollDeployments(q.state.data)) return 10_000;
+			if (shouldPollWalletDunningFor(q.state.data, pollWalletDunningFor)) {
+				return 30_000;
+			}
+			return false;
+		},
 	});
 }
 

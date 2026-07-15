@@ -7,6 +7,7 @@ import {
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
+	shouldPollWalletDunningFor,
 } from "@/hosted/billing/hooks";
 
 function deployment(
@@ -31,6 +32,7 @@ function deployment(
 function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActionResult {
 	return {
 		status: "active",
+		funding_source: "stripe",
 		billing_term_months: 12,
 		cancel_at_period_end: cancelAtPeriodEnd,
 		current_period_end: "2026-08-01T00:00:00Z",
@@ -44,6 +46,7 @@ describe("applyDeploymentSubscriptionResult", () => {
 		qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
 			deployment({
 				status: "active",
+				funding_source: "stripe",
 				payment_state: "ok",
 				billing_term_months: 1,
 				price_cents: 2_000,
@@ -82,6 +85,7 @@ describe("refreshCheckoutReturnQueries", () => {
 		});
 		const beforeCheckout = deployment({
 			status: "active",
+			funding_source: "stripe",
 			payment_state: "ok",
 			billing_term_months: 1,
 			price_cents: 2_000,
@@ -95,6 +99,7 @@ describe("refreshCheckoutReturnQueries", () => {
 			name: "Performance agent after checkout",
 			compute_subscription: {
 				status: "active",
+				funding_source: "stripe",
 				payment_state: "ok",
 				billing_term_months: 12,
 				price_cents: 20_000,
@@ -136,6 +141,24 @@ describe("refreshCheckoutReturnQueries", () => {
 		);
 		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
+	});
+});
+
+describe("shouldPollWalletDunningFor", () => {
+	test("polls only the visible wallet grace deployment", () => {
+		const due = deployment({
+			status: "past_due",
+			funding_source: "wallet",
+			payment_state: "past_due",
+			recovery_action: "top_up",
+			billing_term_months: 1,
+			price_cents: 900,
+			currency: "usd",
+			cancel_at_period_end: false,
+		});
+		due.id = "hdep_due";
+		expect(shouldPollWalletDunningFor([due], "hdep_due")).toBe(true);
+		expect(shouldPollWalletDunningFor([due], "hdep_other")).toBe(false);
 	});
 });
 
