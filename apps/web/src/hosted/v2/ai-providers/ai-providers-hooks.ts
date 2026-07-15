@@ -108,7 +108,7 @@ export function useSaveApiKeyToVault() {
 			const section = "onboarding";
 			const field = safeVaultField(vars.providerId);
 			// Create-or-attach the vault (no create_only → attaches if it exists).
-			unwrap(
+			const vault = unwrap(
 				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId } },
 					body: { slug, name: "AI Providers" },
@@ -116,7 +116,10 @@ export function useSaveApiKeyToVault() {
 			);
 			unwrap(
 				await api.PUT("/v1/vault/{slug}/items", {
-					params: { path: { slug }, query: { project_id: projectId } },
+					params: {
+						path: { slug },
+						query: { project_id: projectId, vault_id: vault.id },
+					},
 					body: { section, fields: { [field]: vars.apiKey } },
 				}),
 			);

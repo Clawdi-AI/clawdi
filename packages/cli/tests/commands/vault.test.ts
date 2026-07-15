@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe("vaultList", () => {
 	it("includes exact references in JSON output", async () => {
-		const { restore } = mockVaultListFetch();
+		const { captured, restore } = mockVaultListFetch();
 		const origLog = console.log;
 		let out = "";
 		console.log = (...args: unknown[]) => {
@@ -76,6 +76,8 @@ describe("vaultList", () => {
 				reference: `clawdi://project/${PROJECT_ID}/vault/default/section/openai/field/api%20key`,
 			},
 		]);
+		const itemsRequest = captured.find((request) => request.path.includes("/items"));
+		expect(itemsRequest?.path).toContain("vault_id=vault-1");
 	});
 
 	it("hides empty vaults in JSON output", async () => {
@@ -298,7 +300,7 @@ describe("vaultImport", () => {
 			{
 				method: "POST",
 				path: "/v1/vault",
-				response: () => jsonResponse({ detail: "already exists" }, 409),
+				response: () => jsonResponse({ id: "vault-1", slug: "default" }),
 			},
 			{
 				method: "GET",
@@ -326,6 +328,7 @@ describe("vaultImport", () => {
 		}
 
 		const put = captured.find((request) => request.method === "PUT");
+		expect(put?.path).toContain("vault_id=vault-1");
 		expect(put?.body).toEqual({
 			section: "",
 			fields: {
@@ -609,6 +612,7 @@ describe("vault attach/detach", () => {
 
 		const del = captured.find((request) => request.method === "DELETE");
 		expect(del?.path).toContain(`/v1/vault/providers?project_id=${OTHER_PROJECT_ID}`);
+		expect(del?.path).toContain("vault_id=vault-1");
 		expect(captured.some((request) => request.path.includes("/items"))).toBe(false);
 		expect(out).toContain("Detached vault");
 		expect(out).toContain("No keys were deleted");
@@ -672,6 +676,7 @@ describe("vaultSet", () => {
 
 		const put = captured.find((request) => request.method === "PUT");
 		expect(put?.path).toContain("/v1/vault/prod/items");
+		expect(put?.path).toContain("vault_id=vault-1");
 		expect(put?.body).toEqual({
 			section: "stripe",
 			fields: { SECRET_KEY: "test-secret-value" },
@@ -846,8 +851,23 @@ describe("vaultSet", () => {
 				path: "/v1/vault",
 				response: () =>
 					jsonResponse({
-						items: [{ id: "vault-1", slug: "prod", name: "prod", project_ids: [PROJECT_ID] }],
-						total: 1,
+						items: [
+							{
+								id: "shared-vault",
+								slug: "prod",
+								name: "Shared prod",
+								project_ids: [OTHER_PROJECT_ID],
+								is_owner: false,
+							},
+							{
+								id: "vault-1",
+								slug: "prod",
+								name: "prod",
+								project_ids: [PROJECT_ID],
+								is_owner: true,
+							},
+						],
+						total: 2,
 					}),
 			},
 			{
@@ -871,6 +891,7 @@ describe("vaultSet", () => {
 
 		const del = captured.find((request) => request.method === "DELETE");
 		expect(del?.path).toContain(`/v1/vault/prod/items?project_id=${PROJECT_ID}`);
+		expect(del?.path).toContain("vault_id=vault-1");
 		expect(del?.path).toContain("global_delete=false");
 		expect(del?.body).toEqual({
 			section: "stripe",

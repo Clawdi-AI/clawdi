@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
@@ -54,6 +54,17 @@ router = APIRouter(prefix="/vault", tags=["vault"])
 VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
 VaultItemLookupRow = tuple[UUID, str, Vault, VaultItem]
 ExactVaultReferenceFilter = tuple[str, str, str]
+
+
+def _ambiguous_vault_detail(
+    *, slug: str, project_id: UUID | None, exact_reference: bool = False
+) -> dict[str, str | None]:
+    return {
+        "code": "ambiguous_vault_reference_slug" if exact_reference else "ambiguous_vault_slug",
+        "message": f"Vault slug '{slug}' identifies multiple Vaults in the requested scope.",
+        "project_id": str(project_id) if project_id is not None else None,
+        "vault_slug": slug,
+    }
 
 
 # --- Vault CRUD ---
@@ -197,14 +208,53 @@ async def create_vault(
     return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)
 
 
+@router.get("/detail")
+async def get_vault_detail(
+    vault_id: UUID = Query(description="Stable Vault identity."),
+    slug: str = Query(description="Canonical Vault slug expected for this identity."),
+    project_id: UUID | None = Query(default=None, description="Optional attachment context."),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> VaultResponse:
+    """Return exact Vault metadata without scanning the paginated collection."""
+    vault = await _get_vault(auth, slug, db, project_id=project_id, vault_id=vault_id)
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    project_ids = (
+        await _attached_project_ids_for_vaults(
+            db, [vault.id], visible_project_ids=visible_project_ids
+        )
+    ).get(vault.id, [])
+    item_count = (
+        await db.execute(
+            select(func.count()).select_from(VaultItem).where(VaultItem.vault_id == vault.id)
+        )
+    ).scalar_one()
+    default_project_id = project_id or await resolve_default_write_project(db, auth)
+    return VaultResponse(
+        id=str(vault.id),
+        slug=vault.slug,
+        name=vault.name,
+        project_id=(
+            str(default_project_id)
+            if default_project_id in project_ids
+            else (str(project_ids[0]) if project_ids else None)
+        ),
+        project_ids=[str(attached_project_id) for attached_project_id in project_ids],
+        is_owner=vault.user_id == auth.user_id,
+        item_count=item_count,
+        created_at=vault.created_at,
+    )
+
+
 @router.delete("/{slug}")
 async def delete_vault(
     slug: str,
     project_id: UUID | None = Query(default=None),
+    vault_id: UUID | None = Query(default=None, description="Exact Vault identity."),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
     if project_id is not None:
         await db.execute(
             delete(VaultProjectAttachment).where(
@@ -225,10 +275,11 @@ async def delete_vault(
 async def list_vault_sections(
     slug: str,
     project_id: UUID | None = Query(default=None),
+    vault_id: UUID | None = Query(default=None, description="Exact Vault identity."),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultSectionsResponse:
-    vault = await _get_vault(auth, slug, db, project_id=project_id)
+    vault = await _get_vault(auth, slug, db, project_id=project_id, vault_id=vault_id)
     result = await db.execute(
         select(VaultItem.section, VaultItem.item_name)
         .where(VaultItem.vault_id == vault.id)
@@ -256,10 +307,11 @@ async def upsert_vault_items(
     slug: str,
     body: VaultItemUpsert,
     project_id: UUID | None = Query(default=None),
+    vault_id: UUID | None = Query(default=None, description="Exact Vault identity."),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
@@ -288,6 +340,8 @@ async def copy_vault_items(
     slug: str,
     body: VaultItemsCopy,
     project_id: UUID | None = Query(default=None),
+    vault_id: UUID | None = Query(default=None, description="Exact source Vault identity."),
+    target_vault_id: UUID | None = Query(default=None, description="Exact target Vault identity."),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsCopyResponse:
@@ -301,8 +355,8 @@ async def copy_vault_items(
     so shared-project viewers can't exfiltrate by copying into a vault
     they control.
     """
-    source = await _get_vault_write(auth, slug, db, project_id=project_id)
-    target = await _get_vault_write(auth, body.target_slug, db)
+    source = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
+    target = await _get_vault_write(auth, body.target_slug, db, vault_id=target_vault_id)
     if target.id == source.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Source and target are the same vault")
 
@@ -347,6 +401,7 @@ async def delete_vault_items(
     slug: str,
     body: VaultItemDelete,
     project_id: UUID | None = Query(default=None),
+    vault_id: UUID | None = Query(default=None, description="Exact Vault identity."),
     global_delete: bool = Query(
         default=False,
         description=(
@@ -357,7 +412,7 @@ async def delete_vault_items(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id)
+    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
     existing_by_name = await _load_items_by_name(db, vault.id, body.section)
     items_to_delete = [
         existing_by_name[field_name] for field_name in body.fields if field_name in existing_by_name
@@ -736,21 +791,60 @@ async def _vault_item_rows_for_exact_references(
     db: AsyncSession,
     project_ids: list[UUID],
     references: list[ExactVaultReferenceFilter],
+    searched_namespaces: set[tuple[UUID, str]],
 ) -> list[VaultItemLookupRow]:
     if not project_ids or not references:
         return []
 
-    vault_slugs = {vault_slug for vault_slug, _section, _field in references}
     sections = {section for _vault_slug, section, _field in references}
     fields = {field for _vault_slug, _section, field in references}
+    # Exact row-value matching avoids both the former Project×slug Cartesian
+    # precheck and a potentially large OR expression (bulk accepts 200 refs).
+    canonical_namespace_clause = tuple_(VaultProjectAttachment.project_id, Vault.slug).in_(
+        searched_namespaces
+    )
+    alias_namespace_clause = tuple_(
+        VaultProjectAttachment.project_id, VaultProjectSlugAlias.slug
+    ).in_(searched_namespaces)
+    canonical_identities = (
+        await db.execute(
+            select(VaultProjectAttachment.project_id, Vault.slug, Vault.id)
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .where(canonical_namespace_clause)
+        )
+    ).all()
+    alias_identities = (
+        await db.execute(
+            select(
+                VaultProjectAttachment.project_id,
+                VaultProjectSlugAlias.slug,
+                Vault.id,
+            )
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .join(VaultProjectSlugAlias, _vault_project_slug_alias_condition())
+            .where(alias_namespace_clause)
+        )
+    ).all()
+    vault_ids_by_namespace: dict[tuple[UUID, str], set[UUID]] = {}
+    for project_id, lookup_slug, vault_id in [*canonical_identities, *alias_identities]:
+        if (project_id, lookup_slug) not in searched_namespaces:
+            continue
+        vault_ids = vault_ids_by_namespace.setdefault((project_id, lookup_slug), set())
+        vault_ids.add(vault_id)
+        if len(vault_ids) > 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=_ambiguous_vault_detail(
+                    slug=lookup_slug, project_id=project_id, exact_reference=True
+                ),
+            )
     canonical_rows = (
         await db.execute(
             select(VaultProjectAttachment.project_id, Vault.slug, Vault, VaultItem)
             .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
             .join(VaultItem, VaultItem.vault_id == Vault.id)
             .where(
-                VaultProjectAttachment.project_id.in_(project_ids),
-                Vault.slug.in_(vault_slugs),
+                canonical_namespace_clause,
                 VaultItem.section.in_(sections),
                 VaultItem.item_name.in_(fields),
             )
@@ -773,8 +867,7 @@ async def _vault_item_rows_for_exact_references(
                 _vault_project_slug_alias_condition(),
             )
             .where(
-                VaultProjectAttachment.project_id.in_(project_ids),
-                VaultProjectSlugAlias.slug.in_(vault_slugs),
+                alias_namespace_clause,
                 VaultItem.section.in_(sections),
                 VaultItem.item_name.in_(fields),
             )
@@ -790,14 +883,24 @@ async def _vault_item_rows_for_exact_references(
     return [
         (project_id, lookup_slug, vault, item)
         for project_id, lookup_slug, vault, item in [*canonical_rows, *alias_rows]
+        if (project_id, lookup_slug) in searched_namespaces
     ]
 
 
 def _vault_item_index(rows: list[VaultItemLookupRow]) -> VaultItemIndex:
-    return {
-        (project_id, lookup_slug, item.section, item.item_name): (vault, item)
-        for project_id, lookup_slug, vault, item in rows
-    }
+    index: VaultItemIndex = {}
+    for project_id, lookup_slug, vault, item in rows:
+        key = (project_id, lookup_slug, item.section, item.item_name)
+        existing = index.get(key)
+        if existing is not None and existing[0].id != vault.id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=_ambiguous_vault_detail(
+                    slug=lookup_slug, project_id=project_id, exact_reference=True
+                ),
+            )
+        index[key] = (vault, item)
+    return index
 
 
 def _format_vault_reference(vault_slug: str, section: str, field: str) -> str:
@@ -984,8 +1087,15 @@ async def resolve_vault_bulk(
     exact_filters = [
         (ref.vault_slug, ref.section, ref.field) for ref, _ordered in ordered_references
     ]
+    searched_namespaces = {
+        (entry["project_id"], ref.vault_slug)
+        for ref, ordered in ordered_references
+        for entry in ordered
+    }
     item_index = _vault_item_index(
-        await _vault_item_rows_for_exact_references(db, project_ids, exact_filters)
+        await _vault_item_rows_for_exact_references(
+            db, project_ids, exact_filters, searched_namespaces
+        )
     )
     results: dict[str, dict[str, object]] = {}
     for ref, ordered in ordered_references:
@@ -1073,6 +1183,7 @@ async def resolve_vault(
                 db,
                 effective_project_ids,
                 [(vault_slug, section, field)],
+                {(entry["project_id"], vault_slug) for entry in ordered},
             )
         )
         return _resolve_exact_vault_reference_from_index(
@@ -1258,6 +1369,7 @@ async def _get_vault_write(
     db: AsyncSession,
     *,
     project_id: UUID | None = None,
+    vault_id: UUID | None = None,
 ) -> Vault:
     """Fetch a vault for mutation, restricted to caller-owned projects.
 
@@ -1271,6 +1383,8 @@ async def _get_vault_write(
     else:
         owned_project_ids = await project_ids_owned_by_user(db, auth.user_id)
     base_q = select(Vault).where(Vault.user_id == auth.user_id, Vault.slug == slug)
+    if vault_id is not None:
+        base_q = base_q.where(Vault.id == vault_id)
     if project_id is not None:
         if project_id not in owned_project_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -1286,8 +1400,9 @@ async def _get_vault_write(
             )
             .where(
                 Vault.user_id == auth.user_id,
+                Vault.id == vault_id if vault_id is not None else True,
                 VaultProjectAttachment.project_id == project_id,
-                _vault_slug_or_alias_clause(slug),
+                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
             .distinct()
         )
@@ -1304,14 +1419,20 @@ async def _get_vault_write(
             )
             .where(
                 Vault.user_id == auth.user_id,
+                Vault.id == vault_id if vault_id is not None else True,
                 VaultProjectAttachment.project_id.in_(owned_project_ids),
-                _vault_slug_or_alias_clause(slug),
+                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
             .distinct()
         )
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
+    if len(rows) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=_ambiguous_vault_detail(slug=slug, project_id=project_id),
+        )
     return rows[0]
 
 
@@ -1321,6 +1442,7 @@ async def _get_vault(
     db: AsyncSession,
     *,
     project_id: UUID | None = None,
+    vault_id: UUID | None = None,
 ) -> Vault:
     """Fetch a vault by slug, project-filtered to what the caller can
     see. Agent API key -> only vaults in its Agent Project.
@@ -1353,6 +1475,8 @@ async def _get_vault(
         )
         .distinct()
     )
+    if vault_id is not None:
+        base_q = base_q.where(Vault.id == vault_id)
     if project_id is not None:
         if project_id not in visible_project_ids:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
@@ -1365,16 +1489,14 @@ async def _get_vault(
             )
             .where(
                 VaultProjectAttachment.project_id == project_id,
-                _vault_slug_or_alias_clause(slug),
+                Vault.id == vault_id if vault_id is not None else True,
+                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
             .distinct()
         )
     rows = (await db.execute(base_q)).scalars().all()
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-    owned = [row for row in rows if row.user_id == auth.user_id]
-    if len(owned) == 1:
-        return owned[0]
     if len(rows) > 1:
         project_rows = (
             (
@@ -1390,12 +1512,8 @@ async def _get_vault(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
-                "code": "ambiguous_vault_slug",
-                "message": (
-                    f"Vault '{slug}' exists in multiple projects; "
-                    "specify project_id query param to disambiguate."
-                ),
-                "project_ids": [str(project_id) for project_id in project_rows],
+                **_ambiguous_vault_detail(slug=slug, project_id=None),
+                "project_ids": [str(attached_project_id) for attached_project_id in project_rows],
             },
         )
     return rows[0]

@@ -13,6 +13,7 @@ import {
 	Share2,
 	Trash2,
 } from "lucide-react";
+import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -77,16 +78,29 @@ function apiSection(section: string): string {
 
 export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const slug = decodeURIComponent(rawSlug);
+	const [vaultId] = useQueryState("vault", parseAsString);
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 
-	const vaults = useQuery({
-		queryKey: ["vaults", "all"],
+	// UUID links use an exact authorized metadata lookup. Slug-only deep links
+	// remain a compatibility fallback for bookmarks created before stable IDs.
+	const vaultDetail = useQuery({
+		queryKey: ["vault-detail", slug, vaultId],
 		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
+			vaultId
+				? unwrap(
+						await api.GET("/v1/vault/detail", {
+							params: { query: { vault_id: vaultId, slug } },
+						}),
+					)
+				: unwrap(await api.GET("/v1/vault", { params: { query: { q: slug, page_size: 200 } } })),
 	});
-	const vault: VaultSummary | null = vaults.data?.items.find((v) => v.slug === slug) ?? null;
+	const vault: VaultSummary | null = vaultId
+		? ((vaultDetail.data as VaultSummary | undefined) ?? null)
+		: (((vaultDetail.data as { items?: VaultSummary[] } | undefined)?.items ?? []).find(
+				(v) => v.slug === slug,
+			) ?? null);
 	const isOwner = vault?.is_owner !== false;
 	const anyProjectId = vault?.project_ids?.[0];
 
@@ -100,11 +114,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	);
 
 	const keys = useQuery({
-		queryKey: ["vault-items", slug, anyProjectId],
+		queryKey: ["vault-items", vault?.id, slug, anyProjectId],
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/vault/{slug}/items", {
-					params: { path: { slug }, query: { project_id: anyProjectId ?? undefined } },
+					params: {
+						path: { slug },
+						query: { project_id: anyProjectId ?? undefined, vault_id: vault?.id },
+					},
 				}),
 			),
 		enabled: !!vault,
@@ -143,7 +160,8 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["vaults"] });
-		qc.invalidateQueries({ queryKey: ["vault-items", slug] });
+		qc.invalidateQueries({ queryKey: ["vault-items", vault?.id, slug] });
+		qc.invalidateQueries({ queryKey: ["vault-detail", slug, vault?.id] });
 	};
 
 	const deleteKey = useMutation({
@@ -153,7 +171,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 				await api.DELETE("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug },
-						query: { project_id: anyProjectId, global_delete: true },
+						query: { project_id: anyProjectId, vault_id: vault?.id, global_delete: true },
 					},
 					body: { section: apiSection(section), fields: [name] },
 				}),
@@ -180,7 +198,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 						await api.DELETE("/v1/vault/{slug}/items", {
 							params: {
 								path: { slug },
-								query: { project_id: anyProjectId, global_delete: true },
+								query: { project_id: anyProjectId, vault_id: vault?.id, global_delete: true },
 							},
 							body: { section, fields: names.slice(i, i + 150) },
 						}),
@@ -218,7 +236,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		mutationFn: async (projectId: string) =>
 			unwrap(
 				await api.DELETE("/v1/vault/{slug}", {
-					params: { path: { slug }, query: { project_id: projectId } },
+					params: { path: { slug }, query: { project_id: projectId, vault_id: vault?.id } },
 				}),
 			),
 		onSuccess: () => {
@@ -233,12 +251,12 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		mutationFn: async () =>
 			unwrap(
 				await api.DELETE("/v1/vault/{slug}", {
-					params: { path: { slug }, query: {} },
+					params: { path: { slug }, query: { vault_id: vault?.id } },
 				}),
 			),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
-			qc.removeQueries({ queryKey: ["vault-items", slug] });
+			qc.removeQueries({ queryKey: ["vault-items", vault?.id, slug] });
 			toast.success("Vault deleted", {
 				description: `${vault?.name ?? slug} and its keys were removed.`,
 			});
@@ -249,7 +267,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 	useSetBreadcrumbTitle(vault?.name ?? null);
 
-	if (vaults.isLoading) {
+	if (vaultDetail.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-20" />
@@ -267,7 +285,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		);
 	}
 
-	if (vaults.error) {
+	if (vaultDetail.error) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
@@ -280,16 +298,16 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<ArrowLeft className="mr-1.5 size-4" />
 					Vaults
 				</Button>
-				{isApiNotFoundError(vaults.error) ? (
+				{isApiNotFoundError(vaultDetail.error) ? (
 					<DetailNotFound
 						title="Vault not found"
 						message="This vault may have been removed, or your account no longer has access."
 					/>
 				) : (
 					<ApiErrorPanel
-						error={vaults.error}
+						error={vaultDetail.error}
 						onRetry={() => {
-							void vaults.refetch();
+							void vaultDetail.refetch();
 						}}
 						title="Couldn't load vault"
 					/>
@@ -449,7 +467,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							/>
 						) : null}
 						{isOwner ? (
-							<AddKeysDialog vaultSlug={slug}>
+							<AddKeysDialog vaultSlug={slug} vaultId={vault.id} vaultProjectId={anyProjectId}>
 								<Button
 									variant="outline"
 									size="sm"

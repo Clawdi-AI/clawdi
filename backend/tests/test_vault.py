@@ -327,6 +327,283 @@ async def test_vault_resolve_exact_reference_accepts_legacy_project_slug_alias(
 
 
 @pytest.mark.asyncio
+async def test_vault_canonical_alias_collision_fails_closed_for_writes_and_exact_resolution(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_project,
+):
+    canonical = await cli_client.post(
+        f"/v1/vault?project_id={seed_project.id}",
+        json={"slug": "prod", "name": "Canonical production"},
+    )
+    legacy = await cli_client.post(
+        f"/v1/vault?project_id={seed_project.id}",
+        json={"slug": "prod-legacy123", "name": "Migrated production"},
+    )
+    assert canonical.status_code == legacy.status_code == 200
+    for slug, value, extra in (
+        ("prod", "canonical-secret", {"ONLY_CANONICAL": "canonical-only"}),
+        ("prod-legacy123", "legacy-secret", {}),
+    ):
+        written = await cli_client.put(
+            f"/v1/vault/{slug}/items?project_id={seed_project.id}",
+            json={"section": "", "fields": {"TOKEN": value, **extra}},
+        )
+        assert written.status_code == 200, written.text
+
+    db_session.add(
+        VaultProjectSlugAlias(
+            vault_id=uuid.UUID(legacy.json()["id"]),
+            project_id=seed_project.id,
+            slug="prod",
+            is_legacy=True,
+        )
+    )
+    await db_session.commit()
+
+    ambiguous_write = await cli_client.put(
+        f"/v1/vault/prod/items?project_id={seed_project.id}",
+        json={"section": "", "fields": {"OTHER": "must-not-be-written"}},
+    )
+    assert ambiguous_write.status_code == 409, ambiguous_write.text
+    assert ambiguous_write.json()["detail"]["code"] == "ambiguous_vault_slug"
+
+    ambiguous_read = await cli_client.get(f"/v1/vault/prod/items?project_id={seed_project.id}")
+    assert ambiguous_read.status_code == 409, ambiguous_read.text
+    assert ambiguous_read.json()["detail"]["code"] == "ambiguous_vault_slug"
+    assert "value" not in ambiguous_read.json()["detail"]
+
+    ambiguous_resolve = await cli_client.post(
+        f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=prod&field=TOKEN"
+    )
+    assert ambiguous_resolve.status_code == 409, ambiguous_resolve.text
+    assert ambiguous_resolve.json()["detail"]["code"] == "ambiguous_vault_reference_slug"
+    assert "value" not in ambiguous_resolve.json()["detail"]
+
+    single_item_resolve = await cli_client.post(
+        f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=prod&field=ONLY_CANONICAL"
+    )
+    assert single_item_resolve.status_code == 409, single_item_resolve.text
+    assert single_item_resolve.json()["detail"]["code"] == "ambiguous_vault_reference_slug"
+
+    bulk_allow_conflicts = await cli_client.post(
+        "/v1/vault/resolve/bulk",
+        json={
+            "project_id": str(seed_project.id),
+            "allow_conflicts": True,
+            "references": [
+                {
+                    "reference": "clawdi://prod/TOKEN",
+                    "vault_slug": "prod",
+                    "section": "",
+                    "field": "TOKEN",
+                }
+            ],
+        },
+    )
+    assert bulk_allow_conflicts.status_code == 409, bulk_allow_conflicts.text
+    assert bulk_allow_conflicts.json()["detail"]["code"] == "ambiguous_vault_reference_slug"
+
+
+@pytest.mark.asyncio
+async def test_exact_resolution_dedupes_canonical_alias_for_same_vault(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_project,
+):
+    created = await cli_client.post(
+        f"/v1/vault?project_id={seed_project.id}",
+        json={"slug": "same-vault", "name": "Same vault"},
+    )
+    assert created.status_code == 200, created.text
+    written = await cli_client.put(
+        f"/v1/vault/same-vault/items?project_id={seed_project.id}",
+        json={"section": "", "fields": {"TOKEN": "same-secret"}},
+    )
+    assert written.status_code == 200, written.text
+    db_session.add(
+        VaultProjectSlugAlias(
+            vault_id=uuid.UUID(created.json()["id"]),
+            project_id=seed_project.id,
+            slug="same-vault",
+            is_legacy=True,
+        )
+    )
+    await db_session.commit()
+
+    resolved = await cli_client.post(
+        f"/v1/vault/resolve?project_id={seed_project.id}&vault_slug=same-vault&field=TOKEN"
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["value"] == "same-secret"
+
+    bulk = await cli_client.post(
+        "/v1/vault/resolve/bulk",
+        json={
+            "project_id": str(seed_project.id),
+            "references": [
+                {
+                    "reference": "clawdi://same-vault/TOKEN",
+                    "vault_slug": "same-vault",
+                    "section": "",
+                    "field": "TOKEN",
+                }
+            ],
+        },
+    )
+    assert bulk.status_code == 200, bulk.text
+    assert bulk.json()["results"]["clawdi://same-vault/TOKEN"]["value"] == "same-secret"
+
+
+@pytest.mark.asyncio
+async def test_vault_detail_and_items_select_exact_authorized_identity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    seed_project,
+    workspace_project,
+):
+    first = Vault(user_id=seed_user.id, slug="collision", name="First collision")
+    second = Vault(user_id=seed_user.id, slug="collision-second", name="Second collision")
+    db_session.add_all([first, second])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            VaultProjectAttachment(vault_id=first.id, project_id=seed_project.id),
+            VaultProjectAttachment(vault_id=second.id, project_id=seed_project.id),
+        ]
+    )
+    await db_session.commit()
+
+    detail = await client.get(f"/v1/vault/detail?vault_id={second.id}&slug=collision-second")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == str(second.id)
+    assert detail.json()["name"] == "Second collision"
+
+    written = await client.put(
+        f"/v1/vault/collision-second/items?project_id={seed_project.id}&vault_id={second.id}",
+        json={"section": "", "fields": {"SECOND_ONLY": "secret"}},
+    )
+    assert written.status_code == 200, written.text
+    second_items = await client.get(
+        f"/v1/vault/collision-second/items?project_id={seed_project.id}&vault_id={second.id}"
+    )
+    first_items = await client.get(
+        f"/v1/vault/collision/items?project_id={seed_project.id}&vault_id={first.id}"
+    )
+    assert second_items.json() == {"(default)": ["SECOND_ONLY"]}
+    assert first_items.json() == {}
+
+    mismatched_write = await client.put(
+        f"/v1/vault/collision/items?project_id={seed_project.id}&vault_id={second.id}",
+        json={"section": "", "fields": {"WRONG_TARGET": "must-not-write"}},
+    )
+    assert mismatched_write.status_code == 404
+    unchanged_first = await client.get(
+        f"/v1/vault/collision/items?project_id={seed_project.id}&vault_id={first.id}"
+    )
+    assert unchanged_first.json() == {}
+
+    wrong_slug = await client.get(f"/v1/vault/detail?vault_id={second.id}&slug=other")
+    assert wrong_slug.status_code == 404
+    wrong_project = await client.get(
+        f"/v1/vault/detail?vault_id={second.id}&slug=collision-second&project_id={workspace_project.id}"
+    )
+    assert wrong_project.status_code == 404
+
+    from app.models.user import User
+
+    hidden_owner = User(
+        clerk_id=f"hidden_vault_{uuid.uuid4().hex}",
+        email=f"hidden-vault-{uuid.uuid4().hex}@test.dev",
+        name="Hidden Vault Owner",
+    )
+    db_session.add(hidden_owner)
+    await db_session.flush()
+    hidden = Vault(user_id=hidden_owner.id, slug="hidden", name="Hidden")
+    db_session.add(hidden)
+    await db_session.commit()
+    hidden_detail = await client.get(f"/v1/vault/detail?vault_id={hidden.id}&slug=hidden")
+    assert hidden_detail.status_code == 404
+    await db_session.delete(hidden_owner)
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_bulk_scoped_reference_ignores_unsearched_ambiguous_namespace(
+    cli_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    seed_project,
+    workspace_project,
+):
+    wanted = Vault(user_id=seed_user.id, slug="wanted", name="Wanted")
+    workspace_safe = Vault(user_id=seed_user.id, slug="workspace-safe", name="Workspace safe")
+    ambiguous_a = Vault(user_id=seed_user.id, slug="unrelated", name="Unrelated A")
+    ambiguous_b = Vault(user_id=seed_user.id, slug="unrelated-legacy", name="Unrelated B")
+    db_session.add_all([wanted, workspace_safe, ambiguous_a, ambiguous_b])
+    await db_session.flush()
+    ciphertext, nonce = vault_crypto_encrypt("wanted-secret")
+    safe_ciphertext, safe_nonce = vault_crypto_encrypt("workspace-secret")
+    db_session.add_all(
+        [
+            VaultProjectAttachment(vault_id=wanted.id, project_id=seed_project.id),
+            VaultProjectAttachment(vault_id=workspace_safe.id, project_id=workspace_project.id),
+            VaultProjectAttachment(vault_id=ambiguous_a.id, project_id=workspace_project.id),
+            VaultProjectAttachment(vault_id=ambiguous_b.id, project_id=workspace_project.id),
+            VaultProjectSlugAlias(
+                vault_id=ambiguous_b.id,
+                project_id=workspace_project.id,
+                slug="unrelated",
+                is_legacy=True,
+            ),
+            VaultItem(
+                vault_id=wanted.id,
+                section="",
+                item_name="TOKEN",
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            ),
+            VaultItem(
+                vault_id=workspace_safe.id,
+                section="",
+                item_name="TOKEN",
+                encrypted_value=safe_ciphertext,
+                nonce=safe_nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resolved = await cli_client.post(
+        "/v1/vault/resolve/bulk",
+        json={
+            "references": [
+                {
+                    "reference": "clawdi://wanted/TOKEN",
+                    "vault_slug": "wanted",
+                    "section": "",
+                    "field": "TOKEN",
+                    "project_id": str(seed_project.id),
+                },
+                {
+                    "reference": "clawdi://workspace-safe/TOKEN",
+                    "vault_slug": "workspace-safe",
+                    "section": "",
+                    "field": "TOKEN",
+                    "project_id": str(workspace_project.id),
+                },
+            ]
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["results"]["clawdi://wanted/TOKEN"]["value"] == "wanted-secret"
+    assert (
+        resolved.json()["results"]["clawdi://workspace-safe/TOKEN"]["value"] == "workspace-secret"
+    )
+
+
+@pytest.mark.asyncio
 async def test_vault_resolve_bulk_exact_clawdi_references(cli_client: httpx.AsyncClient):
     await cli_client.post("/v1/vault", json={"slug": "prod", "name": "Production"})
     r = await cli_client.put(

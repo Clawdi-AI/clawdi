@@ -208,4 +208,64 @@ describe("vaultResolveCommand", () => {
 		expect(err).toContain("update the Clawdi backend");
 		expect(err).not.toContain("No vault value found");
 	});
+
+	it("does not recommend allow-conflicts for an ambiguous Vault namespace", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/vault/resolve",
+				response: () =>
+					jsonResponse(
+						{
+							detail: {
+								code: "ambiguous_vault_reference_slug",
+								message: "Vault namespace is ambiguous.",
+							},
+						},
+						409,
+					),
+			},
+		]);
+		const orig = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY");
+		} finally {
+			console.error = orig;
+			restore();
+		}
+
+		expect(err).toContain("Repair or rename");
+		expect(err).not.toContain("--allow-conflicts");
+	});
+
+	it("recommends allow-conflicts for precedence conflicts", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/vault/resolve",
+				response: () =>
+					jsonResponse(
+						{ detail: { code: "vault_conflicts_blocked", message: "Multiple projects match." } },
+						409,
+					),
+			},
+		]);
+		const orig = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY");
+		} finally {
+			console.error = orig;
+			restore();
+		}
+
+		expect(err).toContain("--allow-conflicts");
+	});
 });

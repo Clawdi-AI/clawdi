@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
+import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
@@ -249,14 +250,17 @@ function VaultCard({
 	// users every vault was empty. Fall back to the per-card fetch then.
 	const listCount: number | undefined = vault.item_count;
 	const keys = useQuery({
-		queryKey: ["vault-items", vault.slug, vault.project_ids?.[0]],
+		queryKey: ["vault-items", vault.id, vault.slug, vault.project_ids?.[0]],
 		enabled: listCount === undefined,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/vault/{slug}/items", {
 					params: {
 						path: { slug: vault.slug },
-						query: { project_id: vault.project_ids?.[0] ?? undefined },
+						query: {
+							project_id: vault.project_ids?.[0] ?? undefined,
+							vault_id: vault.id,
+						},
 					},
 				}),
 			),
@@ -298,7 +302,11 @@ function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			link={{ to: "/vault/$slug", params: { slug: vault.slug } }}
+			link={{
+				to: "/vault/$slug",
+				params: { slug: vault.slug },
+				search: vaultDetailSearch(vault),
+			}}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);
@@ -372,12 +380,16 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 				}),
 			);
 		},
-		onSuccess: () => {
+		onSuccess: (created) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			setOpen(false);
 			setName("");
 			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
-			void router.navigate({ href: `/vault/${encodeURIComponent(slug)}` });
+			void router.navigate({
+				to: "/vault/$slug",
+				params: { slug },
+				search: { vault: created.id },
+			});
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
