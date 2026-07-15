@@ -53,12 +53,21 @@ import type {
 	DeployRequest,
 	Plan,
 } from "@/hosted/billing/contracts";
+import {
+	DEFAULT_DEPLOY_AI_ACCESS_MODE,
+	DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
+	DEFAULT_DEPLOY_PRIMARY_MODEL,
+	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
+	DEFAULT_DEPLOY_RUNTIME,
+	type DeployWizardAiAccessMode,
+} from "@/hosted/billing/deploy/deploy-defaults";
 import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
 import {
 	buildHostedDeployRequest,
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
 import {
+	browserLanguage,
 	browserTimezone,
 	LANGUAGE_OPTIONS,
 	LANGUAGE_SELECT_ITEMS,
@@ -92,7 +101,7 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
+import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -122,7 +131,7 @@ import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type Compute = "free" | "performance";
-type AiAccessMode = "unmanaged" | "configured";
+type AiAccessMode = DeployWizardAiAccessMode;
 type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 type NativeDeployCheckout = {
 	clientSecret: string;
@@ -325,11 +334,15 @@ export function DeployWizard() {
 		null,
 	);
 
-	const [runtime, setRuntime] = useState<HostedRuntime | null>(null);
-	const [aiAccessMode, setAiAccessMode] = useState<AiAccessMode>("unmanaged");
-	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([MANAGED_AI_CHOICE]);
-	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(MANAGED_AI_CHOICE);
-	const [primaryModel, setPrimaryModel] = useState(MANAGED_PRIMARY_MODEL_FALLBACK);
+	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
+	const [aiAccessMode, setAiAccessMode] = useState<AiAccessMode>(DEFAULT_DEPLOY_AI_ACCESS_MODE);
+	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([
+		...DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
+	]);
+	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(
+		DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
+	);
+	const [primaryModel, setPrimaryModel] = useState(DEFAULT_DEPLOY_PRIMARY_MODEL);
 	const [compute, setCompute] = useState<Compute>("free");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
@@ -338,9 +351,11 @@ export function DeployWizard() {
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 
-	// Default the timezone to the browser's after mount (avoids an SSR mismatch).
+	// Default language + timezone to the browser's after mount (avoids an SSR
+	// mismatch). Both stay explicitly unsettable back to the runtime default.
 	useEffect(() => {
 		setTimezone((tz) => tz || browserTimezone());
+		setLanguage((lang) => lang || browserLanguage());
 	}, []);
 	const tzOptions = useMemo(() => {
 		const all = supportedTimezones();
@@ -374,7 +389,7 @@ export function DeployWizard() {
 			? !!perfPlan && !!perfOfferSelection
 			: !!freePlan && !freeSlotUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const canSubmit = planReady && runtime !== null && !submitting;
+	const canSubmit = planReady && !submitting;
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -583,9 +598,6 @@ export function DeployWizard() {
 	}
 
 	function buildDeployRequest(aiFields: DeployAiFields): DeployRequest {
-		if (!runtime) {
-			throw new Error("Choose a runtime before deploying.");
-		}
 		const computePlanSlug: ComputePlanSlug =
 			compute === "performance" ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_FREE_SLUG;
 		return buildHostedDeployRequest({
@@ -656,12 +668,6 @@ export function DeployWizard() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
-			if (!runtime) {
-				toast.error("Choose a runtime", {
-					description: "Select OpenClaw or Hermes before deploying.",
-				});
-				return;
-			}
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			const deployConfig = buildDeployRequest(aiFields);
@@ -737,7 +743,7 @@ export function DeployWizard() {
 			: `${providerChoiceLabel(primaryProviderChoice, providerList)}${
 					selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
 				}`;
-	const runtimeSummary = runtime ? runtimeDisplayName(runtime) : null;
+	const runtimeSummary = runtimeDisplayName(runtime);
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Free"} compute`,
 		aiSummary,
@@ -806,11 +812,6 @@ export function DeployWizard() {
 							description={runtimeBlurb("openclaw")}
 						/>
 					</div>
-					{runtime ? null : (
-						<p className="text-xs text-muted-foreground">
-							Choose a runtime before you deploy. The hosted API no longer applies a default.
-						</p>
-					)}
 				</SettingsSection>
 
 				<SettingsSection
@@ -830,7 +831,7 @@ export function DeployWizard() {
 							description="Deploy first, then configure model access inside the runtime."
 							badge={
 								<Badge variant={aiAccessMode === "unmanaged" ? "secondary" : "outline"}>
-									{aiAccessMode === "unmanaged" ? "Default" : "Optional"}
+									{aiAccessMode === "unmanaged" ? "Selected" : "Optional"}
 								</Badge>
 							}
 						/>
@@ -849,7 +850,7 @@ export function DeployWizard() {
 							badge={
 								<Badge variant="secondary">
 									{aiAccessMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE
-										? "Primary"
+										? "Default"
 										: "Managed"}
 								</Badge>
 							}

@@ -2,6 +2,7 @@ import type { DeploymentDetailsInfo, HostedDeployment } from "@/hosted/billing/c
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
+export const DEFAULT_HOSTED_RUNTIME: HostedRuntime = "openclaw";
 
 const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
@@ -42,7 +43,7 @@ export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
 
 export function configRuntime(configInfo: DeploymentDetailsInfo | null | undefined): HostedRuntime {
 	const runtime = configInfo?.runtime;
-	return runtime && isHostedRuntime(runtime) ? runtime : "openclaw";
+	return runtime && isHostedRuntime(runtime) ? runtime : DEFAULT_HOSTED_RUNTIME;
 }
 
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {

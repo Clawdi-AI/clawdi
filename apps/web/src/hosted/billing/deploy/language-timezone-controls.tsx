@@ -43,6 +43,32 @@ export function normalizeHostedLanguage(value: string | null | undefined): Hoste
 	return HOSTED_LANGUAGE_CODES.has(value as HostedLanguage) ? (value as HostedLanguage) : null;
 }
 
+/**
+ * Best-effort map of the browser's preferred languages onto a supported hosted
+ * language. Returns "" when none match, so the caller falls back to the
+ * unset/"Default" choice. Client-only (reads navigator); call after mount.
+ */
+export function browserLanguage(): HostedLanguage | "" {
+	try {
+		const preferred =
+			typeof navigator !== "undefined"
+				? (navigator.languages?.length ? navigator.languages : [navigator.language]).filter(Boolean)
+				: [];
+		for (const raw of preferred) {
+			const exact = normalizeHostedLanguage(raw);
+			if (exact) return exact;
+			const base = raw.toLowerCase().split("-")[0];
+			const byBase = LANGUAGE_OPTIONS.find(
+				(option) => option.code.toLowerCase().split("-")[0] === base,
+			);
+			if (byBase) return byBase.code;
+		}
+	} catch {
+		// Ignore: fall through to the unset default.
+	}
+	return "";
+}
+
 // Static IANA timezone list keeps SSR and client markup deterministic.
 const TIMEZONE_OPTIONS = `
 Africa/Abidjan
