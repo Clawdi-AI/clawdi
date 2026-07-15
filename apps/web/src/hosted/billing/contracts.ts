@@ -44,6 +44,10 @@ export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"]
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
 export type WalletComputeActivateRequest = Schemas["V2WalletComputeActivateRequest"];
 export type WalletComputeActivateResult = Schemas["V2WalletComputeActivateResponse"];
+export type WalletComputeCancelPendingPlanRequest =
+	Schemas["V2WalletComputeCancelPendingPlanRequest"];
+export type WalletComputeCancelPendingPlanResult =
+	Schemas["V2WalletComputeCancelPendingPlanResponse"];
 export type WalletComputePlanChangeRequest = Schemas["V2WalletComputePlanChangeRequest"];
 export type WalletComputePlanChangeResult = Schemas["V2WalletComputePlanChangeResponse"];
 export type WalletComputeQuoteRequest = Schemas["V2WalletComputeQuoteRequest"];

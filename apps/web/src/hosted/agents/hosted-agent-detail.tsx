@@ -90,7 +90,11 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	BillingApiError,
+	billingErrorNormalizer,
+	normalizeBillingError,
+} from "@/hosted/billing/errors";
 import {
 	billingTermLabel,
 	billingTermSuffix,
@@ -101,6 +105,7 @@ import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
+	useCancelPendingWalletPlan,
 	useCancelSubscription,
 	useChangeWalletPlan,
 	useCheckout,
@@ -135,6 +140,7 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import {
+	type WalletPlanChangeFailure,
 	walletPlanChangeFailure,
 	walletPlanChangeSummary,
 	walletPlanResultTarget,
@@ -2133,6 +2139,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	});
 	const quoteWalletPlanChange = useQuoteWalletPlanChange();
 	const changeWalletPlan = useChangeWalletPlan();
+	const cancelPendingWalletPlan = useCancelPendingWalletPlan();
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
@@ -2152,8 +2159,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const isPaidCompute = fundingMode === "subscription";
 	const isStripeFunded = fundingSource === "stripe";
 	const isWalletFunded = fundingSource === "wallet";
-	const isWalletFallback =
+	const hasWalletFallback =
 		!currentSubscription && deployment.last_funding_event?.funding_source === "wallet";
+	const isWalletPaymentFailureFallback =
+		hasWalletFallback && deployment.last_funding_event?.reason === "payment_failure";
 	const walletSubscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2164,6 +2173,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const [walletPlanQuote, setWalletPlanQuote] = useState<WalletComputePlanChangeResult | null>(
 		null,
 	);
+	const [walletPlanFailure, setWalletPlanFailure] = useState<WalletPlanChangeFailure | null>(null);
 	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
@@ -2379,6 +2389,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				});
 				return;
 			}
+			setWalletPlanFailure(null);
 			setWalletPlanQuote(quote);
 		} catch (error) {
 			const failure = walletPlanChangeFailure(error);
@@ -2407,6 +2418,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				subscription_id: walletPlanQuote.subscription_id,
 				target_plan_slug: targetPlanSlug,
 			});
+			setWalletPlanFailure(null);
 			setWalletPlanQuote(null);
 			toast.success(result.change_kind === "upgrade" ? "Compute upgraded" : "Downgrade scheduled", {
 				description:
@@ -2417,21 +2429,54 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		} catch (error) {
 			const failure = walletPlanChangeFailure(error);
 			if (failure.kind === "insufficient") setWalletTopUpOpen(true);
+			if (failure.kind === "resize_pending") {
+				setWalletPlanFailure(failure);
+			} else if (walletPlanFailure?.kind !== "resize_pending") {
+				setWalletPlanFailure(null);
+			}
 			toast.error(
 				failure.kind === "insufficient"
 					? "Wallet balance too low"
 					: failure.kind === "conflict"
 						? "Wallet plan change conflict"
-						: failure.kind === "retryable"
-							? "Plan change needs a retry"
-							: "Couldn’t change wallet compute plan",
+						: failure.kind === "resize_pending"
+							? "Charge applied, resize pending"
+							: failure.kind === "retryable"
+								? "Plan change needs a retry"
+								: "Couldn’t change wallet compute plan",
 				{
 					description:
 						failure.kind === "insufficient" && failure.shortfallCredits !== null
 							? `Top up ${failure.shortfallCredits.toLocaleString()} credits, then confirm again.`
-							: normalizeBillingError(error),
+							: failure.kind === "resize_pending"
+								? "The Wallet charge is recorded. Retry the resize without paying again."
+								: normalizeBillingError(error),
 				},
 			);
+		}
+	}
+
+	async function cancelPendingWalletComputePlanChange() {
+		if (!walletSubscriptionId || !pendingPlanSlug) return;
+		try {
+			await cancelPendingWalletPlan.mutateAsync({
+				subscription_id: walletSubscriptionId,
+			});
+			toast.success("Scheduled downgrade canceled", {
+				description: `${tierLabel} compute remains active.`,
+			});
+		} catch (error) {
+			if (error instanceof BillingApiError && error.status === 409) {
+				toast.message("Scheduled change already cleared", {
+					description:
+						"This scheduled change was already applied or no longer exists. Refreshing billing details.",
+				});
+				return;
+			}
+			toast.error("Couldn’t cancel scheduled downgrade", {
+				description: normalizeBillingError(error),
+			});
+			throw error;
 		}
 	}
 
@@ -2485,6 +2530,8 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		await router.navigate({ href: "/" });
 	}
 
+	const walletResizePending = walletPlanFailure?.kind === "resize_pending";
+
 	return (
 		<div className="flex flex-col gap-9">
 			<Dialog
@@ -2516,16 +2563,25 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			<Dialog
 				open={walletPlanQuote !== null}
 				onOpenChange={(open) => {
-					if (!open && !changeWalletPlan.isPending) setWalletPlanQuote(null);
+					if (!open && !changeWalletPlan.isPending) {
+						setWalletPlanFailure(null);
+						setWalletPlanQuote(null);
+					}
 				}}
 			>
 				<DialogContent className="sm:max-w-md" data-hosted="true">
 					<DialogHeader>
 						<DialogTitle>
-							Confirm wallet-funded {walletPlanQuote?.change_kind ?? "plan"} change
+							{walletResizePending
+								? "Charge applied, resize pending"
+								: `Confirm wallet-funded ${walletPlanQuote?.change_kind ?? "plan"} change`}
 						</DialogTitle>
 						<DialogDescription>
-							{walletPlanQuote ? walletPlanChangeSummary(walletPlanQuote) : "Review the change."}
+							{walletResizePending
+								? "The Wallet debit is already recorded. Retry only completes the compute resize and does not charge again."
+								: walletPlanQuote
+									? walletPlanChangeSummary(walletPlanQuote)
+									: "Review the change."}
 						</DialogDescription>
 					</DialogHeader>
 					{walletPlanQuote ? (
@@ -2555,7 +2611,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							<div className="flex justify-end gap-2">
 								<Button
 									variant="ghost"
-									onClick={() => setWalletPlanQuote(null)}
+									onClick={() => {
+										setWalletPlanFailure(null);
+										setWalletPlanQuote(null);
+									}}
 									disabled={changeWalletPlan.isPending}
 								>
 									Back
@@ -2564,10 +2623,18 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 									onClick={() => void confirmWalletComputePlanChange()}
 									disabled={changeWalletPlan.isPending}
 								>
-									{changeWalletPlan.isPending ? <Spinner /> : <WalletCards />}
-									{walletPlanQuote.change_kind === "upgrade"
-										? `Pay ${formatCents(walletPlanQuote.prorated_delta_cents)} & upgrade`
-										: "Schedule downgrade"}
+									{changeWalletPlan.isPending ? (
+										<Spinner />
+									) : walletResizePending ? (
+										<RefreshCw />
+									) : (
+										<WalletCards />
+									)}
+									{walletResizePending
+										? "Retry resize"
+										: walletPlanQuote.change_kind === "upgrade"
+											? `Pay ${formatCents(walletPlanQuote.prorated_delta_cents)} & upgrade`
+											: "Schedule downgrade"}
 								</Button>
 							</div>
 						</div>
@@ -2600,7 +2667,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								<Badge variant="outline" className="font-normal text-muted-foreground">
 									{isWalletFunded ? "Wallet" : "Card"}
 								</Badge>
-							) : isWalletFallback ? (
+							) : hasWalletFallback ? (
 								<Badge variant="outline" className="font-normal text-muted-foreground">
 									Wallet fallback
 								</Badge>
@@ -2650,7 +2717,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								) : null}
 							</div>
 						) : null}
-						{isWalletFallback ? (
+						{isWalletPaymentFailureFallback ? (
 							<div className="flex w-full flex-col gap-2 text-xs text-muted-foreground lg:w-72">
 								<p>
 									Use the Wallet recovery banner above to top up and retry the previous paid compute
@@ -2708,10 +2775,24 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 										Plan changes become available after wallet billing details finish syncing.
 									</p>
 								) : pendingPlanSlug ? (
-									<p className="text-xs text-muted-foreground">
-										The scheduled downgrade applies at the next renewal. Pending changes cannot be
-										canceled here.
-									</p>
+									<ConfirmAction
+										title="Cancel scheduled downgrade?"
+										description={
+											<p>{tierLabel} compute will remain active and renew at its current price.</p>
+										}
+										confirmLabel="Cancel scheduled downgrade"
+										onConfirm={() => runAction(cancelPendingWalletComputePlanChange)}
+									>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={cancelPendingWalletPlan.isPending}
+										>
+											{cancelPendingWalletPlan.isPending ? <Spinner /> : <Link2Off />}
+											Cancel scheduled downgrade
+										</Button>
+									</ConfirmAction>
 								) : null}
 								{subscriptionCancelPending ? (
 									<Button

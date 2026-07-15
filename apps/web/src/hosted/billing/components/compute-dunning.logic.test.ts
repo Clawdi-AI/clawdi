@@ -5,6 +5,7 @@ import {
 	computeDunningState,
 	computeDunningTileStatus,
 	dunningDeadlineCountdown,
+	fallbackReasonSentence,
 } from "./compute-dunning.logic";
 
 function deployment(
@@ -109,6 +110,7 @@ describe("computeDunningState", () => {
 		const fallback = {
 			type: "compute_subscription_fallback" as const,
 			funding_source: "wallet" as const,
+			reason: "payment_failure" as const,
 			occurred_at: "2026-07-18T12:00:00Z",
 			prior_plan_slug: "compute_performance",
 			subscription_id: 42,
@@ -142,6 +144,7 @@ describe("computeDunningState", () => {
 					last_funding_event: {
 						type: "compute_subscription_fallback",
 						funding_source: "wallet",
+						reason: "payment_failure",
 						occurred_at: "2026-07-18T12:00:00Z",
 						prior_plan_slug: "compute_performance",
 						subscription_id: 42,
@@ -149,6 +152,75 @@ describe("computeDunningState", () => {
 				}),
 			),
 		).toBeNull();
+	});
+
+	test("branches detached fallback presentation by the persisted reason", () => {
+		const cases = [
+			{
+				fallbackReason: "payment_failure" as const,
+				tone: "destructive",
+				ctaTarget: "wallet",
+				title: "Wallet compute funding ended",
+			},
+			{
+				fallbackReason: "canceled" as const,
+				tone: "neutral",
+				ctaTarget: "none",
+				title: "Compute subscription ended",
+			},
+			{
+				fallbackReason: "refunded" as const,
+				tone: "neutral",
+				ctaTarget: "billing_history",
+				title: "Compute payment refunded",
+			},
+			{
+				fallbackReason: "disputed" as const,
+				tone: "warning",
+				ctaTarget: "support",
+				title: "Compute payment disputed",
+			},
+			{
+				fallbackReason: "admin_forced" as const,
+				tone: "neutral",
+				ctaTarget: "support",
+				title: "Compute funding changed",
+			},
+		];
+
+		for (const expected of cases) {
+			const state = computeDunningState(
+				deployment(null, "compute_basic", {
+					last_funding_event: {
+						type: "compute_subscription_fallback",
+						funding_source: "wallet",
+						reason: expected.fallbackReason,
+						occurred_at: "2026-07-18T12:00:00Z",
+						prior_plan_slug: "compute_performance",
+						subscription_id: 42,
+					},
+				}),
+			);
+			expect(state).toMatchObject(expected);
+		}
+	});
+
+	test("writes factual, reason-specific fallback sentences", () => {
+		expect(fallbackReasonSentence("payment_failure", "Performance compute", "Jul 18")).toBe(
+			"This agent fell back from Performance compute because payment failed on Jul 18.",
+		);
+		expect(fallbackReasonSentence("canceled", "Performance compute", "Jul 18")).toContain(
+			"you canceled the subscription",
+		);
+		expect(fallbackReasonSentence("refunded", "Performance compute", "Jul 18")).toContain(
+			"Review Billing history",
+		);
+		expect(fallbackReasonSentence("disputed", "Performance compute", "Jul 18")).toContain(
+			"contact support",
+		);
+		expect(fallbackReasonSentence("admin_forced", "Performance compute", "Jul 18")).toContain(
+			"changed by an administrator",
+		);
 	});
 
 	test("routes action-required subscriptions to the hosted invoice when present", () => {

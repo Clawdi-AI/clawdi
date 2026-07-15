@@ -73,7 +73,7 @@ function isWalletComputeInsufficientDetail(
 	value: Record<string, unknown>,
 ): value is WalletComputeInsufficientError["detail"] {
 	return (
-		value.code === "insufficient_wallet_balance" &&
+		(value.code === "insufficient_wallet_balance" || value.code === "insufficient_balance") &&
 		typeof value.required_credits === "string" &&
 		typeof value.available_credits === "string" &&
 		typeof value.shortfall_credits === "string"
@@ -86,7 +86,8 @@ function isWalletComputeUpstreamDetail(
 	return (
 		(value.code === "wallet_balance_refresh_failed" ||
 			value.code === "wallet_compute_charge_failed" ||
-			value.code === "wallet_compute_upstream_failed") &&
+			value.code === "wallet_compute_upstream_failed" ||
+			value.code === "resize_failed_retryable") &&
 		value.retryable === true &&
 		(value.failure_code === undefined ||
 			value.failure_code === null ||

@@ -16,6 +16,7 @@ import type {
 	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
 	WalletComputeActivateRequest,
+	WalletComputeCancelPendingPlanRequest,
 	WalletComputePlanChangeRequest,
 	WalletComputeQuoteRequest,
 	WalletComputeRetryRequest,
@@ -153,6 +154,8 @@ export function useBillingClient() {
 				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/quote", { body })),
 			changeWalletPlan: async (body: WalletComputePlanChangeRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/change", { body })),
+			cancelPendingWalletPlan: async (body: WalletComputeCancelPendingPlanRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/cancel-pending", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),

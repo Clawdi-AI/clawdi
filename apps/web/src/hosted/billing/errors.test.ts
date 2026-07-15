@@ -10,6 +10,7 @@ import {
 	isRetryableError,
 	isServerError,
 	normalizeBillingError,
+	walletComputeErrorDetail,
 } from "@/hosted/billing/errors";
 
 describe("error classification", () => {
@@ -136,5 +137,32 @@ describe("normalizeBillingError", () => {
 
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
+	});
+});
+
+describe("walletComputeErrorDetail", () => {
+	test("accepts the retry shortfall and resize-pending generated error variants", () => {
+		const insufficient = walletComputeErrorDetail(
+			new BillingApiError(402, "insufficient", {
+				detail: {
+					code: "insufficient_balance",
+					required_credits: "19000",
+					available_credits: "5000",
+					shortfall_credits: "14000",
+				},
+			}),
+		);
+		expect(insufficient).toMatchObject({ code: "insufficient_balance" });
+
+		const resize = walletComputeErrorDetail(
+			new BillingApiError(502, "resize", {
+				detail: {
+					code: "resize_failed_retryable",
+					failure_code: "deployment_resize_failed",
+					retryable: true,
+				},
+			}),
+		);
+		expect(resize).toMatchObject({ code: "resize_failed_retryable" });
 	});
 });

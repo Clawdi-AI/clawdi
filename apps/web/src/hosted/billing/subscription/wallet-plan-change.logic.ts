@@ -4,7 +4,7 @@ import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
 export type WalletPlanChangeFailure = {
-	kind: "insufficient" | "conflict" | "retryable" | "other";
+	kind: "insufficient" | "conflict" | "resize_pending" | "retryable" | "other";
 	shortfallCredits: number | null;
 };
 
@@ -38,6 +38,16 @@ export function walletPlanChangeFailure(error: unknown): WalletPlanChangeFailure
 	}
 	if (error instanceof BillingApiError && error.status === 409) {
 		return { kind: "conflict", shortfallCredits: null };
+	}
+	if (
+		error instanceof BillingApiError &&
+		error.status === 502 &&
+		detail !== null &&
+		typeof detail !== "string" &&
+		"code" in detail &&
+		detail.code === "resize_failed_retryable"
+	) {
+		return { kind: "resize_pending", shortfallCredits: null };
 	}
 	if (
 		isNetworkError(error) ||

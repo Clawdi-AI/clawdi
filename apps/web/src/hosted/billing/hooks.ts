@@ -22,6 +22,7 @@ import type {
 	PortalRequest,
 	WalletAutoReloadRequest,
 	WalletComputeActivateRequest,
+	WalletComputeCancelPendingPlanRequest,
 	WalletComputePlanChangeRequest,
 	WalletComputeQuoteRequest,
 	WalletComputeRetryRequest,
@@ -336,6 +337,16 @@ export function useChangeWalletPlan() {
 	return useMutation({
 		mutationFn: (body: WalletComputePlanChangeRequest) => client.changeWalletPlan(body),
 		onSuccess: () => invalidateWalletCompute(qc),
+	});
+}
+
+export function useCancelPendingWalletPlan() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: WalletComputeCancelPendingPlanRequest) =>
+			client.cancelPendingWalletPlan(body),
+		onSettled: () => invalidateWalletCompute(qc),
 	});
 }
 

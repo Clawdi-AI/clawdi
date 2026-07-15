@@ -1,20 +1,36 @@
 "use client";
 
-import { CreditCard, ExternalLink, RefreshCw, TriangleAlert, WalletCards } from "lucide-react";
+import {
+	CreditCard,
+	ExternalLink,
+	History,
+	Info,
+	LifeBuoy,
+	RefreshCw,
+	TriangleAlert,
+	WalletCards,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { BillingApiError, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	BillingApiError,
+	normalizeBillingError,
+	walletComputeErrorDetail,
+} from "@/hosted/billing/errors";
 import { useFixPayment, useRetryWalletCompute, useWallet } from "@/hosted/billing/hooks";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { formatShortDate } from "@/lib/format";
+import { settingsQueryHref } from "@/lib/settings-routes";
 import {
 	collectionFailureMessage,
 	computeDunningState,
 	dunningDeadlineCountdown,
+	fallbackReasonSentence,
 } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
@@ -23,6 +39,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const retryWallet = useRetryWalletCompute();
 	const wallet = useWallet({ enabled: state?.ctaTarget === "wallet" });
 	const [topUpOpen, setTopUpOpen] = useState(false);
+	const [retryShortfallCredits, setRetryShortfallCredits] = useState<number | null>(null);
 	const [now, setNow] = useState(() => Date.now());
 
 	useEffect(() => {
@@ -42,10 +59,14 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			: state.serviceRiskAt && state.paymentState !== "unpaid"
 				? `Service is at risk after ${formatShortDate(state.serviceRiskAt)}.`
 				: null;
-	const destructive = state.paymentState === "unpaid";
+	const destructive = state.tone === "destructive";
 	const bannerDescription = [
-		state.fallbackOccurredAt && state.fallbackPlanLabel
-			? `This agent fell back from ${state.fallbackPlanLabel} because payment failed on ${formatShortDate(state.fallbackOccurredAt)}.`
+		state.fallbackOccurredAt && state.fallbackPlanLabel && state.fallbackReason
+			? fallbackReasonSentence(
+					state.fallbackReason,
+					state.fallbackPlanLabel,
+					formatShortDate(state.fallbackOccurredAt),
+				)
 			: null,
 		state.description,
 		collectionFailureMessage(state.failureCode),
@@ -85,7 +106,15 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				description: "Paid compute is active again.",
 			});
 		} catch (error) {
-			if (error instanceof BillingApiError && error.status === 402) setTopUpOpen(true);
+			if (error instanceof BillingApiError && error.status === 402) {
+				const detail = walletComputeErrorDetail(error);
+				const shortfall =
+					detail && typeof detail !== "string" && "shortfall_credits" in detail
+						? Number(detail.shortfall_credits)
+						: Number.NaN;
+				setRetryShortfallCredits(Number.isFinite(shortfall) ? shortfall : null);
+				setTopUpOpen(true);
+			}
 			toast.error("Couldn’t retry wallet payment", {
 				description:
 					error instanceof BillingApiError && error.status === 409
@@ -95,14 +124,27 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 		}
 	}
 
+	function openManualTopUp() {
+		setRetryShortfallCredits(null);
+		setTopUpOpen(true);
+	}
+
+	const BannerIcon = state.tone === "neutral" ? Info : TriangleAlert;
+
 	return (
 		<>
 			<Alert
 				data-hosted="true"
 				variant={destructive ? "destructive" : "default"}
-				className={destructive ? undefined : "border-warning/30 bg-warning-muted"}
+				className={
+					destructive
+						? undefined
+						: state.tone === "warning"
+							? "border-warning/30 bg-warning-muted"
+							: "border-info-muted bg-info-muted text-info-muted-foreground"
+				}
 			>
-				<TriangleAlert />
+				<BannerIcon />
 				<AlertTitle>{state.title}</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>{bannerDescription}</span>
@@ -112,7 +154,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 								<Button
 									size="sm"
 									variant={destructive ? "destructive" : "default"}
-									onClick={() => setTopUpOpen(true)}
+									onClick={openManualTopUp}
 									disabled={!wallet.data}
 								>
 									<WalletCards data-icon="inline-start" /> Top up
@@ -133,7 +175,25 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 								</span>
 							)}
 						</div>
-					) : (
+					) : state.ctaTarget === "billing_history" ? (
+						<Button
+							render={<a href={settingsQueryHref("billing-plan")} />}
+							nativeButton={false}
+							size="sm"
+							variant="outline"
+						>
+							<History data-icon="inline-start" /> View billing history
+						</Button>
+					) : state.ctaTarget === "support" ? (
+						<Button
+							render={<a href="mailto:support@clawdi.ai" />}
+							nativeButton={false}
+							size="sm"
+							variant="outline"
+						>
+							<LifeBuoy data-icon="inline-start" /> Contact support
+						</Button>
+					) : state.ctaTarget !== "none" ? (
 						<Button
 							size="sm"
 							variant={destructive ? "destructive" : "default"}
@@ -149,11 +209,19 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							)}
 							Fix payment
 						</Button>
-					)}
+					) : null}
 				</AlertDescription>
 			</Alert>
 			{wallet.data ? (
-				<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={wallet.data} />
+				<TopUpDialog
+					open={topUpOpen}
+					onOpenChange={setTopUpOpen}
+					wallet={wallet.data}
+					initialAmountCents={topUpAmountCentsForCreditShortfall(
+						retryShortfallCredits,
+						wallet.data.points_per_usd,
+					)}
+				/>
 			) : null}
 		</>
 	);

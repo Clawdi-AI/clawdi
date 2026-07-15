@@ -78,4 +78,18 @@ describe("wallet plan change logic", () => {
 			),
 		).toEqual({ kind: "retryable", shortfallCredits: null });
 	});
+
+	test("distinguishes a charged upgrade awaiting resize", () => {
+		expect(
+			walletPlanChangeFailure(
+				new BillingApiError(502, "resize", {
+					detail: {
+						code: "resize_failed_retryable",
+						failure_code: "deployment_resize_failed",
+						retryable: true,
+					},
+				}),
+			),
+		).toEqual({ kind: "resize_pending", shortfallCredits: null });
+	});
 });

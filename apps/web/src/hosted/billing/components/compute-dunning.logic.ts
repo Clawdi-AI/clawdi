@@ -1,4 +1,4 @@
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { HostedDeployment, HostedFundingEvent } from "@/hosted/billing/contracts";
 import {
 	computeSubscriptionId,
 	computeTierLabel,
@@ -14,10 +14,11 @@ export type ComputePaymentState = ComputeSubscription["payment_state"];
 export type ComputeDunningState = {
 	paymentState: Exclude<ComputePaymentState, "ok">;
 	fundingSource: "stripe" | "wallet";
-	recoveryAction: "top_up" | "fix_payment";
+	recoveryAction: "top_up" | "fix_payment" | null;
+	tone: "neutral" | "warning" | "destructive";
 	title: string;
 	description: string;
-	ctaTarget: "invoice" | "portal" | "wallet";
+	ctaTarget: "invoice" | "portal" | "wallet" | "billing_history" | "support" | "none";
 	invoiceUrl: string | null;
 	subscriptionId: number | null;
 	nextPaymentAttemptAt: string | null;
@@ -25,10 +26,30 @@ export type ComputeDunningState = {
 	failureCode: string | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
+	fallbackReason: HostedFundingEvent["reason"] | null;
 	tileLabel: string;
 	tileTitle: string;
 	tileTextClass: string;
 };
+
+export function fallbackReasonSentence(
+	reason: HostedFundingEvent["reason"],
+	planLabel: string,
+	dateLabel: string,
+): string {
+	switch (reason) {
+		case "payment_failure":
+			return `This agent fell back from ${planLabel} because payment failed on ${dateLabel}.`;
+		case "canceled":
+			return `This agent fell back from ${planLabel} after you canceled the subscription on ${dateLabel}.`;
+		case "refunded":
+			return `This agent fell back from ${planLabel} after its payment was refunded on ${dateLabel}. Review Billing history for details.`;
+		case "disputed":
+			return `This agent fell back from ${planLabel} after its payment was disputed on ${dateLabel}. Review Billing history or contact support.`;
+		case "admin_forced":
+			return `This agent fell back from ${planLabel} after compute funding was changed by an administrator on ${dateLabel}. Contact support if this was unexpected.`;
+	}
+}
 
 function subscriptionForDunning(deployment: DunningDeployment): ComputeSubscription | null {
 	return deployment.compute_subscription ?? null;
@@ -58,7 +79,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	if (!subscription) {
 		const fallback = deployment.last_funding_event;
 		if (fallback?.type !== "compute_subscription_fallback") return null;
-		const walletRecovery = fallback.funding_source === "wallet";
+		const paymentFailure = fallback.reason === "payment_failure";
+		const walletRecovery = paymentFailure && fallback.funding_source === "wallet";
 		const fallbackPlanLabel =
 			fallback.prior_plan_slug === "compute_performance"
 				? "Performance compute"
@@ -66,15 +88,62 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 					? "Basic compute"
 					: "paid compute";
 		const stopped = deployment.status.toLowerCase() === "stopped";
+		const fallbackPresentation = (() => {
+			switch (fallback.reason) {
+				case "payment_failure":
+					return {
+						tone: "destructive" as const,
+						title: walletRecovery ? "Wallet compute funding ended" : "Compute funding ended",
+						ctaTarget: walletRecovery ? ("wallet" as const) : ("portal" as const),
+						tileLabel: walletRecovery ? "Wallet funding ended" : "Compute funding ended",
+						tileTextClass: "text-destructive",
+					};
+				case "canceled":
+					return {
+						tone: "neutral" as const,
+						title: "Compute subscription ended",
+						ctaTarget: "none" as const,
+						tileLabel: "Compute subscription ended",
+						tileTextClass: "text-muted-foreground",
+					};
+				case "refunded":
+					return {
+						tone: "neutral" as const,
+						title: "Compute payment refunded",
+						ctaTarget: "billing_history" as const,
+						tileLabel: "Compute payment refunded",
+						tileTextClass: "text-muted-foreground",
+					};
+				case "disputed":
+					return {
+						tone: "warning" as const,
+						title: "Compute payment disputed",
+						ctaTarget: "support" as const,
+						tileLabel: "Compute payment disputed",
+						tileTextClass: "text-warning-muted-foreground",
+					};
+				case "admin_forced":
+					return {
+						tone: "neutral" as const,
+						title: "Compute funding changed",
+						ctaTarget: "support" as const,
+						tileLabel: "Compute funding changed",
+						tileTextClass: "text-muted-foreground",
+					};
+			}
+		})();
 		return {
+			...fallbackPresentation,
 			paymentState: "unpaid",
 			fundingSource: fallback.funding_source,
-			recoveryAction: walletRecovery ? "top_up" : "fix_payment",
-			title: walletRecovery ? "Wallet compute funding ended" : "Compute funding ended",
+			recoveryAction: paymentFailure ? (walletRecovery ? "top_up" : "fix_payment") : null,
 			description: stopped
-				? "The included Basic slot was occupied, so this agent stopped. Restore paid funding to start it again."
-				: "This agent is now using included Basic. Restore paid funding to re-activate its previous compute plan.",
-			ctaTarget: walletRecovery ? "wallet" : "portal",
+				? paymentFailure
+					? "The included Basic slot was occupied, so this agent stopped. Restore paid funding to start it again."
+					: "The included Basic slot was occupied, so this agent stopped."
+				: paymentFailure
+					? "This agent is now using included Basic. Restore paid funding to re-activate its previous compute plan."
+					: "This agent is now using included Basic.",
 			invoiceUrl: null,
 			subscriptionId: fallback.subscription_id,
 			nextPaymentAttemptAt: null,
@@ -82,11 +151,10 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			failureCode: null,
 			fallbackOccurredAt: fallback.occurred_at,
 			fallbackPlanLabel,
-			tileLabel: walletRecovery ? "Wallet funding ended" : "Compute funding ended",
+			fallbackReason: fallback.reason,
 			tileTitle: stopped
 				? `${fallbackPlanLabel} stopped after its funding ended.`
 				: `${fallbackPlanLabel} fell back to included Basic after its funding ended.`,
-			tileTextClass: "text-destructive",
 		};
 	}
 	if (subscription.payment_state === "ok") return null;
@@ -113,12 +181,14 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		failureCode: subscription.last_collection_failure_code ?? null,
 		fallbackOccurredAt: null,
 		fallbackPlanLabel: null,
+		fallbackReason: null,
 	};
 
 	if (walletRecovery && subscription.payment_state === "past_due") {
 		return {
 			...common,
 			paymentState: "past_due",
+			tone: "warning",
 			title: "Wallet payment failed",
 			description: `The latest ${computeName} debit failed. Your resources stay available during the 72-hour grace period; top up, then retry the payment.`,
 			ctaTarget: "wallet",
@@ -132,6 +202,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "unpaid",
+			tone: "destructive",
 			title: "Wallet compute funding ended",
 			description: `The grace period ended. The deployment fell back to included Basic when a slot was available; otherwise it stopped. Top up and retry to re-activate paid ${computeName}.`,
 			ctaTarget: "wallet",
@@ -145,6 +216,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "requires_action",
+			tone: "warning",
 			title: "Payment authentication required",
 			description: `Stripe needs bank authentication for the latest renewal invoice. Complete the payment to keep ${computeName} active.`,
 			ctaTarget: invoiceUrl ? "invoice" : "portal",
@@ -158,6 +230,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return {
 			...common,
 			paymentState: "past_due",
+			tone: "warning",
 			title: "Payment failed",
 			description:
 				"The latest renewal payment failed. Update your payment method before Stripe retries are exhausted.",
@@ -171,6 +244,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	return {
 		...common,
 		paymentState: "unpaid",
+		tone: "destructive",
 		title: "Payment retries ended",
 		description: `Stripe could not collect payment and ${computeName} entitlement was removed. Update your payment method before restoring this subscription.`,
 		ctaTarget: "portal",

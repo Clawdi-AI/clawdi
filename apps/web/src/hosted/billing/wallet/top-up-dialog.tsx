@@ -26,6 +26,8 @@ import {
 } from "@/hosted/billing/wallet/stripe-payment-form";
 import { completeTopup, handleTopupStartResult } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
+	TOPUP_DEFAULT_CENTS,
+	TOPUP_INCREMENT_CENTS,
 	TOPUP_MAX_CENTS,
 	TOPUP_MIN_CENTS,
 	TOPUP_PRESETS_CENTS,
@@ -38,17 +40,19 @@ export function TopUpDialog({
 	onOpenChange,
 	wallet,
 	onComplete,
+	initialAmountCents,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	wallet: WalletState;
 	onComplete?: (status: "succeeded" | "processing") => void;
+	initialAmountCents?: number | null;
 }) {
 	const topUp = useTopUp();
 	const qc = useQueryClient();
 	const runAction = useActionLock();
 	const [step, setStep] = useState<Step>("amount");
-	const [dollars, setDollars] = useState("25");
+	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
 	// amount so a timeout-resubmit / double-tab can't create two PaymentIntents.
@@ -83,7 +87,8 @@ export function TopUpDialog({
 	useEffect(() => {
 		if (!open) return;
 		reset();
-	}, [open]);
+		setDollars(String((initialAmountCents ?? TOPUP_DEFAULT_CENTS) / 100));
+	}, [initialAmountCents, open]);
 
 	async function onContinue() {
 		// Guard double-submit: the button disables on pending, but a fast
@@ -170,7 +175,7 @@ export function TopUpDialog({
 									autoComplete="off"
 									min={TOPUP_MIN_CENTS / 100}
 									max={TOPUP_MAX_CENTS / 100}
-									step="1"
+									step={TOPUP_INCREMENT_CENTS / 100}
 									className="pl-6"
 									value={dollars}
 									onChange={(e) => setAmount(e.target.value)}
