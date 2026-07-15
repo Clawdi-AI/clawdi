@@ -843,20 +843,32 @@ export function DeployWizard() {
 						return;
 					}
 
-					forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
-					walletDeployAttemptRef.current = null;
 					setWalletFailure(null);
-					let deploymentId = await resolveWalletDeploymentId(
+					const resolution = await resolveWalletDeploymentId(
 						activation,
 						billingClient.getDeploymentByRequest,
-					).catch(() => null);
+					).catch(() => ({ kind: "pending" }) as const);
+					let deploymentId = resolution.kind === "resolved" ? resolution.deploymentId : null;
 					if (!deploymentId) {
 						const refreshedDeployments = await refreshCheckoutReturn().catch(() => undefined);
 						deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
 					}
-					toast.success("Wallet payment complete", {
-						description: `${paidSelection.tierLabel} compute is provisioning now.`,
-					});
+					if (deploymentId) {
+						forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+						walletDeployAttemptRef.current = null;
+						toast.success("Wallet payment complete", {
+							description: `${paidSelection.tierLabel} compute is provisioning now.`,
+						});
+					} else if (resolution.kind === "terminal") {
+						toast.error("Wallet payment completed, but deploy did not start", {
+							description:
+								"The deploy request ended before an agent was created. Your request ID is preserved for a safe retry.",
+						});
+					} else {
+						toast.success("Wallet payment complete", {
+							description: `${paidSelection.tierLabel} compute is still being linked. Check your agents list in a moment.`,
+						});
+					}
 					void router.navigate({
 						href: deploymentId
 							? agentSectionHref(deploymentId, "overview", "source=on-clawdi")

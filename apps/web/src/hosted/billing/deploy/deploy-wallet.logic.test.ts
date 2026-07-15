@@ -64,7 +64,7 @@ describe("resolveWalletDeploymentId", () => {
 			lookups += 1;
 			throw new Error("should not poll");
 		});
-		expect(result).toBe("hdep_direct");
+		expect(result).toEqual({ kind: "resolved", deploymentId: "hdep_direct" });
 		expect(lookups).toBe(0);
 	});
 
@@ -89,7 +89,7 @@ describe("resolveWalletDeploymentId", () => {
 				},
 			},
 		);
-		expect(result).toBe("hdep_resolved");
+		expect(result).toEqual({ kind: "resolved", deploymentId: "hdep_resolved" });
 		expect(delays).toEqual([1_000, 1_500]);
 	});
 
@@ -100,7 +100,7 @@ describe("resolveWalletDeploymentId", () => {
 			deployment_id: null,
 			deployment_status: null,
 		}));
-		expect(result).toBeNull();
+		expect(result).toEqual({ kind: "terminal", requestStatus: "failed" });
 	});
 });
 

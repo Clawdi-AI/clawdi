@@ -79,11 +79,18 @@ type DeploymentResolutionOptions = {
 	delay?: (milliseconds: number) => Promise<void>;
 };
 
-const TERMINAL_DEPLOY_REQUEST_STATUSES = new Set<HostedDeployRequestStatus["request_status"]>([
-	"failed",
-	"expired",
-	"superseded",
-]);
+type TerminalDeployRequestStatus = "failed" | "expired" | "superseded";
+
+export type WalletDeploymentResolution =
+	| { kind: "resolved"; deploymentId: string }
+	| { kind: "pending" }
+	| { kind: "terminal"; requestStatus: TerminalDeployRequestStatus };
+
+function isTerminalDeployRequestStatus(
+	status: HostedDeployRequestStatus["request_status"],
+): status is TerminalDeployRequestStatus {
+	return status === "failed" || status === "expired" || status === "superseded";
+}
 
 function wait(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
@@ -94,8 +101,10 @@ export async function resolveWalletDeploymentId(
 	activation: WalletComputeActivateResult,
 	lookup: DeployRequestLookup,
 	options: DeploymentResolutionOptions = {},
-): Promise<string | null> {
-	if (activation.deployment_id) return activation.deployment_id;
+): Promise<WalletDeploymentResolution> {
+	if (activation.deployment_id) {
+		return { kind: "resolved", deploymentId: activation.deployment_id };
+	}
 	const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
 	const delay = options.delay ?? wait;
 
@@ -105,8 +114,15 @@ export async function resolveWalletDeploymentId(
 			if (status.deploy_request_id !== activation.deploy_request_id) {
 				throw new Error("Deployment request lookup returned a mismatched request ID.");
 			}
-			if (status.deployment_id) return status.deployment_id;
-			if (TERMINAL_DEPLOY_REQUEST_STATUSES.has(status.request_status)) return null;
+			if (status.deployment_id) {
+				return { kind: "resolved", deploymentId: status.deployment_id };
+			}
+			if (isTerminalDeployRequestStatus(status.request_status)) {
+				return {
+					kind: "terminal",
+					requestStatus: status.request_status,
+				};
+			}
 		} catch (error) {
 			const requestNotProjected = error instanceof BillingApiError && error.status === 404;
 			if (!requestNotProjected && !isRetryableError(error)) throw error;
@@ -117,5 +133,5 @@ export async function resolveWalletDeploymentId(
 		}
 	}
 
-	return null;
+	return { kind: "pending" };
 }
