@@ -296,6 +296,30 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	expect(errors, `paid Basic checkout: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("compute plans keep signup credits without advertising subscription credit grants", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, {
+		deployments: [paidBasicDeployment],
+		plans: [
+			{ ...basicPlan, subscription_grant_credits: 500 },
+			{ ...performancePlan, subscription_grant_credits: 1_000 },
+		],
+	});
+	await page.goto("/channels?settings=billing-plan");
+
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog).toBeVisible();
+	await expect(
+		settingsDialog.getByText("$5.00 in AI Credits on signup", { exact: true }),
+	).toBeVisible();
+	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
+	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");
+	await expect(settingsDialog).not.toContainText("credits do not expire");
+	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("command palette opens with Ctrl+K", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);

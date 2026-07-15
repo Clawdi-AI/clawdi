@@ -99,8 +99,6 @@ export function PlanComparison({
 		0,
 		basic?.signup_grant_credits ?? performance?.signup_grant_credits ?? 0,
 	);
-	const subscriptionGrantCredits = Math.max(0, performance?.subscription_grant_credits ?? 0);
-	const basicSubscriptionGrantCredits = Math.max(0, basic?.subscription_grant_credits ?? 0);
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
@@ -165,12 +163,6 @@ export function PlanComparison({
 							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>BYOK avoids managed-AI usage charges</FeatureRow>
-							{basicSubscriptionGrantCredits > 0 ? (
-								<FeatureRow>
-									{creditsToUsd(basicSubscriptionGrantCredits, pointsPerUsd)} in AI Credits per
-									subscription
-								</FeatureRow>
-							) : null}
 							{signupGrantCredits > 0 ? (
 								<FeatureRow>
 									{creditsToUsd(signupGrantCredits, pointsPerUsd)} in AI Credits on signup
@@ -242,12 +234,6 @@ export function PlanComparison({
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
 							</FeatureRow>
-							{subscriptionGrantCredits > 0 ? (
-								<FeatureRow>
-									{creditsToUsd(subscriptionGrantCredits, pointsPerUsd)} in AI Credits added to
-									Wallet; credits do not expire
-								</FeatureRow>
-							) : null}
 						</ul>
 					</CardContent>
 					<CardFooter>
