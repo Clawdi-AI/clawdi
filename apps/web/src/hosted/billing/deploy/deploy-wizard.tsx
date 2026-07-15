@@ -67,6 +67,7 @@ import {
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
 import {
+	browserLanguage,
 	browserTimezone,
 	LANGUAGE_OPTIONS,
 	LANGUAGE_SELECT_ITEMS,
@@ -350,9 +351,11 @@ export function DeployWizard() {
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 
-	// Default the timezone to the browser's after mount (avoids an SSR mismatch).
+	// Default language + timezone to the browser's after mount (avoids an SSR
+	// mismatch). Both stay explicitly unsettable back to the runtime default.
 	useEffect(() => {
 		setTimezone((tz) => tz || browserTimezone());
+		setLanguage((lang) => lang || browserLanguage());
 	}, []);
 	const tzOptions = useMemo(() => {
 		const all = supportedTimezones();
@@ -791,15 +794,6 @@ export function DeployWizard() {
 				>
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
-							selected={runtime === "hermes"}
-							onClick={() => setRuntime("hermes")}
-							icon={
-								<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
-							}
-							title={runtimeDisplayName("hermes")}
-							description={runtimeBlurb("hermes")}
-						/>
-						<EntityChoiceCard
 							selected={runtime === "openclaw"}
 							onClick={() => setRuntime("openclaw")}
 							icon={
@@ -807,6 +801,15 @@ export function DeployWizard() {
 							}
 							title={runtimeDisplayName("openclaw")}
 							description={runtimeBlurb("openclaw")}
+						/>
+						<EntityChoiceCard
+							selected={runtime === "hermes"}
+							onClick={() => setRuntime("hermes")}
+							icon={
+								<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
+							}
+							title={runtimeDisplayName("hermes")}
+							description={runtimeBlurb("hermes")}
 						/>
 					</div>
 				</SettingsSection>
