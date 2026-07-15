@@ -37,11 +37,11 @@ describe("stripe checkout logic", () => {
 
 	test("builds an explicit hosted fallback request", () => {
 		const request: CheckoutRequest = {
-			plan_slug: "compute_performance",
+			plan_slug: "compute_basic",
 			billing_term_months: 12,
 			ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 			deploy_config: {
-				compute_plan_slug: "compute_performance",
+				compute_plan_slug: "compute_basic",
 				runtime: "hermes",
 				ai_provider_auth_kind: "unmanaged",
 			},
@@ -51,6 +51,9 @@ describe("stripe checkout logic", () => {
 			...request,
 			ui_mode: "hosted",
 		});
+		expect(buildHostedCheckoutFallbackRequest(request).deploy_config?.compute_plan_slug).toBe(
+			"compute_basic",
+		);
 	});
 
 	test("finds a deployment created after checkout completes", () => {

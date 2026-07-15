@@ -1,4 +1,8 @@
-import type { DeployRequest, HostedConfigRequest } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanSlug,
+	DeployRequest,
+	HostedConfigRequest,
+} from "@/hosted/billing/contracts";
 import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
 import type { HostedRuntime } from "@/hosted/runtimes";
 
@@ -7,8 +11,13 @@ type DeployPersona = {
 	timezone: string;
 };
 
-type ComputePlanSlug = DeployRequest["compute_plan_slug"];
-export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> & Partial<DeployRequest>;
+export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> &
+	Partial<
+		Pick<
+			DeployRequest,
+			"ai_provider_bootstrap" | "ai_provider_id" | "primary_model" | "provider_ids"
+		>
+	>;
 
 export function buildHostedDeployRequest({
 	computePlanSlug,

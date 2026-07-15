@@ -92,7 +92,7 @@ function deployment(
 		openclaw_control_ui_url: null,
 		hermes_control_ui_url: null,
 		config_info: {
-			compute_plan_slug: "compute_free",
+			compute_plan_slug: "compute_basic",
 			mux_enabled: true,
 			telegram_mux_enabled: false,
 			discord_mux_enabled: false,
@@ -163,6 +163,7 @@ describe("deploymentToTiles", () => {
 			deployment({
 				compute_subscription: {
 					status: "past_due",
+					funding_source: "stripe",
 					payment_state: "requires_action",
 					billing_term_months: 1,
 					price_cents: 1_900,
@@ -180,7 +181,7 @@ describe("deploymentToTiles", () => {
 
 		expect(tile?.secondaryStatus).toEqual({
 			label: "Payment action required",
-			title: "Complete payment authentication to keep Performance compute active.",
+			title: "Complete payment authentication to keep Basic compute active.",
 			textClass: "text-warning-muted-foreground",
 		});
 	});
@@ -192,6 +193,7 @@ describe("deploymentToTiles", () => {
 				failure_reason: "startup_probe_failing; restart_count=2; container failed readiness probe",
 				compute_subscription: {
 					status: "past_due",
+					funding_source: "stripe",
 					payment_state: "requires_action",
 					billing_term_months: 1,
 					price_cents: 1_900,

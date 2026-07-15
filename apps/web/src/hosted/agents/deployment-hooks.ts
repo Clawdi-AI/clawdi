@@ -56,7 +56,7 @@ function toastAgentLanguageTimezoneError(error: unknown) {
  * the agent tiles use). Returns null for self-managed (CLI) agents.
  */
 export function useAgentDeployment(environmentId: string) {
-	const query = useHostedDeployments();
+	const query = useHostedDeployments({ pollWalletDunningFor: environmentId });
 	const match = useMemo(() => {
 		const target = environmentId.toLowerCase();
 		for (const d of query.data ?? []) {

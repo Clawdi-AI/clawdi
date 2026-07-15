@@ -22,6 +22,7 @@ import {
 	Sparkles,
 	TerminalSquare,
 	Trash2,
+	WalletCards,
 	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -81,6 +82,7 @@ import type {
 	CheckoutRequest,
 	HostedDeployment,
 	RebindAgentAiProviderRequest,
+	WalletComputePlanChangeResult,
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
@@ -88,18 +90,31 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import {
+	BillingApiError,
+	billingErrorNormalizer,
+	normalizeBillingError,
+} from "@/hosted/billing/errors";
+import {
+	billingTermLabel,
+	billingTermSuffix,
+	formatCents,
+	formatCentsCompact,
+} from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
+	useCancelPendingWalletPlan,
 	useCancelSubscription,
+	useChangeWalletPlan,
 	useCheckout,
 	useCheckoutReturnRefresh,
 	usePlans,
 	usePortal,
+	useQuoteWalletPlanChange,
 	useResumeSubscription,
+	useWallet,
 } from "@/hosted/billing/hooks";
 import {
 	type IdempotencyAttempt,
@@ -108,17 +123,35 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import {
+	COMPUTE_BASIC_SLUG,
+	COMPUTE_PERFORMANCE_SLUG,
+	computeFundingMode,
+	computeFundingSource,
+	computeSubscriptionId,
+	computeTierLabel,
+	explicitPlanOffers,
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionTermChangeable,
+	pendingComputePlanSlug,
 	planOffers,
+	resolveBasicPlan,
 	resolvePerformancePlan,
+	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
+import {
+	type WalletPlanChangeFailure,
+	walletPlanChangeFailure,
+	walletPlanChangeSummary,
+	walletPlanResultTarget,
+	walletPlanTarget,
+} from "@/hosted/billing/subscription/wallet-plan-change.logic";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import {
 	compactDeploymentFailureReason,
 	deploymentFailureReason,
@@ -372,7 +405,7 @@ export function HostedAgentDetail({
 		section: activeTab,
 	});
 
-	const isPerformance = ci?.compute_plan_slug === "compute_performance";
+	const isPerformance = ci?.compute_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const scopedSessionLink = (sessionId: string) => ({
@@ -486,7 +519,6 @@ export function HostedAgentDetail({
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
-							isPerformance={isPerformance}
 							runtime={runtime}
 						/>
 					) : null}
@@ -728,7 +760,7 @@ function OverviewTab({
 					label="Status"
 					value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
 				/>
-				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
+				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
 				<StatCard label="Model" value={model} />
 				<StatCard
 					label="Resources"
@@ -1957,19 +1989,17 @@ function LinkedChannelRow({
 function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
-	isPerformance,
 	runtime,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	isPerformance: boolean;
 	runtime: Runtime;
 }) {
 	return (
 		<div className="flex flex-col gap-10">
 			<AgentSettingsPanel environmentId={environmentId} />
 			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
-			<ComputeSettingsSections deployment={deployment} isPerformance={isPerformance} />
+			<ComputeSettingsSections deployment={deployment} />
 		</div>
 	);
 }
@@ -2095,13 +2125,7 @@ function LanguageTimezoneSettingsSection({
 	);
 }
 
-function ComputeSettingsSections({
-	deployment,
-	isPerformance,
-}: {
-	deployment: HostedDeployment;
-	isPerformance: boolean;
-}) {
+function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment }) {
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const lifecycle = useDeploymentLifecycle();
@@ -2110,6 +2134,12 @@ function ComputeSettingsSections({
 	const checkout = useCheckout();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const portal = usePortal();
+	const wallet = useWallet({
+		enabled: deployment.compute_subscription?.funding_source === "wallet",
+	});
+	const quoteWalletPlanChange = useQuoteWalletPlanChange();
+	const changeWalletPlan = useChangeWalletPlan();
+	const cancelPendingWalletPlan = useCancelPendingWalletPlan();
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
@@ -2121,11 +2151,31 @@ function ComputeSettingsSections({
 	const canRestart = canRestartDeployment(deploymentStatus);
 	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
+	const computePlanSlug = deployment.config_info?.compute_plan_slug;
 	const currentSubscription = deployment.compute_subscription;
+	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
+	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
+	const isIncludedBasic = fundingMode === "included_basic";
+	const isPaidCompute = fundingMode === "subscription";
+	const isStripeFunded = fundingSource === "stripe";
+	const isWalletFunded = fundingSource === "wallet";
+	const hasWalletFallback =
+		!currentSubscription && deployment.last_funding_event?.funding_source === "wallet";
+	const isWalletPaymentFailureFallback =
+		hasWalletFallback && deployment.last_funding_event?.reason === "payment_failure";
+	const walletSubscriptionId = computeSubscriptionId(currentSubscription);
+	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
+	const tierLabel = computeTierLabel(computePlanSlug);
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
 	const [termChangeConfirmation, setTermChangeConfirmation] =
 		useState<TermChangeConfirmation | null>(null);
+	const [walletPlanQuote, setWalletPlanQuote] = useState<WalletComputePlanChangeResult | null>(
+		null,
+	);
+	const [walletPlanFailure, setWalletPlanFailure] = useState<WalletPlanChangeFailure | null>(null);
+	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
+	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
 	const perfOfferSelection = useMemo(
@@ -2133,10 +2183,41 @@ function ComputeSettingsSections({
 		[perfPlan, term],
 	);
 	const perfOffer = perfOfferSelection?.offer ?? null;
-	const selectedBillingTerm = perfOfferSelection?.billingTermMonths ?? term;
+	const currentPaidPlan =
+		computePlanSlug === COMPUTE_BASIC_SLUG
+			? basicPlan
+			: computePlanSlug === COMPUTE_PERFORMANCE_SLUG
+				? perfPlan
+				: undefined;
+	const billingPlan = isIncludedBasic ? perfPlan : currentPaidPlan;
+	const billingUsesExplicitBasicOffers = !isIncludedBasic && computePlanSlug === COMPUTE_BASIC_SLUG;
+	const billingOffers = useMemo(
+		() =>
+			billingPlan
+				? billingUsesExplicitBasicOffers
+					? explicitPlanOffers(billingPlan)
+					: planOffers(billingPlan)
+				: [],
+		[billingPlan, billingUsesExplicitBasicOffers],
+	);
+	const billingOfferSelection = useMemo(
+		() =>
+			billingPlan
+				? billingUsesExplicitBasicOffers
+					? selectExplicitOfferForTerm(billingPlan, term)
+					: selectOfferForTerm(billingPlan, term)
+				: null,
+		[billingPlan, billingUsesExplicitBasicOffers, term],
+	);
+	const selectedBillingTerm = billingOfferSelection?.billingTermMonths ?? term;
 	const currentOfferSelection = useMemo(
-		() => (perfPlan ? selectOfferForTerm(perfPlan, currentBillingTerm) : null),
-		[perfPlan, currentBillingTerm],
+		() =>
+			currentPaidPlan
+				? computePlanSlug === COMPUTE_BASIC_SLUG
+					? selectExplicitOfferForTerm(currentPaidPlan, currentBillingTerm)
+					: selectOfferForTerm(currentPaidPlan, currentBillingTerm)
+				: null,
+		[computePlanSlug, currentPaidPlan, currentBillingTerm],
 	);
 	const currentOffer =
 		currentOfferSelection?.billingTermMonths === currentBillingTerm
@@ -2152,27 +2233,30 @@ function ComputeSettingsSections({
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const canChangeBillingTerm =
-		isPerformance &&
-		!!perfPlan &&
-		!!perfOfferSelection &&
+		isStripeFunded &&
+		!!currentPaidPlan &&
+		!!billingOfferSelection &&
 		!!currentSubscription &&
 		isComputeSubscriptionTermChangeable(currentSubscription) &&
 		!subscriptionCancelPending &&
 		selectedBillingTerm !== currentBillingTerm;
-	const canUpgrade = !isPerformance && deployment.upgrade_available;
+	const canUpgrade = isIncludedBasic && deployment.upgrade_available;
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability..."
 		: !perfPlan
 			? "Performance compute is unavailable right now."
 			: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
-				? "An upgrade may already be pending for this Free agent."
-				: "Upgrade is available once this Free agent is running or stopped.";
+				? "An upgrade may already be pending for this Basic agent."
+				: "Upgrade is available once this Basic agent is running or stopped.";
 	useEffect(() => {
-		if (!perfOffers.length || perfOffers.some((offer) => offer.billing_term_months === term)) {
+		if (
+			!billingOffers.length ||
+			billingOffers.some((offer) => offer.billing_term_months === term)
+		) {
 			return;
 		}
-		setTerm(perfOffers[0]?.billing_term_months ?? 1);
-	}, [perfOffers, term]);
+		setTerm(billingOffers[0]?.billing_term_months ?? 1);
+	}, [billingOffers, term]);
 	useEffect(() => {
 		setTerm(currentBillingTerm);
 	}, [deployment.id, currentBillingTerm]);
@@ -2216,7 +2300,7 @@ function ComputeSettingsSections({
 		}
 		try {
 			const body: CheckoutRequest = {
-				plan_slug: perfPlan.slug,
+				plan_slug: COMPUTE_PERFORMANCE_SLUG,
 				billing_term_months: perfOfferSelection.billingTermMonths,
 				ui_mode: "hosted",
 				upgrade_deployment_id: deployment.id,
@@ -2283,21 +2367,151 @@ function ComputeSettingsSections({
 		);
 	}
 
-	async function cancelPerformanceSubscription() {
+	async function quoteWalletComputePlanChange() {
+		const targetPlanSlug = walletPlanTarget(computePlanSlug);
+		if (!walletSubscriptionId || !targetPlanSlug) {
+			toast.error("Wallet plan change unavailable", {
+				description: "Refresh this agent after its wallet subscription details finish syncing.",
+			});
+			return;
+		}
+		try {
+			const quote = await quoteWalletPlanChange.mutateAsync({
+				subscription_id: walletSubscriptionId,
+				target_plan_slug: targetPlanSlug,
+			});
+			if (
+				quote.subscription_id !== walletSubscriptionId ||
+				walletPlanResultTarget(quote) !== targetPlanSlug
+			) {
+				toast.error("Wallet plan quote changed", {
+					description: "Refresh the agent and request a new quote before confirming.",
+				});
+				return;
+			}
+			setWalletPlanFailure(null);
+			setWalletPlanQuote(quote);
+		} catch (error) {
+			const failure = walletPlanChangeFailure(error);
+			toast.error(
+				failure.kind === "conflict"
+					? "Wallet plan change conflict"
+					: failure.kind === "retryable"
+						? "Wallet quote temporarily unavailable"
+						: "Couldn’t quote wallet plan change",
+				{ description: normalizeBillingError(error) },
+			);
+		}
+	}
+
+	async function confirmWalletComputePlanChange() {
+		if (!walletPlanQuote) return;
+		const targetPlanSlug = walletPlanResultTarget(walletPlanQuote);
+		if (!targetPlanSlug) {
+			toast.error("Wallet plan quote is invalid", {
+				description: "Close this dialog and request a new quote.",
+			});
+			return;
+		}
+		try {
+			const result = await changeWalletPlan.mutateAsync({
+				subscription_id: walletPlanQuote.subscription_id,
+				target_plan_slug: targetPlanSlug,
+			});
+			setWalletPlanFailure(null);
+			setWalletPlanQuote(null);
+			toast.success(result.change_kind === "upgrade" ? "Compute upgraded" : "Downgrade scheduled", {
+				description:
+					result.change_kind === "upgrade"
+						? "The wallet charge was applied and the deployment is resizing."
+						: `The ${computeTierLabel(COMPUTE_BASIC_SLUG)} plan begins ${formatShortDate(result.effective_at)}.`,
+			});
+		} catch (error) {
+			const failure = walletPlanChangeFailure(error);
+			if (failure.kind === "insufficient") setWalletTopUpOpen(true);
+			if (failure.kind === "resize_pending") {
+				setWalletPlanFailure(failure);
+			} else if (walletPlanFailure?.kind !== "resize_pending") {
+				setWalletPlanFailure(null);
+			}
+			toast.error(
+				failure.kind === "insufficient"
+					? "Wallet balance too low"
+					: failure.kind === "conflict"
+						? "Wallet plan change conflict"
+						: failure.kind === "resize_pending"
+							? "Charge applied, resize pending"
+							: failure.kind === "retryable"
+								? "Plan change needs a retry"
+								: "Couldn’t change wallet compute plan",
+				{
+					description:
+						failure.kind === "insufficient" && failure.shortfallCredits !== null
+							? `Top up ${failure.shortfallCredits.toLocaleString()} credits, then confirm again.`
+							: failure.kind === "resize_pending"
+								? "The Wallet charge is recorded. Retry the resize without paying again."
+								: normalizeBillingError(error),
+				},
+			);
+		}
+	}
+
+	async function cancelPendingWalletComputePlanChange() {
+		if (!walletSubscriptionId || !pendingPlanSlug) return;
+		try {
+			await cancelPendingWalletPlan.mutateAsync({
+				subscription_id: walletSubscriptionId,
+			});
+			toast.success("Scheduled downgrade canceled", {
+				description: `${tierLabel} compute remains active.`,
+			});
+		} catch (error) {
+			if (error instanceof BillingApiError && error.status === 409) {
+				toast.message("Scheduled change already cleared", {
+					description:
+						"This scheduled change was already applied or no longer exists. Refreshing billing details.",
+				});
+				return;
+			}
+			toast.error("Couldn’t cancel scheduled downgrade", {
+				description: normalizeBillingError(error),
+			});
+			throw error;
+		}
+	}
+
+	function handleWalletPlanTopup(status: "succeeded" | "processing") {
+		if (status !== "succeeded" || !walletPlanQuote) return;
+		const targetPlanSlug = walletPlanResultTarget(walletPlanQuote);
+		if (!targetPlanSlug) return;
+		void quoteWalletPlanChange
+			.mutateAsync({
+				subscription_id: walletPlanQuote.subscription_id,
+				target_plan_slug: targetPlanSlug,
+			})
+			.then(setWalletPlanQuote)
+			.catch((error: unknown) => {
+				toast.error("Couldn’t refresh plan quote", { description: normalizeBillingError(error) });
+			});
+	}
+
+	async function cancelComputeSubscription() {
 		if (!subscriptionCancelable || subscriptionCancelPending) return;
 		try {
 			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription cancellation scheduled", {
 				description: res.current_period_end
-					? `Performance stays active until ${formatShortDate(res.current_period_end)}.`
-					: (res.message ?? undefined),
+					? `Cancellation takes effect ${formatShortDate(
+							res.current_period_end,
+						)}. The deployment then falls back to included Basic funding if available; otherwise, it stops.`
+					: "The deployment falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
 		}
 	}
 
-	async function resumePerformanceSubscription() {
+	async function resumeComputeSubscription() {
 		if (!subscriptionCancelable || !subscriptionCancelPending) return;
 		try {
 			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
@@ -2315,6 +2529,8 @@ function ComputeSettingsSections({
 		await del.mutateAsync(deployment.id);
 		await router.navigate({ href: "/" });
 	}
+
+	const walletResizePending = walletPlanFailure?.kind === "resize_pending";
 
 	return (
 		<div className="flex flex-col gap-9">
@@ -2344,37 +2560,147 @@ function ComputeSettingsSections({
 					) : null}
 				</DialogContent>
 			</Dialog>
+			<Dialog
+				open={walletPlanQuote !== null}
+				onOpenChange={(open) => {
+					if (!open && !changeWalletPlan.isPending) {
+						setWalletPlanFailure(null);
+						setWalletPlanQuote(null);
+					}
+				}}
+			>
+				<DialogContent className="sm:max-w-md" data-hosted="true">
+					<DialogHeader>
+						<DialogTitle>
+							{walletResizePending
+								? "Charge applied, resize pending"
+								: `Confirm wallet-funded ${walletPlanQuote?.change_kind ?? "plan"} change`}
+						</DialogTitle>
+						<DialogDescription>
+							{walletResizePending
+								? "The Wallet debit is already recorded. Retry only completes the compute resize and does not charge again."
+								: walletPlanQuote
+									? walletPlanChangeSummary(walletPlanQuote)
+									: "Review the change."}
+						</DialogDescription>
+					</DialogHeader>
+					{walletPlanQuote ? (
+						<div className="flex flex-col gap-4">
+							<div className="grid gap-3 rounded-lg border p-3 text-sm sm:grid-cols-2">
+								<div>
+									<div className="text-xs text-muted-foreground">New plan</div>
+									<div className="font-medium">
+										{computeTierLabel(
+											walletPlanQuote.target_plan_slug === COMPUTE_PERFORMANCE_SLUG
+												? COMPUTE_PERFORMANCE_SLUG
+												: COMPUTE_BASIC_SLUG,
+										)}
+									</div>
+								</div>
+								<div>
+									<div className="text-xs text-muted-foreground">
+										{walletPlanQuote.change_kind === "upgrade" ? "Due now" : "Effective"}
+									</div>
+									<div className="font-medium tabular-nums">
+										{walletPlanQuote.change_kind === "upgrade"
+											? formatCents(walletPlanQuote.prorated_delta_cents)
+											: formatShortDate(walletPlanQuote.effective_at)}
+									</div>
+								</div>
+							</div>
+							<div className="flex justify-end gap-2">
+								<Button
+									variant="ghost"
+									onClick={() => {
+										setWalletPlanFailure(null);
+										setWalletPlanQuote(null);
+									}}
+									disabled={changeWalletPlan.isPending}
+								>
+									Back
+								</Button>
+								<Button
+									onClick={() => void confirmWalletComputePlanChange()}
+									disabled={changeWalletPlan.isPending}
+								>
+									{changeWalletPlan.isPending ? (
+										<Spinner />
+									) : walletResizePending ? (
+										<RefreshCw />
+									) : (
+										<WalletCards />
+									)}
+									{walletResizePending
+										? "Retry resize"
+										: walletPlanQuote.change_kind === "upgrade"
+											? `Pay ${formatCents(walletPlanQuote.prorated_delta_cents)} & upgrade`
+											: "Schedule downgrade"}
+								</Button>
+							</div>
+						</div>
+					) : null}
+				</DialogContent>
+			</Dialog>
+			{wallet.data ? (
+				<TopUpDialog
+					open={walletTopUpOpen}
+					onOpenChange={setWalletTopUpOpen}
+					wallet={wallet.data}
+					onComplete={handleWalletPlanTopup}
+				/>
+			) : null}
 
 			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
 					<div className="min-w-0 flex-1">
 						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-							{isPerformance ? <Zap className="size-4" /> : <Cpu className="size-4" />}
-							<span>{isPerformance ? "Performance compute" : "Free compute"}</span>
+							{tierLabel === "Performance" ? (
+								<Zap className="size-4" />
+							) : (
+								<Cpu className="size-4" />
+							)}
+							<span>{tierLabel} compute</span>
 							<Badge variant="outline" className="font-normal text-muted-foreground">
 								Current
 							</Badge>
+							{isPaidCompute ? (
+								<Badge variant="outline" className="font-normal text-muted-foreground">
+									{isWalletFunded ? "Wallet" : "Card"}
+								</Badge>
+							) : hasWalletFallback ? (
+								<Badge variant="outline" className="font-normal text-muted-foreground">
+									Wallet fallback
+								</Badge>
+							) : null}
 						</div>
 						<p className="mt-1 text-xs text-muted-foreground">
-							Free uses one active slot per user. Performance uses one subscription per deployment.
+							Basic includes one free active slot per user. Paid Basic and Performance each use one
+							subscription per deployment.
 						</p>
-						{isPerformance && currentSubscription ? (
-							<p className="mt-2 text-xs text-muted-foreground">
-								{billingTermLabel(currentBillingTerm)}
-								{currentPriceCents !== null ? (
-									<>
-										{" "}
-										· {formatCentsCompact(currentPriceCents)}
-										{billingTermSuffix(currentBillingTerm)}
-									</>
+						{isPaidCompute && currentSubscription ? (
+							<div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
+								<p>
+									{billingTermLabel(currentBillingTerm)}
+									{currentPriceCents !== null ? (
+										<>
+											{" "}
+											· {formatCentsCompact(currentPriceCents)}
+											{billingTermSuffix(currentBillingTerm)}
+										</>
+									) : null}
+									{" · "}
+									{subscriptionCancelPending ? "Ends" : "Renews"} {subscriptionPeriodLabel}
+								</p>
+								{pendingPlanSlug ? (
+									<p className="font-medium text-warning-muted-foreground">
+										{computeTierLabel(pendingPlanSlug)} scheduled for {subscriptionPeriodLabel}.
+									</p>
 								) : null}
-								{" · "}
-								{subscriptionCancelPending ? "Ends" : "Renews"} {subscriptionPeriodLabel}
-							</p>
+							</div>
 						) : null}
 					</div>
 					<div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end">
-						{!isPerformance && perfPlan ? (
+						{isIncludedBasic && perfPlan ? (
 							<div className="text-xs text-muted-foreground sm:text-right">
 								<span className="font-medium text-foreground">
 									{perfOffer
@@ -2391,7 +2717,14 @@ function ComputeSettingsSections({
 								) : null}
 							</div>
 						) : null}
-						{!isPerformance ? (
+						{isWalletPaymentFailureFallback ? (
+							<div className="flex w-full flex-col gap-2 text-xs text-muted-foreground lg:w-72">
+								<p>
+									Use the Wallet recovery banner above to top up and retry the previous paid compute
+									subscription.
+								</p>
+							</div>
+						) : isIncludedBasic ? (
 							<div className="flex w-full flex-col gap-2 lg:w-64">
 								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
 								<Button
@@ -2416,9 +2749,94 @@ function ComputeSettingsSections({
 									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
 								)}
 							</div>
-						) : (
+						) : isWalletFunded ? (
 							<div className="flex w-full flex-col gap-2 lg:w-72">
-								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={
+										quoteWalletPlanChange.isPending ||
+										!walletSubscriptionId ||
+										!!pendingPlanSlug ||
+										currentSubscription?.status !== "active"
+									}
+									onClick={() =>
+										void runAction(quoteWalletComputePlanChange).catch(() => undefined)
+									}
+								>
+									{quoteWalletPlanChange.isPending ? <Spinner /> : <WalletCards />}
+									{computePlanSlug === COMPUTE_BASIC_SLUG
+										? "Upgrade with Wallet"
+										: "Schedule Basic downgrade"}
+								</Button>
+								{!walletSubscriptionId ? (
+									<p className="text-xs text-muted-foreground">
+										Plan changes become available after wallet billing details finish syncing.
+									</p>
+								) : pendingPlanSlug ? (
+									<ConfirmAction
+										title="Cancel scheduled downgrade?"
+										description={
+											<p>{tierLabel} compute will remain active and renew at its current price.</p>
+										}
+										confirmLabel="Cancel scheduled downgrade"
+										onConfirm={() => runAction(cancelPendingWalletComputePlanChange)}
+									>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={cancelPendingWalletPlan.isPending}
+										>
+											{cancelPendingWalletPlan.isPending ? <Spinner /> : <Link2Off />}
+											Cancel scheduled downgrade
+										</Button>
+									</ConfirmAction>
+								) : null}
+								{subscriptionCancelPending ? (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										disabled={resumeSubscription.isPending || !subscriptionCancelable}
+										onClick={() => void runAction(resumeComputeSubscription).catch(() => undefined)}
+									>
+										{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
+										Resume subscription
+									</Button>
+								) : (
+									<ConfirmAction
+										title={`Cancel ${tierLabel} subscription?`}
+										description={
+											<p>
+												Cancellation takes effect {subscriptionPeriodLabel}. The deployment then
+												falls back to included Basic funding if available; otherwise, it stops.
+											</p>
+										}
+										confirmLabel="Cancel at period end"
+										destructive
+										onConfirm={() => runAction(cancelComputeSubscription)}
+									>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={cancelSubscription.isPending || !subscriptionCancelable}
+										>
+											{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
+											Cancel subscription
+										</Button>
+									</ConfirmAction>
+								)}
+							</div>
+						) : isStripeFunded ? (
+							<div className="flex w-full flex-col gap-2 lg:w-72">
+								<TermSwitcher
+									offers={billingOffers}
+									value={selectedBillingTerm}
+									onChange={setTerm}
+								/>
 								<Button
 									type="button"
 									variant="outline"
@@ -2439,9 +2857,7 @@ function ComputeSettingsSections({
 										variant="outline"
 										size="sm"
 										disabled={resumeSubscription.isPending || !subscriptionCancelable}
-										onClick={() =>
-											void runAction(resumePerformanceSubscription).catch(() => undefined)
-										}
+										onClick={() => void runAction(resumeComputeSubscription).catch(() => undefined)}
 									>
 										{resumeSubscription.isPending ? (
 											<Spinner className="size-3.5" />
@@ -2452,16 +2868,16 @@ function ComputeSettingsSections({
 									</Button>
 								) : (
 									<ConfirmAction
-										title="Cancel Performance?"
+										title={`Cancel ${tierLabel} subscription?`}
 										description={
 											<p>
-												This deployment stays on Performance until {subscriptionPeriodLabel}, then
-												moves back to Free compute.
+												Cancellation takes effect {subscriptionPeriodLabel}. The deployment then
+												falls back to included Basic funding if available; otherwise, it stops.
 											</p>
 										}
 										confirmLabel="Cancel at period end"
 										destructive
-										onConfirm={() => runAction(cancelPerformanceSubscription)}
+										onConfirm={() => runAction(cancelComputeSubscription)}
 									>
 										<Button
 											type="button"
@@ -2484,7 +2900,7 @@ function ComputeSettingsSections({
 									</p>
 								) : null}
 							</div>
-						)}
+						) : null}
 					</div>
 				</div>
 			</SettingsSection>

@@ -2,7 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { handleTopupStartResult } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import {
+	handleTopupStartResult,
+	topUpAmountCentsForCreditShortfall,
+} from "@/hosted/billing/wallet/top-up-dialog.logic";
 
 function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
 	return {
@@ -94,5 +97,20 @@ describe("handleTopupStartResult", () => {
 		expect(resetAttempt).not.toHaveBeenCalled();
 		expect(toastSuccess).not.toHaveBeenCalled();
 		expect(toastError).not.toHaveBeenCalled();
+	});
+});
+
+describe("topUpAmountCentsForCreditShortfall", () => {
+	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
+		expect(topUpAmountCentsForCreditShortfall(4_000, 1_000)).toBe(1_000);
+		expect(topUpAmountCentsForCreditShortfall(14_000, 1_000)).toBe(1_400);
+		expect(topUpAmountCentsForCreditShortfall(25_001, 1_000)).toBe(2_600);
+		expect(topUpAmountCentsForCreditShortfall(2_500_000, 1_000)).toBe(200_000);
+	});
+
+	test("ignores missing or invalid conversion inputs", () => {
+		expect(topUpAmountCentsForCreditShortfall(null, 1_000)).toBeNull();
+		expect(topUpAmountCentsForCreditShortfall(14_000, 0)).toBeNull();
+		expect(topUpAmountCentsForCreditShortfall(Number.NaN, 1_000)).toBeNull();
 	});
 });

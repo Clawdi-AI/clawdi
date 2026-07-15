@@ -1,6 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
+import {
+	TOPUP_INCREMENT_CENTS,
+	TOPUP_MAX_CENTS,
+	TOPUP_MIN_CENTS,
+} from "@/hosted/billing/wallet/wallet-constants";
 
 type TopupToast = (message: string, options: { description: string }) => void;
 
@@ -11,11 +16,31 @@ export interface TopupCompletionControls {
 	resetAttempt: () => void;
 	closeDialog: () => void;
 	toastSuccess: TopupToast;
+	onComplete?: (status: TopupCompletionStatus) => void;
 }
 
 export interface TopupStartResultControls extends TopupCompletionControls {
 	startPayment: (clientSecret: string) => void;
 	toastError: TopupToast;
+}
+
+/** Convert a credit shortfall into the smallest whole-dollar top-up that covers it. */
+export function topUpAmountCentsForCreditShortfall(
+	shortfallCredits: number | null,
+	pointsPerUsd: number,
+): number | null {
+	if (
+		shortfallCredits === null ||
+		!Number.isFinite(shortfallCredits) ||
+		shortfallCredits <= 0 ||
+		!Number.isFinite(pointsPerUsd) ||
+		pointsPerUsd <= 0
+	) {
+		return null;
+	}
+	const rawCents = (shortfallCredits / pointsPerUsd) * 100;
+	const roundedCents = Math.ceil(rawCents / TOPUP_INCREMENT_CENTS) * TOPUP_INCREMENT_CENTS;
+	return Math.min(TOPUP_MAX_CENTS, Math.max(TOPUP_MIN_CENTS, roundedCents));
 }
 
 export function invalidateWalletActivity(queryClient: QueryClient): void {
@@ -29,6 +54,7 @@ export function completeTopup(
 ): void {
 	invalidateWalletActivity(controls.queryClient);
 	controls.resetAttempt();
+	controls.onComplete?.(status);
 	if (status === "succeeded") {
 		controls.toastSuccess("Top-up complete", {
 			description: "Your credits will appear in a moment.",

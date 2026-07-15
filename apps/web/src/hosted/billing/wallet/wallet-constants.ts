@@ -7,6 +7,8 @@
 // Top-up: $10–$2,000 (WALLET_TOPUP_MIN/MAX_CENTS).
 export const TOPUP_MIN_CENTS = 1000;
 export const TOPUP_MAX_CENTS = 200_000;
+export const TOPUP_DEFAULT_CENTS = 2500;
+export const TOPUP_INCREMENT_CENTS = 100;
 export const TOPUP_PRESETS_CENTS = [1000, 2500, 5000, 10_000, 25_000];
 
 // Auto-reload: amount $5–$500, threshold ≥ $1 (1000 credits), cap ≥ 0 (0 = off).

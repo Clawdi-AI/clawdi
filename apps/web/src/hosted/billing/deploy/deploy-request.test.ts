@@ -8,7 +8,7 @@ import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request
 describe("buildHostedDeployRequest", () => {
 	test("serializes the default wizard state with explicit hermes and managed AI", () => {
 		const request = buildHostedDeployRequest({
-			computePlanSlug: "compute_free",
+			computePlanSlug: "compute_basic",
 			runtime: DEFAULT_DEPLOY_RUNTIME,
 			persona: {
 				language: "",
@@ -18,7 +18,7 @@ describe("buildHostedDeployRequest", () => {
 		});
 
 		expect(request).toEqual({
-			compute_plan_slug: "compute_free",
+			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
 			language: null,
 			timezone: null,
@@ -77,6 +77,30 @@ describe("buildHostedDeployRequest", () => {
 		expect("slack_bot_token" in (request.config ?? {})).toBe(false);
 	});
 
+	test("serializes paid Basic deploy config for checkout auto-deploy", () => {
+		const request = buildHostedDeployRequest({
+			computePlanSlug: "compute_basic",
+			runtime: "hermes",
+			persona: {
+				language: "en",
+				timezone: "Etc/UTC",
+			},
+			aiFields: { ai_provider_auth_kind: "managed" },
+		});
+
+		expect(request).toMatchObject({
+			compute_plan_slug: "compute_basic",
+			runtime: "hermes",
+			language: "en",
+			timezone: "Etc/UTC",
+			config: {
+				runtime: "hermes",
+				language: "en",
+				timezone: "Etc/UTC",
+			},
+		});
+	});
+
 	test("serializes backend provider pool contract at the deploy body boundary", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
@@ -112,7 +136,7 @@ describe("buildHostedDeployRequest", () => {
 
 	test("serializes explicit unmanaged deploys without provider material", () => {
 		const request = buildHostedDeployRequest({
-			computePlanSlug: "compute_free",
+			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
 				language: "",
@@ -122,7 +146,7 @@ describe("buildHostedDeployRequest", () => {
 		});
 
 		expect(request).toEqual({
-			compute_plan_slug: "compute_free",
+			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
 			language: null,
 			timezone: null,

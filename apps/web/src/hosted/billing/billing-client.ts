@@ -10,10 +10,16 @@ import type {
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
+	HostedDeployment,
 	PortalRequest,
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
+	WalletComputeActivateRequest,
+	WalletComputeCancelPendingPlanRequest,
+	WalletComputePlanChangeRequest,
+	WalletComputeQuoteRequest,
+	WalletComputeRetryRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
@@ -62,7 +68,7 @@ export function unwrapDeploy<T>(result: DeployResult<T>): T {
 	if (result.error !== undefined || !result.response.ok) {
 		const detail =
 			result.error === undefined ? result.response.statusText : extractApiDetail(result.error);
-		throw new BillingApiError(result.response.status, detail);
+		throw new BillingApiError(result.response.status, detail, result.error);
 	}
 	return result.data as T;
 }
@@ -80,7 +86,10 @@ function runtimeAgentType(agentType: string): RuntimeAgentType {
 export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const api = createClient<DeployPaths>({ baseUrl: ROOT_BASE_URL, fetch: fetchWithTimeout });
+		const api = createClient<DeployPaths>({
+			baseUrl: ROOT_BASE_URL,
+			fetch: fetchWithTimeout,
+		});
 		api.use({
 			async onRequest({ request }) {
 				const token = await getToken();
@@ -108,6 +117,12 @@ export function useBillingClient() {
 				unwrapDeploy(await api.PUT("/v2/wallet/auto-reload", { body })),
 
 			getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
+			getBillingHistory: async (limit = 20, cursor?: string | null) =>
+				unwrapDeploy(
+					await api.GET("/v2/subscription/billing-history", {
+						params: { query: { limit, cursor } },
+					}),
+				),
 			checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/subscription/checkout", {
@@ -129,12 +144,31 @@ export function useBillingClient() {
 				unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 			resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
+			quoteWalletCompute: async (body: WalletComputeQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/quote", { body })),
+			activateWalletCompute: async (body: WalletComputeActivateRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/activate", { body })),
+			retryWalletCompute: async (body: WalletComputeRetryRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/retry", { body })),
+			quoteWalletPlanChange: async (body: WalletComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/quote", { body })),
+			changeWalletPlan: async (body: WalletComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/change", { body })),
+			cancelPendingWalletPlan: async (body: WalletComputeCancelPendingPlanRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/cancel-pending", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
 
-			listDeployments: async () => unwrapDeploy(await api.GET("/v2/deployments")),
+			listDeployments: async (): Promise<HostedDeployment[]> =>
+				unwrapDeploy(await api.GET("/v2/deployments")),
+			getDeploymentByRequest: async (deployRequestId: string) =>
+				unwrapDeploy(
+					await api.GET("/v2/deployments/by-request/{deploy_request_id}", {
+						params: { path: { deploy_request_id: deployRequestId } },
+					}),
+				),
 			createDeployment: async (body: DeployRequest, idempotencyKey: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments", {

@@ -170,3 +170,21 @@ export function idempotencyAttemptFor(
 	if (freshCurrent) return freshCurrent;
 	return { createdAt: now, fingerprint, key: mintKey(prefix) };
 }
+
+/** Remove a completed logical attempt so a later identical action is new. */
+export function forgetIdempotencyAttempt(
+	prefix: string,
+	fingerprint: string,
+	options: IdempotencyPersistenceOptions = {},
+): void {
+	const storage = options.storage === undefined ? browserSessionStorage() : options.storage;
+	if (!storage) return;
+	const now = options.now?.() ?? Date.now();
+	const ttlMs = options.ttlMs ?? IDEMPOTENCY_ATTEMPT_TTL_MS;
+	const attempts = readStoredAttempts(storage, now, ttlMs);
+	if (!attempts) return;
+	const entryKey = storageEntryKey(prefix, fingerprint);
+	if (!(entryKey in attempts)) return;
+	delete attempts[entryKey];
+	writeStoredAttempts(storage, attempts);
+}

@@ -10,12 +10,20 @@
  */
 
 import { toast } from "sonner";
+import type {
+	WalletComputeConflictError,
+	WalletComputeErrorDetail,
+	WalletComputeInsufficientError,
+	WalletComputeUpstreamError,
+} from "@/hosted/billing/contracts";
 
 export class BillingApiError extends Error {
 	constructor(
 		public status: number,
 		/** Parsed `detail` string (or the raw status text). */
 		public detail: string,
+		/** Original OpenAPI error payload when the client returned one. */
+		public payload?: unknown,
 	) {
 		super(`Billing API ${status}: ${detail}`);
 		this.name = "BillingApiError";
@@ -23,18 +31,89 @@ export class BillingApiError extends Error {
 
 	static async fromResponse(response: Response): Promise<BillingApiError> {
 		let detail = response.statusText;
+		let payload: unknown;
 		try {
-			const body = (await response.json()) as { detail?: unknown };
-			if (typeof body?.detail === "string") {
+			const body: unknown = await response.json();
+			payload = body;
+			if (hasDetail(body) && typeof body.detail === "string") {
 				detail = body.detail;
-			} else if (body?.detail != null) {
+			} else if (hasDetail(body) && body.detail != null) {
 				detail = JSON.stringify(body.detail);
 			}
 		} catch {
 			// Non-JSON body (proxy/gateway error page) — keep statusText.
 		}
-		return new BillingApiError(response.status, detail);
+		return new BillingApiError(response.status, detail, payload);
 	}
+}
+
+function hasDetail(value: unknown): value is { detail: unknown } {
+	return typeof value === "object" && value !== null && "detail" in value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Structured FastAPI detail object, when one was returned. */
+export function billingErrorDetail(error: unknown): Record<string, unknown> | null {
+	if (!(error instanceof BillingApiError)) return null;
+	if (hasDetail(error.payload) && isRecord(error.payload.detail)) return error.payload.detail;
+	if (isRecord(error.payload)) return error.payload;
+	try {
+		const parsed: unknown = JSON.parse(error.detail);
+		if (hasDetail(parsed) && isRecord(parsed.detail)) return parsed.detail;
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function isWalletComputeInsufficientDetail(
+	value: Record<string, unknown>,
+): value is WalletComputeInsufficientError["detail"] {
+	return (
+		(value.code === "insufficient_wallet_balance" || value.code === "insufficient_balance") &&
+		typeof value.required_credits === "string" &&
+		typeof value.available_credits === "string" &&
+		typeof value.shortfall_credits === "string"
+	);
+}
+
+function isWalletComputeUpstreamDetail(
+	value: Record<string, unknown>,
+): value is WalletComputeUpstreamError["detail"] {
+	return (
+		(value.code === "wallet_balance_refresh_failed" ||
+			value.code === "wallet_compute_charge_failed" ||
+			value.code === "wallet_compute_upstream_failed" ||
+			value.code === "resize_failed_retryable") &&
+		value.retryable === true &&
+		(value.failure_code === undefined ||
+			value.failure_code === null ||
+			typeof value.failure_code === "string")
+	);
+}
+
+function isWalletComputeConflictDetail(
+	value: Record<string, unknown>,
+): value is Exclude<WalletComputeConflictError["detail"], string> {
+	return (
+		value.code === "deploy_request_funding_conflict" ||
+		value.code === "idempotency_key_reused" ||
+		value.code === "open_refund_debt" ||
+		(typeof value.code === "string" && value.retryable === true)
+	);
+}
+
+/** Generated wallet-compute business error detail, validated at the HTTP boundary. */
+export function walletComputeErrorDetail(error: unknown): WalletComputeErrorDetail | null {
+	const detail = billingErrorDetail(error);
+	if (!detail) return null;
+	if (isWalletComputeInsufficientDetail(detail)) return detail;
+	if (isWalletComputeUpstreamDetail(detail)) return detail;
+	if (isWalletComputeConflictDetail(detail)) return detail;
+	return null;
 }
 
 /**
@@ -124,7 +203,7 @@ export function isInsufficientBalanceError(error: unknown): boolean {
  */
 export function normalizeBillingError(error: unknown): string {
 	if (isInsufficientBalanceError(error)) {
-		return "Your AI Credits balance is too low. Top up or enable auto-reload to keep using managed AI — your agent keeps running.";
+		return "Your AI Credits balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"
@@ -138,6 +217,19 @@ export function normalizeBillingError(error: unknown): string {
 		return "The billing service is having trouble right now. Please try again in a moment.";
 	}
 	if (error instanceof BillingApiError) {
+		const code = billingErrorDetail(error)?.code;
+		if (code === "open_refund_debt") {
+			return "A wallet refund is still settling. Try again after it completes.";
+		}
+		if (code === "deploy_request_funding_conflict") {
+			return "This deploy request is already linked to a different payment flow.";
+		}
+		if (code === "idempotency_key_reused") {
+			return "This payment request conflicts with an earlier attempt. Refresh and try again.";
+		}
+		if (typeof code === "string") {
+			return "The billing request could not be completed. Refresh and try again.";
+		}
 		// Snake_case error codes → readable text; pass through real sentences.
 		if (/^[a-z0-9_]+$/.test(error.detail)) {
 			return error.detail.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());

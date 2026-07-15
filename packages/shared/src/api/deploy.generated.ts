@@ -56,6 +56,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/deployments/by-request/{deploy_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Deploy Request Status */
+        get: operations["get_v2_deploy_request_status_v2_deployments_by_request__deploy_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}": {
         parameters: {
             query?: never;
@@ -245,6 +262,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/billing-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Subscription Billing History */
+        get: operations["list_v2_subscription_billing_history_v2_subscription_billing_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/invoices": {
         parameters: {
             query?: never;
@@ -307,6 +341,108 @@ export interface paths {
         put?: never;
         /** Resume V2 Subscription */
         post: operations["resume_v2_subscription_v2_subscription_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate V2 Wallet Subscription */
+        post: operations["activate_v2_wallet_subscription_v2_subscription_wallet_activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/plan/cancel-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Pending V2 Wallet Subscription Plan */
+        post: operations["cancel_pending_v2_wallet_subscription_plan_v2_subscription_wallet_plan_cancel_pending_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/plan/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change V2 Wallet Subscription Plan */
+        post: operations["change_v2_wallet_subscription_plan_v2_subscription_wallet_plan_change_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/plan/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Quote V2 Wallet Subscription Plan Change */
+        post: operations["quote_v2_wallet_subscription_plan_change_v2_subscription_wallet_plan_quote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Quote V2 Wallet Subscription */
+        post: operations["quote_v2_wallet_subscription_v2_subscription_wallet_quote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/subscription/wallet/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry V2 Wallet Subscription */
+        post: operations["retry_v2_wallet_subscription_v2_subscription_wallet_retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -519,10 +655,73 @@ export interface components {
             /** Client Secret */
             client_secret?: string | null;
         };
-        /** V2ComputeCheckoutRequest */
-        V2ComputeCheckoutRequest: {
+        /** V2ComputeBillingHistoryItem */
+        V2ComputeBillingHistoryItem: {
+            /** Id */
+            id: string;
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /** Compute Subscription Id */
+            compute_subscription_id: number;
             /** Plan Slug */
             plan_slug: string;
+            /** Status */
+            status: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /** Credits */
+            credits?: string | null;
+            /** Points Per Usd */
+            points_per_usd?: number | null;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /**
+             * Created
+             * Format: date-time
+             */
+            created: string;
+            /** Stripe Invoice Id */
+            stripe_invoice_id?: string | null;
+            /** Stripe Invoice Number */
+            stripe_invoice_number?: string | null;
+            /** Hosted Invoice Url */
+            hosted_invoice_url?: string | null;
+            /** Wallet Charge Id */
+            wallet_charge_id?: number | null;
+            /** Charge Ledger Ids */
+            charge_ledger_ids?: string[];
+            /** Reversal Ledger Ids */
+            reversal_ledger_ids?: string[];
+        };
+        /** V2ComputeBillingHistoryResponse */
+        V2ComputeBillingHistoryResponse: {
+            /** Data */
+            data?: components["schemas"]["V2ComputeBillingHistoryItem"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /** V2ComputeCheckoutRequest */
+        V2ComputeCheckoutRequest: {
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
             /**
              * Billing Term Months
              * @default 1
@@ -597,6 +796,12 @@ export interface components {
         V2ComputeSubscriptionActionResponse: {
             /** Status */
             status: string;
+            /**
+             * Funding Source
+             * @default stripe
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
             /** Billing Term Months */
             billing_term_months: number;
             /** Cancel At Period End */
@@ -605,6 +810,14 @@ export interface components {
             current_period_end?: string | null;
             /** Cancel At */
             cancel_at?: string | null;
+            /** Next Collection Attempt At */
+            next_collection_attempt_at?: string | null;
+            /** Dunning Deadline At */
+            dunning_deadline_at?: string | null;
+            /** Last Collection Failure Code */
+            last_collection_failure_code?: string | null;
+            /** Recovery Action */
+            recovery_action?: ("top_up" | "fix_payment") | null;
             /** Message */
             message?: string | null;
         };
@@ -683,8 +896,16 @@ export interface components {
         };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {
+            /** Subscription Id */
+            subscription_id?: number | null;
             /** Status */
             status: string;
+            /**
+             * Funding Source
+             * @default stripe
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
             /**
              * Payment State
              * @default ok
@@ -717,6 +938,16 @@ export interface components {
             latest_failed_invoice_hosted_url?: string | null;
             /** Next Payment Attempt At */
             next_payment_attempt_at?: string | null;
+            /** Next Collection Attempt At */
+            next_collection_attempt_at?: string | null;
+            /** Dunning Deadline At */
+            dunning_deadline_at?: string | null;
+            /** Last Collection Failure Code */
+            last_collection_failure_code?: string | null;
+            /** Recovery Action */
+            recovery_action?: ("top_up" | "fix_payment") | null;
+            /** Pending Plan Slug */
+            pending_plan_slug?: string | null;
         };
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
@@ -753,7 +984,7 @@ export interface components {
              * Compute Plan Slug
              * @enum {string}
              */
-            compute_plan_slug: "compute_free" | "compute_performance";
+            compute_plan_slug: "compute_basic" | "compute_performance";
             /** Primary Model */
             primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */
@@ -802,13 +1033,27 @@ export interface components {
             } | null;
             config?: components["schemas"]["V2HostedConfigRequest"] | null;
         };
+        /** V2HostedDeployRequestStatusResponse */
+        V2HostedDeployRequestStatusResponse: {
+            /** Deploy Request Id */
+            deploy_request_id: string;
+            /**
+             * Request Status
+             * @enum {string}
+             */
+            request_status: "pending" | "ready" | "processing" | "succeeded" | "failed" | "expired" | "superseded";
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Deployment Status */
+            deployment_status?: string | null;
+        };
         /** V2HostedDeploymentDetailsInfo */
         V2HostedDeploymentDetailsInfo: {
             /**
              * Compute Plan Slug
              * @enum {string}
              */
-            compute_plan_slug: "compute_free" | "compute_performance";
+            compute_plan_slug: "compute_basic" | "compute_performance";
             /**
              * Mux Enabled
              * @default false
@@ -892,6 +1137,8 @@ export interface components {
              * @example usr_K8fJ3pQm
              */
             user_id: string;
+            /** Deploy Request Id */
+            deploy_request_id?: string | null;
             /** Name */
             name: string;
             /** App Id */
@@ -915,6 +1162,7 @@ export interface components {
             hermes_control_ui_url?: string | null;
             config_info?: components["schemas"]["V2HostedDeploymentDetailsInfo"] | null;
             compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
+            last_funding_event?: components["schemas"]["V2HostedFundingEventInfo"] | null;
             /**
              * Created At
              * Format: date-time
@@ -925,6 +1173,33 @@ export interface components {
              * @default false
              */
             upgrade_available: boolean;
+        };
+        /** V2HostedFundingEventInfo */
+        V2HostedFundingEventInfo: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "compute_subscription_fallback";
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Prior Plan Slug */
+            prior_plan_slug: string;
+            /** Subscription Id */
+            subscription_id: number;
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
@@ -1068,6 +1343,262 @@ export interface components {
             auto_reload_amount_cents?: number | null;
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents?: number | null;
+        };
+        /** V2WalletComputeActivateRequest */
+        V2WalletComputeActivateRequest: {
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
+            /**
+             * Billing Term Months
+             * @default 1
+             * @constant
+             */
+            billing_term_months: 1;
+            deploy_config: components["schemas"]["V2HostedDeployRequest"];
+        };
+        /** V2WalletComputeActivateResponse */
+        V2WalletComputeActivateResponse: {
+            /** Subscription Id */
+            subscription_id: number;
+            /** Status */
+            status: string;
+            /**
+             * Funding Source
+             * @default wallet
+             * @constant
+             */
+            funding_source: "wallet";
+            /** Deploy Request Id */
+            deploy_request_id: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Charge Ledger Id */
+            charge_ledger_id: string;
+            /** Charged Credits */
+            charged_credits: string;
+            /** Post Charge Balance Credits */
+            post_charge_balance_credits: string;
+            /**
+             * Current Period Start
+             * Format: date-time
+             */
+            current_period_start: string;
+            /**
+             * Current Period End
+             * Format: date-time
+             */
+            current_period_end: string;
+            /**
+             * Entitled Until
+             * Format: date-time
+             */
+            entitled_until: string;
+        };
+        /** V2WalletComputeCancelPendingPlanRequest */
+        V2WalletComputeCancelPendingPlanRequest: {
+            /** Subscription Id */
+            subscription_id: number;
+        };
+        /** V2WalletComputeCancelPendingPlanResponse */
+        V2WalletComputeCancelPendingPlanResponse: {
+            /** Subscription Id */
+            subscription_id: number;
+            /** Current Plan Slug */
+            current_plan_slug: string;
+            /** Canceled Plan Slug */
+            canceled_plan_slug: string;
+            /** Pending Plan Slug */
+            pending_plan_slug: null;
+        };
+        /** V2WalletComputeConflictCodeDetail */
+        V2WalletComputeConflictCodeDetail: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "deploy_request_funding_conflict" | "idempotency_key_reused" | "open_refund_debt";
+        };
+        /** V2WalletComputeConflictErrorResponse */
+        V2WalletComputeConflictErrorResponse: {
+            /** Detail */
+            detail: components["schemas"]["V2WalletComputeConflictCodeDetail"] | components["schemas"]["V2WalletComputeRetryErrorDetail"] | string;
+        };
+        /** V2WalletComputeInsufficientErrorDetail */
+        V2WalletComputeInsufficientErrorDetail: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "insufficient_wallet_balance" | "insufficient_balance";
+            /** Required Credits */
+            required_credits: string;
+            /** Available Credits */
+            available_credits: string;
+            /** Shortfall Credits */
+            shortfall_credits: string;
+        };
+        /** V2WalletComputeInsufficientErrorResponse */
+        V2WalletComputeInsufficientErrorResponse: {
+            detail: components["schemas"]["V2WalletComputeInsufficientErrorDetail"];
+        };
+        /** V2WalletComputePlanChangeRequest */
+        V2WalletComputePlanChangeRequest: {
+            /** Subscription Id */
+            subscription_id: number;
+            /**
+             * Target Plan Slug
+             * @enum {string}
+             */
+            target_plan_slug: "compute_basic" | "compute_performance";
+        };
+        /** V2WalletComputePlanChangeResponse */
+        V2WalletComputePlanChangeResponse: {
+            /** Subscription Id */
+            subscription_id: number;
+            /** Current Plan Slug */
+            current_plan_slug: string;
+            /** Target Plan Slug */
+            target_plan_slug: string;
+            /**
+             * Change Kind
+             * @enum {string}
+             */
+            change_kind: "upgrade" | "downgrade";
+            /** Status */
+            status: string;
+            /**
+             * Effective At
+             * Format: date-time
+             */
+            effective_at: string;
+            /**
+             * Period Start
+             * Format: date-time
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date-time
+             */
+            period_end: string;
+            /** Prorated Delta Cents */
+            prorated_delta_cents: number;
+            /** Prorated Delta Credits */
+            prorated_delta_credits: string;
+            /** Points Per Usd */
+            points_per_usd: number;
+            /** Charge Ledger Id */
+            charge_ledger_id?: string | null;
+            /** Pending Plan Slug */
+            pending_plan_slug?: string | null;
+        };
+        /** V2WalletComputeQuoteRequest */
+        V2WalletComputeQuoteRequest: {
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
+            /**
+             * Billing Term Months
+             * @default 1
+             * @constant
+             */
+            billing_term_months: 1;
+        };
+        /** V2WalletComputeQuoteResponse */
+        V2WalletComputeQuoteResponse: {
+            /**
+             * Plan Slug
+             * @enum {string}
+             */
+            plan_slug: "compute_basic" | "compute_performance";
+            /**
+             * Billing Term Months
+             * @default 1
+             * @constant
+             */
+            billing_term_months: 1;
+            /** Monthly Price Cents */
+            monthly_price_cents: number;
+            /** Monthly Price Credits */
+            monthly_price_credits: string;
+            /** Points Per Usd */
+            points_per_usd: number;
+            /** First Charge Cents */
+            first_charge_cents: number;
+            /** First Charge Credits */
+            first_charge_credits: string;
+            /**
+             * Period Start
+             * Format: date-time
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date-time
+             */
+            period_end: string;
+            /** Balance Credits */
+            balance_credits: string;
+            /** Post Charge Balance Estimate Credits */
+            post_charge_balance_estimate_credits: string;
+            /** Warnings */
+            warnings?: ("open_refund_debt" | "low_coverage")[];
+        };
+        /** V2WalletComputeRetryErrorDetail */
+        V2WalletComputeRetryErrorDetail: {
+            /** Code */
+            code: string;
+            /**
+             * Retryable
+             * @constant
+             */
+            retryable: true;
+        };
+        /** V2WalletComputeRetryRequest */
+        V2WalletComputeRetryRequest: {
+            /** Subscription Id */
+            subscription_id: number;
+        };
+        /** V2WalletComputeRetryResponse */
+        V2WalletComputeRetryResponse: {
+            /** Subscription Id */
+            subscription_id: number;
+            /** Status */
+            status: string;
+            /** Current Period Start */
+            current_period_start?: string | null;
+            /** Current Period End */
+            current_period_end?: string | null;
+            /** Entitled Until */
+            entitled_until?: string | null;
+            /** Next Collection Attempt At */
+            next_collection_attempt_at?: string | null;
+            /** Last Collection Failure Code */
+            last_collection_failure_code?: string | null;
+        };
+        /** V2WalletComputeUpstreamErrorDetail */
+        V2WalletComputeUpstreamErrorDetail: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "wallet_balance_refresh_failed" | "wallet_compute_charge_failed" | "wallet_compute_upstream_failed" | "resize_failed_retryable";
+            /** Failure Code */
+            failure_code?: string | null;
+            /**
+             * Retryable
+             * @constant
+             */
+            retryable: true;
+        };
+        /** V2WalletComputeUpstreamErrorResponse */
+        V2WalletComputeUpstreamErrorResponse: {
+            detail: components["schemas"]["V2WalletComputeUpstreamErrorDetail"];
         };
         /** V2WalletLedgerItemResponse */
         V2WalletLedgerItemResponse: {
@@ -1223,7 +1754,9 @@ export interface operations {
     create_v2_deployment_v2_deployments_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1240,6 +1773,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedDeploymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_deploy_request_status_v2_deployments_by_request__deploy_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deploy_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2HostedDeployRequestStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1676,6 +2240,38 @@ export interface operations {
             };
         };
     };
+    list_v2_subscription_billing_history_v2_subscription_billing_history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeBillingHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_v2_subscription_invoices_v2_subscription_invoices_get: {
         parameters: {
             query?: {
@@ -1781,6 +2377,303 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ComputeSubscriptionActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_v2_wallet_subscription_v2_subscription_wallet_activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputeActivateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeActivateResponse"];
+                };
+            };
+            /** @description The wallet balance cannot cover the initial charge. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeInsufficientErrorResponse"];
+                };
+            };
+            /** @description The activation conflicts with current billing state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The wallet charge result is retryable or unavailable. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeUpstreamErrorResponse"];
+                };
+            };
+        };
+    };
+    cancel_pending_v2_wallet_subscription_plan_v2_subscription_wallet_plan_cancel_pending_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputeCancelPendingPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeCancelPendingPlanResponse"];
+                };
+            };
+            /** @description No wallet-funded pending plan change can be canceled. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_v2_wallet_subscription_plan_v2_subscription_wallet_plan_change_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputePlanChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputePlanChangeResponse"];
+                };
+            };
+            /** @description The wallet balance cannot cover the plan change. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeInsufficientErrorResponse"];
+                };
+            };
+            /** @description The plan change conflicts with current billing state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The wallet charge or deployment resize is retryable. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeUpstreamErrorResponse"];
+                };
+            };
+        };
+    };
+    quote_v2_wallet_subscription_plan_change_v2_subscription_wallet_plan_quote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputePlanChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputePlanChangeResponse"];
+                };
+            };
+            /** @description The plan quote conflicts with current billing state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quote_v2_wallet_subscription_v2_subscription_wallet_quote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputeQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeQuoteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Wallet balance refresh is temporarily unavailable. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeUpstreamErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_v2_wallet_subscription_v2_subscription_wallet_retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputeRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeRetryResponse"];
+                };
+            };
+            /** @description The retry still has insufficient wallet balance. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeInsufficientErrorResponse"];
+                };
+            };
+            /** @description The retry conflicts with current collection state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
                 };
             };
             /** @description Validation Error */

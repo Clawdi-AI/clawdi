@@ -120,9 +120,9 @@ function failureReasonIndicatesNoBackingInfra(failureReason: string | null | und
 }
 
 /**
- * Mirrors the deploy-API Free-slot product predicate in `slot_occupancy.py`.
+ * Mirrors the deploy-API included-Basic-slot product predicate in `slot_occupancy.py`.
  * This is not the cluster tenant/disk reservation rule; stopped deployments
- * release a user's Free slot while their PVC may still reserve cluster space.
+ * release a user's included Basic slot while their PVC may still reserve cluster space.
  */
 export function occupiesComputeSlot(deployment: {
 	status: string | null | undefined;

@@ -13,7 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
-import { InvoicesSection } from "@/hosted/billing/subscription/invoices-section";
+import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -81,8 +81,8 @@ export function SubscriptionPage() {
 				<CardHeader>
 					<CardTitle>Compute is managed per agent</CardTitle>
 					<CardDescription>
-						Free gives one active hosted-agent slot. Performance creates a separate subscription for
-						each hosted agent.
+						Basic includes one free active hosted-agent slot. Additional Basic and Performance
+						agents each use a separate subscription.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -105,7 +105,7 @@ export function SubscriptionPage() {
 				</CardContent>
 			</Card>
 
-			<InvoicesSection />
+			<BillingHistorySection />
 
 			<PlanComparison term={term} onTermChange={setTerm} />
 		</div>

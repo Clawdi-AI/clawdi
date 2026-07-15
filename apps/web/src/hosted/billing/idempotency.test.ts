@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	forgetIdempotencyAttempt,
 	IDEMPOTENCY_ATTEMPT_TTL_MS,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
@@ -186,5 +187,18 @@ describe("idempotencyAttemptFor", () => {
 		expect(retry).toBe(first);
 		expect(counter).toBe(1);
 		expect(() => idempotencyAttemptFor(null, "checkout", "ssr-safe", mint)).not.toThrow();
+	});
+
+	test("forgets a completed attempt so the next identical action gets a fresh key", () => {
+		const storage = new MemoryStorage();
+		let counter = 0;
+		const mint = (prefix: string) => `${prefix}-${++counter}`;
+		const first = idempotencyAttemptFor(null, "wallet-deploy", "same", mint, { storage });
+
+		forgetIdempotencyAttempt("wallet-deploy", "same", { storage });
+		const next = idempotencyAttemptFor(null, "wallet-deploy", "same", mint, { storage });
+
+		expect(first.key).toBe("wallet-deploy-1");
+		expect(next.key).toBe("wallet-deploy-2");
 	});
 });

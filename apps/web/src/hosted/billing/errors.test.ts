@@ -10,6 +10,7 @@ import {
 	isRetryableError,
 	isServerError,
 	normalizeBillingError,
+	walletComputeErrorDetail,
 } from "@/hosted/billing/errors";
 
 describe("error classification", () => {
@@ -121,7 +122,47 @@ describe("normalizeBillingError", () => {
 		).toBe("That code has already been used.");
 	});
 
+	test("structured wallet errors never expose raw JSON or internal codes", () => {
+		const known = new BillingApiError(409, '{"detail":{"code":"open_refund_debt"}}', {
+			detail: { code: "open_refund_debt" },
+		});
+		const unknown = new BillingApiError(409, '{"detail":{"code":"bridge_internal_17"}}', {
+			detail: { code: "bridge_internal_17" },
+		});
+		expect(normalizeBillingError(known)).toContain("refund is still settling");
+		expect(normalizeBillingError(unknown)).toBe(
+			"The billing request could not be completed. Refresh and try again.",
+		);
+	});
+
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
+	});
+});
+
+describe("walletComputeErrorDetail", () => {
+	test("accepts the retry shortfall and resize-pending generated error variants", () => {
+		const insufficient = walletComputeErrorDetail(
+			new BillingApiError(402, "insufficient", {
+				detail: {
+					code: "insufficient_balance",
+					required_credits: "19000",
+					available_credits: "5000",
+					shortfall_credits: "14000",
+				},
+			}),
+		);
+		expect(insufficient).toMatchObject({ code: "insufficient_balance" });
+
+		const resize = walletComputeErrorDetail(
+			new BillingApiError(502, "resize", {
+				detail: {
+					code: "resize_failed_retryable",
+					failure_code: "deployment_resize_failed",
+					retryable: true,
+				},
+			}),
+		);
+		expect(resize).toMatchObject({ code: "resize_failed_retryable" });
 	});
 });

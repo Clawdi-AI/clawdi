@@ -1,7 +1,13 @@
-import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
+import {
+	type BillingOffer,
+	COMPUTE_BASIC_SLUG,
+	COMPUTE_PERFORMANCE_SLUG,
+	type ComputePlanSlug,
+	type HostedDeployment,
+	type Plan,
+} from "@/hosted/billing/contracts";
 
-export const COMPUTE_FREE_SLUG = "compute_free";
-export const COMPUTE_PERFORMANCE_SLUG = "compute_performance";
+export { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG };
 export const COMPUTE_SUBSCRIPTION_CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
 export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["trialing", "active"]);
 
@@ -29,18 +35,68 @@ export function isComputeSubscriptionTermChangeable(
 	return COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES.has(subscription?.status ?? "");
 }
 
-export function resolveFreePlan(plans: Plan[] | undefined): Plan | undefined {
-	return (
-		plans?.find((plan) => plan.slug === COMPUTE_FREE_SLUG) ??
-		plans?.find((plan) => plan.price_cents === 0)
-	);
+export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
+	return plans?.find((plan) => plan.slug === COMPUTE_BASIC_SLUG);
 }
 
 export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefined {
-	return (
-		plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG) ??
-		plans?.find((plan) => plan.price_cents > 0)
-	);
+	return plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG);
+}
+
+export function isBasicCompute(planSlug: string | null | undefined): boolean {
+	return planSlug === COMPUTE_BASIC_SLUG;
+}
+
+export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
+
+export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
+
+export function computeFundingMode(
+	planSlug: string | null | undefined,
+	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+): ComputeFundingMode {
+	if (computeSubscription) return "subscription";
+	if (isBasicCompute(planSlug)) return "included_basic";
+	return "unknown";
+}
+
+export function computeFundingSource(
+	planSlug: string | null | undefined,
+	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+): ComputeFundingSource {
+	if (computeSubscription?.funding_source === "wallet") return "wallet";
+	// Additive rollout compatibility: subscriptions from the pre-wallet
+	// deployment projection had no funding_source and were necessarily Stripe.
+	if (computeSubscription) return "stripe";
+	if (isBasicCompute(planSlug) && !computeSubscription) return "included_basic";
+	return "unknown";
+}
+
+export function computeSubscriptionId(
+	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+): number | null {
+	if (!subscription) return null;
+	return typeof subscription.subscription_id === "number" &&
+		Number.isInteger(subscription.subscription_id) &&
+		subscription.subscription_id > 0
+		? subscription.subscription_id
+		: null;
+}
+
+export function pendingComputePlanSlug(
+	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+): ComputePlanSlug | null {
+	if (!subscription) return null;
+	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||
+		subscription.pending_plan_slug === COMPUTE_PERFORMANCE_SLUG
+		? subscription.pending_plan_slug
+		: null;
+}
+
+export function computeTierLabel(
+	planSlug: ComputePlanSlug | null | undefined,
+): "Basic" | "Performance" {
+	return planSlug === COMPUTE_PERFORMANCE_SLUG ? "Performance" : "Basic";
 }
 
 /**
@@ -58,6 +114,17 @@ export function planOffers(plan: Plan): BillingOffer[] {
 					discount_percent: 0,
 				},
 			];
+}
+
+/** Offers explicitly advertised by the plans API; an empty list is not purchasable. */
+export function explicitPlanOffers(plan: Plan): BillingOffer[] {
+	return plan.offers ?? [];
+}
+
+export function selectExplicitOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer | null {
+	const offers = explicitPlanOffers(plan);
+	const offer = offers.find((candidate) => candidate.billing_term_months === term) ?? offers[0];
+	return offer ? { offer, billingTermMonths: offer.billing_term_months } : null;
 }
 
 export function selectOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer {
