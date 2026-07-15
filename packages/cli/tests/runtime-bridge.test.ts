@@ -327,6 +327,93 @@ describe("runtime bridge", () => {
 		}
 	});
 
+	it("adds immutable caching only to successful GETs for content-hashed assets", async () => {
+		const upstream = createServer((req, res) => {
+			const url = new URL(req.url ?? "/", "http://runtime.local");
+			const headers: Record<string, string> = {
+				"Content-Type": url.pathname.endsWith(".html")
+					? "text/html; charset=utf-8"
+					: "application/octet-stream",
+			};
+			if (url.searchParams.has("upstream-cache")) {
+				headers["Cache-Control"] = "private, max-age=60";
+			}
+			res.writeHead(url.searchParams.has("missing") ? 404 : 200, headers);
+			res.end("asset");
+		});
+		await listen(upstream, "127.0.0.1", 0);
+		const bridge = await startRuntimeBridge({
+			token: "asset-token",
+			surfaces: [
+				{
+					...HERMES_SURFACE,
+					listenHost: "127.0.0.1",
+					listenPort: 0,
+					upstreamPort: serverPort(upstream),
+				},
+			],
+		});
+		const bridgePort = bridge.surfaces[0]?.listenPort;
+		if (bridgePort === undefined) throw new Error("bridge did not expose a port");
+		const immutable = "public, max-age=31536000, immutable";
+		const cases = [
+			{
+				name: "hashed JavaScript",
+				path: "/assets/index-AbCd1234.js",
+				expected: immutable,
+			},
+			{
+				name: "hashed CSS behind a public path prefix",
+				path: "/assets/theme-A_b-1234.css?theme=dark",
+				headers: { "X-Forwarded-Prefix": "/v2-hermes-9119" },
+				expected: immutable,
+			},
+			{ name: "HTML", path: "/assets/index-AbCd1234.html", expected: null },
+			{ name: "API path", path: "/api/assets/index-AbCd1234.js", expected: null },
+			{
+				name: "upstream cache policy",
+				path: "/assets/index-AbCd1234.js?upstream-cache=1",
+				expected: "private, max-age=60",
+			},
+			{
+				name: "non-200 response",
+				path: "/assets/missing-AbCd1234.js?missing=1",
+				status: 404,
+				expected: null,
+			},
+			{
+				name: "non-GET request",
+				path: "/assets/index-AbCd1234.js",
+				method: "POST",
+				expected: null,
+			},
+			{ name: "unhashed filename", path: "/assets/index.js", expected: null },
+		] as const;
+
+		try {
+			for (const testCase of cases) {
+				const response = await bridgeHttpRequest({
+					port: bridgePort,
+					path: testCase.path,
+					method: "method" in testCase ? testCase.method : "GET",
+					headers: {
+						...("headers" in testCase ? testCase.headers : {}),
+					},
+					cookie: `${RUNTIME_BRIDGE_COOKIE}=asset-token`,
+				});
+				expect(response.statusCode, testCase.name).toBe(
+					"status" in testCase ? testCase.status : 200,
+				);
+				expect(response.headers.get("cache-control") ?? null, testCase.name).toBe(
+					testCase.expected,
+				);
+			}
+		} finally {
+			await bridge.close();
+			await close(upstream);
+		}
+	});
+
 	it("leaves wildcard-subdomain HTML bodies unchanged when no public path prefix is present", async () => {
 		const html =
 			'<html><head><link rel="stylesheet" href="/style.css"></head><body><script src="/app.js"></script></body></html>';
@@ -860,6 +947,49 @@ describe("runtime bridge", () => {
 		}
 	});
 });
+
+function bridgeHttpRequest(input: {
+	port: number;
+	path: string;
+	method: string;
+	cookie: string;
+	headers?: Record<string, string>;
+}): Promise<{ statusCode: number; headers: Map<string, string> }> {
+	return new Promise((resolve, reject) => {
+		const socket = connect(input.port, "127.0.0.1");
+		let buffer = "";
+		socket.once("error", reject);
+		socket.on("data", (chunk) => {
+			buffer += chunk.toString("latin1");
+			if (!buffer.includes("\r\n\r\n")) return;
+			socket.destroy();
+			const [head] = buffer.split("\r\n\r\n");
+			const lines = (head ?? "").split("\r\n");
+			const statusCode = Number.parseInt(lines.shift()?.split(" ")[1] ?? "0", 10);
+			const headers = new Map<string, string>();
+			for (const line of lines) {
+				const separator = line.indexOf(":");
+				if (separator <= 0) continue;
+				headers.set(line.slice(0, separator).toLowerCase(), line.slice(separator + 1).trim());
+			}
+			resolve({ statusCode, headers });
+		});
+		socket.once("connect", () => {
+			socket.write(
+				[
+					`${input.method} ${input.path} HTTP/1.1`,
+					`Host: 127.0.0.1:${input.port}`,
+					"Connection: close",
+					`Cookie: ${input.cookie}`,
+					...(input.method === "GET" ? [] : ["Content-Length: 0"]),
+					...Object.entries(input.headers ?? {}).map(([name, value]) => `${name}: ${value}`),
+					"",
+					"",
+				].join("\r\n"),
+			);
+		});
+	});
+}
 
 function websocketRequest(input: {
 	port: number;

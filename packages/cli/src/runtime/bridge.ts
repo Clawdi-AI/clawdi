@@ -81,6 +81,9 @@ const HEALTH_CONNECT_TIMEOUT_MS = 1_000;
 const MAX_HEADER_BYTES = 64 * 1024;
 const BRIDGE_PUBLIC_PREFIX_SCRIPT_PATH = "/__clawdi_runtime_bridge_prefix.js";
 const RUNTIME_UI_REDEMPTION_SUBJECT = "v2_hosted_runtime_ui";
+const IMMUTABLE_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const CONTENT_HASHED_ASSET_PATH =
+	/^\/(?:assets|static)\/(?:[^/]+\/)*[^/]*-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2|woff|ttf|svg|png|ico|map)$/;
 const BRIDGE_PUBLIC_PREFIX_SCRIPT = String.raw`
 (() => {
 	const script = document.currentScript;
@@ -472,7 +475,15 @@ function proxyRawRequest(
 		connected = true;
 		clearTimeout(timer);
 		if (!isUpgrade) {
-			pipeUpstreamHttpResponse(upstreamSocket, clientSocket, frameAncestors, publicPrefix);
+			const upstreamPath = requestUrl(proxyPath(parsed.requestTarget))?.pathname ?? "/";
+			pipeUpstreamHttpResponse(
+				upstreamSocket,
+				clientSocket,
+				frameAncestors,
+				publicPrefix,
+				parsed.method,
+				upstreamPath,
+			);
 		}
 		upstreamSocket.write(buildProxyRequestHead(parsed, surface));
 		if (remaining.length > 0) upstreamSocket.write(remaining);
@@ -498,6 +509,8 @@ function pipeUpstreamHttpResponse(
 	clientSocket: Socket,
 	frameAncestors: string,
 	publicPrefix: string,
+	requestMethod: string,
+	requestPath: string,
 ): void {
 	let buffer = Buffer.alloc(0);
 	let handled = false;
@@ -522,7 +535,13 @@ function pipeUpstreamHttpResponse(
 			upstreamSocket.on("data", (nextChunk) => chunks.push(nextChunk));
 			upstreamSocket.once("end", () => {
 				const body = rewriteHtmlBody(Buffer.concat(chunks));
-				const head = rewriteResponseHeadForFrameEmbedding(rawHead, frameAncestors, body.length);
+				const head = rewriteResponseHeadForFrameEmbedding(
+					rawHead,
+					frameAncestors,
+					requestMethod,
+					requestPath,
+					body.length,
+				);
 				clientSocket.end(Buffer.concat([Buffer.from(`${head}\r\n\r\n`, "latin1"), body]));
 			});
 			upstreamSocket.once("close", () => {
@@ -530,7 +549,12 @@ function pipeUpstreamHttpResponse(
 			});
 			return;
 		}
-		const head = rewriteResponseHeadForFrameEmbedding(rawHead, frameAncestors);
+		const head = rewriteResponseHeadForFrameEmbedding(
+			rawHead,
+			frameAncestors,
+			requestMethod,
+			requestPath,
+		);
 		clientSocket.write(Buffer.from(`${head}\r\n\r\n`, "latin1"));
 		if (remaining.length > 0) clientSocket.write(remaining);
 		upstreamSocket.pipe(clientSocket);
@@ -595,6 +619,8 @@ function publicPathPrefix(headers: Map<string, string[]>): string {
 function rewriteResponseHeadForFrameEmbedding(
 	rawHead: string,
 	frameAncestors: string,
+	requestMethod: string,
+	requestPath: string,
 	contentLength?: number,
 ): string {
 	const lines = rawHead.split("\r\n");
@@ -602,6 +628,7 @@ function rewriteResponseHeadForFrameEmbedding(
 	if (!statusLine) return rawHead;
 	const output = [statusLine];
 	const cspValues: string[] = [];
+	let hasCacheControl = false;
 	for (const line of lines) {
 		const index = line.indexOf(":");
 		if (index <= 0) {
@@ -611,6 +638,7 @@ function rewriteResponseHeadForFrameEmbedding(
 		const name = line.slice(0, index);
 		const value = line.slice(index + 1).trimStart();
 		const lowerName = name.toLowerCase();
+		if (lowerName === "cache-control") hasCacheControl = true;
 		if (lowerName === "x-frame-options") continue;
 		if (lowerName === "content-security-policy") {
 			const sanitized = removeCspDirective(value, "frame-ancestors");
@@ -619,6 +647,14 @@ function rewriteResponseHeadForFrameEmbedding(
 		}
 		if (contentLength !== undefined && lowerName === "content-length") continue;
 		output.push(line);
+	}
+	if (
+		requestMethod === "GET" &&
+		/^HTTP\/\d\.\d 200(?: |$)/.test(statusLine) &&
+		CONTENT_HASHED_ASSET_PATH.test(requestPath) &&
+		!hasCacheControl
+	) {
+		output.push(`Cache-Control: ${IMMUTABLE_ASSET_CACHE_CONTROL}`);
 	}
 	for (const value of cspValues) {
 		output.push(`Content-Security-Policy: ${value}`);
