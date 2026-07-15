@@ -518,6 +518,9 @@ async function gotoHostedAgentSettings(
 		await page.goto(`/agents/${deploymentId}/settings${search}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
+			// Do not open a modal while React is still hydrating the sidebar; Base UI's
+			// focus isolation mutates aria-hidden and can create a false mismatch.
+			await page.waitForLoadState("networkidle");
 			return;
 		} catch (error) {
 			if (attempt === 1) throw error;
