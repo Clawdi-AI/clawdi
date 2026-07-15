@@ -5081,7 +5081,14 @@ exit 0
 				],
 			).toBe('"manifest-locale-1"');
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
+			const resetFailedIndex = systemctlCalls.indexOf(
+				"--user reset-failed openclaw-gateway.service",
+			);
+			const enableIndex = systemctlCalls.indexOf("--user enable --now openclaw-gateway.service");
+			const restartIndex = systemctlCalls.indexOf("--user restart openclaw-gateway.service");
+			expect(resetFailedIndex).toBeGreaterThanOrEqual(0);
+			expect(enableIndex).toBeGreaterThan(resetFailedIndex);
+			expect(restartIndex).toBeGreaterThan(enableIndex);
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);

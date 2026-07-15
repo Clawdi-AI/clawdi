@@ -86,6 +86,18 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
+function writeFakeSystemctl(input: { path: string; logPath: string; exitCode?: number }): void {
+	mkdirSync(dirname(input.path), { recursive: true });
+	writeFileSync(
+		input.path,
+		`#!/usr/bin/env bash
+printf 'systemctl %s\\n' "$*" >> '${input.logPath}'
+exit ${input.exitCode ?? 0}
+`,
+	);
+	chmodSync(input.path, 0o700);
+}
+
 afterEach(() => {
 	process.env = { ...originalEnv };
 	for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -165,7 +177,21 @@ describe("runtime manifest services", () => {
 		expect(openclawUnit).toContain(
 			`EnvironmentFile=${join(paths.systemdEnvRoot, "openclaw-gateway.service.env")}`,
 		);
+		expect(openclawUnit).toContain(
+			`ConditionPathExists=${join(paths.systemdEnvRoot, "openclaw-gateway.service.env")}`,
+		);
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
+		expect(hermesUnit).toContain(
+			`ConditionPathExists=${join(paths.systemdEnvRoot, "hermes-gateway.service.env")}`,
+		);
+		expect(dashboardUnit).toContain(
+			`ConditionPathExists=${join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env")}`,
+		);
+		const runtimeWatchUnit = readFileSync(
+			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+			"utf8",
+		);
+		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		for (const unit of [hermesUnit, dashboardUnit, openclawUnit]) {
 			expect(unit).not.toContain("clawdi run --");
 			expect(unit).not.toContain("supervisord");
@@ -296,7 +322,10 @@ describe("runtime manifest services", () => {
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+		writeFakeSystemctl({ path: systemctlCommand, logPath, exitCode: 37 });
 		writeFakeGatewayCli({
 			path: openclawCommand,
 			logPath,
@@ -363,7 +392,9 @@ describe("runtime manifest services", () => {
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
+			"systemctl --user reset-failed hermes-gateway.service",
 			"hermes gateway install --force",
+			"systemctl --user reset-failed openclaw-gateway.service",
 			"openclaw gateway install --force --json",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",
